@@ -7,6 +7,8 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
+from textual.css.query import NoMatches
+
 if TYPE_CHECKING:
     from tests.support.clock import FakeClock
 
@@ -27,17 +29,26 @@ async def yield_control() -> None:
 
 
 async def wait_until(predicate: _Predicate, timeout: float) -> None:
-    """Poll `predicate` (sync or async) until it is true, or raise `WaitTimeoutError`."""
+    """Poll `predicate` (sync or async) until it is true, or raise `WaitTimeoutError`.
+
+    A Textual `NoMatches` raised by the predicate means its widget is not mounted yet; it counts
+    as "not yet" and, if the wait times out, is chained as the cause.
+    """
     deadline = time.monotonic() + timeout
+    not_mounted: NoMatches | None = None
     while True:
-        result = predicate()
-        if isinstance(result, Awaitable):
-            result = await result
+        try:
+            result = predicate()
+            if isinstance(result, Awaitable):
+                result = await result
+        except NoMatches as error:
+            not_mounted = error
+            result = False
         if result:
             return
         if time.monotonic() >= deadline:
             message = f"predicate did not become true within {timeout}s"
-            raise WaitTimeoutError(message)
+            raise WaitTimeoutError(message) from not_mounted
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
 

@@ -480,7 +480,11 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
         assert overwrite_choice.value == "refuse"
         assert cast("Select[str]", screen.query_one("#export-signals", Select)).value == ("exclude")
         result_scroll = screen.query_one("#palette-result-scroll")
-        await pilot.pause()
+        await wait_until(
+            lambda: result_scroll.max_scroll_y > 0,
+            timeout=EXPORT_WAIT_SECONDS,
+        )
+        form.scroll_to_widget(result_scroll, animate=False, immediate=True)
         await wait_until(
             lambda: (
                 result_scroll.region.y >= form.region.y
@@ -490,14 +494,11 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
             ),
             timeout=EXPORT_WAIT_SECONDS,
         )
-        assert result_scroll.region.y >= form.region.y
-        assert result_scroll.region.bottom <= screen.size.height
-        assert frame.content_region.contains_region(result_scroll.region)
-        assert form.content_region.contains_region(result_scroll.region)
-        assert result_scroll.max_scroll_y > 0
         result_scroll.scroll_end(animate=False)
-        await pilot.pause()
-        assert result_scroll.scroll_y == result_scroll.max_scroll_y
+        await wait_until(
+            lambda: result_scroll.scroll_y == result_scroll.max_scroll_y,
+            timeout=EXPORT_WAIT_SECONDS,
+        )
 
     assert _snapshot(connection, reader, task.id) == before
     output_path = project_root / destination

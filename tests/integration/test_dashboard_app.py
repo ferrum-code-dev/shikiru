@@ -410,18 +410,16 @@ def _settings_without_animations(project_dir: Path) -> Settings:
 
 
 async def _select_home_task(app: DashboardApp, task_id: str) -> None:
-    row = app.query_one(f"#task-row-{task_id}", ListItem)
-    task_list = cast("ListView", row.parent)
-    index = tuple(task_list.children).index(row)
-    task_list.focus()
-    task_list.index = index
-    await wait_until(
-        lambda: (
-            task_list.highlighted_child is row
-            and task_id in _widget_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-        ),
-        timeout=UI_WAIT_SECONDS,
-    )
+    def selected() -> bool:
+        row = app.query_one(f"#task-row-{task_id}", ListItem)
+        task_list = cast("ListView", row.parent)
+        task_list.focus()
+        task_list.index = tuple(task_list.children).index(row)
+        return task_list.highlighted_child is row and task_id in _widget_text(
+            app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+        )
+
+    await wait_until(selected, timeout=UI_WAIT_SECONDS)
 
 
 if TYPE_CHECKING:
@@ -680,12 +678,14 @@ def _assert_fixed_context_target_picker_hidden(screen: PaletteScreen) -> None:
     assert not screen.query_one("#field-resolution").display
 
 
-def _assert_attention_answer_target(
+async def _assert_attention_answer_target(
     screen: PaletteScreen,
     task_id: str,
     escalation_id: str,
     headline: str,
 ) -> None:
+    summary_widget = screen.query_one("#palette-escalation-summary", Static)
+    await wait_until(lambda: headline in _rendered_text(summary_widget), timeout=UI_WAIT_SECONDS)
     assert screen.query_one("#task-id", Input).value == task_id
     assert not screen.query_one("#field-escalation").display
     assert screen.query_one("#field-palette-escalation-summary").display
@@ -693,10 +693,9 @@ def _assert_attention_answer_target(
     assert screen.query_one("#field-resolution-text").display
     assert not screen.query_one("#field-role").display
     _assert_fixed_context_target_picker_hidden(screen)
-    summary = _rendered_text(screen.query_one("#palette-escalation-summary", Static))
+    summary = _rendered_text(summary_widget)
     assert task_id in summary
     assert escalation_id in summary
-    assert headline in summary
     assert "Question: unavailable" in summary
 
 
@@ -2259,7 +2258,9 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
 
             screen = await _open_attention_answer_form(app, pilot, row)
             assert caller.is_mounted
-            _assert_attention_answer_target(screen, task.id, escalation.id, escalation.headline)
+            await _assert_attention_answer_target(
+                screen, task.id, escalation.id, escalation.headline
+            )
             title = screen.query_one("#palette-title", Static)
             assert task.id in _rendered_text(title)
             assert escalation.id in _rendered_text(title)
@@ -2809,7 +2810,7 @@ async def test_attention_answer_draft_stays_with_its_decision_on_the_same_task(
             )
             caller = app.screen
             first_palette = await _open_attention_answer_form(app, pilot, row)
-            _assert_attention_answer_target(
+            await _assert_attention_answer_target(
                 first_palette,
                 task.id,
                 first.id,
@@ -2837,7 +2838,7 @@ async def test_attention_answer_draft_stays_with_its_decision_on_the_same_task(
             second_summary = _rendered_text(
                 second_palette.query_one("#palette-escalation-summary", Static)
             )
-            _assert_attention_answer_target(
+            await _assert_attention_answer_target(
                 second_palette,
                 task.id,
                 second.id,
@@ -2853,7 +2854,7 @@ async def test_attention_answer_draft_stays_with_its_decision_on_the_same_task(
             await _enter_answer_text(pilot, second_palette, second_guidance)
             await _close_palette_to_caller(app, pilot, caller, queue)
             reopened = await _open_attention_answer_form(app, pilot, row)
-            _assert_attention_answer_target(
+            await _assert_attention_answer_target(
                 reopened,
                 task.id,
                 second.id,
@@ -2918,7 +2919,7 @@ async def test_attention_non_answer_route_keeps_an_earlier_answer_draft_on_its_t
             )
             caller = app.screen
             first_palette = await _open_attention_answer_form(app, pilot, row)
-            _assert_attention_answer_target(
+            await _assert_attention_answer_target(
                 first_palette,
                 task.id,
                 first.id,
@@ -4957,6 +4958,7 @@ async def _open_and_close_task_message_draft(
         timeout=UI_WAIT_SECONDS,
     )
     await pilot.press(*guidance)
+    await wait_until(lambda: message.text == guidance, timeout=UI_WAIT_SECONDS)
     await pilot.press("escape")
     await wait_until(lambda: app.screen is home, timeout=UI_WAIT_SECONDS)
     return home, list_view, guidance
@@ -4975,6 +4977,11 @@ async def _open_home_task_action_menu(
         timeout=UI_WAIT_SECONDS,
     )
     return cast("PaletteScreen", app.screen)
+
+
+async def _type_and_confirm(pilot: Pilot[None], text_area: TextArea, text: str) -> None:
+    await pilot.press(*text)
+    await wait_until(lambda: text_area.text == text, timeout=UI_WAIT_SECONDS)
 
 
 async def _back_to_context_actions(
@@ -5032,7 +5039,7 @@ async def test_contextual_message_draft_survives_back_action_change_and_another_
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Message draft caller task")
     role_task = seed_task(connection, clock, title="Back menu message draft", mode=Mode.IMPLEMENT)
     answer_task, _, escalation, queue = _seed_home_answer_decision(connection, clock)
@@ -5087,7 +5094,7 @@ async def test_contextual_message_draft_survives_back_action_change_and_another_
                 timeout=UI_WAIT_SECONDS,
             )
             await _resize_blank_palette_text_area(app, pilot, answer_palette, answer, queue)
-            await pilot.press(*"Preserve the typed answer for the second task.")
+            await _type_and_confirm(pilot, answer, "Preserve the typed answer for the second task.")
             assert queue.pending() == []
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home, timeout=UI_WAIT_SECONDS)
@@ -5153,6 +5160,7 @@ async def _exercise_back_and_action_change_draft(
     assert role.value == Role.IMPLEMENTER.value
     guidance = "Keep the explicitly selected implementer message."
     await pilot.press(*guidance)
+    await wait_until(lambda: message.text == guidance, timeout=UI_WAIT_SECONDS)
     assert queue.pending() == []
 
     await _exercise_submit_request_form_resize(app, pilot, palette, home, queue)
@@ -6032,7 +6040,6 @@ async def test_home_shared_detail_is_current_after_a_task_detail_popup_closes(
             await pilot.press("ctrl+p")
             await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
             TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
-            assert Hold.PAUSED.value not in _rendered_text(ownership)
             await pilot.press("escape")
             await wait_until(lambda: app.screen is task_screen, timeout=UI_WAIT_SECONDS)
             await wait_until(

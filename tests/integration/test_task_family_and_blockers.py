@@ -466,30 +466,22 @@ async def _exercise_paged_relationship_navigation(
         )
         await pilot.pause()
         await pilot.click(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}")
-        await pilot.pause()
-        assert "Page 2" in _static_text(
-            app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static)
-        )
-        panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
-        assert app.focused is panel.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button)
-        assert tasks.superseded.id in _static_text(
-            panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-        )
         await wait_until(
             lambda: (
                 "Page 2"
                 in _static_text(app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static))
             ),
-            timeout=5.0,
+            timeout=UI_WAIT_SECONDS,
+        )
+        panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+        previous = panel.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button)
+        await wait_until(lambda: app.focused is previous, timeout=UI_WAIT_SECONDS)
+        assert tasks.superseded.id in _static_text(
+            panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         )
         assert tasks.replacements[-1].id in _static_text(
             app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static)
         )
-        panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
-        assert "Page 2" in _static_text(
-            panel.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static)
-        )
-        previous = panel.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button)
         more = panel.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button)
         assert not previous.disabled
         assert more.disabled
@@ -522,7 +514,10 @@ async def _exercise_paged_relationship_navigation(
         assert related_select.value == tasks.replacements[-1].id
         assert panel.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button).disabled
         assert not panel.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button).disabled
-        assert app.focused is panel.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button)
+        await wait_until(
+            lambda: app.focused is panel.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button),
+            timeout=UI_WAIT_SECONDS,
+        )
         detail_screen = app.screen
         await pilot.press("escape")
         await wait_until(lambda: app.screen is not detail_screen, timeout=5.0)
