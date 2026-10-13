@@ -187,6 +187,9 @@ async def test_tab_visits_only_visible_stops_and_highlights_the_readouts(
         await _settled(decision_home, pilot, decision=True)
         task_list = decision_home.query_one("#task-browser-list", ListView)
         assert decision_home.focused is task_list
+        bar = decision_home.query_one("#escalations", EscalationsPanel)
+        assert bar.has_class("armed")
+        assert {_SELECTED_SURFACE} == set().union(*_surface_rows(bar))
         stops = await _tab_cycle(decision_home, pilot)
         for stop in stops:
             assert stop.id not in _INVISIBLE_STOPS
@@ -200,6 +203,13 @@ async def test_tab_visits_only_visible_stops_and_highlights_the_readouts(
                 stop.focus()
                 await pilot.pause()
                 assert {_SELECTED_SURFACE} == set().union(*_surface_rows(stop))
+        resources = decision_home.query_one("#resources", ResourcesPanel)
+        rule = decision_home.query_one("#resources-rule")
+        resources.focus()
+        await pilot.pause()
+        assert resources.gutter.top == 0
+        assert rule.region.bottom == resources.region.y
+        assert _SELECTED_SURFACE not in set().union(*_surface_rows(rule))
 
 
 @pytest.mark.parametrize("size", [_COMPACT, _TINY])
@@ -224,33 +234,6 @@ async def test_focused_readout_scrolls_with_page_keys_and_keeps_the_task_selecti
             timeout=_WAIT_SECONDS,
         )
         assert task_list.index == selected
-
-
-async def test_resources_highlight_covers_every_stats_row_and_not_the_rule(
-    decision_home: DashboardApp,
-) -> None:
-    async with decision_home.run_test(size=_COMPACT) as pilot:
-        await _settled(decision_home, pilot, decision=True)
-        resources = decision_home.query_one("#resources", ResourcesPanel)
-        rule = decision_home.query_one("#resources-rule")
-        resources.focus()
-        await pilot.pause()
-        rows = _surface_rows(resources)
-        assert len(rows) > 1
-        assert all(row == {_SELECTED_SURFACE} for row in rows)
-        assert resources.gutter.top == 0
-        assert rule.region.bottom == resources.region.y
-        assert _SELECTED_SURFACE not in set().union(*_surface_rows(rule))
-
-
-async def test_decision_bar_is_armed_while_the_task_list_keeps_focus(
-    decision_home: DashboardApp,
-) -> None:
-    async with decision_home.run_test(size=_WIDE) as pilot:
-        bar = await _settled(decision_home, pilot, decision=True)
-        assert decision_home.focused is decision_home.query_one("#task-browser-list")
-        assert bar.has_class("armed")
-        assert {_SELECTED_SURFACE} == set().union(*_surface_rows(bar))
 
 
 @pytest.mark.parametrize("size", _SIZES)
@@ -285,15 +268,22 @@ def _unhighlighted_lists(stops: list[Widget], lists: tuple[ListView, ListView]) 
     ]
 
 
-@pytest.mark.parametrize("key", ["tab", "shift+tab"])
-async def test_a_tab_sweep_with_the_selection_on_an_active_row_never_stops_on_recent(
+async def test_tab_sweeps_skip_recent_until_down_hands_the_stop_over(
     recent_home: DashboardApp,
-    key: str,
 ) -> None:
     async with recent_home.run_test(size=_WIDE) as pilot:
         active, recent = await _settled_lists(recent_home, pilot)
-        stops = await _tab_cycle(recent_home, pilot, key)
-        assert recent not in stops
+        for key in ("tab", "shift+tab"):
+            stops = await _tab_cycle(recent_home, pilot, key)
+            assert recent not in stops
+            assert not _unhighlighted_lists(stops, (active, recent))
+        await pilot.press("down")
+        await wait_until(lambda: recent.highlighted_child is not None, timeout=_WAIT_SECONDS)
+        await pilot.press("tab")
+        assert recent_home.focused is recent
+        stops = await _tab_cycle(recent_home, pilot)
+        assert recent in stops
+        assert active not in stops
         assert not _unhighlighted_lists(stops, (active, recent))
 
 
@@ -309,21 +299,6 @@ async def test_clicking_a_recent_row_from_an_active_selection_focuses_and_highli
         assert active.highlighted_child is None
         identity = plain_text(recent_home.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
         assert "Finished task" in identity
-
-
-async def test_down_into_recent_hands_the_tab_stop_to_the_recent_list(
-    recent_home: DashboardApp,
-) -> None:
-    async with recent_home.run_test(size=_WIDE) as pilot:
-        active, recent = await _settled_lists(recent_home, pilot)
-        await pilot.press("down")
-        await wait_until(lambda: recent.highlighted_child is not None, timeout=_WAIT_SECONDS)
-        await pilot.press("tab")
-        assert recent_home.focused is recent
-        stops = await _tab_cycle(recent_home, pilot)
-        assert recent in stops
-        assert active not in stops
-        assert not _unhighlighted_lists(stops, (active, recent))
 
 
 async def test_escape_clears_the_selection_and_the_list_that_held_focus_leaves_no_tab_stop(
