@@ -114,9 +114,9 @@ The `Recent` list uses the existing task browser/history queries and retains the
 | Escape | Close the current menu/form/overlay or return to its caller, preserving task, role, selection, entered text and reading position. | None. |
 | `/` in Home | Reveal and focus task search. Enter moves to results; Escape clears a nonempty query before hiding the empty input. Search remains hidden at rest. | None. |
 | Click actionable attention row | Select the affected task and open its answer/resolution form directly. A fault or engine-stop row opens the corresponding evidence/action route. | None until submitted. |
-| Click project token, billing or subscription summary | Open Project Totals and recorded subscription/quota details. | None. |
+| Click project token, billing or subscription summary | Open Project totals and recorded subscription/quota details. | None. |
 | Click Host/Shikiru resource summary | Open Diagnostics with the same cached observation. | None. |
-| Click `u Details` or `e Evidence` | Open the corresponding task view. | None. |
+| Click `u details` or `e evidence` | Open the corresponding task view. | None. |
 | Click contextual action or form control | Select/open that action or submit only when the explicit submit control/key is activated. Inputs retain native editing keys. | Only explicit submission queues the typed operation. |
 
 The Home footer presents `↑↓ select`, `Enter inspect`, `Ctrl+P actions` and `? help`; its inline wrapping keeps every mouse route available at compact widths, including when search is focused or no task is selected. On task detail, the same menu exposes task-scoped actions and secondary views. Primary menu order is Answer decision when applicable; Inspect task; Evidence & reports; Message a role; Take over/Hand back a role when applicable; Usage; Commands; Project diagnostics. Each entry is a quiet left-aligned label with a short secondary meaning. More actions keeps submit, prioritize, rung change, pause/pause-now, resume, retry, cancel, stop, export, secondary views and configured Extensions discoverable on demand. Show only applicable actions and provide guidance and consequence before submission. A Role field appears only when the selected action needs a role.
