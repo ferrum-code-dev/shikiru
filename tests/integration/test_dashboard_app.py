@@ -1,12 +1,8 @@
 from __future__ import annotations
 
 import errno
-import json
 import os
 import re
-import shlex
-import sys
-from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from html import unescape
 from itertools import pairwise
@@ -14,7 +10,6 @@ from typing import TYPE_CHECKING, cast
 
 import psutil
 import pytest
-from fake_agent.turns import FAKE_COMPACT_AT_PCT_ENV_VAR
 from rich.cells import cell_len
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.events import MouseScrollDown
@@ -41,11 +36,6 @@ from shikiru.agents.contracts import (
     COST_BASIS_API_EQUIVALENT,
     COST_BASIS_BILLED,
     COST_BASIS_UNKNOWN,
-    PROJECT_ENV_VAR,
-    ROLE_ENV_VAR,
-    RUN_DIR_ENV_VAR,
-    SLOT_ENV_VAR,
-    TASK_ENV_VAR,
     BillingDeclaration,
     Rung,
     Usage,
@@ -100,7 +90,6 @@ from shikiru.dashboard.detail import (
     TaskDetailScreen,
 )
 from shikiru.dashboard.palette import PaletteScreen
-from shikiru.dashboard.services import DashboardServices, GitRepoStatusService
 from shikiru.domain.commands import (
     AnswerResolution,
     CancelResolution,
@@ -122,17 +111,12 @@ from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Task
 from shikiru.engine.escalations import PacketContext, render_packet
-from shikiru.engine.turn_processes import TurnProcesses, read_turn_pid, turn_pid_path
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
-from shikiru.paths import run_dir, turns_dir
+from shikiru.paths import turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.strips import StripsPanel
 from shikiru.process import (
-    START_TIME_TOLERANCE_SECONDS,
-    ProcessIdentity,
-    SpawnedProcess,
-    SubprocessRunner,
     identify_pid,
 )
 from shikiru.store.commands import CommandQueue
@@ -141,19 +125,16 @@ from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
-from shikiru.telemetry.disk import DiskSampler
-from shikiru.telemetry.docker import DockerSampler
 from shikiru.telemetry.resources import ResourceProcessRoots, ResourceSampler
 from shikiru.tmux.client import Tmux, exact_target, tmux_key_label
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.ui.compact import format_cpu_pct
-from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, ignore_palette_action, state_views
-from tests.support.entry_points import FakeDistribution, ambiguous_entry_points
-from tests.support.git_repo import GIT_COMMAND_TIMEOUT
+from tests.support.entry_points import FakeDistribution
 from tests.support.render import plain_text
+from tests.support.resource_agent import resource_services, start_resource_agent
 from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import wait_until
@@ -217,24 +198,6 @@ _API_BILLED_COST_USD = 0.42
 _API_EQUIVALENT_ESTIMATE_USD = 0.11
 _TIMELINE_REFRESH_SECONDS = 1
 _FORM_CONTENT_TRAILING_GAP_ROWS = 3
-_RESOURCE_AGENT_SESSION_ID = "task110-resource-session"
-_RESOURCE_AGENT_PROMPT = "wait for the next instruction"
-_RESOURCE_AGENT_MODEL = "resource-test-model"
-_RESOURCE_AGENT_MODULE = "fake_agent.turn_cli"
-_RESOURCE_AGENT_COMMAND = "turn"
-_RESOURCE_AGENT_SESSION_FLAG = "--session-id"
-_RESOURCE_AGENT_PROMPT_FLAG = "--prompt"
-_RESOURCE_AGENT_MODEL_FLAG = "--model"
-_RESOURCE_AGENT_SHELL = "/bin/sh"
-_RESOURCE_AGENT_SHELL_COMMAND_FLAG = "-c"
-_RESOURCE_AGENT_SLOT = "0"
-_RESOURCE_AGENT_COMPACT_AT_PCT = "80"
-_RESOURCE_AGENT_WAIT_SECONDS = 10.0
-_RESOURCE_AGENT_RUN_TARGET = "=task110-resource"
-_RESOURCE_PID_REUSE_SHIFT_SECONDS = START_TIME_TOLERANCE_SECONDS + 1.0
-_RESOURCE_BYTES_PER_GIB = 1024**3
-_RESOURCE_RSS_TOLERANCE_BYTES = 4 * 1024**2
-_RESOURCE_AGENT_RUNG = Rung(agent="fake", model=_RESOURCE_AGENT_MODEL, effort=None)
 
 
 class _ExternalWidget:
@@ -469,6 +432,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import OpenPalette, OpenPaletteContext, WidgetContext
+    from shikiru.dashboard.services import DashboardServices
     from shikiru.store.database import Database
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -875,23 +839,13 @@ def _finish_report_read(
     os.close(descriptor)
 
 
-async def test_dashboard_app_rejects_an_unregistered_widget_name(
-    database: Database, connection: Connection, tmp_path: Path
-) -> None:
-    del connection
-    project_dir = write_minimal_project(tmp_path)
-    reader = StateReader(database, SystemClock())
-    try:
-        app = _app(reader, project_dir, widget_names=["no-such-widget"])
-        with pytest.raises(WidgetPluginError):
-            async with app.run_test():
-                pass
-    finally:
-        reader.close()
-
-
-async def test_dashboard_app_names_a_widget_with_an_unsupported_placement(
-    database: Database, connection: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("widget_name", ["no-such-widget", _InvalidPlacementWidget.name])
+async def test_dashboard_app_rejects_an_invalid_widget_config_naming_the_widget(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    widget_name: str,
 ) -> None:
     del connection
     entry_points = registry_module.entry_points
@@ -903,15 +857,10 @@ async def test_dashboard_app_names_a_widget_with_an_unsupported_placement(
         return list(registered)
 
     monkeypatch.setattr(registry_module, "entry_points", entry_points_with_extension)
-    project_dir = write_minimal_project(tmp_path)
-    reader = StateReader(database, SystemClock())
-    try:
-        app = _app(reader, project_dir, widget_names=[_InvalidPlacementWidget.name])
-        with pytest.raises(WidgetPluginError, match=_InvalidPlacementWidget.name):
-            async with app.run_test():
-                pass
-    finally:
-        reader.close()
+    app = _app(reader, write_minimal_project(tmp_path), widget_names=[widget_name])
+    with pytest.raises(WidgetPluginError, match=widget_name):
+        async with app.run_test():
+            pass
 
 
 async def test_dashboard_mounts_the_default_widgets(
@@ -1577,104 +1526,6 @@ async def test_resource_groups_stay_aligned_after_resize_for_observed_process_tr
         reader.close()
 
 
-async def _start_resource_agent(
-    connection: Connection,
-    clock: FakeClock,
-    project_dir: Path,
-    task: Task,
-) -> tuple[SubprocessRunner, SpawnedProcess, TurnProcesses, Path, ProcessIdentity]:
-    RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, _RESOURCE_AGENT_RUNG)
-    task_run_dir = run_dir(project_dir, task.id)
-    runner = SubprocessRunner()
-    turn_processes = TurnProcesses(runner=runner, clock=clock, project_root=project_dir)
-    environment = dict(os.environ)
-    environment.update(
-        {
-            RUN_DIR_ENV_VAR: str(task_run_dir),
-            ROLE_ENV_VAR: Role.IMPLEMENTER.value,
-            PROJECT_ENV_VAR: str(project_dir),
-            TASK_ENV_VAR: task.id,
-            SLOT_ENV_VAR: _RESOURCE_AGENT_SLOT,
-            FAKE_COMPACT_AT_PCT_ENV_VAR: _RESOURCE_AGENT_COMPACT_AT_PCT,
-        }
-    )
-    agent_argv = (
-        sys.executable,
-        "-m",
-        _RESOURCE_AGENT_MODULE,
-        _RESOURCE_AGENT_COMMAND,
-        _RESOURCE_AGENT_SESSION_FLAG,
-        _RESOURCE_AGENT_SESSION_ID,
-        _RESOURCE_AGENT_PROMPT_FLAG,
-        _RESOURCE_AGENT_PROMPT,
-        _RESOURCE_AGENT_MODEL_FLAG,
-        _RESOURCE_AGENT_MODEL,
-    )
-    shell_command = f"{shlex.join(agent_argv)} & wait"
-    process = await runner.spawn(
-        [_RESOURCE_AGENT_SHELL, _RESOURCE_AGENT_SHELL_COMMAND_FLAG, shell_command],
-        cwd=project_dir,
-        env=environment,
-    )
-    started = False
-    try:
-        process_identity = runner.identify(process.pid)
-        assert process_identity is not None
-        turn_processes.record(task_run_dir, Role.IMPLEMENTER, process.pid)
-        recorded_identity = read_turn_pid(turn_pid_path(task_run_dir, Role.IMPLEMENTER))
-        assert recorded_identity.matches(process_identity)
-        await wait_until(
-            lambda: bool(psutil.Process(process.pid).children(recursive=True)),
-            timeout=_RESOURCE_AGENT_WAIT_SECONDS,
-        )
-        started = True
-        return runner, process, turn_processes, task_run_dir, recorded_identity
-    finally:
-        if not started:
-            await process.stop()
-            turn_processes.clear(task_run_dir, Role.IMPLEMENTER)
-
-
-def _resource_services(
-    reader: StateReader,
-    project_dir: Path,
-    clock: FakeClock,
-    *,
-    settings: Settings,
-    tmux_server: TmuxServer,
-    sampler: ResourceSampler,
-    runner: SubprocessRunner,
-) -> DashboardServices:
-    return DashboardServices(
-        GitRepoStatusService(
-            Git(runner, command_timeout=GIT_COMMAND_TIMEOUT),
-            settings.repo,
-            project_dir,
-            clock,
-            cache_ttl_seconds=settings.dashboard.repo_status_cache_seconds,
-        ),
-        clock=clock,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-        engine_up=lambda: False,
-        engine_identity=lambda: None,
-        project_root=project_dir,
-        state=reader,
-        tmux=Tmux(tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env),
-        session_target=_RESOURCE_AGENT_RUN_TARGET,
-        resources=sampler,
-        disk=DiskSampler(
-            clock, project_dir, refresh_seconds=settings.dashboard.disk_refresh_seconds
-        ),
-        docker=DockerSampler(
-            runner,
-            clock,
-            refresh_seconds=settings.dashboard.docker_refresh_seconds,
-            timeout_seconds=settings.dashboard.docker_timeout_seconds,
-            project_roots=None,
-        ),
-    )
-
-
 @pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE])
 async def test_headless_agent_resources_are_disjoint_and_diagnostics_reuses_the_sample(
     connection: Connection,
@@ -1687,14 +1538,14 @@ async def test_headless_agent_resources_are_disjoint_and_diagnostics_reuses_the_
     settings = load_settings(project_dir)
     clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Read the recorded agent tree")
-    runner, process, turn_processes, task_run_dir, _recorded_identity = await _start_resource_agent(
+    runner, process, turn_processes, task_run_dir, _recorded_identity = await start_resource_agent(
         connection,
         clock,
         project_dir,
         task,
     )
     sampler = ResourceSampler(clock, settings.orchestration.resources)
-    services = _resource_services(
+    services = resource_services(
         reader,
         project_dir,
         clock,
@@ -1895,194 +1746,6 @@ async def _assert_project_diagnostics_view(
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     assert "Scope" not in _exported_screen_text(app)
-
-
-async def test_resource_diagnostics_preserves_a_missing_sample(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    del connection
-    project_dir = write_minimal_project(tmp_path)
-    app = _app(
-        reader,
-        project_dir,
-        widget_names=["resources"],
-        services=StubServices(),
-    )
-    async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
-        resource_summary = app.query_one("#resources", Static)
-        await wait_until(
-            lambda: "Host" in plain_text(resource_summary.content),
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
-        assert await pilot.click("#resources")
-        await wait_until(
-            lambda: bool(app.screen.query("#project-diagnostics-resources")), timeout=2
-        )
-        diagnostic_resources = app.screen.query_one("#project-diagnostics-resources", Static)
-        await wait_until(
-            lambda: (
-                "unavailable · no sample recorded"
-                in " ".join(_rendered_widget_lines(diagnostic_resources))
-            ),
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
-        diagnostic_text = " ".join(_rendered_widget_lines(diagnostic_resources))
-        assert "Host" not in diagnostic_text
-        assert "Agents" not in diagnostic_text
-
-
-async def test_resource_sampling_rejects_reused_and_exited_agent_identities(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-    tmux_server: TmuxServer,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    settings = load_settings(project_dir)
-    clock = FakeClock(_TEST_START)
-    task = seed_task(connection, clock, title="Check turn identity reuse")
-    runner, process, turn_processes, task_run_dir, identity = await _start_resource_agent(
-        connection,
-        clock,
-        project_dir,
-        task,
-    )
-    sampler = ResourceSampler(clock, settings.orchestration.resources)
-    services = _resource_services(
-        reader,
-        project_dir,
-        clock,
-        settings=settings,
-        tmux_server=tmux_server,
-        sampler=sampler,
-        runner=runner,
-    )
-    turn_pid = turn_pid_path(task_run_dir, Role.IMPLEMENTER)
-    assert identity.started_at is not None
-    try:
-        initial = await services.resources()
-        shifted_identity = replace(
-            identity,
-            started_at=identity.started_at - _RESOURCE_PID_REUSE_SHIFT_SECONDS,
-        )
-        turn_pid.write_text(json.dumps(asdict(shifted_identity)), encoding="utf-8")
-        clock.advance(settings.orchestration.resources.sample_seconds)
-        reused_pid = await services.resources()
-
-        assert runner.is_running(identity)
-        assert reused_pid.sampled_at != initial.sampled_at
-        assert reused_pid.agents_cpu_pct is None
-        assert reused_pid.agents_rss_gb is None
-        assert reused_pid.agents_process_tree_empty is True
-
-        turn_processes.record(task_run_dir, Role.IMPLEMENTER, process.pid)
-        await process.stop()
-        await wait_until(
-            lambda: not runner.is_running(identity),
-            timeout=_RESOURCE_AGENT_WAIT_SECONDS,
-        )
-        clock.advance(settings.orchestration.resources.sample_seconds)
-        exited = await services.resources()
-        assert exited.agents_cpu_pct is None
-        assert exited.agents_rss_gb is None
-        assert exited.agents_process_tree_empty is True
-    finally:
-        if process.returncode is None:
-            await process.stop()
-        turn_processes.clear(task_run_dir, Role.IMPLEMENTER)
-
-
-async def test_resource_readings_within_one_interval_reuse_the_sample_and_resample_afterwards(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-    tmux_server: TmuxServer,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    settings = load_settings(project_dir)
-    clock = FakeClock(_TEST_START)
-    task = seed_task(connection, clock, title="Share one resource sample")
-    runner, process, turn_processes, task_run_dir, identity = await _start_resource_agent(
-        connection,
-        clock,
-        project_dir,
-        task,
-    )
-    sampler = ResourceSampler(clock, settings.orchestration.resources)
-    services = _resource_services(
-        reader,
-        project_dir,
-        clock,
-        settings=settings,
-        tmux_server=tmux_server,
-        sampler=sampler,
-        runner=runner,
-    )
-    turn_pid = turn_pid_path(task_run_dir, Role.IMPLEMENTER)
-    assert identity.started_at is not None
-    try:
-        first = await services.resources()
-        shifted_identity = replace(
-            identity,
-            started_at=identity.started_at - _RESOURCE_PID_REUSE_SHIFT_SECONDS,
-        )
-        turn_pid.write_text(json.dumps(asdict(shifted_identity)), encoding="utf-8")
-        repeated = await services.resources()
-
-        assert repeated.sampled_at == first.sampled_at
-        assert repeated.agents_process_tree_empty is False
-
-        clock.advance(settings.orchestration.resources.sample_seconds)
-        resampled = await services.resources()
-
-        assert resampled.sampled_at != first.sampled_at
-        assert resampled.agents_process_tree_empty is True
-    finally:
-        if process.returncode is None:
-            await process.stop()
-        turn_processes.clear(task_run_dir, Role.IMPLEMENTER)
-
-
-async def test_resource_sampler_deduplicates_overlapping_recorded_agent_roots(
-    connection: Connection,
-    tmp_path: Path,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    settings = load_settings(project_dir)
-    clock = FakeClock(_TEST_START)
-    task = seed_task(connection, clock, title="Deduplicate recorded process roots")
-    _, process, turn_processes, task_run_dir, identity = await _start_resource_agent(
-        connection,
-        clock,
-        project_dir,
-        task,
-    )
-    root = psutil.Process(identity.pid)
-    sampler = ResourceSampler(clock, settings.orchestration.resources)
-    roots = ResourceProcessRoots((identity,), (identity, identity))
-    try:
-        try:
-            sample = sampler.sample_process_roots(roots)
-            process_tree = [root, *root.children(recursive=True)]
-            expected_rss_bytes = sum(item.memory_info().rss for item in process_tree)
-        except psutil.AccessDenied, PermissionError:
-            pytest.skip("host process enumeration is restricted")
-        assert sample.shikiru_process_tree_empty is True
-        assert sample.shikiru_cpu_pct is None
-        assert sample.shikiru_rss_gb is None
-        assert sample.agents_process_tree_empty is False
-        assert sample.agents_rss_gb is not None
-        assert sample.instance_rss_gb == sample.agents_rss_gb
-        assert sample.agents_rss_gb * _RESOURCE_BYTES_PER_GIB == pytest.approx(
-            expected_rss_bytes,
-            abs=_RESOURCE_RSS_TOLERANCE_BYTES,
-        )
-    finally:
-        if process.returncode is None:
-            await process.stop()
-        turn_processes.clear(task_run_dir, Role.IMPLEMENTER)
 
 
 async def test_focus_keeps_selected_task_and_reading_position_after_reorder(
@@ -7116,27 +6779,5 @@ async def test_ctrl_p_carries_the_selected_browser_task(
 
             assert len(opened) == 1
             assert opened[0].task_id == task.id
-    finally:
-        reader.close()
-
-
-async def test_dashboard_app_rejects_an_ambiguous_widget_name(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    del connection
-    monkeypatch.setattr(
-        registry_module, "entry_points", ambiguous_entry_points("dup", "dist-one", "dist-two")
-    )
-    project_dir = write_minimal_project(tmp_path)
-    reader = StateReader(database, SystemClock())
-    try:
-        app = _app(reader, project_dir, widget_names=["dup"])
-        with pytest.raises(WidgetPluginError) as excinfo:
-            async with app.run_test():
-                pass
-        assert "dist-two" in str(excinfo.value)
     finally:
         reader.close()
