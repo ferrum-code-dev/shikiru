@@ -248,7 +248,7 @@ Eighth-review scope and evidence: [eighth real-project review](../docs/tui-feedb
 
 - [x] Task 156: Remove screenshot-capture side effects and task-numbered test names
 - [x] Task 157: Fold and simplify `test_dashboard_app.py`
-- [ ] Task 158: Fold the rest of the dashboard-family integration tests
+- [x] Task 158: Fold the rest of the dashboard-family integration tests
 - [ ] Task 159: Trim unit tables and fold tmux/workspace/config tests
 - [ ] Task 160: Stale only after a failure; age hint only when stale
 - [ ] Task 161: One refresh moment for the bar and the popup; header keeps ticking
