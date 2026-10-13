@@ -134,6 +134,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from mcp.server.fastmcp import FastMCP
+    from textual.screen import ModalScreen
 
     from shikiru.config.settings import LoggingConfig, Settings
     from shikiru.engine.integration import IntegrationCoordinator
@@ -320,6 +321,7 @@ async def run_dashboard(
     """Run the configured dashboard for one project entry point."""
     dashboard_app_module = import_module("shikiru.dashboard.app")
     dashboard_palette_module = import_module("shikiru.dashboard.palette")
+    dashboard_resolution_module = import_module("shikiru.dashboard.resolution")
     dashboard_services_module = import_module("shikiru.dashboard.services")
     dashboard_views_module = import_module("shikiru.dashboard.views")
     dashboard_motion_module = import_module("shikiru.dashboard.motion")
@@ -401,6 +403,17 @@ async def run_dashboard(
             return await navigation.role_pane(task_id, Role(role_name))
 
         app_instance = None
+        resolution_drafts = dashboard_resolution_module.ResolutionDrafts()
+
+        def resolution_screen(escalation_id: str) -> ModalScreen[bool]:
+            return dashboard_resolution_module.ResolutionScreen(
+                services.commands,
+                services.queries,
+                clock=clock,
+                on_change=services.reader.watch,
+                drafts=resolution_drafts,
+                escalation_id=escalation_id,
+            )
 
         async def push_palette(action: str, context: _PaletteContext | None = None) -> None:
             if app_instance is None:
@@ -419,6 +432,7 @@ async def run_dashboard(
                 project_diagnostics_available=(
                     context is not None and DASHBOARD_RESOURCES_WIDGET in settings.dashboard.widgets
                 ),
+                resolution_screen=resolution_screen,
             )
 
             callback = app_instance.palette_return_callback(
@@ -448,6 +462,7 @@ async def run_dashboard(
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
             open_palette_context=open_palette_context,
+            resolution_screen=resolution_screen,
             navigate_task_window=navigation.task_window,
             navigate_role_pane=navigate_role_pane,
             navigate_home=navigation.home,
@@ -464,6 +479,7 @@ async def run_palette(
 ) -> None:
     """Run the operator palette as a popup using project-local operator services."""
     palette_module = import_module("shikiru.dashboard.palette")
+    resolution_module = import_module("shikiru.dashboard.resolution")
     palette_request = import_module("shikiru.dashboard.contract").PaletteRequest
     clock = build_clock()
     settings = load_settings(project_root, overrides)
@@ -481,6 +497,18 @@ async def run_palette(
         if task_role is not None:
             task_id, role = task_role
             initial_context = palette_request(task_id=task_id, role=role.value)
+        resolution_drafts = resolution_module.ResolutionDrafts()
+
+        def resolution_screen(escalation_id: str) -> ModalScreen[bool]:
+            return resolution_module.ResolutionScreen(
+                services.commands,
+                services.queries,
+                clock=clock,
+                on_change=services.reader.watch,
+                drafts=resolution_drafts,
+                escalation_id=escalation_id,
+            )
+
         app_instance = palette_module.PaletteApp(
             services.commands,
             services.queries,
@@ -488,6 +516,7 @@ async def run_palette(
             on_change=services.reader.watch,
             initial_context=initial_context,
             evidence_exporter=evidence_exporter,
+            resolution_screen=resolution_screen,
         )
         await app_instance.run_async()
     finally:

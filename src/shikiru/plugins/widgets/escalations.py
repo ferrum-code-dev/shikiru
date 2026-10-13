@@ -16,7 +16,6 @@ from shikiru.dashboard.contract import (
     AttentionGroupView,
     AttentionView,
     EscalationPanelView,
-    PaletteRequest,
     WidgetPlacement,
     WorkspaceSummaryView,
 )
@@ -319,15 +318,8 @@ class EscalationsPanel(Static):
     async def _open_resolution(self, decision: EscalationPanelView) -> None:
         if not widget_is_current(self):
             return
-        request = PaletteRequest(
-            action=f"resolve {decision.escalation_id}",
-            task_id=decision.task_id,
-            direct_answer=decision.answer_available,
-        )
-        if self._widget_context.open_palette_context is not None:
-            await self._widget_context.open_palette_context(request)
-        else:
-            await self._widget_context.open_palette(request.action or "")
+        if self._widget_context.open_resolution is not None:
+            await self._widget_context.open_resolution(decision.escalation_id)
 
     async def _open_fault_evidence(self) -> None:
         open_view = self._widget_context.open_contextual_view

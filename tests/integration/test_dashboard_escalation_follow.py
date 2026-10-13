@@ -24,7 +24,13 @@ from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.tokens import AMBER, SECONDARY_TEXT_COLOR
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices, state_views
+from tests.support.dashboard import StubServices, ignore_palette_action, state_views
+from tests.support.escalations import (
+    operator_services,
+    resolution_factory,
+    resolution_title,
+    wait_for_resolution,
+)
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
@@ -56,7 +62,6 @@ class _Home:
     first: Task
     second: Task
     decisions: dict[str, str]
-    palette_actions: list[str]
 
     @property
     def bar(self) -> EscalationsPanel:
@@ -135,11 +140,7 @@ def home(connection: Connection, reader: StateReader, tmp_path: Path) -> _Home:
         first.id: _escalate(connection, clock, first, EscalationReason.DECISION_REQUIRED),
         second.id: _escalate(connection, clock, second, EscalationReason.INTEGRATION_BLOCKED),
     }
-    palette_actions: list[str] = []
-
-    async def record(action: str) -> None:
-        palette_actions.append(action)
-
+    commands, queries, _ = operator_services(connection, reader, clock, project_dir)
     settings = load_settings(project_dir)
     app = DashboardApp(
         focus_task=None,
@@ -153,14 +154,14 @@ def home(connection: Connection, reader: StateReader, tmp_path: Path) -> _Home:
         quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
         quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
         animations=False,
-        open_palette=record,
+        open_palette=ignore_palette_action,
         widget_names=settings.dashboard.widgets,
-        open_palette_context=None,
+        resolution_screen=resolution_factory(commands, queries, clock, reader),
         timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
         tmux_detach_hint=None,
         detach_tmux_client=None,
     )
-    return _Home(app, plain, first, second, decisions, palette_actions)
+    return _Home(app, plain, first, second, decisions)
 
 
 async def _settled(home: _Home, pilot: Pilot[None]) -> None:
@@ -233,7 +234,7 @@ async def test_other_decisions_are_counted_only_while_any_remain(
         assert home.other_decisions() == shown
 
 
-async def test_enter_on_the_list_opens_the_form_of_the_followed_escalation_only(
+async def test_enter_on_the_list_opens_the_resolution_of_the_followed_escalation_only(
     home: _Home,
 ) -> None:
     async with home.app.run_test(size=_WIDE) as pilot:
@@ -242,15 +243,17 @@ async def test_enter_on_the_list_opens_the_form_of_the_followed_escalation_only(
         await wait_until(
             lambda: home.decisions[home.second.id] in home.text(), timeout=UI_WAIT_SECONDS
         )
+        home_screen = home.app.screen
         await pilot.press("enter")
-        await wait_until(lambda: bool(home.palette_actions), timeout=UI_WAIT_SECONDS)
-        assert home.palette_actions == [f"resolve {home.decisions[home.second.id]}"]
-        home.palette_actions.clear()
+        screen = await wait_for_resolution(home.app)
+        assert home.decisions[home.second.id] in resolution_title(screen)
+        await pilot.press("escape")
+        await wait_until(lambda: home.app.screen is home_screen, timeout=UI_WAIT_SECONDS)
         await _select(home, pilot, home.plain)
         await wait_until(lambda: "No decision needed" in home.text(), timeout=UI_WAIT_SECONDS)
         await pilot.press("enter")
         await pilot.pause()
-        assert home.palette_actions == []
+        assert home.app.screen is home_screen
 
 
 async def test_clicking_a_task_row_and_clearing_the_selection_move_the_bar(

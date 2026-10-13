@@ -471,12 +471,12 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
         packet_path=str(empty_packet_path),
         options=options_for(EscalationReason.AGENT_ERROR),
     )
-    actions: list[str] = []
+    resolutions: list[str] = []
 
-    async def open_palette(action: str) -> None:
-        actions.append(action)
+    async def open_resolution(escalation_id: str) -> None:
+        resolutions.append(escalation_id)
 
-    context = widget_context(reader, project_dir, clock, open_palette=open_palette)
+    context = widget_context(reader, project_dir, clock, open_resolution=open_resolution)
     views = context.views.escalations()
     assert views[0].question == (
         "Which parser should we use?\n\n### Trade-offs\n\n- Strict validation\n- Flexible recovery"
@@ -521,7 +521,7 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
         await wait_until(lambda: pilot.app.screen is home, timeout=UI_WAIT_SECONDS)
         widget.focus()
         await pilot.press("r")
-        assert actions == ["resolve E-1"]
+        assert resolutions == ["E-1"]
 
 
 async def test_attention_keeps_unreadable_decision_and_does_not_create_its_packet(

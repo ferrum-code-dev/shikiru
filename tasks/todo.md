@@ -276,6 +276,6 @@ Ninth-review scope and evidence: [ninth real-project review](../docs/tui-feedbac
 Tenth-review scope and evidence: [tenth review, escalation resolution panel](../docs/tui-feedback-tenth-review.md).
 
 - [x] Task 176: Resolution view model
-- [ ] Task 177: Escalation resolution screen
+- [x] Task 177: Escalation resolution screen
 - [ ] Task 178: Remove the old resolve form
 - [ ] Task 179: Verify the tenth review, reconcile the reference and docs

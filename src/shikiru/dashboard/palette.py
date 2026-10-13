@@ -27,7 +27,7 @@ from shikiru.domain.commands import (
 from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.escalation_evidence import EscalationPacket, parse_escalation_packet
 from shikiru.domain.tasks import Mode, Role
-from shikiru.errors import ShikiruError
+from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.commands import (
     ACK_TIMEOUT_MESSAGE,
     QUEUED_MESSAGE,
@@ -65,7 +65,7 @@ if TYPE_CHECKING:
     from textual.worker import Worker
 
     from shikiru.agents.contracts import Rung
-    from shikiru.dashboard.contract import OnChangeRegistration
+    from shikiru.dashboard.contract import OnChangeRegistration, ResolutionScreenFactory
     from shikiru.domain.commands import Command
     from shikiru.operator.commands import Ack, OperatorCommands
     from shikiru.operator.evidence_export import EvidenceFormat
@@ -344,6 +344,7 @@ _ACTION_GUIDANCE = {
 }
 _TASK_ACTION_BY_ID = {action.value: action for action in OperatorTaskAction}
 _NO_TASK_TARGET = "Choose a task target first"
+_NO_DECISION_NEEDED = "No decision needs an answer"
 _ACTION_DISABLED_PREFIX = "unavailable: "
 
 PaneSelector = Callable[[str], Awaitable[None]]
@@ -445,6 +446,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         remember_contextual_draft: Callable[[PaletteDraft], None] | None = None,
         task_routes_available: bool = False,
         project_diagnostics_available: bool = False,
+        resolution_screen: ResolutionScreenFactory | None = None,
     ) -> None:
         """Use the operator services for actions and queries and inject pane selection."""
         super().__init__()
@@ -468,6 +470,8 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._remember_contextual_draft = remember_contextual_draft
         self._task_routes_available = task_routes_available
         self._project_diagnostics_available = project_diagnostics_available
+        self._resolution_screen = resolution_screen
+        self._previous_action = _ACTION_SUBMIT
         self._more_actions_expanded = False
         self._role_is_explicit = self._initial_context.role is not None
         self._task_search_tasks: tuple[TaskSummary, ...] = ()
@@ -826,6 +830,8 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     async def on_select_changed(self, event: Select.Changed) -> None:
         """Refresh visible fields and escalation packet details when a selection changes."""
         if event.select.id == _FIELD_ACTION:
+            if self._route_chosen_resolution(event):
+                return
             if (
                 self._route_error is not None
                 and isinstance(event.value, str)
@@ -905,7 +911,9 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             self._more_actions_expanded = not self._more_actions_expanded
             self._refresh_context_menu()
         elif button_id == _PALETTE_ROUTE_ANSWER:
-            self._open_menu_action(_ACTION_RESOLVE, direct_answer=True)
+            self._open_resolution(
+                self._answerable_escalation_id(self._input(_FIELD_TASK_ID).strip())
+            )
         elif button_id.startswith(_PALETTE_MENU_ACTION_PREFIX):
             action = button_id.removeprefix(_PALETTE_MENU_ACTION_PREFIX)
             self._open_menu_action(action)
@@ -934,25 +942,45 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         else:
             self.dismiss()
 
-    def _open_menu_action(self, action: str, *, direct_answer: bool = False) -> None:
+    def _route_chosen_resolution(self, event: Select.Changed) -> bool:
+        if event.value == _ACTION_RESOLVE and event.select.has_focus:
+            cast("Select[str]", event.select).value = self._previous_action
+            self._open_resolution(self._resolution_target())
+            return True
+        if isinstance(event.value, str):
+            self._previous_action = event.value
+        return False
+
+    def _resolution_target(self) -> str | None:
+        return self._context_escalation_id() or next(
+            (id_ for id_ in self._escalations if self._is_open_escalation(id_)), None
+        )
+
+    def _open_resolution(self, escalation_id: str | None) -> None:
+        if escalation_id is None:
+            self._show_result(_NO_DECISION_NEEDED)
+            return
+        if self._resolution_screen is None:
+            message = "the escalation resolution screen is not configured"
+            raise ConfigError(message)
+        cast("App[None]", self.app).push_screen(
+            self._resolution_screen(escalation_id), callback=self._resolution_closed
+        )
+
+    def _resolution_closed(self, sent: bool | None) -> None:
+        if sent:
+            self.call_later(self.action_close)
+
+    def _open_menu_action(self, action: str) -> None:
         if action not in {value for _, value in PALETTE_ACTIONS}:
+            return
+        if action == _ACTION_RESOLVE:
+            self._open_resolution(self._resolution_target())
             return
         same_form = self._form_position_action == action
         if not same_form:
             self._form_focus_id = None
             self._form_scroll_y = 0
-        if action == _ACTION_RESOLVE:
-            self._answer_resolution_route = direct_answer
-            escalation_id = self._context_escalation_id()
-            if escalation_id is None:
-                return
-            cast(
-                "Select[str]", self.query_one(f"#{_FIELD_ESCALATION}", Select)
-            ).value = escalation_id
-            self._show_escalation(escalation_id, force=True)
-            if direct_answer:
-                self._answer_resolution_route = self._select_direct_answer()
-                self._show_escalation(escalation_id, force=True)
         if action in _FORM_ROLE_ACTIONS:
             self._choose_available_role(action)
         action_search = self.query_one(f"#{_FIELD_ACTION_SEARCH}", Input)
@@ -2318,6 +2346,7 @@ class PaletteApp(App[None]):
         on_change: OnChangeRegistration,
         initial_context: PaletteRequest | None = None,
         evidence_exporter: TaskEvidenceExporter | None = None,
+        resolution_screen: ResolutionScreenFactory | None = None,
     ) -> None:
         """Retain the services used by the palette screen."""
         super().__init__()
@@ -2328,6 +2357,7 @@ class PaletteApp(App[None]):
         self._on_change = on_change
         self._initial_context = initial_context
         self._evidence_exporter = evidence_exporter
+        self._resolution_screen = resolution_screen
 
     def compose(self) -> ComposeResult:
         """Keep a neutral base screen beneath the modal palette."""
@@ -2343,5 +2373,6 @@ class PaletteApp(App[None]):
                 on_change=self._on_change,
                 initial_context=self._initial_context,
                 evidence_exporter=self._evidence_exporter,
+                resolution_screen=self._resolution_screen,
             )
         )

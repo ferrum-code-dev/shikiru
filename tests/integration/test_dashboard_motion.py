@@ -74,8 +74,15 @@ from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
     choose_focus_view,
+    ignore_palette_action,
     state_views,
     widget_context,
+)
+from tests.support.escalations import (
+    operator_services,
+    resolution_factory,
+    resolution_title,
+    wait_for_resolution,
 )
 from tests.support.render import plain_text
 from tests.support.store import seed_task
@@ -1984,10 +1991,7 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
     try:
         views = _build_views(reader, project_dir, settings, clock, task)
 
-        opened_actions: list[str] = []
-
-        async def open_palette(action: str) -> None:
-            opened_actions.append(action)
+        commands, queries, _ = operator_services(connection, reader, clock, project_dir)
 
         app = DashboardApp(
             focus_task=None,
@@ -2000,7 +2004,8 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
             disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
             quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
             quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
-            open_palette=open_palette,
+            open_palette=ignore_palette_action,
+            resolution_screen=resolution_factory(commands, queries, clock, reader),
             widget_names=settings.dashboard.widgets,
         )
         async with app.run_test(size=(100, 30)) as pilot:
@@ -2010,8 +2015,11 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
             row = scroll.query_one(Static)
             assert first.id in plain_text(row.content)
             panel.focus()
+            home = app.screen
             await pilot.press("enter")
-            await wait_until(lambda: opened_actions == [f"resolve {first.id}"], timeout=1)
+            assert first.id in resolution_title(await wait_for_resolution(app))
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home, timeout=UI_WAIT_SECONDS)
             await pilot.press("right")
             await wait_until(
                 lambda: (
@@ -2083,10 +2091,7 @@ async def test_focus_attention_up_and_down_keep_the_first_group_among_many(
     try:
         views = _build_views(reader, project_dir, settings, clock, tasks[0])
 
-        opened_actions: list[str] = []
-
-        async def open_palette(action: str) -> None:
-            opened_actions.append(action)
+        commands, queries, _ = operator_services(connection, reader, clock, project_dir)
 
         app = DashboardApp(
             focus_task=None,
@@ -2099,7 +2104,8 @@ async def test_focus_attention_up_and_down_keep_the_first_group_among_many(
             disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
             quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
             quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
-            open_palette=open_palette,
+            open_palette=ignore_palette_action,
+            resolution_screen=resolution_factory(commands, queries, clock, reader),
             widget_names=settings.dashboard.widgets,
         )
         first_escalation_id = views.attention().groups[0].escalations[0].escalation_id
@@ -2112,10 +2118,7 @@ async def test_focus_attention_up_and_down_keep_the_first_group_among_many(
             assert first_escalation_id in plain_text(scroll.query_one(Static).content)
             panel.focus()
             await pilot.press("enter")
-            await wait_until(
-                lambda: opened_actions == [f"resolve {first_escalation_id}"],
-                timeout=1,
-            )
+            assert first_escalation_id in resolution_title(await wait_for_resolution(app))
     finally:
         reader.close()
 

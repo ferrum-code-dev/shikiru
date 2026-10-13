@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from fake_agent.scripted import TASK_SCRIPT_DIR_ENV_VAR, role_script_env_var, task_script_path
 from textual.containers import VerticalScroll
+from textual.geometry import Region
 from textual.widgets import Button, Input, ListView, Select, Static, TextArea
 
 from shikiru.bootstrap import build_engine
@@ -21,6 +22,7 @@ from shikiru.dashboard.detail import (
 )
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.palette import PaletteScreen
+from shikiru.dashboard.resolution import ResolutionScreen
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.domain.commands import (
     Cancel,
@@ -28,11 +30,9 @@ from shikiru.domain.commands import (
     Command,
     HandBack,
     Pause,
-    ResolutionKind,
     Submit,
     TakeOver,
 )
-from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import CONSULT_LIMIT
 from shikiru.domain.tasks import Hold, Mode, Role, Status, StatusReason, Step
@@ -59,6 +59,7 @@ from tests.support.engine import (
     engine_settings,
     set_role_script,
 )
+from tests.support.escalations import resolution_factory
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.store import reopen_command
@@ -74,7 +75,6 @@ if TYPE_CHECKING:
 
     from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import PaletteRequest
-    from shikiru.domain.escalation import EscalationOption
     from shikiru.store.commands import CommandOutcome
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -100,20 +100,9 @@ def _plain(widget: Widget) -> str:
     return cast("Text", widget.render()).plain
 
 
-def _assert_escalation_resolution_semantics(
-    packet_text: str,
-    expected_question: str,
-    options: tuple[EscalationOption, ...],
-    resolution: Select[str],
-) -> None:
-    packet = parse_escalation_packet(packet_text)
-    assert packet.question is not None
-    assert expected_question in packet.question
-    assert packet.agent_request is None
-    assert not packet.errors
-    assert any(item.kind is ResolutionKind.ANSWER for item in packet.resolutions)
-    assert any(option.label is ResolutionKind.ANSWER and option.recommended for option in options)
-    assert resolution.value == ResolutionKind.ANSWER.value
+def _rendered_lines(widget: Widget) -> str:
+    region = Region(0, 0, widget.size.width, widget.size.height)
+    return "\n".join(line.text for line in widget.render_lines(region))
 
 
 @dataclass
@@ -207,6 +196,7 @@ class WorkspaceRuntime:
             ),
         )
         app_ref: list[DashboardApp] = []
+        resolution_screen = resolution_factory(self.commands, self.queries, self.clock, self.reader)
 
         async def select_pane(_pane_id: str) -> None:
             raise AssertionError
@@ -220,6 +210,7 @@ class WorkspaceRuntime:
                     on_change=self.reader.watch,
                     initial_action=action,
                     evidence_exporter=self.exporter,
+                    resolution_screen=resolution_screen,
                 )
             )
 
@@ -232,6 +223,7 @@ class WorkspaceRuntime:
                     on_change=self.reader.watch,
                     initial_context=request,
                     evidence_exporter=self.exporter,
+                    resolution_screen=resolution_screen,
                 )
             )
 
@@ -249,6 +241,7 @@ class WorkspaceRuntime:
             timeline_refresh_seconds=self.settings.dashboard.timeline_refresh_seconds,
             open_palette=open_palette,
             open_palette_context=open_palette_context,
+            resolution_screen=resolution_screen,
             widget_names=self.settings.dashboard.widgets,
         )
         app_ref.append(app)
@@ -510,7 +503,7 @@ async def test_fake_agent_workspace_finds_verdict_and_applies_contextual_message
         await runtime.close()
 
 
-async def test_fake_agent_escalation_updates_an_open_resolution_form_from_another_operator(
+async def test_fake_agent_escalation_disables_an_open_resolution_resolved_by_another_operator(
     tmp_path: Path,
     tmux_server: TmuxServer,
 ) -> None:
@@ -531,24 +524,17 @@ async def test_fake_agent_escalation_updates_an_open_resolution_form_from_anothe
         async with app.run_test(size=TASK_SIZE) as pilot:
             await pilot.press("ctrl+p")
             await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen))
-            palette = cast("PaletteScreen", app.screen)
-            await _select_palette_action(runtime, pilot, palette, "resolve")
-            cast("Select[str]", palette.query_one("#escalation", Select)).value = escalation.id
-            await pilot.pause()
-            packet_view = runtime.queries.get_escalation(escalation.id)
-            assert packet_view is not None
-            assert packet_view.packet is not None
-            resolution = cast("Select[str]", palette.query_one("#resolution", Select))
-            _assert_escalation_resolution_semantics(
-                packet_view.packet,
-                DECISION_QUESTION,
-                escalation.options,
-                resolution,
+            app.screen.query_one("#palette-menu-answer", Button).press()
+            await runtime.wait_for(lambda: isinstance(app.screen, ResolutionScreen))
+            resolution = cast("ResolutionScreen", app.screen)
+            await runtime.wait_for(lambda: bool(resolution.query("#resolution-answer")))
+            answer = resolution.query_one("#resolution-answer", TextArea)
+            await pilot.press("enter")
+            await runtime.wait_for(lambda: app.focused is answer)
+            await pilot.press(*GUIDANCE_MESSAGE)
+            assert DECISION_QUESTION in _rendered_lines(
+                resolution.query_one("#resolution-decision")
             )
-            answer = palette.query_one("#resolution-text", TextArea)
-            answer.text = GUIDANCE_MESSAGE
-            summary = _plain(palette.query_one("#palette-escalation-summary", Static))
-            assert DECISION_QUESTION in summary
             external_connection = Database(state_db_path(tmp_path)).connect()
             external_queue = CommandQueue(external_connection, runtime.clock)
             external_commands = OperatorCommands(
@@ -563,16 +549,9 @@ async def test_fake_agent_escalation_updates_an_open_resolution_form_from_anothe
             external_ack = await external_send
             assert external_ack.status.value == "done"
             await runtime.wait_for(
-                lambda: (
-                    palette.query_one("#palette-submit", Button).disabled
-                    and "resolved"
-                    in _plain(palette.query_one("#palette-escalation-status", Static)).lower()
-                )
+                lambda: answer.disabled and resolution.query_one("#resolution-notice").display
             )
             assert answer.text == GUIDANCE_MESSAGE
-            assert (
-                "answer" in _plain(palette.query_one("#palette-escalation-summary", Static)).lower()
-            )
             await _wait_for_task(runtime, task_id, Status.CANCELLED)
     finally:
         if external_connection is not None:

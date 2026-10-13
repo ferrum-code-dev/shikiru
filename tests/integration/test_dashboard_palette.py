@@ -17,7 +17,6 @@ from shikiru.dashboard.palette import PaletteApp, PaletteScreen
 from shikiru.domain.commands import (
     AcceptResolution,
     AnswerResolution,
-    Cancel,
     CancelResolution,
     CommandStatus,
     Pause,
@@ -30,27 +29,26 @@ from shikiru.domain.commands import (
     Submit,
     TakeOver,
 )
-from shikiru.domain.escalation import Escalation, EscalationStatus, options_for
-from shikiru.domain.reports import EscalationRequest
-from shikiru.domain.reports import Option as AgentOption
+from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
-from shikiru.engine.escalations import PacketContext, render_packet
-from shikiru.engine.handlers.base import HandlerContext
 from shikiru.engine.handlers.escalations import ResolveHandler
-from shikiru.engine.handlers.tasks import CancelHandler
 from shikiru.errors import CommandRejectedError, ConfigError
 from shikiru.operator.commands import COMMAND_ACK_WAIT_SECONDS, OperatorCommands
-from shikiru.operator.queries import OperatorQueries
-from shikiru.store.commands import CommandOutcome, CommandQueue, QueuedCommand
-from shikiru.store.database import transaction
+from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
-from shikiru.store.events import EventLog
 from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import FORMAT_PANE_ID, Tmux, exact_target
 from tests.support.clock import FakeClock
+from tests.support.escalations import (
+    assert_engine_applies_resolution,
+    enqueue_and_cancel,
+    handler_context,
+    operator_services,
+    seed_escalation,
+)
 from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
@@ -64,6 +62,7 @@ if TYPE_CHECKING:
 
     from shikiru.domain.commands import Command
     from shikiru.domain.tasks import Task
+    from shikiru.operator.queries import OperatorQueries
     from shikiru.store.database import Database
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -73,9 +72,6 @@ _START = datetime(2026, 1, 1, tzinfo=UTC)
 _POLL_SECONDS = 0.25
 _APP_SIZE = (120, 32)
 _COMPACT_APP_SIZE = (54, 20)
-_FORM_COMPACT_SIZE = (48, 20)
-_FORM_NARROW_SIZE = (36, 14)
-_FORM_TINY_SIZE = (20, 8)
 _FORM_SCROLL_TEST_OFFSET = 8
 _LONG_PACKET_LINES = 80
 _LAST_PACKET_LINE = "This is the final retained packet line."
@@ -87,33 +83,6 @@ def _seed_live_session(connection: Connection, clock: FakeClock, task_id: str) -
     runs = RunStore(connection, clock)
     run = runs.start(task_id, Role.LEADER, _LIVE_RUNG)
     runs.set_session(run.id, "session-current", "resume-current")
-
-
-def _services(
-    connection: Connection,
-    reader: StateReader,
-    clock: FakeClock,
-    project_dir: Path,
-    *,
-    engine_up: bool = False,
-) -> tuple[OperatorCommands, OperatorQueries, CommandQueue]:
-    queue = CommandQueue(connection, clock)
-    for command in queue.pending():
-        queue.mark_done(command.id)
-    queries = OperatorQueries(
-        reader,
-        project="palette-test",
-        project_root=project_dir,
-        engine_up=lambda: engine_up,
-        max_parallel=2,
-        clock=clock,
-    )
-    commands = OperatorCommands(
-        queue,
-        clock,
-        engine_up=lambda: engine_up,
-    )
-    return commands, queries, queue
 
 
 def _screen(app: PaletteApp) -> PaletteScreen:
@@ -182,150 +151,6 @@ def _palette_app(
     )
 
 
-def _seed_escalation(
-    connection: Connection,
-    clock: FakeClock,
-    task_id: str,
-    project_dir: Path,
-    reason: EscalationReason,
-    *,
-    write_packet: bool = True,
-) -> tuple[Escalation, str]:
-    task = TaskStore(connection, clock).require(task_id)
-    TaskStore(connection, clock).apply_transition(
-        task_id,
-        Transition.escalate(task, reason, step=Step.CONSULT),
-    )
-    agent_request = EscalationRequest(
-        question="Which behavior should remain?",
-        options=[
-            AgentOption(
-                label="Keep existing behavior",
-                consequences="Preserve the current call pattern.",
-                recommended=True,
-            ),
-            AgentOption(
-                label="Change behavior",
-                consequences="Update callers and documentation.",
-            ),
-        ],
-    )
-    packet = render_packet(
-        PacketContext(
-            task_id=task_id,
-            step=Step.CONSULT,
-            reason=reason,
-            timeline=["turn completed: implementation"],
-            attempted="One implementation and review round.",
-            reports="Implementation report evidence.",
-            facts="Recorded git facts.",
-            view_tail="Recent stream tail.",
-            sessions="Leader session evidence.",
-            question=agent_request.question,
-            options=options_for(reason),
-            agent_request=agent_request,
-        )
-    )
-    packet_path = project_dir / f"{task_id}-{reason.value}.md"
-    if write_packet:
-        packet_path.write_text(packet)
-    escalation = EscalationStore(connection, clock).open(
-        task_id,
-        step=Step.CONSULT,
-        reason=reason,
-        headline="A product decision is needed",
-        packet_path=str(packet_path),
-        options=options_for(reason),
-    )
-    return escalation, packet
-
-
-def _handler_context(connection: Connection, clock: FakeClock, project_dir: Path) -> HandlerContext:
-    async def no_task_action(_task_id: str) -> None:
-        return None
-
-    async def no_title_refresh(_task: object) -> None:
-        return None
-
-    async def no_finish(_task: object) -> Path | None:
-        return None
-
-    return HandlerContext(
-        tasks=TaskStore(connection, clock),
-        escalations=EscalationStore(connection, clock),
-        events=EventLog(connection, clock),
-        runs=RunStore(connection, clock),
-        project_root=project_dir,
-        cancel_task=no_task_action,
-        start_task=no_task_action,
-        finish_task=no_finish,
-        stop_engine=lambda: None,
-        refresh_titles=no_title_refresh,
-        atomically=lambda: transaction(connection),
-    )
-
-
-async def _enqueue_and_cancel(
-    connection: Connection,
-    clock: FakeClock,
-    task_id: str,
-    project_dir: Path,
-) -> CommandOutcome:
-    queue = CommandQueue(connection, clock)
-    inserted = queue.append(Cancel(task_id=task_id))
-    queued = next(item for item in queue.pending() if item.id == inserted.id)
-    assert isinstance(queued.command, Cancel)
-    result = await CancelHandler(_handler_context(connection, clock, project_dir)).handle(
-        queued.command
-    )
-    queue.mark_done(inserted.id, result)
-    outcome = queue.status(inserted.id)
-    assert outcome is not None
-    return outcome
-
-
-async def _assert_engine_applies_resolution(
-    connection: Connection,
-    clock: FakeClock,
-    project_dir: Path,
-    queue: CommandQueue,
-    *,
-    queued: QueuedCommand,
-    task_id: str,
-    escalation_id: str,
-    expected_type: type[object],
-) -> None:
-    command = queued.command
-    assert isinstance(command, Resolve)
-    assert isinstance(command.resolution, expected_type)
-    result = await ResolveHandler(_handler_context(connection, clock, project_dir)).handle(command)
-    queue.mark_done(queued.id, result)
-    resolved_task = TaskStore(connection, clock).require(task_id)
-    resolved_escalation = EscalationStore(connection, clock).get(escalation_id)
-    stored = queue.status(queued.id)
-    assert resolved_escalation is not None
-    assert resolved_escalation.status is EscalationStatus.RESOLVED
-    assert stored is not None
-    assert stored.status is CommandStatus.DONE
-    assert stored.result == result
-    assert result["task_id"] == task_id
-    assert result["status"] == resolved_task.status.value
-    if isinstance(command.resolution, AnswerResolution):
-        assert resolved_task.status is Status.QUEUED
-        assert resolved_task.step is Step.CONSULT
-    elif isinstance(command.resolution, RetryResolution):
-        assert resolved_task.status is Status.QUEUED
-        assert resolved_task.overrides[Role.LEADER] == Rung(
-            agent="codex", model="sol", effort="high"
-        )
-    elif isinstance(command.resolution, AcceptResolution):
-        assert resolved_task.status is Status.QUEUED
-        assert resolved_task.step is Step.INTEGRATE
-    else:
-        assert isinstance(command.resolution, CancelResolution)
-        assert resolved_task.status is Status.CANCELLED
-
-
 async def _open_action(pilot: Pilot[None], screen: PaletteScreen, action: str) -> None:
     menu = screen.query_one("#palette-menu", VerticalScroll)
     if menu.display:
@@ -367,7 +192,7 @@ async def test_palette_context_targets_message_and_rung_without_id_entry(
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Context task")
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     context = PaletteRequest(task_id=task.id, role=Role.IMPLEMENTER.value)
     app = _palette_app(reader, commands, queries, _selection_must_not_run, initial_context=context)
 
@@ -419,7 +244,7 @@ async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
     TaskStore(connection, clock).set_panes(task.id, {Role.IMPLEMENTER: "%7"})
     run = RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, _LIVE_RUNG)
     RunStore(connection, clock).set_session(run.id, "menu-session", "menu-resume")
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -474,153 +299,13 @@ async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
         assert queue.pending() == []
 
 
-async def test_context_menu_answers_the_recorded_question_without_a_target_picker(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    task = seed_task(connection, clock, title="Context menu recorded answer")
-    escalation, _ = _seed_escalation(
-        connection,
-        clock,
-        task.id,
-        tmp_path,
-        EscalationReason.DECISION_REQUIRED,
-    )
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(task_id=task.id),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        answer_button = screen.query_one("#palette-menu-answer", Button)
-        assert answer_button.display
-        await _click_menu_button(pilot, screen, "palette-menu-answer")
-        assert not screen.query_one("#field-escalation").display
-        assert not screen.query_one("#field-task-search").display
-        assert not screen.query_one("#field-task-choice").display
-        assert not screen.query_one("#field-task-id").display
-        assert not screen.query_one("#field-resolution").display
-        assert not screen.query_one("#field-palette-escalation-status").display
-        assert screen.query_one("#field-resolution-text").display
-        submit = screen.query_one("#palette-submit", Button)
-        assert submit.display
-        assert submit.disabled
-        assert queue.pending() == []
-
-        summary = _static_text(screen, "#palette-escalation-summary")
-        assert escalation.id in summary
-        assert "Which behavior should remain?" in summary
-        assert "Keep existing behavior" in summary
-        assert "Preserve the current call pattern." in summary
-        assert "Consequence:" in _static_text(screen, "#palette-guidance")
-        assert screen.query_one("#palette-evidence-original", Collapsible).collapsed
-        assert "Change behavior" in _static_text(screen, "#palette-original-packet")
-        assert "Which behavior should remain?" in _static_text(screen, "#palette-original-packet")
-        assert "Evidence error" not in _static_text(screen, "#palette-evidence-error")
-        answer = screen.query_one("#resolution-text", TextArea)
-        await wait_until(lambda: app.focused is answer, timeout=UI_WAIT_SECONDS)
-        await pilot.press(*"Keep the recorded call pattern.")
-        await pilot.press("enter")
-        await pilot.press(*" and update callers.")
-        assert answer.text == "Keep the recorded call pattern.\n and update callers."
-        await wait_until(lambda: not submit.disabled, timeout=UI_WAIT_SECONDS)
-        assert queue.pending() == []
-        await _resize_recorded_answer_form(
-            app,
-            pilot,
-            screen,
-            answer=answer,
-            queue=queue,
-            expected_answer="Keep the recorded call pattern.\n and update callers.",
-        )
-
-        await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
-        command = queue.pending()[0].command
-        assert isinstance(command, Resolve)
-        assert command.escalation_id == escalation.id
-        assert command.resolution == AnswerResolution(
-            text="Keep the recorded call pattern.\n and update callers."
-        )
-
-
-async def _resize_recorded_answer_form(
-    app: PaletteApp,
-    pilot: Pilot[None],
-    screen: PaletteScreen,
-    *,
-    answer: TextArea,
-    queue: CommandQueue,
-    expected_answer: str,
-) -> None:
-    frame = screen.query_one("#palette-frame")
-    preferred_region = frame.region
-    preferred_viewport = (app.size.width, app.size.height)
-    cursor_location = answer.cursor_location
-    for width, height in (
-        _FORM_COMPACT_SIZE,
-        _FORM_NARROW_SIZE,
-        _FORM_TINY_SIZE,
-    ):
-        await pilot.resize_terminal(width, height)
-        close = screen.query_one("#palette-close", Button)
-        form = screen.query_one("#palette-form", VerticalScroll)
-        await wait_until(
-            lambda target_width=width, target_height=height, popup_close=close, popup_frame=frame: (
-                (app.size.width, app.size.height) == (target_width, target_height)
-                and app.focused is answer
-                and popup_close.region.width > 0
-                and popup_frame.content_region.contains_region(popup_close.region)
-                and screen.region.contains_region(popup_close.region)
-            ),
-            timeout=UI_WAIT_SECONDS,
-        )
-        assert close.region.width > 0
-        assert close.region.height > 0
-        assert close.region.x >= 0
-        assert close.region.right <= width
-        assert close.region.y >= 0
-        assert close.region.bottom <= height
-        assert frame.content_region.contains_region(close.region)
-        assert not form.scrollable_content_region.contains_region(close.region)
-        for button_id in ("palette-back-to-menu", "palette-submit"):
-            button = screen.query_one(f"#{button_id}", Button)
-            assert button.display
-            assert frame.content_region.contains_region(button.region)
-            assert screen.region.contains_region(button.region)
-            assert not form.scrollable_content_region.contains_region(button.region)
-            assert button.region.right <= width
-            assert button.region.bottom < height
-        assert answer.text == expected_answer
-        assert answer.cursor_location == cursor_location
-        assert queue.pending() == []
-    await pilot.resize_terminal(*preferred_viewport)
-    await wait_until(
-        lambda: (
-            frame.region == preferred_region
-            and app.focused is answer
-            and answer.text == expected_answer
-            and answer.cursor_location == cursor_location
-        ),
-        timeout=UI_WAIT_SECONDS,
-    )
-    assert await pilot.click("#palette-submit")
-
-
 async def test_project_context_menu_has_no_task_targets(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
 ) -> None:
     clock = FakeClock(_START)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -652,7 +337,7 @@ async def test_context_menu_preserves_an_explicit_unavailable_role(
     TaskStore(connection, clock).set_panes(task.id, {Role.IMPLEMENTER: "%7"})
     run = RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, _LIVE_RUNG)
     RunStore(connection, clock).set_session(run.id, "explicit-session", "explicit-resume")
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -678,7 +363,7 @@ async def test_contextual_project_actions_queue_only_after_explicit_submission(
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Project action context")
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -738,7 +423,7 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Guidance acknowledgement")
-    commands, queries, queue = _services(
+    commands, queries, queue = operator_services(
         connection,
         reader,
         clock,
@@ -784,7 +469,7 @@ async def test_palette_target_follows_search_choice_and_stays_manually_editable(
     context_task = seed_task(connection, clock, title="Detail task")
     other_task = seed_task(connection, clock, title="Other task")
     selected_task = seed_task(connection, clock, title="Chosen by title")
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -842,7 +527,7 @@ async def test_palette_task_search_is_bounded_current_and_retains_selected_targe
     clock = FakeClock(_START)
     for index in range(52):
         seed_task(connection, clock, title=f"Older palette task {index}")
-    commands, queries, _queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, _queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
@@ -883,7 +568,7 @@ async def test_palette_serializes_pending_action_and_closes_without_worker_error
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Pending command target")
     other_task = seed_task(connection, clock, title="Edited command target")
-    commands, queries, queue = _services(
+    commands, queries, queue = operator_services(
         connection,
         reader,
         clock,
@@ -937,7 +622,7 @@ async def test_palette_shutdown_keeps_a_pending_command_without_stale_ui_refresh
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Shutdown with pending command")
-    commands, queries, queue = _services(
+    commands, queries, queue = operator_services(
         connection,
         reader,
         clock,
@@ -971,7 +656,7 @@ async def test_palette_keeps_acknowledgement_timeout_pending_with_current_engine
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Acknowledgement wait")
-    commands, queries, queue = _services(
+    commands, queries, queue = operator_services(
         connection,
         reader,
         clock,
@@ -1023,7 +708,7 @@ async def test_palette_observes_outcome_after_ack_wait_without_form_edits(
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Observed pending outcome")
-    commands, queries, queue = _services(
+    commands, queries, queue = operator_services(
         connection,
         reader,
         clock,
@@ -1086,7 +771,7 @@ async def test_pending_form_guards_survive_form_switches_and_palette_reopen(
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Multiple pending forms")
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     context = PaletteRequest(task_id=task.id, role=Role.LEADER.value)
     first_app = _palette_app(
         reader, commands, queries, _selection_must_not_run, initial_context=context
@@ -1144,7 +829,7 @@ async def test_pending_submit_recovers_after_store_allocates_its_task_id(
     tmp_path: Path,
 ) -> None:
     clock = FakeClock(_START)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     request = "One pending task submission"
     first_app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
@@ -1179,7 +864,7 @@ async def test_palette_revalidates_task_state_before_queueing(
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -1222,7 +907,7 @@ async def test_implicit_role_default_tracks_task_selection_until_explicitly_chan
         implementer_task.id,
         Transition.stay(implementer_task, step=Step.IMPLEMENT, status=Status.RUNNING),
     )
-    commands, queries, _queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, _queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -1359,7 +1044,7 @@ async def test_palette_submit_queues_the_command_and_shows_its_ack(
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
@@ -1402,8 +1087,8 @@ async def test_palette_routes_structured_escalation_to_validated_resolution(
     reader = StateReader(database, clock)
     request.addfinalizer(reader.close)
     task = seed_task(connection, clock, title="Structured decision")
-    escalation, packet = _seed_escalation(connection, clock, task.id, tmp_path, reason)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    escalation, packet = seed_escalation(connection, clock, task.id, tmp_path, reason)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -1459,7 +1144,7 @@ async def test_palette_routes_structured_escalation_to_validated_resolution(
         assert "Pending" in _static_text(screen, "#palette-result")
         submitted = queued[0]
 
-    await _assert_engine_applies_resolution(
+    await assert_engine_applies_resolution(
         connection,
         clock,
         tmp_path,
@@ -1495,7 +1180,7 @@ async def test_resolution_target_keeps_task_identity_once_when_headline_has_a_pr
         packet_path=str(tmp_path / "missing-resolution-packet.md"),
         options=options_for(reason),
     )
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -1539,10 +1224,10 @@ async def test_palette_preserves_resolution_form_after_unrelated_database_update
     request.addfinalizer(reader.close)
     task = seed_task(connection, clock, title="Selected decision")
     other_task = seed_task(connection, clock, title="Unrelated decision")
-    escalation, _ = _seed_escalation(
+    escalation, _ = seed_escalation(
         connection, clock, task.id, tmp_path, EscalationReason.ITERATIONS_EXHAUSTED
     )
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -1582,7 +1267,7 @@ async def test_palette_preserves_resolution_form_after_unrelated_database_update
 
         external = database.connect()
         try:
-            unrelated_escalation, _ = _seed_escalation(
+            unrelated_escalation, _ = seed_escalation(
                 external,
                 clock,
                 other_task.id,
@@ -1617,7 +1302,7 @@ async def test_palette_original_packet_scrolls_to_its_last_line(
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Long decision packet")
-    escalation, packet = _seed_escalation(
+    escalation, packet = seed_escalation(
         connection, clock, task.id, tmp_path, EscalationReason.DECISION_REQUIRED
     )
     packet_lines = "\n".join(
@@ -1625,7 +1310,7 @@ async def test_palette_original_packet_scrolls_to_its_last_line(
     )
     packet = f"{packet}\n{packet_lines}\n{_LAST_PACKET_LINE}\n"
     await asyncio.to_thread(Path(escalation.packet_path).write_text, packet)
-    commands, queries, _queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, _queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -1659,7 +1344,7 @@ async def test_palette_keeps_durable_resolution_visible_when_packet_is_unavailab
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Missing packet")
-    escalation, _ = _seed_escalation(
+    escalation, _ = seed_escalation(
         connection,
         clock,
         task.id,
@@ -1667,7 +1352,7 @@ async def test_palette_keeps_durable_resolution_visible_when_packet_is_unavailab
         EscalationReason.DECISION_REQUIRED,
         write_packet=False,
     )
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -1701,7 +1386,7 @@ async def test_palette_preserves_original_and_readable_sections_of_malformed_pac
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Malformed packet")
-    escalation, packet = _seed_escalation(
+    escalation, packet = seed_escalation(
         connection, clock, task.id, tmp_path, EscalationReason.DECISION_REQUIRED
     )
     section_start = packet.index("## Agent alternatives")
@@ -1712,7 +1397,7 @@ async def test_palette_preserves_original_and_readable_sections_of_malformed_pac
         + packet[section_end:]
     )
     await asyncio.to_thread(Path(escalation.packet_path).write_text, malformed)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -1741,10 +1426,10 @@ async def test_palette_disables_an_escalation_after_another_client_cancels_it(
     reader = StateReader(database, clock)
     request.addfinalizer(reader.close)
     task = seed_task(connection, clock, title="External cancellation")
-    escalation, _ = _seed_escalation(
+    escalation, _ = seed_escalation(
         connection, clock, task.id, tmp_path, EscalationReason.DECISION_REQUIRED
     )
-    commands, queries, _ = _services(connection, reader, clock, tmp_path)
+    commands, queries, _ = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -1763,7 +1448,7 @@ async def test_palette_disables_an_escalation_after_another_client_cancels_it(
         await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         engine = database.connect()
         try:
-            external = await _enqueue_and_cancel(engine, clock, task.id, tmp_path)
+            external = await enqueue_and_cancel(engine, clock, task.id, tmp_path)
             assert external.status.value == "done"
         finally:
             engine.close()
@@ -1789,10 +1474,10 @@ async def test_palette_shows_engine_rejection_after_resolution_race_without_resu
     reader = StateReader(database, clock)
     request.addfinalizer(reader.close)
     task = seed_task(connection, clock, title="Resolution race")
-    escalation, _ = _seed_escalation(
+    escalation, _ = seed_escalation(
         connection, clock, task.id, tmp_path, EscalationReason.DECISION_REQUIRED
     )
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
         commands,
@@ -1816,13 +1501,13 @@ async def test_palette_shows_engine_rejection_after_resolution_race_without_resu
         await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         engine = database.connect()
         try:
-            external = await _enqueue_and_cancel(engine, clock, task.id, tmp_path)
+            external = await enqueue_and_cancel(engine, clock, task.id, tmp_path)
             resolution_command = next(
                 item for item in CommandQueue(engine, clock).pending() if item.id == submitted[0].id
             )
             assert isinstance(resolution_command.command, Resolve)
             with pytest.raises(CommandRejectedError, match="already resolved"):
-                await ResolveHandler(_handler_context(engine, clock, tmp_path)).handle(
+                await ResolveHandler(handler_context(engine, clock, tmp_path)).handle(
                     resolution_command.command
                 )
             CommandQueue(engine, clock).mark_rejected(
@@ -1877,7 +1562,9 @@ async def test_palette_takeover_queues_a_task_role_command_and_selects_the_pane_
     task = seed_task(connection, clock)
     TaskStore(connection, clock).set_panes(task.id, {Role.LEADER: "%7"})
     _seed_live_session(connection, clock, task.id)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path, engine_up=engine_up)
+    commands, queries, queue = operator_services(
+        connection, reader, clock, tmp_path, engine_up=engine_up
+    )
     selected: list[str] = []
 
     async def select_pane(pane_id: str) -> None:
@@ -1946,7 +1633,9 @@ async def test_completed_takeover_selects_the_role_pane_and_its_window(
     runs = RunStore(connection, clock)
     run = runs.start(task.id, Role.IMPLEMENTER, _LIVE_RUNG)
     runs.set_session(run.id, "session-current", "resume-current")
-    commands, queries, queue = _services(connection, reader, clock, tmp_path, engine_up=True)
+    commands, queries, queue = operator_services(
+        connection, reader, clock, tmp_path, engine_up=True
+    )
     app = _palette_app(reader, commands, queries, tmux.select_pane)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
@@ -2005,7 +1694,7 @@ async def test_popup_pane_context_selects_its_recorded_task_and_role(
     TaskStore(connection, clock).set_panes(stale_task.id, {Role.LEADER: pane_id})
     task = seed_task(connection, clock, title="Popup context")
     TaskStore(connection, clock).set_panes(task.id, {Role.IMPLEMENTER: pane_id})
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     originating_pane = await tmux.display(pane_id, FORMAT_PANE_ID)
     task_role = queries.task_role_for_pane(originating_pane)
     assert task_role is not None
@@ -2052,7 +1741,9 @@ async def test_palette_disables_takeover_without_task_or_role_pane(
 ) -> None:
     clock = FakeClock(_START)
     task_id = seed_task(connection, clock).id if task_exists else "T-404"
-    commands, queries, queue = _services(connection, reader, clock, tmp_path, engine_up=True)
+    commands, queries, queue = operator_services(
+        connection, reader, clock, tmp_path, engine_up=True
+    )
     app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
@@ -2077,7 +1768,7 @@ async def test_palette_preserves_invalid_and_missing_resolve_routes(
     expected: str,
 ) -> None:
     clock = FakeClock(_START)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = _palette_app(reader, commands, queries, _selection_must_not_run)
 
     async with app.run_test(size=_APP_SIZE) as pilot:

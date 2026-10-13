@@ -90,16 +90,11 @@ from shikiru.dashboard.detail import (
 )
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.domain.commands import (
-    AnswerResolution,
-    CancelResolution,
     Prioritize,
-    ResolutionKind,
-    Resolve,
-    RetryResolution,
     Say,
     Stop,
 )
-from shikiru.domain.escalation import Escalation, EscalationStatus, options_for
+from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
     REPORT_FILENAME,
@@ -109,7 +104,6 @@ from shikiru.domain.reports import (
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Task
-from shikiru.engine.escalations import PacketContext, render_packet
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import turns_dir
@@ -132,6 +126,12 @@ from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, ignore_palette_action, state_views
 from tests.support.entry_points import FakeDistribution
+from tests.support.escalations import (
+    operator_services,
+    resolution_factory,
+    resolution_title,
+    wait_for_resolution,
+)
 from tests.support.render import plain_text
 from tests.support.resource_agent import resource_services, start_resource_agent
 from tests.support.store import seed_task
@@ -139,7 +139,6 @@ from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
-_APP_SHUTDOWN_TIMEOUT_SECONDS = 2
 _COMPACT_RESOLUTION_CONTEXT_SCROLL_ROWS = 5
 _COMMAND_FEEDBACK_CLOCK_ADVANCE_SECONDS = 120
 _COMMAND_HISTORY_INITIAL_SIZE = (100, 34)
@@ -201,7 +200,6 @@ _ESTIMATED_OUTPUT_TOKENS = 100
 _API_BILLED_COST_USD = 0.42
 _API_EQUIVALENT_ESTIMATE_USD = 0.11
 _TIMELINE_REFRESH_SECONDS = 1
-_FORM_CONTENT_TRAILING_GAP_ROWS = 3
 
 
 class _ExternalWidget:
@@ -313,39 +311,6 @@ def _exported_screen_text(app: DashboardApp) -> str:
     return " ".join(text.split())
 
 
-def _rendered_palette_header_text(app: DashboardApp) -> str:
-    elements: list[tuple[str, str]] = []
-    for attributes, content in re.findall(
-        r"<text\b([^>]*)>(.*?)</text>", app.export_screenshot(), re.DOTALL
-    ):
-        y = re.search(r'\by="([^"]+)"', attributes)
-        label = " ".join(unescape(content).replace("\xa0", " ").split())
-        if y is not None and label:
-            elements.append((y.group(1), label))
-    close_row = next((y for y, label in elements if "Esc \u00d7" in label), None)
-    assert close_row is not None
-    return " ".join(label for y, label in elements if y == close_row)
-
-
-async def _assert_rendered_palette_header_identity(
-    app: DashboardApp,
-    task_id: str,
-    escalation_id: str,
-) -> None:
-    await wait_until(
-        lambda: (
-            task_id in _rendered_palette_header_text(app)
-            and escalation_id in _rendered_palette_header_text(app)
-            and "Esc \u00d7" in _rendered_palette_header_text(app)
-        ),
-        timeout=UI_WAIT_SECONDS,
-    )
-    header = _rendered_palette_header_text(app)
-    assert task_id in header
-    assert escalation_id in header
-    assert "Esc \u00d7" in header
-
-
 def _rendered_visible_home_origins(
     app: DashboardApp, anchors: tuple[str, ...]
 ) -> dict[str, tuple[float, float]]:
@@ -429,178 +394,16 @@ if TYPE_CHECKING:
 
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
-    from shikiru.dashboard.contract import OpenPalette, OpenPaletteContext, WidgetContext
+    from shikiru.dashboard.contract import (
+        OpenPalette,
+        OpenPaletteContext,
+        ResolutionScreenFactory,
+        WidgetContext,
+    )
     from shikiru.dashboard.services import DashboardServices
     from shikiru.store.database import Database
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
-
-
-def _open_agent_error_escalation(
-    connection: Connection,
-    clock: Clock,
-    project_dir: Path,
-    task: Task,
-    *,
-    step: Step | None,
-    headline: str,
-    packet_name: str,
-    question: str,
-    attempted: str,
-) -> Escalation:
-    reason = EscalationReason.AGENT_ERROR
-    packet_path = project_dir / ".shikiru" / "escalations" / packet_name
-    packet_path.parent.mkdir(parents=True, exist_ok=True)
-    packet_path.write_text(
-        render_packet(
-            PacketContext(
-                task_id=task.id,
-                step=step,
-                reason=reason,
-                timeline=(),
-                attempted=attempted,
-                reports="",
-                facts="",
-                view_tail="",
-                sessions="",
-                question=question,
-                options=options_for(reason),
-            )
-        )
-    )
-    return EscalationStore(connection, clock).open(
-        task.id,
-        step=step,
-        reason=reason,
-        headline=headline,
-        packet_path=str(packet_path.relative_to(project_dir)),
-        options=options_for(reason),
-    )
-
-
-def _assert_non_answer_resolution_form(
-    screen: PaletteScreen,
-    task_id: str,
-    escalation_id: str,
-    question: str,
-) -> Select[str]:
-    assert screen.query_one("#field-escalation").display
-    assert screen.query_one("#field-resolution").display
-    assert screen.query_one("#field-resolution-text").display is False
-    assert cast("Select[str]", screen.query_one("#escalation", Select)).value == escalation_id
-    summary = _rendered_text(screen.query_one("#palette-escalation-summary", Static))
-    assert task_id in summary
-    assert escalation_id in summary
-    assert question in summary
-    assert ResolutionKind.RETRY.value in summary
-    assert ResolutionKind.CANCEL.value in summary
-    return cast("Select[str]", screen.query_one("#resolution", Select))
-
-
-def _assert_missing_packet_resolution_form(
-    screen: PaletteScreen,
-    task_id: str,
-    escalation: Escalation,
-) -> tuple[Select[str], Select[str]]:
-    assert screen.query_one("#task-id", Input).value == task_id
-    target = cast("Select[str]", screen.query_one("#escalation", Select))
-    assert target.value == escalation.id
-    resolution = cast("Select[str]", screen.query_one("#resolution", Select))
-    assert resolution.display
-    assert resolution.value == ResolutionKind.RETRY.value
-    summary = _rendered_text(screen.query_one("#palette-escalation-summary", Static))
-    assert summary.count(task_id) == 1
-    assert escalation.id in summary
-    assert "Retry the failed step." in summary
-    assert "Question: unavailable" in summary
-    assert "Agent alternatives" in summary
-    assert "unavailable" in summary
-    assert ResolutionKind.CANCEL.value in summary
-    evidence_error = _rendered_text(screen.query_one("#palette-evidence-error", Static))
-    assert "Evidence error:" in evidence_error
-    assert "missing-resolution-packet.md" in evidence_error
-    return target, resolution
-
-
-async def _capture_compact_resolution_context(
-    app: DashboardApp,
-    target: Select[str],
-    task_id: str,
-    escalation_id: str,
-) -> None:
-    form = app.screen.query_one("#palette-form", VerticalScroll)
-    form.scroll_to(y=0, animate=False, immediate=True)
-    await wait_until(lambda: form.scroll_y == 0, timeout=UI_WAIT_SECONDS)
-    target.focus()
-    await wait_until(lambda: app.focused is target, timeout=UI_WAIT_SECONDS)
-    form.scroll_to(
-        y=_COMPACT_RESOLUTION_CONTEXT_SCROLL_ROWS,
-        animate=False,
-        immediate=True,
-    )
-    await wait_until(
-        lambda: form.scroll_y == _COMPACT_RESOLUTION_CONTEXT_SCROLL_ROWS,
-        timeout=UI_WAIT_SECONDS,
-    )
-    await wait_until(
-        lambda: (
-            "Question: unavailable" in _exported_screen_text(app)
-            and "Agent alternatives" in _exported_screen_text(app)
-        ),
-        timeout=UI_WAIT_SECONDS,
-    )
-    await _assert_rendered_palette_header_identity(app, task_id, escalation_id)
-
-
-async def _exercise_native_resolution_select(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    resolution: Select[str],
-    queue: CommandQueue,
-) -> None:
-    resolution.focus()
-    await wait_until(lambda: app.focused is resolution, timeout=UI_WAIT_SECONDS)
-    await pilot.press("enter")
-    await wait_until(lambda: resolution.expanded, timeout=UI_WAIT_SECONDS)
-    assert queue.pending() == []
-    await pilot.press("escape")
-    await wait_until(
-        lambda: not resolution.expanded and app.focused is resolution,
-        timeout=UI_WAIT_SECONDS,
-    )
-    assert queue.pending() == []
-
-
-async def _assert_compact_resolution_controls(
-    app: DashboardApp,
-    screen: PaletteScreen,
-    size: tuple[int, int],
-    queue: CommandQueue,
-    *,
-    task_id: str,
-    escalation_id: str,
-) -> Input:
-    frame = screen.query_one("#palette-frame")
-    for button_id in ("palette-back-to-menu", "palette-submit"):
-        button = screen.query_one(f"#{button_id}", Button)
-        assert button.display
-        assert frame.content_region.contains_region(button.region)
-        assert button.region.bottom <= size[1]
-    retry_rung = screen.query_one("#resolution-rung", Input)
-    retry_rung.focus()
-    screen.query_one("#palette-form", VerticalScroll).scroll_to_widget(
-        screen.query_one("#field-palette-evidence-error"),
-        animate=False,
-        immediate=True,
-        force=True,
-    )
-    await wait_until(
-        lambda: app.focused is retry_rung and "Evidence error:" in _exported_screen_text(app),
-        timeout=UI_WAIT_SECONDS,
-    )
-    await _assert_rendered_palette_header_identity(app, task_id, escalation_id)
-    assert queue.pending() == []
-    return retry_rung
 
 
 async def _unexpected_pane_selection(pane_id: str) -> None:
@@ -643,87 +446,6 @@ def _palette_screen_for_app(
     )
 
 
-def _palette_context_opener(
-    reader: StateReader,
-    connection: Connection,
-    project_dir: Path,
-    clock: Clock,
-    app_instances: list[DashboardApp],
-) -> OpenPaletteContext:
-    async def open_palette_context(request: PaletteRequest) -> None:
-        app = app_instances[0]
-        palette = _palette_screen_for_app(
-            reader,
-            connection,
-            project_dir,
-            clock,
-            request,
-            remember_contextual_draft=app.remember_contextual_palette_draft,
-            task_routes_available=True,
-        )
-        await app.push_screen(
-            palette,
-            callback=lambda _: app.refresh_task_detail_after_resume(),
-        )
-
-    return open_palette_context
-
-
-def _assert_fixed_context_target_picker_hidden(screen: PaletteScreen) -> None:
-    assert not screen.query_one("#field-task-search").display
-    assert not screen.query_one("#field-task-choice").display
-    assert not screen.query_one("#field-task-id").display
-    assert not screen.query_one("#field-resolution").display
-
-
-async def _assert_attention_answer_target(
-    screen: PaletteScreen,
-    task_id: str,
-    escalation_id: str,
-    headline: str,
-) -> None:
-    summary_widget = screen.query_one("#palette-escalation-summary", Static)
-    await wait_until(lambda: headline in _rendered_text(summary_widget), timeout=UI_WAIT_SECONDS)
-    assert screen.query_one("#task-id", Input).value == task_id
-    assert not screen.query_one("#field-escalation").display
-    assert screen.query_one("#field-palette-escalation-summary").display
-    assert screen.query_one("#field-palette-evidence-error").display
-    assert screen.query_one("#field-resolution-text").display
-    assert not screen.query_one("#field-role").display
-    _assert_fixed_context_target_picker_hidden(screen)
-    summary = _rendered_text(summary_widget)
-    assert task_id in summary
-    assert escalation_id in summary
-    assert "Question: unavailable" in summary
-
-
-async def _enter_answer_text(
-    pilot: Pilot[None],
-    palette: PaletteScreen,
-    guidance: str,
-) -> None:
-    answer = palette.query_one("#resolution-text", TextArea)
-    await wait_until(
-        lambda: pilot.app.focused is answer,
-        timeout=UI_WAIT_SECONDS,
-    )
-    await pilot.press(*guidance)
-    assert answer.text == guidance
-
-
-async def _open_attention_answer_form(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    row: Static,
-) -> PaletteScreen:
-    await pilot.click(row)
-    await wait_until(
-        lambda: isinstance(app.screen, PaletteScreen),
-        timeout=UI_WAIT_SECONDS,
-    )
-    return cast("PaletteScreen", app.screen)
-
-
 def _app(
     reader: StateReader,
     project_dir: Path,
@@ -732,6 +454,7 @@ def _app(
     services: StubServices | None = None,
     open_palette: OpenPalette = ignore_palette_action,
     open_palette_context: OpenPaletteContext | None = None,
+    resolution_screen: ResolutionScreenFactory | None = None,
     focus_task: str | None = None,
     clock: Clock | None = None,
     settings: Settings | None = None,
@@ -764,6 +487,7 @@ def _app(
         open_palette=open_palette,
         widget_names=widget_names,
         open_palette_context=open_palette_context,
+        resolution_screen=resolution_screen,
         timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
         tmux_detach_hint=tmux_detach_hint,
         detach_tmux_client=detach_tmux_client,
@@ -2197,360 +1921,6 @@ async def test_focus_attention_opens_durable_decision_evidence(
         reader.close()
 
 
-@pytest.mark.parametrize("size", [_STANDARD_HOME_SIZE, _COMPACT_HOME_SIZE, _TINY_HOME_SIZE])
-async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-    size: tuple[int, int],
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
-    task = seed_task(connection, clock, title="Answer from attention")
-    TaskStore(connection, clock).apply_transition(
-        task.id,
-        Transition.stay(task, step=task.step, status=Status.ESCALATED),
-    )
-    escalation = EscalationStore(connection, clock).open(
-        task.id,
-        step=task.step,
-        reason=EscalationReason.DECISION_REQUIRED,
-        headline="Choose the parser behavior",
-        packet_path=".shikiru/escalations/missing-packet.md",
-        options=options_for(EscalationReason.DECISION_REQUIRED),
-    )
-    queue = CommandQueue(connection, clock)
-    for command in queue.pending():
-        queue.mark_done(command.id)
-    reader = StateReader(database, clock)
-    app_instances: list[DashboardApp] = []
-    open_palette_context = _palette_context_opener(
-        reader,
-        connection,
-        project_dir,
-        clock,
-        app_instances,
-    )
-
-    try:
-        app = _app(
-            reader,
-            project_dir,
-            widget_names=["escalations"],
-            open_palette_context=open_palette_context,
-        )
-        app_instances.append(app)
-        async with app.run_test(size=size) as pilot:
-            attention = app.query_one("#escalations", EscalationsPanel)
-            await wait_until(lambda: attention.display, timeout=UI_WAIT_SECONDS)
-            row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
-            assert escalation.id in _rendered_text(row)
-            if size == _TINY_HOME_SIZE:
-                root = app.query_one("#focus-root", VerticalScroll)
-                root.scroll_to_widget(row, animate=False, immediate=True)
-                await wait_until(
-                    lambda: row.region.overlaps(root.scrollable_content_region),
-                    timeout=UI_WAIT_SECONDS,
-                )
-            caller = app.screen
-
-            screen = await _open_attention_answer_form(app, pilot, row)
-            assert caller.is_mounted
-            await _assert_attention_answer_target(
-                screen, task.id, escalation.id, escalation.headline
-            )
-            title = screen.query_one("#palette-title", Static)
-            assert task.id in _rendered_text(title)
-            assert escalation.id in _rendered_text(title)
-            await _assert_rendered_palette_header_identity(app, task.id, escalation.id)
-            assert "missing-packet.md" in _rendered_text(
-                screen.query_one("#palette-evidence-error", Static)
-            )
-            assert queue.pending() == []
-    finally:
-        reader.close()
-
-
-def _seed_home_answer_decision(
-    connection: Connection,
-    clock: Clock,
-) -> tuple[Task, Task, Escalation, CommandQueue]:
-    task = seed_task(connection, clock, title="Answer from the normal Home focus")
-    related = seed_task(connection, clock, title="Task referenced by the decision")
-    TaskStore(connection, clock).apply_transition(
-        task.id,
-        Transition.stay(task, step=task.step, status=Status.ESCALATED),
-    )
-    headline = f"{task.id} · Keep the behavior used by {related.id}."
-    escalation = EscalationStore(connection, clock).open(
-        task.id,
-        step=task.step,
-        reason=EscalationReason.DECISION_REQUIRED,
-        headline=headline,
-        packet_path=".shikiru/escalations/missing-packet.md",
-        options=options_for(EscalationReason.DECISION_REQUIRED),
-    )
-    queue = CommandQueue(connection, clock)
-    for command in queue.pending():
-        queue.mark_done(command.id)
-    return task, related, escalation, queue
-
-
-async def _assert_keyboard_answer_enter_and_cancel(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    screen: PaletteScreen,
-    *,
-    home_screen: object,
-    queue: CommandQueue,
-) -> None:
-    answer = screen.query_one("#resolution-text", TextArea)
-    await wait_until(
-        lambda: app.focused is answer,
-        timeout=UI_WAIT_SECONDS,
-    )
-    await pilot.pause()
-    await pilot.press("enter")
-    assert answer.text == "\n"
-    assert queue.pending() == []
-    await pilot.press("escape")
-    await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
-    assert queue.pending() == []
-
-
-async def _submit_mouse_opened_answer(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    row: Static,
-    *,
-    task: Task,
-    escalation: Escalation,
-    queue: CommandQueue,
-) -> None:
-    await pilot.click(row)
-    await wait_until(
-        lambda: isinstance(app.screen, PaletteScreen),
-        timeout=UI_WAIT_SECONDS,
-    )
-    screen = cast("PaletteScreen", app.screen)
-    assert screen.query_one("#task-id", Input).value == task.id
-    assert screen.query_one("#palette-escalation-summary", Static).display
-    assert queue.pending() == []
-    screen.query_one("#resolution-text", TextArea).text = "Keep the existing behavior."
-    submit = screen.query_one("#palette-submit", Button)
-    await pilot.pause()
-    assert not submit.disabled
-    submit.focus()
-    await wait_until(
-        lambda: app.focused is submit,
-        timeout=UI_WAIT_SECONDS,
-    )
-    await pilot.press("enter")
-    await wait_until(
-        lambda: bool(queue.pending()),
-        timeout=UI_WAIT_SECONDS,
-    )
-    (queued,) = queue.pending()
-    assert isinstance(queued.command, Resolve)
-    assert queued.command.escalation_id == escalation.id
-    assert isinstance(queued.command.resolution, AnswerResolution)
-
-
-@pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE])
-async def test_home_list_enter_opens_the_attention_answer_and_waits_for_submit(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-    size: tuple[int, int],
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
-    task, related, escalation, queue = _seed_home_answer_decision(connection, clock)
-    headline = f"{task.id} · Keep the behavior used by {related.id}."
-    reader = StateReader(database, clock)
-    app_instances: list[DashboardApp] = []
-    open_palette_context = _palette_context_opener(
-        reader,
-        connection,
-        project_dir,
-        clock,
-        app_instances,
-    )
-
-    try:
-        app = _app(
-            reader,
-            project_dir,
-            widget_names=["queue", "escalations"],
-            open_palette_context=open_palette_context,
-        )
-        app_instances.append(app)
-        async with app.run_test(size=size) as pilot:
-            home_screen = app.screen
-            task_list = app.query_one("#task-browser-list", ListView)
-            attention = app.query_one("#escalations", EscalationsPanel)
-            await wait_until(
-                lambda: (
-                    app.focused is task_list
-                    and escalation.id
-                    in _rendered_text(
-                        attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
-                    )
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
-            row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
-            attention_text = _rendered_text(row)
-            assert attention_text.count(task.id) == 1
-            assert related.id in attention_text
-            assert "Enter answer" in attention_text
-            assert queue.pending() == []
-
-            await pilot.press("enter")
-            await wait_until(
-                lambda: isinstance(app.screen, PaletteScreen),
-                timeout=UI_WAIT_SECONDS,
-            )
-            screen = cast("PaletteScreen", app.screen)
-            assert home_screen.is_mounted
-            _assert_fixed_context_target_picker_hidden(screen)
-            assert screen.query_one("#task-id", Input).value == task.id
-            summary = _rendered_text(screen.query_one("#palette-escalation-summary", Static))
-            assert summary.count(task.id) == 1
-            assert related.id in summary
-            assert escalation.id in summary
-            assert headline.removeprefix(f"{task.id} · ") in summary
-            stored = EscalationStore(connection, clock).get(escalation.id)
-            assert stored is not None
-            assert stored.headline == headline
-            assert queue.pending() == []
-            if size == _WIDE_HOME_SIZE:
-                frame = screen.query_one("#palette-frame")
-                evidence_error_field = screen.query_one("#field-palette-evidence-error")
-                evidence_error = screen.query_one("#palette-evidence-error", Static)
-                actions = screen.query_one("#palette-actions")
-                assert actions.region.bottom <= frame.content_region.bottom
-                assert evidence_error_field.region.height == evidence_error.region.height
-                assert (
-                    actions.region.y - evidence_error.region.bottom
-                    <= _FORM_CONTENT_TRAILING_GAP_ROWS
-                )
-            await _assert_keyboard_answer_enter_and_cancel(
-                app,
-                pilot,
-                screen,
-                home_screen=home_screen,
-                queue=queue,
-            )
-            await _submit_mouse_opened_answer(
-                app,
-                pilot,
-                row,
-                task=task,
-                escalation=escalation,
-                queue=queue,
-            )
-    finally:
-        reader.close()
-
-
-@pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE])
-async def test_home_list_enter_opens_the_selected_resolution_without_dispatching(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-    size: tuple[int, int],
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
-    task = seed_task(connection, clock, title="Resolve from the normal Home focus")
-    TaskStore(connection, clock).apply_transition(
-        task.id,
-        Transition.stay(task, step=task.step, status=Status.ESCALATED),
-    )
-    escalation = EscalationStore(connection, clock).open(
-        task.id,
-        step=task.step,
-        reason=EscalationReason.AGENT_ERROR,
-        headline=f"{task.id} · Retry the failed step.",
-        packet_path=".shikiru/escalations/missing-resolution-packet.md",
-        options=options_for(EscalationReason.AGENT_ERROR),
-    )
-    queue = CommandQueue(connection, clock)
-    for command in queue.pending():
-        queue.mark_done(command.id)
-    reader = StateReader(database, clock)
-    app_instances: list[DashboardApp] = []
-    open_palette_context = _palette_context_opener(
-        reader,
-        connection,
-        project_dir,
-        clock,
-        app_instances,
-    )
-
-    try:
-        app = _app(
-            reader,
-            project_dir,
-            widget_names=["queue", "escalations"],
-            open_palette_context=open_palette_context,
-        )
-        app_instances.append(app)
-        async with app.run_test(size=size) as pilot:
-            home_screen = app.screen
-            task_list = app.query_one("#task-browser-list", ListView)
-            attention = app.query_one("#escalations", EscalationsPanel)
-            row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
-            await wait_until(
-                lambda: (
-                    app.focused is task_list
-                    and escalation.id in _rendered_text(row)
-                    and "Enter resolve" in _rendered_text(row)
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
-            assert _rendered_text(row).count(task.id) == 1
-            await pilot.press("enter")
-            await wait_until(
-                lambda: isinstance(app.screen, PaletteScreen),
-                timeout=UI_WAIT_SECONDS,
-            )
-            screen = cast("PaletteScreen", app.screen)
-            target, resolution = _assert_missing_packet_resolution_form(
-                screen,
-                task.id,
-                escalation,
-            )
-            await _assert_rendered_palette_header_identity(app, task.id, escalation.id)
-            assert queue.pending() == []
-            if size == _COMPACT_HOME_SIZE:
-                await _capture_compact_resolution_context(app, target, task.id, escalation.id)
-            await _exercise_native_resolution_select(app, pilot, resolution, queue)
-            await _assert_rendered_palette_header_identity(app, task.id, escalation.id)
-            if size == _COMPACT_HOME_SIZE:
-                retry_rung = await _assert_compact_resolution_controls(
-                    app,
-                    screen,
-                    size,
-                    queue,
-                    task_id=task.id,
-                    escalation_id=escalation.id,
-                )
-                await pilot.resize_terminal(*_TINY_HOME_SIZE)
-                await wait_until(
-                    lambda: app.size == _TINY_HOME_SIZE and app.focused is retry_rung,
-                    timeout=UI_WAIT_SECONDS,
-                )
-                await _assert_rendered_palette_header_identity(app, task.id, escalation.id)
-            assert queue.pending() == []
-            await pilot.press("escape")
-            await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
-            assert queue.pending() == []
-    finally:
-        reader.close()
-
-
 async def test_home_list_enter_uses_the_selected_decision_when_one_task_has_several(
     database: Database,
     connection: Connection,
@@ -2579,23 +1949,15 @@ async def test_home_list_enter_uses_the_selected_decision_when_one_task_has_seve
     for command in queue.pending():
         queue.mark_done(command.id)
     reader = StateReader(database, clock)
-    app_instances: list[DashboardApp] = []
-    open_palette_context = _palette_context_opener(
-        reader,
-        connection,
-        project_dir,
-        clock,
-        app_instances,
-    )
+    commands, queries, _ = operator_services(connection, reader, clock, project_dir)
 
     try:
         app = _app(
             reader,
             project_dir,
             widget_names=["queue", "escalations"],
-            open_palette_context=open_palette_context,
+            resolution_screen=resolution_factory(commands, queries, clock, reader),
         )
-        app_instances.append(app)
         async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
             home_screen = app.screen
             task_list = app.query_one("#task-browser-list", ListView)
@@ -2616,362 +1978,16 @@ async def test_home_list_enter_uses_the_selected_decision_when_one_task_has_seve
             )
             task_list.focus()
             await pilot.press("enter")
-            await wait_until(
-                lambda: isinstance(app.screen, PaletteScreen),
-                timeout=UI_WAIT_SECONDS,
-            )
-            keyboard_screen = cast("PaletteScreen", app.screen)
-            assert keyboard_screen.query_one("#task-id", Input).value == task.id
-            assert decisions[1].id in _rendered_text(
-                keyboard_screen.query_one("#palette-title", Static)
-            )
-            assert decisions[0].id not in _rendered_text(
-                keyboard_screen.query_one("#palette-title", Static)
-            )
-            await _assert_rendered_palette_header_identity(app, task.id, decisions[1].id)
+            title = resolution_title(await wait_for_resolution(app))
+            assert decisions[1].id in title
+            assert decisions[0].id not in title
             assert queue.pending() == []
 
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
             await pilot.click(row)
-            await wait_until(
-                lambda: isinstance(app.screen, PaletteScreen),
-                timeout=UI_WAIT_SECONDS,
-            )
-            mouse_screen = cast("PaletteScreen", app.screen)
-            assert mouse_screen.query_one("#task-id", Input).value == task.id
-            assert decisions[1].id in _rendered_text(
-                mouse_screen.query_one("#palette-title", Static)
-            )
+            assert decisions[1].id in resolution_title(await wait_for_resolution(app))
             assert queue.pending() == []
-    finally:
-        reader.close()
-
-
-@pytest.mark.parametrize("widget_name", ["escalations", "queue"])
-@pytest.mark.parametrize(
-    ("resolution_kind", "resolution_type"),
-    [
-        (ResolutionKind.RETRY, RetryResolution),
-        (ResolutionKind.CANCEL, CancelResolution),
-    ],
-)
-async def test_attention_routes_non_answer_decisions_to_explicit_resolution(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-    *,
-    widget_name: str,
-    resolution_kind: ResolutionKind,
-    resolution_type: type[object],
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
-    task = seed_task(connection, clock, title="Resolve the failed step", mode=Mode.IMPLEMENT)
-    step = Step.IMPLEMENT
-    TaskStore(connection, clock).apply_transition(
-        task.id,
-        Transition.stay(task, step=step, status=Status.ESCALATED),
-    )
-    question = "Should the failed implementation step run again?"
-    escalation = _open_agent_error_escalation(
-        connection,
-        clock,
-        project_dir,
-        task,
-        step=step,
-        headline="The implementation step failed",
-        packet_name="agent-error.md",
-        question=question,
-        attempted="The implementation step failed on its final retry.",
-    )
-    queue = CommandQueue(connection, clock)
-    for command in queue.pending():
-        queue.mark_done(command.id)
-    assert queue.pending() == []
-    reader = StateReader(database, clock)
-    app_instances: list[DashboardApp] = []
-    palette_opener = _palette_context_opener(
-        reader,
-        connection,
-        project_dir,
-        clock,
-        app_instances,
-    )
-    palette_requests: list[PaletteRequest] = []
-
-    async def open_palette_context(request: PaletteRequest) -> None:
-        palette_requests.append(request)
-        await palette_opener(request)
-
-    try:
-        app = _app(
-            reader,
-            project_dir,
-            widget_names=[widget_name],
-            open_palette_context=open_palette_context,
-        )
-        app_instances.append(app)
-        async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
-            attention = app.query_one("#escalations", Static)
-            await wait_until(lambda: attention.display, timeout=UI_WAIT_SECONDS)
-            row = (
-                app.query_one("#escalation-panels", VerticalScroll).query_one(Static)
-                if widget_name == "escalations"
-                else attention
-            )
-            await wait_until(
-                lambda: escalation.id in _rendered_text(row),
-                timeout=UI_WAIT_SECONDS,
-            )
-            await pilot.click(row)
-            await wait_until(
-                lambda: isinstance(app.screen, PaletteScreen),
-                timeout=UI_WAIT_SECONDS,
-            )
-
-            assert len(palette_requests) == 1
-            assert palette_requests[0].direct_answer is False
-            screen = cast("PaletteScreen", app.screen)
-            resolution = _assert_non_answer_resolution_form(
-                screen,
-                task.id,
-                escalation.id,
-                question,
-            )
-            assert queue.pending() == []
-
-            resolution.value = resolution_kind.value
-            await pilot.pause()
-            assert queue.pending() == []
-            await pilot.click("#palette-submit")
-            await wait_until(lambda: bool(queue.pending()), timeout=UI_WAIT_SECONDS)
-
-            (queued,) = queue.pending()
-            assert isinstance(queued.command, Resolve)
-            assert queued.command.escalation_id == escalation.id
-            assert isinstance(queued.command.resolution, resolution_type)
-    finally:
-        reader.close()
-
-
-async def test_attention_answer_draft_stays_with_its_decision_on_the_same_task(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
-    task = seed_task(connection, clock, title="Sequential decision drafts")
-    TaskStore(connection, clock).apply_transition(
-        task.id,
-        Transition.stay(task, step=task.step, status=Status.ESCALATED),
-    )
-    escalations = EscalationStore(connection, clock)
-    first = escalations.open(
-        task.id,
-        step=task.step,
-        reason=EscalationReason.DECISION_REQUIRED,
-        headline="First decision summary",
-        packet_path=".shikiru/escalations/first-missing.md",
-        options=options_for(EscalationReason.DECISION_REQUIRED),
-    )
-    queue = CommandQueue(connection, clock)
-    for command in queue.pending():
-        queue.mark_done(command.id)
-    assert queue.pending() == []
-    reader = StateReader(database, clock)
-    app_instances: list[DashboardApp] = []
-    open_palette_context = _palette_context_opener(
-        reader,
-        connection,
-        project_dir,
-        clock,
-        app_instances,
-    )
-
-    try:
-        app = _app(
-            reader,
-            project_dir,
-            widget_names=["escalations"],
-            open_palette_context=open_palette_context,
-        )
-        app_instances.append(app)
-        async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
-            attention = app.query_one("#escalations", EscalationsPanel)
-            await wait_until(lambda: attention.display, timeout=UI_WAIT_SECONDS)
-            row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
-            await wait_until(
-                lambda: first.id in _rendered_text(row),
-                timeout=UI_WAIT_SECONDS,
-            )
-            caller = app.screen
-            first_palette = await _open_attention_answer_form(app, pilot, row)
-            await _assert_attention_answer_target(
-                first_palette,
-                task.id,
-                first.id,
-                "First decision summary",
-            )
-            assert queue.pending() == []
-            first_guidance = "Keep this answer with the first decision only."
-            await _enter_answer_text(pilot, first_palette, first_guidance)
-            await _close_palette_to_caller(app, pilot, caller, queue)
-
-            escalations.resolve(first.id, "answer closed first decision")
-            second = escalations.open(
-                task.id,
-                step=task.step,
-                reason=EscalationReason.DECISION_REQUIRED,
-                headline="Second decision summary",
-                packet_path=".shikiru/escalations/second-missing.md",
-                options=options_for(EscalationReason.DECISION_REQUIRED),
-            )
-            await wait_until(
-                lambda: second.id in _rendered_text(row) and first.id not in _rendered_text(row),
-                timeout=UI_WAIT_SECONDS,
-            )
-            second_palette = await _open_attention_answer_form(app, pilot, row)
-            second_summary = _rendered_text(
-                second_palette.query_one("#palette-escalation-summary", Static)
-            )
-            await _assert_attention_answer_target(
-                second_palette,
-                task.id,
-                second.id,
-                "Second decision summary",
-            )
-            assert "First decision summary" not in second_summary
-            second_answer = second_palette.query_one("#resolution-text", TextArea)
-            assert second_answer.text == ""
-            assert not second_palette.query_one("#field-escalation").display
-            assert queue.pending() == []
-
-            second_guidance = "Keep this answer with the second decision only."
-            await _enter_answer_text(pilot, second_palette, second_guidance)
-            await _close_palette_to_caller(app, pilot, caller, queue)
-            reopened = await _open_attention_answer_form(app, pilot, row)
-            await _assert_attention_answer_target(
-                reopened,
-                task.id,
-                second.id,
-                "Second decision summary",
-            )
-            assert reopened.query_one("#resolution-text", TextArea).text == second_guidance
-            assert queue.pending() == []
-            await _close_palette_to_caller(app, pilot, caller, queue)
-    finally:
-        reader.close()
-
-
-async def test_attention_non_answer_route_keeps_an_earlier_answer_draft_on_its_target(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
-    task = seed_task(connection, clock, title="Answer draft and retry decision")
-    TaskStore(connection, clock).apply_transition(
-        task.id,
-        Transition.stay(task, step=task.step, status=Status.ESCALATED),
-    )
-    escalations = EscalationStore(connection, clock)
-    first = escalations.open(
-        task.id,
-        step=task.step,
-        reason=EscalationReason.DECISION_REQUIRED,
-        headline="Earlier answer decision",
-        packet_path=".shikiru/escalations/first-missing.md",
-        options=options_for(EscalationReason.DECISION_REQUIRED),
-    )
-    queue = CommandQueue(connection, clock)
-    for command in queue.pending():
-        queue.mark_done(command.id)
-    reader = StateReader(database, clock)
-    app_instances: list[DashboardApp] = []
-    open_palette_context = _palette_context_opener(
-        reader,
-        connection,
-        project_dir,
-        clock,
-        app_instances,
-    )
-
-    try:
-        app = _app(
-            reader,
-            project_dir,
-            widget_names=["escalations"],
-            open_palette_context=open_palette_context,
-        )
-        app_instances.append(app)
-        async with app.run_test(size=_MEASURED_HOME_SIZE) as pilot:
-            attention = app.query_one("#escalations", EscalationsPanel)
-            await wait_until(lambda: attention.display, timeout=UI_WAIT_SECONDS)
-            row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
-            await wait_until(
-                lambda: first.id in _rendered_text(row),
-                timeout=UI_WAIT_SECONDS,
-            )
-            caller = app.screen
-            first_palette = await _open_attention_answer_form(app, pilot, row)
-            await _assert_attention_answer_target(
-                first_palette,
-                task.id,
-                first.id,
-                "Earlier answer decision",
-            )
-            first_guidance = "Guidance belongs to the resolved decision."
-            await _enter_answer_text(pilot, first_palette, first_guidance)
-            await _close_palette_to_caller(app, pilot, caller, queue)
-
-            escalations.resolve(first.id, "answer closed the earlier decision")
-            question = "Should the failed step run again?"
-            second = _open_agent_error_escalation(
-                connection,
-                clock,
-                project_dir,
-                task,
-                step=task.step,
-                headline="Retry decision",
-                packet_name="retry.md",
-                question=question,
-                attempted="The step failed after its final retry.",
-            )
-            await wait_until(
-                lambda: second.id in _rendered_text(row) and first.id not in _rendered_text(row),
-                timeout=UI_WAIT_SECONDS,
-            )
-
-            second_palette = await _open_attention_answer_form(app, pilot, row)
-            resolution = _assert_non_answer_resolution_form(
-                second_palette,
-                task.id,
-                second.id,
-                question,
-            )
-            assert second_palette.query_one("#resolution-text", TextArea).text == ""
-            summary = _rendered_text(
-                second_palette.query_one("#palette-escalation-summary", Static)
-            )
-            assert "Earlier answer decision" not in summary
-            assert resolution.value in {
-                ResolutionKind.RETRY.value,
-                ResolutionKind.CANCEL.value,
-            }
-            assert queue.pending() == []
-
-            resolution.value = ResolutionKind.CANCEL.value
-            await pilot.pause()
-            assert queue.pending() == []
-            await pilot.click("#palette-submit")
-            await wait_until(lambda: bool(queue.pending()), timeout=UI_WAIT_SECONDS)
-            (queued,) = queue.pending()
-            assert isinstance(queued.command, Resolve)
-            assert queued.command.escalation_id == second.id
-            assert isinstance(queued.command.resolution, CancelResolution)
     finally:
         reader.close()
 
@@ -4976,11 +3992,6 @@ async def _open_home_task_action_menu(
     return cast("PaletteScreen", app.screen)
 
 
-async def _type_and_confirm(pilot: Pilot[None], text_area: TextArea, text: str) -> None:
-    await pilot.press(*text)
-    await wait_until(lambda: text_area.text == text, timeout=UI_WAIT_SECONDS)
-
-
 async def _back_to_context_actions(
     pilot: Pilot[None],
     palette: PaletteScreen,
@@ -5030,7 +4041,7 @@ async def _close_palette_to_caller(
     assert queue.pending() == []
 
 
-async def test_contextual_message_draft_survives_back_action_change_and_another_tasks_answer(
+async def test_contextual_message_draft_survives_back_and_action_change(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -5039,7 +4050,9 @@ async def test_contextual_message_draft_survives_back_action_change_and_another_
     clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Message draft caller task")
     role_task = seed_task(connection, clock, title="Back menu message draft", mode=Mode.IMPLEMENT)
-    answer_task, _, escalation, queue = _seed_home_answer_decision(connection, clock)
+    queue = CommandQueue(connection, clock)
+    for command in queue.pending():
+        queue.mark_done(command.id)
     reader = StateReader(database, clock)
     app_instances: list[DashboardApp] = []
 
@@ -5071,30 +4084,6 @@ async def test_contextual_message_draft_survives_back_action_change_and_another_
                 pilot,
                 task,
             )
-
-            attention = app.query_one("#escalations", EscalationsPanel)
-            answer_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
-            app.query_one("#task-browser-search", Input).value = answer_task.title
-            await wait_until(
-                lambda: bool(app.query(f"#task-row-{answer_task.id}")),
-                timeout=UI_WAIT_SECONDS,
-            )
-            await _select_home_task(app, answer_task.id)
-            await wait_until(
-                lambda: escalation.id in _rendered_text(answer_row),
-                timeout=UI_WAIT_SECONDS,
-            )
-            answer_palette = await _open_attention_answer_form(app, pilot, answer_row)
-            answer = answer_palette.query_one("#resolution-text", TextArea)
-            await wait_until(
-                lambda: app.focused is answer,
-                timeout=UI_WAIT_SECONDS,
-            )
-            await _resize_blank_palette_text_area(app, pilot, answer_palette, answer, queue)
-            await _type_and_confirm(pilot, answer, "Preserve the typed answer for the second task.")
-            assert queue.pending() == []
-            await pilot.press("escape")
-            await wait_until(lambda: app.screen is home, timeout=UI_WAIT_SECONDS)
 
             app.query_one("#task-browser-search", Input).value = task.title
             await wait_until(
@@ -5217,6 +4206,8 @@ async def test_empty_home_footer_actions_are_mouse_reachable_and_read_only(
     clock = SystemClock()
     reader = StateReader(database, clock)
     queue = CommandQueue(connection, clock)
+    for command in queue.pending():
+        queue.mark_done(command.id)
     app_instances: list[DashboardApp] = []
 
     async def open_palette_context(request: PaletteRequest) -> None:

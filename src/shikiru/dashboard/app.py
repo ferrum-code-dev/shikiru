@@ -106,6 +106,7 @@ if TYPE_CHECKING:
         OnChangeRegistration,
         OpenPalette,
         OpenPaletteContext,
+        ResolutionScreenFactory,
     )
 
 _WIDGET_PLUGIN_KIND = "dashboard widget plugin"
@@ -982,16 +983,8 @@ class _HomeAttentionStatus(Static):
         if group.task_id is not None and self._widget_context.on_task_selected is not None:
             self._widget_context.on_task_selected(group.task_id)
         if group.escalations:
-            decision = group.escalations[0]
-            request = PaletteRequest(
-                action=f"resolve {decision.escalation_id}",
-                task_id=decision.task_id,
-                direct_answer=decision.answer_available,
-            )
-            if self._widget_context.open_palette_context is not None:
-                await self._widget_context.open_palette_context(request)
-            else:
-                await self._widget_context.open_palette(request.action or "")
+            if self._widget_context.open_resolution is not None:
+                await self._widget_context.open_resolution(group.escalations[0].escalation_id)
             event.stop()
         elif group.task_id is not None:
             if self._widget_context.on_task_selected is not None:
@@ -1167,6 +1160,7 @@ class DashboardApp(App[None]):
         open_palette: OpenPalette,
         widget_names: Sequence[str],
         open_palette_context: OpenPaletteContext | None = None,
+        resolution_screen: ResolutionScreenFactory | None = None,
         navigate_task_window: NavigateTaskWindow | None = None,
         navigate_role_pane: NavigateRolePane | None = None,
         navigate_home: NavigateHome | None = None,
@@ -1191,6 +1185,7 @@ class DashboardApp(App[None]):
         self._quota_alert_pct = quota_alert_pct
         self._open_palette = open_palette
         self._open_palette_context = open_palette_context
+        self._resolution_screen = resolution_screen
         self._palette_drafts: dict[tuple[str, str, str | None], PaletteDraft] = {}
         self._selected_task_id = focus_task
         self._navigate_task_window = navigate_task_window
@@ -1329,6 +1324,7 @@ class DashboardApp(App[None]):
             on_motion=self.register_motion_callback,
             open_palette=self._open_palette,
             open_palette_context=self._open_contextual_palette,
+            open_resolution=self.open_resolution,
             open_task_detail=open_task_detail,
             open_task_detail_view=open_task_detail_view,
             navigate_task_window=self._navigate_task_window,
@@ -1529,6 +1525,17 @@ class DashboardApp(App[None]):
         if drafts:
             request = replace(request, drafts=drafts)
         await callback(request)
+
+    async def open_resolution(self, escalation_id: str) -> None:
+        """Open the resolution screen for one escalation."""
+        factory = self._resolution_screen
+        if factory is None:
+            message = "the escalation resolution screen is not configured"
+            raise ConfigError(message)
+        await self.push_screen(
+            factory(escalation_id),
+            callback=lambda _: self.refresh_task_detail_after_resume(),
+        )
 
     def remember_contextual_palette_draft(self, draft: PaletteDraft) -> None:
         """Keep the latest contextual form draft in memory while its caller is visible."""

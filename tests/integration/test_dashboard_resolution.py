@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from textual.geometry import Region
-from textual.widgets import TextArea
+from textual.widgets import Button, Select, Static, TextArea
 
+from shikiru.clock import SystemClock
+from shikiru.dashboard.palette import PaletteApp, PaletteScreen
 from shikiru.dashboard.resolution import ResolutionScreen
 from shikiru.domain.commands import (
     AcceptResolution,
@@ -17,15 +19,20 @@ from shikiru.domain.commands import (
 )
 from shikiru.domain.tasks import EscalationReason
 from shikiru.operator.commands import COMMAND_POLL_SECONDS
+from shikiru.store.escalations import EscalationStore
 from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from tests.support.clock import FakeClock
+from tests.support.config import write_minimal_project
+from tests.support.dashboard import dashboard_app
 from tests.support.escalations import (
     ResolutionHost,
     assert_engine_applies_resolution,
     enqueue_and_cancel,
     operator_services,
     resolution_factory,
+    resolution_title,
     seed_escalation,
+    wait_for_resolution,
 )
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
@@ -36,6 +43,8 @@ if TYPE_CHECKING:
     from textual.pilot import Pilot
     from textual.widget import Widget
 
+    from shikiru.dashboard.app import DashboardApp
+    from shikiru.dashboard.contract import PaletteRequest
     from shikiru.store.database import Database
     from tests.support.store import Connection
 
@@ -270,3 +279,130 @@ async def test_engine_rejection_keeps_the_screen_open_with_its_reason(
         assert app.results == []
         assert queue.pending() == []
         assert queries.command_history().total_count == recorded_commands + 1
+
+
+async def _no_pane_selection(pane_id: str) -> None:
+    raise AssertionError(pane_id)
+
+
+@pytest.mark.parametrize(
+    "route",
+    ["bar-enter", "bar-click", "strip-click", "task-menu-answer", "ctrl-p-resolve"],
+)
+async def test_every_entry_route_opens_the_resolution_screen_without_dispatching(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    *,
+    route: str,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    reader = StateReader(database, clock)
+    request.addfinalizer(reader.close)
+    task = seed_task(connection, clock, title="Entry route")
+    escalation, _ = seed_escalation(
+        connection, clock, task.id, project_dir, EscalationReason.DECISION_REQUIRED
+    )
+    commands, queries, queue = operator_services(connection, reader, clock, project_dir)
+    factory = resolution_factory(commands, queries, clock, reader)
+    apps: list[DashboardApp] = []
+
+    async def open_palette_context(palette_request: PaletteRequest) -> None:
+        await apps[0].push_screen(
+            PaletteScreen(
+                commands,
+                queries,
+                _no_pane_selection,
+                on_change=reader.watch,
+                initial_context=palette_request,
+                task_routes_available=True,
+                resolution_screen=factory,
+            )
+        )
+
+    widgets = ["queue"] if route == "strip-click" else ["queue", "escalations"]
+    app = dashboard_app(
+        reader,
+        project_dir,
+        clock,
+        widget_names=widgets,
+        open_palette_context=open_palette_context,
+        resolution_screen=factory,
+    )
+    apps.append(app)
+
+    async with app.run_test(size=_HOME_SIZE) as pilot:
+        bar = app.query_one("#escalations", Static)
+        await wait_until(
+            lambda: bar.display and escalation.id in _text_of(_bar_row(app, route)),
+            timeout=UI_WAIT_SECONDS,
+        )
+        if route == "bar-enter":
+            await pilot.press("enter")
+        elif route in {"bar-click", "strip-click"}:
+            await pilot.click(_bar_row(app, route))
+        else:
+            await pilot.press("ctrl+p")
+            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
+            if route == "task-menu-answer":
+                await pilot.click("#palette-menu-answer")
+            else:
+                await pilot.click("#palette-menu-more-actions")
+                resolve = app.screen.query_one("#palette-menu-action-resolve", Button)
+                await wait_until(lambda: resolve.region.height > 0, timeout=UI_WAIT_SECONDS)
+                resolve.press()
+        screen = await wait_for_resolution(app)
+        assert f"{escalation.id} · {task.id}" in resolution_title(screen)
+        assert queue.pending() == []
+
+
+def _bar_row(app: DashboardApp, route: str) -> Widget:
+    bar = app.query_one("#escalations", Static)
+    return bar if route == "strip-click" else bar.query_one("#escalation-panels").query_one(Static)
+
+
+@pytest.mark.parametrize("pending", [True, False])
+async def test_the_generic_resolve_action_opens_the_first_decision_or_says_none_is_needed(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    *,
+    pending: bool,
+) -> None:
+    clock = FakeClock(_START)
+    reader = StateReader(database, clock)
+    request.addfinalizer(reader.close)
+    task = seed_task(connection, clock, title="Generic resolve")
+    escalation, _ = seed_escalation(
+        connection, clock, task.id, tmp_path, EscalationReason.AGENT_ERROR
+    )
+    if not pending:
+        EscalationStore(connection, clock).resolve(escalation.id, "closed elsewhere")
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
+    app = PaletteApp(
+        commands,
+        queries,
+        _no_pane_selection,
+        on_change=reader.watch,
+        resolution_screen=resolution_factory(commands, queries, clock, reader),
+    )
+
+    async with app.run_test(size=_SIZE) as pilot:
+        await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
+        palette = app.screen
+        action = cast("Select[str]", palette.query_one("#action", Select))
+        action.focus()
+        action.value = "resolve"
+        if pending:
+            assert escalation.id in resolution_title(await wait_for_resolution(app))
+        else:
+            await wait_until(
+                lambda: _text_of(palette.query_one("#palette-result")).strip() != "",
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert app.screen is palette
+        await pilot.pause()
+        assert queue.pending() == []

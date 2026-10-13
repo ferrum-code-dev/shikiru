@@ -33,7 +33,12 @@ if TYPE_CHECKING:
 
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
-    from shikiru.dashboard.contract import OpenPalette
+    from shikiru.dashboard.contract import (
+        OpenPalette,
+        OpenPaletteContext,
+        OpenResolution,
+        ResolutionScreenFactory,
+    )
     from shikiru.process import ProcessIdentity
     from shikiru.store.reader import StateReader
 
@@ -155,6 +160,7 @@ def widget_context(
     *,
     services: StubServices | None = None,
     open_palette: OpenPalette | None = None,
+    open_resolution: OpenResolution | None = None,
     focus_task: str | None = None,
 ) -> WidgetContext:
     settings = load_settings(project_dir)
@@ -178,6 +184,7 @@ def widget_context(
         on_change=reader.watch,
         on_motion=lambda _: lambda: None,
         open_palette=open_palette or ignore_palette_action,
+        open_resolution=open_resolution,
     )
 
 
@@ -190,6 +197,8 @@ def dashboard_app(
     settings: Settings | None = None,
     services: StubServices | None = None,
     resources_refresh_seconds: float | None = None,
+    open_palette_context: OpenPaletteContext | None = None,
+    resolution_screen: ResolutionScreenFactory | None = None,
 ) -> DashboardApp:
     """Build the Home dashboard over `reader` with the stub services."""
     settings = settings or load_settings(project_dir)
@@ -211,5 +220,7 @@ def dashboard_app(
         animations=False,
         open_palette=ignore_palette_action,
         widget_names=widget_names,
+        open_palette_context=open_palette_context,
+        resolution_screen=resolution_screen,
         timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
     )
