@@ -1643,3 +1643,57 @@ Refs: Tasks 160–165; eighth-review specification.
 | 7 low free space marker | 162, 166 |
 | 8 header uptime frozen under the popup | 161, 165 |
 | Test count / value | 156–159 |
+
+
+### Ninth-review follow-up
+
+Scope: [ninth real-project review](../docs/tui-feedback-ninth-review.md), planned from three read-only analyses. Execute Tasks 167–174 sequentially, one fresh agent per task, root review by the orchestrator. The test-stability tasks (169–171) precede the Command history work so its tests run on the hardened suite.
+
+### Task 167: `Tasks` heading and bold `SHIKIRU`
+Refs: `plugins/widgets/header.py:88`, `plugins/widgets/queue.py` `_render_count` (about 1260–1279), `ui/tokens.py` `STYLE_BOLD`; 06 §6.1; tests that pin `TASKS` (`test_dashboard_app.py` anchors helper and the count assertion, `test_tmux_palette_binding.py`).
+- [ ] `SHIKIRU` renders bold steel blue (bold survives `NO_COLOR`); the heading reads `Tasks`, the filter label after ` · ` is lower case; the redundant explicit style in the default-focus branch goes; 06 §6.1 names `SHIKIRU` as the only upper-case exception.
+- [ ] Update the pinned strings; make the anchor helper fail when an anchor is missing instead of skipping it; at most one span test for the bold brand. Native colour and `NO_COLOR` render.
+
+### Task 168: Plugin reinstall hint
+Refs: `agents/registry.py` `load_unique_entry_point` (the single producer), `dashboard/app.py` `_load_widget`, README.md Quick start, design 07 runtime row.
+- [ ] One named constant appended to the not-found message only; README (after the install block) and design 07 state that a change to plugin entry points needs `uv tool install . --reinstall` (editable: `uv tool install --editable . --reinstall`).
+- [ ] The registry not-found test asserts the hint through the constant; no wording test.
+
+### Task 169: One UI wait budget
+Refs: `tests/support/waiting.py`, `tests/support/dashboard.py` `FOCUS_VIEW_WAIT_SECONDS`, the module constants in `test_dashboard_app.py`, `test_dashboard_escalation_follow.py`, `test_dashboard_tab_stops.py`, `test_dashboard_popup_focus.py`, `test_dashboard_motion.py`, `test_dashboard_task_detail.py`, the literal `timeout=2` calls (about 330), `pyproject.toml` per-test `timeout`.
+- [ ] A single named UI budget (about 30 s; a ceiling reached only on failure) replaces every 2 s constant and literal wait; the per-test timeout is raised only if a test needs it.
+- [ ] Verify by running `test_dashboard_app.py`, `test_dashboard_task_detail.py` and `test_task_family_and_blockers.py` repeatedly (30 rounds of 10 parallel copies in a scratch directory, deleted afterwards) with zero failures; report the numbers.
+
+### Task 170: `pause(); assert` becomes `wait_until`
+Refs: offenders `test_task_family_and_blockers.py` (`_exercise_paged_relationship_navigation`), `test_dashboard_app.py` (contextual draft test, home shared detail pair), `test_task_evidence_export.py` (`test_palette_export_controls_and_full_result_remain_reachable`); about 75 sites listed by `grep -A1 "await pilot.pause()" tests/integration`.
+- [ ] Fix the named offenders (wait for the observable before asserting, confirm typed text landed, scroll maximum waited for, negative checks that race a refresh dropped or made deterministic, `FakeClock` where the test needs no real timers); sweep the remaining sites file by file with the same idiom; keep the pauses that only settle the app between steps.
+- [ ] Same repeated-run verification on every touched file; report collected cases (must not grow) and the remaining `pause(); assert` count.
+
+### Task 171: Harden the CPU and take-over tests
+Refs: `tests/integration/test_resource_sampler_cpu.py` (`MIN_BURNED_SECONDS`, `MAX_DUTY_FRACTION`, `children[0]`), `src/shikiru/telemetry/resources.py` lifetime CPU, `tests/integration/test_engine_daemon.py::test_take_over_holds_only_that_task_and_hand_back_resumes_its_session`.
+- [ ] CPU test: longer burn, a duty bound whose headroom covers create-time skew, the burner chosen by its command line; the product code only changes if the measurement itself is wrong (reproduce first).
+- [ ] Take-over test: wait for the agent prompt in the pane before `/exit`, wait for the taken-over record; both tests pass 30 rounds of 10 parallel copies with a CPU hog (`yes > /dev/null`, one per core, killed afterwards).
+
+### Task 172: Command history pages with the arrow keys
+Refs: `dashboard/app.py` `_CommandHistoryScreen` (`BINDINGS`, `check_action`, controls row, compact labels, help line, compact page label, p/n constants), test imports of the p/n constants; `dashboard/interaction.py` `native_editor_has_focus` (shared; not changed).
+- [ ] Remove `p`/`n` (constants, bindings, labels, help line, page label); the buttons read `←<cyan> newer` and `→<cyan> older` (compact: bare arrows); Left/Right page from the initial focus and while the status filter is collapsed and stay inert while it is expanded or an input is focused (the guard is local to the popup).
+- [ ] Convert the existing p/n assertions in `test_dashboard_app.py` to the arrow keys (no new tests); native render with the cyan arrows in both sizes.
+
+### Task 173: Coloured rows, no raw result
+Refs: `dashboard/app.py` `_command_history_text`, the status map of `_command_summary_text`, the rejection reason helpers; `dashboard/palette.py` `_show_ack`, `_show_stored_command`, `_applied_result`, `_returned_result*`; 06 §5 and tui-focus (full result stays in history).
+- [ ] Rows are styled per the spec (the status map is shared with the footer summary, not duplicated); `; returned …` is removed from rows and the palette; rejected commands show the engine's `error` text, else the fixed fallback; Pending shows the recorded queue time through the existing helper; the two design sentences are amended.
+- [ ] Merge the two wording-based pending-history tests into one on queue time and status; delete the raw-JSON assertions; fix the palette fixture whose rejected result is not the engine shape. Native colour and `NO_COLOR` renders; collected cases do not grow.
+
+### Task 174: Verify the ninth review, reconcile reference, docs and AGENTS.md
+Refs: Tasks 167–173; HTML reference (`.shk-brand` weight, `Tasks`, history footer arrows and their keydown); AGENTS.md "Test value".
+- [ ] AGENTS.md "Test value" gains the audit lines (at most three sentences) only after the sweep; `uv run poe check` plain and `TERM=dumb NO_COLOR=1` green on the default worker count, plus the repeated-run numbers of 169–171; native before/after of every item; collected cases, functions and lines compared with 1605 / 950 / 60,423.
+- [ ] HTML reference and design docs match the TUI (decode, edit, re-encode with an exact round-trip, Chrome check with a throwaway profile); spec marked delivered, release record `docs/release-readiness-2026-10-13-phase11-ninth-review.md`, README links, plan and todo ticked.
+
+| Request | Implementation / verification |
+|---|---|
+| `TASKS` to `Tasks`, bold `SHIKIRU` | 167, 174 |
+| Plugin reinstall hint and README | 168 |
+| AGENTS.md anti-pattern lines | 174 |
+| Stable, hardened tests | 169, 170, 171, 174 |
+| Command history: arrows | 172, 174 |
+| Command history: colour, no `returned` | 173, 174 |

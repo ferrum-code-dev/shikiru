@@ -257,3 +257,14 @@ Eighth-review scope and evidence: [eighth real-project review](../docs/tui-feedb
 - [x] Task 164: Sentence-case titles everywhere
 - [x] Task 165: Verify the eighth review
 - [x] Task 166: Reconcile the HTML reference, design docs and release record
+
+Ninth-review scope and evidence: [ninth real-project review](../docs/tui-feedback-ninth-review.md).
+
+- [ ] Task 167: `Tasks` heading and bold `SHIKIRU`
+- [ ] Task 168: Plugin reinstall hint
+- [ ] Task 169: One UI wait budget
+- [ ] Task 170: `pause(); assert` becomes `wait_until`
+- [ ] Task 171: Harden the CPU and take-over tests
+- [ ] Task 172: Command history pages with the arrow keys
+- [ ] Task 173: Coloured rows, no raw result
+- [ ] Task 174: Verify the ninth review, reconcile reference, docs and AGENTS.md
