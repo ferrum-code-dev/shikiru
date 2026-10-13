@@ -266,7 +266,7 @@ Ninth-review scope and evidence: [ninth real-project review](../docs/tui-feedbac
   - Proof: a `python -I` call with a missing name printed the not-found message before the change; after it both agent and widget messages end with the reinstall hint, and `--reinstall` and `--editable` are confirmed in `uv tool install --help`. The registry test asserts the hint constant, and collected cases stay at 1607. Gate green on the default workers (1586 passed, 14 skipped, 91.16 % coverage).
 - [x] Task 169: One UI wait budget
 - [x] Task 170: `pause(); assert` becomes `wait_until`
-- [ ] Task 171: Harden the CPU and take-over tests
+- [x] Task 171: Harden the CPU and take-over tests
 - [ ] Task 172: Command history pages with the arrow keys
 - [ ] Task 173: Coloured rows, no raw result
 - [ ] Task 174: Verify the ninth review, reconcile reference, docs and AGENTS.md
