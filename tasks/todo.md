@@ -277,5 +277,14 @@ Tenth-review scope and evidence: [tenth review, escalation resolution panel](../
 
 - [x] Task 176: Resolution view model
 - [x] Task 177: Escalation resolution screen
-- [ ] Task 178: Remove the old resolve form
+- [x] Task 178: Remove the old resolve form
 - [ ] Task 179: Verify the tenth review, reconcile the reference and docs
+
+Eleventh-review scope and evidence: [eleventh review, task details](../docs/tui-feedback-eleventh-review.md).
+
+- [ ] Task 180: Briefing data
+- [ ] Task 181: Briefing render and actions row
+- [ ] Task 182: Details list and section views
+- [ ] Task 183: Arrow lists for events, agent activity and relationships
+- [ ] Task 184: Remove the old detail code and tests
+- [ ] Task 185: Verify the eleventh review, reconcile the reference and docs

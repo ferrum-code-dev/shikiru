@@ -83,8 +83,6 @@ class PaletteDraft:
     guidance: str
     role: str | None = None
     role_explicit: bool = False
-    escalation_id: str | None = None
-    resolution: str | None = None
 
 
 class TaskPaletteRoute(StrEnum):
@@ -106,7 +104,6 @@ class PaletteRequest:
     task_id: str | None = None
     role: str | None = None
     drafts: tuple[PaletteDraft, ...] = ()
-    direct_answer: bool = False
 
 
 OpenPalette = Callable[[str], Awaitable[None]]

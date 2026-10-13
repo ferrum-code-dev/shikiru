@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
-from functools import partial
 from typing import TYPE_CHECKING, cast, get_args
 
 from rich.text import Text
@@ -12,7 +11,7 @@ from textual.app import App
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Collapsible, Input, Label, Rule, Select, Static, TextArea
+from textual.widgets import Button, Input, Label, Rule, Select, Static, TextArea
 
 from shikiru.agents.contracts import parse_rung
 from shikiru.config.settings import ComplexityName
@@ -25,7 +24,6 @@ from shikiru.domain.commands import (
     command_rejection_cause,
 )
 from shikiru.domain.escalation import EscalationStatus
-from shikiru.domain.escalation_evidence import EscalationPacket, parse_escalation_packet
 from shikiru.domain.tasks import Mode, Role
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.commands import (
@@ -43,7 +41,6 @@ from shikiru.operator.queries import (
     TASK_ACTION_ROLES,
     OperatorTaskAction,
 )
-from shikiru.ui.compact import display_escalation_headline
 from shikiru.ui.popup import (
     POPUP_BODY_CLASS,
     POPUP_CLOSE_CLASS,
@@ -91,7 +88,6 @@ _ACTION_RUNG = "rung"
 _ACTION_MESSAGE = "message"
 _ACTION_PEEK = "peek"
 _ACTION_RESOLVE = "resolve"
-_RESOLUTION_ROUTE_PREFIX = f"{_ACTION_RESOLVE} "
 _ACTION_STOP = "stop"
 _ACTION_EXPORT = "export"
 _FIELD_EXPORT_DESTINATION = "export-destination"
@@ -150,7 +146,6 @@ SUBMIT_ACTION_LABELS = {
     _ACTION_RUNG: "Change rung",
     _ACTION_MESSAGE: "Queue message",
     _ACTION_PEEK: "Open session",
-    _ACTION_RESOLVE: "Submit resolution",
     _ACTION_EXPORT: "Export evidence",
     _ACTION_STOP: "Stop engine",
 }
@@ -169,8 +164,6 @@ _COMPLEXITY_OPTIONS = (
 )
 _EMPTY = ""
 _FIELD_ACTION = "action"
-_FIELD_ESCALATION = "escalation"
-_FIELD_RESOLUTION = "resolution"
 _FIELD_ACTION_SEARCH = "action-search"
 _FIELD_TASK_SEARCH = "task-search"
 _FIELD_TASK_CHOICE = "task-choice"
@@ -187,8 +180,6 @@ _FIELD_LEADER_RUNG = "leader-rung"
 _FIELD_IMPLEMENTER_RUNG = "implementer-rung"
 _FIELD_RUNG = "rung"
 _FIELD_MESSAGE = "message"
-_FIELD_RESOLUTION_TEXT = "resolution-text"
-_FIELD_RESOLUTION_RUNG = "resolution-rung"
 _EXPORT_FORMAT_OPTIONS = (
     ("Markdown", EXPORT_FORMAT_MARKDOWN),
     ("JSON", EXPORT_FORMAT_JSON),
@@ -200,19 +191,6 @@ _EXPORT_OVERWRITE_OPTIONS = (
 _EXPORT_SIGNALS_OPTIONS = (
     ("Exclude normalized signal excerpts", _EXPORT_SIGNALS_EXCLUDE),
     ("Include normalized signal excerpts", _EXPORT_SIGNALS_INCLUDE),
-)
-_ESCALATION_SUMMARY_ID = "palette-escalation-summary"
-_ESCALATION_STATUS_ID = "palette-escalation-status"
-_EVIDENCE_ERROR_ID = "palette-evidence-error"
-_EVIDENCE_CONTAINER_ID = "palette-evidence"
-_ORIGINAL_PACKET_ID = "palette-original-packet"
-_EVIDENCE_SECTIONS = (
-    ("Timeline", "timeline"),
-    ("What was tried", "what-was-tried"),
-    ("Reports", "reports"),
-    ("Facts", "facts"),
-    ("Recent turn signals", "recent-signals"),
-    ("Sessions", "sessions"),
 )
 _ACTION_STATE_ID = "palette-action-state"
 _GUIDANCE_ID = "palette-guidance"
@@ -271,7 +249,6 @@ _PALETTE_STACKED_ACTIONS_ROWS = 2
 _PALETTE_TEXT_AREA_HEIGHTS = (
     (_FIELD_REQUEST, 6),
     (_FIELD_MESSAGE, 4),
-    (_FIELD_RESOLUTION_TEXT, 5),
 )
 _TAKEOVER_SELECTION_FAILURE = "take-over succeeded, but the role pane could not be selected"
 _PALETTE_STATE_WORKER = "palette-state-updates"
@@ -289,12 +266,6 @@ _FORM_IDENTITY_FIELDS = {
     _ACTION_PRIORITIZE: (_FIELD_PRIORITY,),
     _ACTION_RUNG: (_FIELD_RUNG,),
     _ACTION_MESSAGE: (_FIELD_MESSAGE,),
-    _ACTION_RESOLVE: (
-        _FIELD_ESCALATION,
-        _FIELD_RESOLUTION,
-        _FIELD_RESOLUTION_TEXT,
-        _FIELD_RESOLUTION_RUNG,
-    ),
     _ACTION_EXPORT: (
         _FIELD_EXPORT_DESTINATION,
         _FIELD_EXPORT_FORMAT,
@@ -332,7 +303,6 @@ _ACTION_GUIDANCE = {
         "Queues guidance for this role's next turn; it does not interrupt a running turn."
     ),
     _ACTION_PEEK: "Shows recorded session activity for this task and role.",
-    _ACTION_RESOLVE: "Applies one of the open escalation's allowed resolutions.",
     _ACTION_STOP: (
         "Stops this project's engine and running turns. Task state, sessions and worktrees "
         "remain for the next engine start."
@@ -395,8 +365,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         max-height: 1fr; min-height: 0; margin-top: 0; padding-top: 0;
         border-top: none;
     }
-    #field-palette-escalation-summary { height: auto; }
-    #field-palette-escalation-status, #field-palette-evidence-error { height: auto; }
     .palette-field { height: auto; margin-bottom: 1; }
     .palette-field Label { height: 1; color: $secondary-text; text-style: none; }
     .palette-field Input, .palette-field Select { width: 100%; }
@@ -407,13 +375,9 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         text-style: reverse;
     }
     #palette-result-scroll { height: auto; max-height: 12; margin-top: 1; }
-    #palette-escalation-summary, #palette-escalation-status, #palette-evidence-error,
-    #palette-original-packet, #palette-result { height: auto; }
-    #palette-evidence { height: auto; }
-    .palette-evidence { height: auto; }
+    #palette-result { height: auto; }
     #request { height: 6; }
     #message { height: 4; }
-    #resolution-text { height: 5; }
     #palette-submit, #palette-back-to-menu {
         height: 1; min-height: 1; margin: 0 0 0 1; padding: 0 1; border: none;
         text-style: none;
@@ -456,12 +420,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._contextual_palette = initial_context is not None
         self._initial_context = initial_context or PaletteRequest()
         self._initial_action = self._initial_context.action or initial_action
-        self._fixed_escalation_id = (
-            self._initial_action.removeprefix(_RESOLUTION_ROUTE_PREFIX)
-            if self._initial_action.startswith(_RESOLUTION_ROUTE_PREFIX)
-            else None
-        )
-        self._answer_resolution_route = self._initial_context.direct_answer
         self._menu_available = self._contextual_palette
         self._menu_visible = self._menu_available and self._initial_action == _EMPTY
         self._pane_selector = pane_selector
@@ -483,9 +441,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._action_states: dict[str, TaskActionAvailability] = {}
         self._shown_action_options: tuple[tuple[str, str], ...] = ()
         self._escalations: dict[str, EscalationView] = {}
-        self._shown_escalation_id: str | None = None
-        self._escalation_state_message: str | None = None
-        self._escalation_packet: EscalationPacket | None = None
         self._route_error: str | None = None
         self._route_action: str | None = None
         self._advanced_expanded = False
@@ -587,8 +542,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             yield from self._compose_action_target_fields()
             yield from self._compose_task_submission_fields()
             yield from self._compose_task_role_fields()
-            yield from self._compose_resolution_fields()
-            yield from self._compose_evidence_fields()
+            yield Static("", id=_GUIDANCE_ID, markup=False)
             with VerticalScroll(id="palette-result-scroll", classes=POPUP_BODY_CLASS):
                 yield Static("", id="palette-result", markup=False)
 
@@ -635,45 +589,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         yield from self._select_field("Role", _FIELD_ROLE, _ROLE_OPTIONS)
         yield from self._input_field("Rung", "rung", "agent:model:effort")
         yield from self._text_area_field("Message", "message", "Message for the next turn")
-
-    def _compose_resolution_fields(self) -> ComposeResult:
-        yield from self._select_field("Escalation", _FIELD_ESCALATION, ())
-        with Vertical(id=f"field-{_ESCALATION_STATUS_ID}"):
-            yield Static("", id=_ESCALATION_STATUS_ID, markup=False)
-        with Vertical(id=f"field-{_ESCALATION_SUMMARY_ID}"):
-            yield Static("", id=_ESCALATION_SUMMARY_ID, markup=False)
-        yield from self._select_field("Resolution", _FIELD_RESOLUTION, ())
-        yield from self._text_area_field(
-            "Answer guidance", "resolution-text", "Guidance for the Leader"
-        )
-        yield from self._input_field(
-            "Retry rung (optional)", "resolution-rung", "agent:model:effort"
-        )
-        yield Static("", id=_GUIDANCE_ID, markup=False)
-        with Vertical(id=f"field-{_EVIDENCE_ERROR_ID}"):
-            yield Static("", id=_EVIDENCE_ERROR_ID, markup=False)
-
-    def _compose_evidence_fields(self) -> ComposeResult:
-        yield Vertical(
-            *(
-                Collapsible(
-                    Static("", id=f"palette-evidence-{section_id}", markup=False),
-                    title=title,
-                    collapsed=True,
-                    id=f"palette-evidence-toggle-{section_id}",
-                    classes="palette-evidence",
-                )
-                for title, section_id in _EVIDENCE_SECTIONS
-            ),
-            Collapsible(
-                Static("", id=_ORIGINAL_PACKET_ID, markup=False),
-                title="Original full packet",
-                collapsed=True,
-                id="palette-evidence-original",
-                classes="palette-evidence",
-            ),
-            id=_EVIDENCE_CONTAINER_ID,
-        )
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         parent = event.widget.parent
@@ -724,31 +639,11 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             self.query_one(f"#{_SUBMIT_ID}", Button).disabled = True
 
     def _initialize_action_route(self) -> None:
-        escalation_select = cast("Select[str]", self.query_one("#escalation", Select))
         action_select = cast("Select[str]", self.query_one("#action", Select))
         if self._initial_action == _EMPTY:
             action_select.value = _ACTION_SUBMIT
         elif self._initial_action in {action for _, action in PALETTE_ACTIONS}:
             action_select.value = self._initial_action
-        elif self._initial_action.startswith(_RESOLUTION_ROUTE_PREFIX):
-            action_select.value = _ACTION_RESOLVE
-            escalation_id = self._initial_action.removeprefix(_RESOLUTION_ROUTE_PREFIX)
-            if self._is_open_escalation(escalation_id):
-                escalation_select.value = escalation_id
-            else:
-                item = self._queries.get_escalation(escalation_id)
-                if item is None:
-                    self._route_error = self._missing_escalation_message(escalation_id)
-                    escalation_select.set_options(
-                        [
-                            *self._escalation_select_options(),
-                            (f"{escalation_id} · not open", escalation_id),
-                        ]
-                    )
-                else:
-                    self._escalations[escalation_id] = item
-                    self._refresh_escalation_options(preserve=escalation_id)
-                escalation_select.value = escalation_id
         else:
             self._route_error = f"unknown palette action route: {self._initial_action}"
             action_select.set_options(
@@ -779,10 +674,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._refresh_task_choices()
         self._route_action = self._selected_value(_FIELD_ACTION)
         self._update_fields(action_select.value)
-        if self._answer_resolution_route:
-            self._answer_resolution_route = self._select_direct_answer()
-            self._show_escalation(self._selected_value(_FIELD_ESCALATION), force=True)
-            self._update_fields(action_select.value)
         self._restore_contextual_form_draft(self._selected_value(_FIELD_ACTION))
         self._form_position_action = self._selected_value(_FIELD_ACTION)
 
@@ -843,11 +734,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                 self._show_result(_EMPTY)
             self._update_fields(event.value)
             self._refresh_action_availability()
-        elif event.select.id == _FIELD_ESCALATION:
-            self._handle_escalation_selection(event.value)
-        elif event.select.id == _FIELD_RESOLUTION:
-            self._update_fields(self._selected_value(_FIELD_ACTION))
-            self._refresh_action_availability()
         elif event.select.id == _FIELD_TASK_CHOICE:
             if isinstance(event.value, str) and event.select.has_focus:
                 self.query_one(f"#{_FIELD_TASK_ID}", Input).value = event.value
@@ -855,21 +741,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             if not self._role_is_explicit and event.select.has_focus:
                 self._role_is_explicit = True
             self._refresh_action_availability()
-
-    def _handle_escalation_selection(self, value: object) -> None:
-        selected_id = value if isinstance(value, str) else None
-        if selected_id != self._selected_value(_FIELD_ESCALATION):
-            return
-        if (
-            self._route_error is not None
-            and selected_id is not None
-            and self._is_open_escalation(selected_id)
-        ):
-            self._route_error = None
-            self.query_one(f"#{_SUBMIT_ID}", Button).disabled = False
-            self._show_result(_EMPTY)
-        self._show_escalation(value)
-        self._refresh_action_availability()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         """Filter palette actions and task targets or refresh current eligibility."""
@@ -892,7 +763,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             self._refresh_action_availability()
 
     async def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        if event.text_area.id in {_FIELD_REQUEST, _FIELD_MESSAGE, _FIELD_RESOLUTION_TEXT}:
+        if event.text_area.id in {_FIELD_REQUEST, _FIELD_MESSAGE}:
             self._refresh_action_availability()
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -1058,15 +929,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             button.styles.height = 1 if narrow_pane else "auto"
         if tiny_pane:
             action = self._selected_value(_FIELD_ACTION)
-            compact_submit_label = (
-                "Answer"
-                if self._answer_resolution_route
-                else "Queue"
-                if action == _ACTION_MESSAGE
-                else "Resolve"
-                if action == _ACTION_RESOLVE
-                else "Submit"
-            )
+            compact_submit_label = "Queue" if action == _ACTION_MESSAGE else "Submit"
             self.query_one(f"#{_SUBMIT_ID}", Button).label = compact_submit_label
         else:
             self._update_fields(self._selected_value(_FIELD_ACTION))
@@ -1114,19 +977,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         if task_id is None or action in {_ACTION_SUBMIT, _ACTION_STOP}:
             return label
         target = task_id
-        if action == _ACTION_RESOLVE:
-            escalation_id = self._selected_value(_FIELD_ESCALATION)
-            if escalation_id is not None:
-                target = f"{escalation_id} · {task_id}"
-            label = "Answer decision" if self._answer_resolution_route else "Resolve escalation"
-            full_title = f"{label} · {target}"
-            if self.size.width <= _PALETTE_SHORT_PANE_MAX_COLUMNS:
-                return f"{task_id} {escalation_id}" if escalation_id is not None else task_id
-            short_label = "Answer" if self._answer_resolution_route else "Resolve"
-            short_title = f"{short_label} · {target}"
-            if self.size.width <= _PALETTE_CONTEXT_TITLE_SHORT_LABEL_MAX_COLUMNS:
-                return short_title
-            return full_title
         if action in _FORM_ROLE_ACTIONS:
             role = self._selected_value(_FIELD_ROLE)
             if role is not None:
@@ -1148,24 +998,17 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     def _remember_form_draft(self) -> None:
         task_id = self._initial_context.task_id
         action = self._selected_value(_FIELD_ACTION)
-        resolution = self._selected_value(_FIELD_RESOLUTION)
-        if task_id is None or action not in {_ACTION_MESSAGE, _ACTION_RESOLVE}:
+        if task_id is None or action != _ACTION_MESSAGE:
             return
-        if action == _ACTION_RESOLVE and resolution != ResolutionKind.ANSWER.value:
-            return
-        guidance_field = _FIELD_MESSAGE if action == _ACTION_MESSAGE else _FIELD_RESOLUTION_TEXT
-        guidance = self._text(guidance_field)
         role = self._selected_value(_FIELD_ROLE)
         if self._remember_contextual_draft is not None:
             self._remember_contextual_draft(
                 PaletteDraft(
                     task_id=task_id,
                     action=action,
-                    guidance=guidance,
+                    guidance=self._text(_FIELD_MESSAGE),
                     role=role,
                     role_explicit=self._role_is_explicit,
-                    escalation_id=self._selected_value(_FIELD_ESCALATION),
-                    resolution=resolution,
                 )
             )
 
@@ -1186,28 +1029,11 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             )
         if draft is None:
             return
-        fixed_escalation_route = (
-            self._fixed_escalation_id is not None or self._answer_resolution_route
-        )
-        if (
-            action == _ACTION_RESOLVE
-            and fixed_escalation_route
-            and draft.escalation_id != self._selected_value(_FIELD_ESCALATION)
-        ):
-            return
         if self._initial_context.role is None and draft.role is not None:
             cast("Select[str]", self.query_one(f"#{_FIELD_ROLE}", Select)).value = draft.role
             self._role_is_explicit = draft.role_explicit
         if action == _ACTION_MESSAGE:
             self.query_one(f"#{_FIELD_MESSAGE}", TextArea).text = draft.guidance
-        elif action == _ACTION_RESOLVE:
-            if draft.escalation_id is not None:
-                self._refresh_escalation_options(preserve=draft.escalation_id)
-            if draft.resolution is not None:
-                cast(
-                    "Select[str]", self.query_one(f"#{_FIELD_RESOLUTION}", Select)
-                ).value = draft.resolution
-            self.query_one(f"#{_FIELD_RESOLUTION_TEXT}", TextArea).text = draft.guidance
         self._restored_contextual_draft_actions.add(action)
 
     def _refresh_context_menu(self) -> None:
@@ -1337,13 +1163,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
 
     def _context_escalation_id(self) -> str | None:
         task_id = self._input(_FIELD_TASK_ID).strip()
-        selected_id = self._selected_value(_FIELD_ESCALATION)
-        if (
-            selected_id is not None
-            and self._is_open_escalation(selected_id)
-            and self._escalations[selected_id].escalation.task_id == task_id
-        ):
-            return selected_id
         return next(
             (
                 item.escalation.id
@@ -1405,7 +1224,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             form.scroll_to(y=self._form_scroll_y, animate=False, immediate=True)
             return
         action = self._selected_value(_FIELD_ACTION)
-        resolution = self._selected_value(_FIELD_RESOLUTION)
         candidates = {
             _ACTION_SUBMIT: _FIELD_REQUEST,
             _ACTION_PRIORITIZE: _FIELD_PRIORITY,
@@ -1413,13 +1231,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             _ACTION_HAND_BACK: _FIELD_ROLE,
             _ACTION_RUNG: _FIELD_ROLE,
             _ACTION_MESSAGE: _FIELD_MESSAGE,
-            _ACTION_RESOLVE: (
-                _FIELD_RESOLUTION_TEXT
-                if resolution == ResolutionKind.ANSWER.value
-                else _FIELD_RESOLUTION_RUNG
-                if resolution == ResolutionKind.RETRY.value
-                else _FIELD_RESOLUTION
-            ),
             _ACTION_EXPORT: _FIELD_EXPORT_DESTINATION,
         }
         candidate = candidates.get(action) if action is not None else None
@@ -1583,16 +1394,11 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                 if item.action is selected_action
             )
             disabled_reason = role_state.disabled_reason
-        if action == _ACTION_RESOLVE:
-            disabled_reason = self._resolve_disabled_reason() or disabled_reason
         state = self.query_one(f"#{_ACTION_STATE_ID}", Static)
         state.update(f"Unavailable: {disabled_reason}" if disabled_reason is not None else _EMPTY)
-        guidance = (
-            self._answer_resolution_consequence()
-            if action == _ACTION_RESOLVE and self._answer_resolution_route
-            else _ACTION_GUIDANCE.get(action or "", _EMPTY)
+        self.query_one(f"#{_GUIDANCE_ID}", Static).update(
+            _ACTION_GUIDANCE.get(action or "", _EMPTY)
         )
-        self.query_one(f"#{_GUIDANCE_ID}", Static).update(guidance)
         pending_same_form = form_identity in self._pending_form_commands
         self.query_one(f"#{_SUBMIT_ID}", Button).disabled = (
             self._route_error is not None
@@ -1601,64 +1407,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             or pending_same_form
         )
         self._refresh_context_menu()
-
-    def _select_direct_answer(self) -> bool:
-        escalation_id = self._selected_value(_FIELD_ESCALATION)
-        if escalation_id is None:
-            return False
-        item = self._escalations.get(escalation_id)
-        if item is None or not any(
-            option.label is ResolutionKind.ANSWER for option in item.escalation.options
-        ):
-            return False
-        cast(
-            "Select[str]", self.query_one(f"#{_FIELD_RESOLUTION}", Select)
-        ).value = ResolutionKind.ANSWER.value
-        return True
-
-    def _resolve_disabled_reason(self) -> str | None:
-        escalation_id = self._selected_value(_FIELD_ESCALATION)
-        reason = None
-        if escalation_id is None:
-            reason = _SELECT_REQUIRED
-        else:
-            item = self._escalations.get(escalation_id)
-            if item is None:
-                reason = self._missing_escalation_message(escalation_id)
-            elif self._escalation_state_message is not None:
-                reason = self._escalation_state_message
-            else:
-                resolution_value = self._selected_value(_FIELD_RESOLUTION)
-                if resolution_value is None:
-                    reason = _SELECT_REQUIRED
-                else:
-                    kind = ResolutionKind(resolution_value)
-                    if not any(option.label is kind for option in item.escalation.options):
-                        reason = f"{kind.value} is not an option for {escalation_id}"
-                    elif (
-                        kind is ResolutionKind.ANSWER
-                        and not self._text(_FIELD_RESOLUTION_TEXT).strip()
-                    ):
-                        reason = "answer is required"
-        return reason
-
-    def _answer_resolution_consequence(self) -> str:
-        packet = self._escalation_packet
-        if packet is None:
-            return "Consequence unavailable in the recorded packet."
-        consequence = next(
-            (
-                item.consequences
-                for item in packet.resolutions
-                if item.kind is ResolutionKind.ANSWER
-            ),
-            None,
-        )
-        return (
-            f"Consequence: {consequence}"
-            if consequence is not None
-            else "Consequence unavailable in the recorded packet."
-        )
 
     async def _refresh_after_database_change(self) -> None:
         if self._is_current_screen():
@@ -1670,11 +1418,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             self._refresh_action_availability()
 
     def _refresh_escalations(self) -> None:
-        selected_id = self._selected_value(_FIELD_ESCALATION)
-        same_target = selected_id is not None and selected_id == self._shown_escalation_id
-        form = self.query_one("#palette-form", VerticalScroll)
-        scroll_y = form.scroll_y
-        focused = cast("App[None]", self.app).focused
         escalations = {item.escalation.id: item for item in self._queries.list_escalations()}
         if self._contextual_palette and self._initial_context.task_id is not None:
             escalations = {
@@ -1682,54 +1425,11 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                 for escalation_id, item in escalations.items()
                 if item.escalation.task_id == self._initial_context.task_id
             }
-        if selected_id is not None and selected_id not in escalations:
-            item = self._queries.get_escalation(selected_id)
-            if item is not None:
-                escalations[selected_id] = item
         self._escalations = escalations
-        self._refresh_escalation_options(preserve=selected_id)
-        if selected_id is not None:
-            self._show_escalation(selected_id, force=True)
-        if same_target:
-            self.call_after_refresh(partial(self._restore_escalation_form_state, scroll_y, focused))
-
-    def _restore_escalation_form_state(self, scroll_y: float, focused: Widget | None) -> None:
-        if not self._is_current_screen():
-            return
-        if focused is not None and widget_is_on_screen(focused, self):
-            focused.focus()
-        self.query_one("#palette-form", VerticalScroll).scroll_to(
-            y=scroll_y,
-            animate=False,
-            immediate=True,
-        )
-
-    def _escalation_select_options(self) -> list[tuple[str, str]]:
-        return [
-            (
-                f"{item.escalation.id} · {item.escalation.task_id} · "
-                f"{display_escalation_headline(item.escalation.task_id, item.escalation.headline)}"
-                + (" · resolved" if item.escalation.status is not EscalationStatus.OPEN else ""),
-                item.escalation.id,
-            )
-            for item in self._escalations.values()
-        ]
-
-    def _refresh_escalation_options(self, *, preserve: str | None) -> None:
-        select = cast("Select[str]", self.query_one(f"#{_FIELD_ESCALATION}", Select))
-        options = self._escalation_select_options()
-        if preserve is not None and preserve not in {value for _, value in options}:
-            options.append((f"{preserve} · not open", preserve))
-        select.set_options(options)
-        if preserve is not None:
-            select.value = preserve
 
     def _is_open_escalation(self, escalation_id: str) -> bool:
         item = self._escalations.get(escalation_id)
         return item is not None and item.escalation.status is EscalationStatus.OPEN
-
-    def _missing_escalation_message(self, escalation_id: str) -> str:
-        return f"escalation {escalation_id} is not open"
 
     def _refresh_pending_commands(self) -> None:
         completed: set[int] = set()
@@ -1782,7 +1482,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             _ACTION_MESSAGE: lambda: self._commands.prepare_send_message(
                 task_id, self._role(), self._text(_FIELD_MESSAGE)
             ),
-            _ACTION_RESOLVE: self._resolve_command,
             _ACTION_STOP: self._commands.prepare_stop_engine,
         }
         builder = builders.get(action or _EMPTY)
@@ -1799,33 +1498,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             depends_on=self._dependencies(),
             leader=self._optional_rung(_FIELD_LEADER_RUNG),
             implementer=self._optional_rung(_FIELD_IMPLEMENTER_RUNG),
-        )
-
-    def _resolve_command(self) -> Command:
-        escalation_id = self._selected_value(_FIELD_ESCALATION)
-        resolution_value = self._selected_value(_FIELD_RESOLUTION)
-        if escalation_id is None or resolution_value is None:
-            raise ValueError(_SELECT_REQUIRED)
-        kind = ResolutionKind(resolution_value)
-        item = self._escalations.get(escalation_id)
-        if item is None:
-            message = f"escalation {escalation_id} is not open"
-            raise ValueError(message)
-        if not any(option.label is kind for option in item.escalation.options):
-            message = f"{kind.value} is not an option for {escalation_id}"
-            raise ValueError(message)
-        answer = self._text(_FIELD_RESOLUTION_TEXT) if kind is ResolutionKind.ANSWER else _EMPTY
-        if kind is ResolutionKind.ANSWER and not answer.strip():
-            message = "answer is required"
-            raise ValueError(message)
-        retry_rung = (
-            self._optional_rung(_FIELD_RESOLUTION_RUNG) if kind is ResolutionKind.RETRY else None
-        )
-        return self._commands.prepare_palette_resolution(
-            escalation_id,
-            kind,
-            answer=answer,
-            retry_rung=retry_rung,
         )
 
     def _form_identity(self) -> tuple[str, ...]:
@@ -1854,8 +1526,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     def _target_for_action(self, action: str, task_id: str, role: Role | None) -> str:
         if action in {_ACTION_SUBMIT, _ACTION_STOP}:
             return "project"
-        if action == _ACTION_RESOLVE:
-            return self._selected_value(_FIELD_ESCALATION) or "escalation"
         if role is not None:
             return f"{task_id} · {role.value}"
         return task_id or "task"
@@ -1984,140 +1654,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             )
         self._show_result("\n".join(lines))
 
-    def _show_escalation(self, value: object, *, force: bool = False) -> None:
-        escalation_id = value if isinstance(value, str) else _EMPTY
-        selected_id = escalation_id or None
-        target_changed = selected_id != self._shown_escalation_id
-        if not force and not target_changed:
-            return
-        self._shown_escalation_id = selected_id
-        item = self._escalations.get(escalation_id)
-        status = self.query_one(f"#{_ESCALATION_STATUS_ID}", Static)
-        summary = self.query_one(f"#{_ESCALATION_SUMMARY_ID}", Static)
-        evidence_error = self.query_one(f"#{_EVIDENCE_ERROR_ID}", Static)
-        status_field = self.query_one(f"#field-{_ESCALATION_STATUS_ID}")
-        resolution = cast("Select[str]", self.query_one("#resolution", Select))
-        if item is None:
-            self._escalation_packet = None
-            self._escalation_state_message = None
-            status.update(_EMPTY)
-            status_field.display = True
-            summary.update(self._route_error or self._missing_escalation_message(escalation_id))
-            evidence_error.update(_EMPTY)
-            self._show_packet_evidence(None, None)
-            resolution.set_options(())
-            return
-
-        self._escalation_state_message = self._queries.escalation_resolution_disabled_reason(
-            escalation_id
-        )
-        status.update(self._escalation_state_message or "Open escalation")
-        status_field.display = (
-            not self._answer_resolution_route or self._escalation_state_message is not None
-        )
-        self._escalation_packet = (
-            parse_escalation_packet(item.packet) if item.packet is not None else None
-        )
-        parsed = self._escalation_packet
-        options = tuple(
-            (
-                f"{'★ ' if option.recommended else ''}{option.label.value}",
-                option.label.value,
-            )
-            for option in item.escalation.options
-        )
-        selected_resolution = self._selected_value(_FIELD_RESOLUTION)
-        resolution.set_options(options)
-        if target_changed or selected_resolution not in {value for _, value in options}:
-            recommended = next(
-                option.label.value for option in item.escalation.options if option.recommended
-            )
-            resolution.value = recommended
-        else:
-            resolution.value = selected_resolution
-        question = (
-            parsed.agent_request.question
-            if parsed is not None and parsed.agent_request is not None
-            else parsed.question
-            if parsed is not None
-            else None
-        )
-        summary.update(self._escalation_summary(item, parsed, question))
-        errors = [item.packet_error] if item.packet_error is not None else []
-        if parsed is not None:
-            errors.extend(parsed.errors)
-        evidence_error.update("Evidence error: " + "; ".join(errors) if errors else _EMPTY)
-        self._show_packet_evidence(item.packet, parsed)
-
-    def _escalation_summary(
-        self,
-        item: EscalationView,
-        packet: EscalationPacket | None,
-        question: str | None,
-    ) -> str:
-        identity = (
-            f"{item.escalation.task_id} · {item.escalation.id} · "
-            f"{display_escalation_headline(item.escalation.task_id, item.escalation.headline)}"
-        )
-        if self._answer_resolution_route:
-            lines = [identity, f"Question: {question or 'unavailable'}"]
-            if packet is not None and packet.agent_request is not None:
-                suggestion = next(
-                    (option for option in packet.agent_request.options if option.recommended),
-                    None,
-                )
-                if suggestion is not None:
-                    lines.append(f"Leader suggestion: {suggestion.label}")
-                    lines.append(f"Suggestion consequence: {suggestion.consequences}")
-            return "\n".join(lines)
-        lines = [identity]
-        lines.append(f"Question: {question}" if question else "Question: unavailable")
-        lines.append("Agent alternatives")
-        if packet is not None and packet.agent_request is not None:
-            lines.extend(
-                f"  {'★ ' if option.recommended else ''}{option.label}\n"
-                f"    Consequences: {option.consequences}"
-                for option in packet.agent_request.options
-            )
-        elif packet is None:
-            lines.append("  Agent alternatives are unavailable with the packet.")
-        elif packet.errors:
-            lines.append("  Agent alternatives could not be read.")
-        else:
-            lines.append("  No structured agent alternatives are recorded.")
-        consequences = (
-            {option.kind: option.consequences for option in packet.resolutions}
-            if packet is not None
-            else {}
-        )
-        lines.append("Allowed engine resolutions")
-        lines.extend(
-            f"  {'★ ' if option.recommended else ''}{option.label.value}"
-            f" · {consequences.get(option.label, 'Consequence unavailable')}"
-            for option in item.escalation.options
-        )
-        return "\n".join(lines)
-
-    def _show_packet_evidence(
-        self,
-        original_packet: str | None,
-        packet: EscalationPacket | None,
-    ) -> None:
-        sections = dict(packet.evidence_sections) if packet is not None else {}
-        for title, section_id in _EVIDENCE_SECTIONS:
-            control_id = f"palette-evidence-toggle-{section_id}"
-            control = self.query_one(f"#{control_id}", Collapsible)
-            content = sections.get(title)
-            control.display = content is not None
-            self.query_one(f"#palette-evidence-{section_id}", Static).update(
-                content if content is not None else _EMPTY
-            )
-        original = self.query_one("#palette-evidence-original", Collapsible)
-        original.display = original_packet is not None
-        self.query_one(f"#{_ORIGINAL_PACKET_ID}", Static).update(
-            original_packet if original_packet is not None else _EMPTY
-        )
-
     def _update_fields(self, value: object) -> None:
         action = value if isinstance(value, str) else _EMPTY
         fixed_task_target = self._contextual_palette and self._initial_context.task_id is not None
@@ -2145,33 +1681,10 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             in {_ACTION_TAKE_OVER, _ACTION_HAND_BACK, _ACTION_RUNG, _ACTION_MESSAGE, _ACTION_PEEK},
             "rung": action == _ACTION_RUNG,
             "message": action == _ACTION_MESSAGE,
-            _FIELD_ESCALATION: action == _ACTION_RESOLVE and not self._answer_resolution_route,
-            _ESCALATION_STATUS_ID: action == _ACTION_RESOLVE
-            and (
-                not self._answer_resolution_route
-                or self._escalation_state_message is not None
-                or self._selected_value(_FIELD_ESCALATION) not in self._escalations
-            ),
-            _ESCALATION_SUMMARY_ID: action == _ACTION_RESOLVE,
-            _EVIDENCE_ERROR_ID: action == _ACTION_RESOLVE,
-            _FIELD_RESOLUTION: action == _ACTION_RESOLVE and not self._answer_resolution_route,
-            "resolution-text": action == _ACTION_RESOLVE
-            and self._selected_value(_FIELD_RESOLUTION) == ResolutionKind.ANSWER,
-            "resolution-rung": action == _ACTION_RESOLVE
-            and self._selected_value(_FIELD_RESOLUTION) == ResolutionKind.RETRY,
         }
         for field, visible in groups.items():
             self.query_one(f"#field-{field}").display = visible
         submit_label = SUBMIT_ACTION_LABELS.get(action, "Submit action")
-        if action == _ACTION_RESOLVE:
-            selected_resolution = self._selected_value(_FIELD_RESOLUTION)
-            submit_label = (
-                "Submit answer"
-                if selected_resolution == ResolutionKind.ANSWER
-                else "Submit retry"
-                if selected_resolution == ResolutionKind.RETRY
-                else SUBMIT_ACTION_LABELS[_ACTION_RESOLVE]
-            )
         self.query_one(f"#{_SUBMIT_ID}", Button).label = submit_label
         self.query_one(f"#{_ACTION_STATE_ID}").display = action in _TASK_TARGET_ACTIONS
         self.query_one(f"#{_GUIDANCE_ID}").display = action in _ACTION_GUIDANCE
@@ -2183,8 +1696,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self.query_one(f"#{_ADVANCED_FIELDS_ID}").display = (
             action == _ACTION_SUBMIT and self._advanced_expanded
         )
-        self.query_one(f"#{_EVIDENCE_CONTAINER_ID}").display = action == _ACTION_RESOLVE
-        self._show_escalation(self._selected_value(_FIELD_ESCALATION))
 
     def _show_ack(self, ack: Ack, additional_detail: str | None = None) -> None:
         outcome = self._queries.command_status(ack.id)

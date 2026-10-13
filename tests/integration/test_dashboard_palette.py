@@ -1,63 +1,46 @@
 from __future__ import annotations
 
-import asyncio
-import re
 from datetime import UTC, datetime
-from html import unescape
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import Button, Collapsible, Input, OptionList, Select, Static, TextArea
+from textual.widgets import Button, Input, Select, Static, TextArea
 
 from shikiru.agents.contracts import Rung
 from shikiru.dashboard.contract import PaletteRequest
 from shikiru.dashboard.palette import PaletteApp, PaletteScreen
 from shikiru.domain.commands import (
-    AcceptResolution,
-    AnswerResolution,
-    CancelResolution,
     CommandStatus,
     Pause,
     Prioritize,
-    Resolve,
-    RetryResolution,
     Say,
     SetRung,
     Stop,
     Submit,
     TakeOver,
 )
-from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
-from shikiru.engine.handlers.escalations import ResolveHandler
-from shikiru.errors import CommandRejectedError, ConfigError
+from shikiru.domain.tasks import Mode, Role, Status, Step
+from shikiru.errors import ConfigError
 from shikiru.operator.commands import COMMAND_ACK_WAIT_SECONDS, OperatorCommands
 from shikiru.store.commands import CommandQueue
-from shikiru.store.escalations import EscalationStore
 from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import FORMAT_PANE_ID, Tmux, exact_target
 from tests.support.clock import FakeClock
 from tests.support.escalations import (
-    assert_engine_applies_resolution,
-    enqueue_and_cancel,
-    handler_context,
     operator_services,
-    seed_escalation,
 )
-from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+    from pathlib import Path
 
     from rich.text import Text
-    from textual.content import Content
     from textual.pilot import Pilot
 
     from shikiru.domain.commands import Command
@@ -71,10 +54,6 @@ if TYPE_CHECKING:
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _POLL_SECONDS = 0.25
 _APP_SIZE = (120, 32)
-_COMPACT_APP_SIZE = (54, 20)
-_FORM_SCROLL_TEST_OFFSET = 8
-_LONG_PACKET_LINES = 80
-_LAST_PACKET_LINE = "This is the final retained packet line."
 _LIVE_RUNG = Rung(agent="codex", model="sol", effort="high")
 _NATIVE_VISUAL_REVIEW_DIR_ENV = "SHIKIRU_NATIVE_VISUAL_REVIEW_DIR"
 
@@ -87,12 +66,6 @@ def _seed_live_session(connection: Connection, clock: FakeClock, task_id: str) -
 
 def _screen(app: PaletteApp) -> PaletteScreen:
     return cast("PaletteScreen", app.screen)
-
-
-def _exported_screen_text(app: PaletteApp) -> str:
-    text_elements = re.findall(r"<text\b[^>]*>(.*?)</text>", app.export_screenshot(), re.DOTALL)
-    text = " ".join(unescape(content).replace("\xa0", " ") for content in text_elements)
-    return " ".join(text.split())
 
 
 async def _click_menu_button(
@@ -1064,471 +1037,6 @@ async def test_palette_submit_queues_the_command_and_shows_its_ack(
 
 
 @pytest.mark.parametrize(
-    ("reason", "kind", "expected_type", "rung_text"),
-    [
-        (EscalationReason.DECISION_REQUIRED, "answer", AnswerResolution, ""),
-        (EscalationReason.AGENT_ERROR, "retry", RetryResolution, "codex:sol:high"),
-        (EscalationReason.ITERATIONS_EXHAUSTED, "accept", AcceptResolution, ""),
-        (EscalationReason.DECISION_REQUIRED, "cancel", CancelResolution, ""),
-    ],
-)
-async def test_palette_routes_structured_escalation_to_validated_resolution(
-    connection: Connection,
-    database: Database,
-    tmp_path: Path,
-    request: pytest.FixtureRequest,
-    *,
-    reason: EscalationReason,
-    kind: str,
-    expected_type: type[object],
-    rung_text: str,
-) -> None:
-    clock = FakeClock(_START)
-    reader = StateReader(database, clock)
-    request.addfinalizer(reader.close)
-    task = seed_task(connection, clock, title="Structured decision")
-    escalation, packet = seed_escalation(connection, clock, task.id, tmp_path, reason)
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(action=f"resolve {escalation.id}"),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        assert cast("Select[str]", screen.query_one("#escalation", Select)).value == escalation.id
-        summary = _static_text(screen, "#palette-escalation-summary")
-        assert "Which behavior should remain?" in summary
-        assert "★ Keep existing behavior" in summary
-        assert "Preserve the current call pattern." in summary
-        assert "Allowed engine resolutions" in summary
-        assert f"{kind} ·" in summary
-        assert "preserve its worktree" in summary
-        assert _static_text(screen, "#palette-original-packet") == packet
-        assert screen.query_one("#palette-evidence-original", Collapsible).collapsed
-        assert "turn completed: implementation" in _static_text(
-            screen, "#palette-evidence-timeline"
-        )
-        assert "Implementation report evidence." in _static_text(
-            screen, "#palette-evidence-reports"
-        )
-        assert "Recorded git facts." in _static_text(screen, "#palette-evidence-facts")
-        assert "Recent stream tail." in _static_text(screen, "#palette-evidence-recent-signals")
-        assert "Leader session evidence." in _static_text(screen, "#palette-evidence-sessions")
-        assert screen.query_one("#field-resolution").display
-
-        screen.query_one("#resolution", Select).value = kind
-        if kind == "answer":
-            assert screen.query_one("#palette-submit", Button).disabled
-            screen.query_one("#resolution-text", TextArea).text = "Keep the current behavior."
-        if rung_text:
-            screen.query_one("#resolution-rung", Input).value = rung_text
-        await pilot.click("#palette-submit")
-        await _wait_for_ack(screen)
-
-        queued = queue.pending()
-        assert len(queued) == 1
-        assert isinstance(queued[0].command, Resolve)
-        command = queued[0].command
-        assert command.escalation_id == escalation.id
-        assert isinstance(command.resolution, expected_type)
-        if kind == "answer":
-            assert command.resolution == AnswerResolution(text="Keep the current behavior.")
-        if kind == "retry":
-            assert isinstance(command.resolution, RetryResolution)
-            assert command.resolution.rung == Rung(agent="codex", model="sol", effort="high")
-        assert "Pending" in _static_text(screen, "#palette-result")
-        submitted = queued[0]
-
-    await assert_engine_applies_resolution(
-        connection,
-        clock,
-        tmp_path,
-        queue,
-        queued=submitted,
-        task_id=task.id,
-        escalation_id=escalation.id,
-        expected_type=expected_type,
-    )
-
-
-async def test_resolution_target_keeps_task_identity_once_when_headline_has_a_prefix(
-    connection: Connection,
-    database: Database,
-    tmp_path: Path,
-    request: pytest.FixtureRequest,
-) -> None:
-    clock = FakeClock(_START)
-    reader = StateReader(database, clock)
-    request.addfinalizer(reader.close)
-    task = seed_task(connection, clock, title="Normalize the resolution target")
-    reason = EscalationReason.AGENT_ERROR
-    TaskStore(connection, clock).apply_transition(
-        task.id,
-        Transition.escalate(task, reason, step=Step.IMPLEMENT),
-    )
-    suffix = "The implementation step could not continue."
-    escalation = EscalationStore(connection, clock).open(
-        task.id,
-        step=Step.IMPLEMENT,
-        reason=reason,
-        headline=f"{task.id} · {suffix}",
-        packet_path=str(tmp_path / "missing-resolution-packet.md"),
-        options=options_for(reason),
-    )
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(action="resolve", task_id=task.id),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        target = cast("Select[str]", screen.query_one("#escalation", Select))
-        assert target.display
-        target.value = escalation.id
-        target.focus()
-        await pilot.press("enter")
-        await wait_until(lambda: target.expanded, timeout=UI_WAIT_SECONDS)
-        options = target.query_one(OptionList)
-        label = next(
-            plain_text(options.get_option_at_index(index).prompt)
-            for index in range(options.option_count)
-            if escalation.id in plain_text(options.get_option_at_index(index).prompt)
-        )
-        assert label.count(task.id) == 1
-        assert escalation.id in label
-        assert suffix in label
-        assert queue.pending() == []
-        await pilot.press("escape")
-        await wait_until(lambda: not target.expanded, timeout=UI_WAIT_SECONDS)
-        assert queue.pending() == []
-
-
-async def test_palette_preserves_resolution_form_after_unrelated_database_update(
-    connection: Connection,
-    database: Database,
-    tmp_path: Path,
-    request: pytest.FixtureRequest,
-) -> None:
-    clock = FakeClock(_START)
-    reader = StateReader(database, clock)
-    request.addfinalizer(reader.close)
-    task = seed_task(connection, clock, title="Selected decision")
-    other_task = seed_task(connection, clock, title="Unrelated decision")
-    escalation, _ = seed_escalation(
-        connection, clock, task.id, tmp_path, EscalationReason.ITERATIONS_EXHAUSTED
-    )
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(action=f"resolve {escalation.id}"),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        resolution = cast("Select[str]", screen.query_one("#resolution", Select))
-        guidance = "Preserve the selected form while refreshing."
-        screen.query_one("#resolution-text", TextArea).text = guidance
-        resolution.value = "accept"
-        rung_text = "codex:sol:high"
-        screen.query_one("#resolution-rung", Input).value = rung_text
-        await pilot.pause()
-        assert resolution.value == "accept"
-
-        form = screen.query_one("#palette-form", VerticalScroll)
-        resolution.focus()
-        form.scroll_to(y=_FORM_SCROLL_TEST_OFFSET, animate=False, immediate=True)
-        await pilot.pause()
-        await pilot.click("#palette-submit")
-        await _wait_for_ack(screen)
-        (submitted,) = queue.pending()
-        assert isinstance(submitted.command, Resolve)
-        assert isinstance(submitted.command.resolution, AcceptResolution)
-
-        resolution.focus(scroll_visible=False)
-        await wait_until(lambda: app.focused is resolution, timeout=UI_WAIT_SECONDS)
-        await pilot.pause()
-        form.scroll_to(y=_FORM_SCROLL_TEST_OFFSET, animate=False, immediate=True)
-        before_scroll = form.scroll_y
-        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
-
-        external = database.connect()
-        try:
-            unrelated_escalation, _ = seed_escalation(
-                external,
-                clock,
-                other_task.id,
-                tmp_path,
-                EscalationReason.DECISION_REQUIRED,
-            )
-        finally:
-            external.close()
-        clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
-        await wait_until(
-            lambda: any(
-                unrelated_escalation.id in str(option.prompt)
-                for option in screen.query_one("#escalation", Select).query_one(OptionList).options
-            ),
-            timeout=UI_WAIT_SECONDS,
-        )
-        await pilot.pause()
-
-        assert resolution.value == "accept"
-        assert screen.query_one("#resolution-text", TextArea).text == guidance
-        assert screen.query_one("#resolution-rung", Input).value == rung_text
-        assert app.focused is resolution
-        assert form.scroll_y == before_scroll
-        assert screen.query_one("#palette-submit", Button).disabled
-        assert [item.id for item in queue.pending()] == [submitted.id]
-
-
-async def test_palette_original_packet_scrolls_to_its_last_line(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    task = seed_task(connection, clock, title="Long decision packet")
-    escalation, packet = seed_escalation(
-        connection, clock, task.id, tmp_path, EscalationReason.DECISION_REQUIRED
-    )
-    packet_lines = "\n".join(
-        f"Extended packet evidence {line}" for line in range(_LONG_PACKET_LINES)
-    )
-    packet = f"{packet}\n{packet_lines}\n{_LAST_PACKET_LINE}\n"
-    await asyncio.to_thread(Path(escalation.packet_path).write_text, packet)
-    commands, queries, _queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(action=f"resolve {escalation.id}"),
-    )
-
-    async with app.run_test(size=_COMPACT_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        form = screen.query_one("#palette-form", VerticalScroll)
-        screen.query_one("#palette-evidence-original", Collapsible).collapsed = False
-        await pilot.pause()
-        packet_content = screen.query_one("#palette-original-packet", Static)
-        assert _LAST_PACKET_LINE in _static_text(screen, "#palette-original-packet")
-        assert packet_content.size.height >= packet_content.content_size.height
-        form.scroll_to_widget(packet_content, top=True, force=True, animate=False, immediate=True)
-        await pilot.pause()
-        top_scroll = form.scroll_y
-        form.scroll_to(y=form.max_scroll_y, animate=False, immediate=True)
-        await pilot.pause()
-        assert form.scroll_y > top_scroll
-        assert packet_content.region.bottom <= form.region.bottom
-
-
-async def test_palette_keeps_durable_resolution_visible_when_packet_is_unavailable(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    task = seed_task(connection, clock, title="Missing packet")
-    escalation, _ = seed_escalation(
-        connection,
-        clock,
-        task.id,
-        tmp_path,
-        EscalationReason.DECISION_REQUIRED,
-        write_packet=False,
-    )
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(action=f"resolve {escalation.id}"),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        summary = _static_text(screen, "#palette-escalation-summary")
-        assert escalation.id in summary
-        assert escalation.headline in summary
-        assert "answer" in summary
-        assert "cancel" in summary
-        assert "Evidence error:" in _static_text(screen, "#palette-evidence-error")
-        assert "missing" in _static_text(screen, "#palette-evidence-error")
-        assert not screen.query_one("#palette-evidence-original", Collapsible).display
-        assert queue.pending() == []
-        assert TaskStore(connection, clock).require(task.id).status is Status.ESCALATED
-        current = EscalationStore(connection, clock).get(escalation.id)
-        assert current is not None
-        assert current.status.value == "open"
-
-
-async def test_palette_preserves_original_and_readable_sections_of_malformed_packet(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    task = seed_task(connection, clock, title="Malformed packet")
-    escalation, packet = seed_escalation(
-        connection, clock, task.id, tmp_path, EscalationReason.DECISION_REQUIRED
-    )
-    section_start = packet.index("## Agent alternatives")
-    section_end = packet.index("\n## Options", section_start)
-    malformed = (
-        packet[:section_start]
-        + "## Agent alternatives\n\n{ malformed report data }\n"
-        + packet[section_end:]
-    )
-    await asyncio.to_thread(Path(escalation.packet_path).write_text, malformed)
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(action=f"resolve {escalation.id}"),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        assert escalation.id in _static_text(screen, "#palette-escalation-summary")
-        assert "malformed" in _static_text(screen, "#palette-evidence-error")
-        assert "Recorded git facts." in _static_text(screen, "#palette-evidence-facts")
-        assert _static_text(screen, "#palette-original-packet") == malformed
-        assert queue.pending() == []
-
-
-async def test_palette_disables_an_escalation_after_another_client_cancels_it(
-    connection: Connection,
-    database: Database,
-    tmp_path: Path,
-    request: pytest.FixtureRequest,
-) -> None:
-    clock = FakeClock(_START)
-    reader = StateReader(database, clock)
-    request.addfinalizer(reader.close)
-    task = seed_task(connection, clock, title="External cancellation")
-    escalation, _ = seed_escalation(
-        connection, clock, task.id, tmp_path, EscalationReason.DECISION_REQUIRED
-    )
-    commands, queries, _ = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(action=f"resolve {escalation.id}"),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        guidance = "Keep this guidance for copying."
-        screen.query_one("#resolution-text", TextArea).text = guidance
-        await pilot.pause()
-        assert not screen.query_one("#palette-submit", Button).disabled
-        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
-        engine = database.connect()
-        try:
-            external = await enqueue_and_cancel(engine, clock, task.id, tmp_path)
-            assert external.status.value == "done"
-        finally:
-            engine.close()
-        clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
-        await wait_until(
-            lambda: (
-                screen.query_one("#palette-submit", Button).disabled
-                and "was resolved" in _static_text(screen, "#palette-escalation-status")
-            ),
-            timeout=UI_WAIT_SECONDS,
-        )
-        assert screen.query_one("#resolution-text", TextArea).text == guidance
-        assert queries.command_history().total_count == 2
-
-
-async def test_palette_shows_engine_rejection_after_resolution_race_without_resubmitting(
-    connection: Connection,
-    database: Database,
-    tmp_path: Path,
-    request: pytest.FixtureRequest,
-) -> None:
-    clock = FakeClock(_START)
-    reader = StateReader(database, clock)
-    request.addfinalizer(reader.close)
-    task = seed_task(connection, clock, title="Resolution race")
-    escalation, _ = seed_escalation(
-        connection, clock, task.id, tmp_path, EscalationReason.DECISION_REQUIRED
-    )
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(action=f"resolve {escalation.id}"),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        guidance = "Answer queued before cancellation."
-        screen.query_one("#resolution-text", TextArea).text = guidance
-        await pilot.pause()
-        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
-        await pilot.click("#palette-submit")
-        await _wait_for_ack(screen)
-        submitted = queue.pending()
-        assert len(submitted) == 1
-        assert isinstance(submitted[0].command, Resolve)
-        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
-        engine = database.connect()
-        try:
-            external = await enqueue_and_cancel(engine, clock, task.id, tmp_path)
-            resolution_command = next(
-                item for item in CommandQueue(engine, clock).pending() if item.id == submitted[0].id
-            )
-            assert isinstance(resolution_command.command, Resolve)
-            with pytest.raises(CommandRejectedError, match="already resolved"):
-                await ResolveHandler(handler_context(engine, clock, tmp_path)).handle(
-                    resolution_command.command
-                )
-            CommandQueue(engine, clock).mark_rejected(
-                resolution_command.id,
-                {"error": f"{escalation.id} is already resolved"},
-            )
-            assert external.status.value == "done"
-        finally:
-            engine.close()
-        clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
-        await wait_until(
-            lambda: "Rejected" in _static_text(screen, "#palette-result"),
-            timeout=UI_WAIT_SECONDS,
-        )
-        assert "already resolved" in _static_text(screen, "#palette-result")
-        assert screen.query_one("#resolution-text", TextArea).text == guidance
-        assert queries.command_history().total_count == 3
-        assert queue.pending() == []
-
-
-@pytest.mark.parametrize(
     ("engine_up", "outcome", "selection_fails", "expected"),
     [
         pytest.param(False, None, False, ("Pending",), id="queued-without-selection"),
@@ -1753,44 +1261,4 @@ async def test_palette_disables_takeover_without_task_or_role_pane(
         await _set_target(pilot, screen, task_id)
         assert screen.query_one("#palette-submit", Button).disabled
         assert expected in _static_text(screen, "#palette-action-state")
-        assert not queue.pending()
-
-
-@pytest.mark.parametrize(
-    ("route", "expected"),
-    [("resolve E-404", "E-404 is not open"), ("make-it-up", "unknown palette action route")],
-)
-async def test_palette_preserves_invalid_and_missing_resolve_routes(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-    route: str,
-    expected: str,
-) -> None:
-    clock = FakeClock(_START)
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(reader, commands, queries, _selection_must_not_run)
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        await app.pop_screen()
-        await app.push_screen(
-            PaletteScreen(
-                commands,
-                queries,
-                _selection_must_not_run,
-                on_change=reader.watch,
-                initial_action=route,
-            )
-        )
-        await pilot.pause()
-        screen = _screen(app)
-        close = screen.query_one("#palette-close", Button)
-        await wait_until(
-            lambda: app.focused is screen.query_one("#action-search", Input),
-            timeout=UI_WAIT_SECONDS,
-        )
-        assert cast("Content", close.label).plain in _exported_screen_text(app)
-        assert screen.query_one("#palette-submit", Button).disabled
-        assert expected in _static_text(screen, "#palette-result")
         assert not queue.pending()

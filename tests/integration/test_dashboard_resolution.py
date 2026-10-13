@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -38,8 +40,6 @@ from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from textual.pilot import Pilot
     from textual.widget import Widget
 
@@ -160,6 +160,43 @@ async def test_each_send_route_queues_one_resolution_the_engine_applies(
         escalation_id=escalation.id,
         expected_type=type(expected),
     )
+
+
+@pytest.mark.parametrize("record", ["missing-packet", "malformed-packet", "unknown-decision"])
+async def test_a_degraded_or_unknown_decision_opens_with_its_reason_and_dispatches_nothing(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    *,
+    record: str,
+) -> None:
+    clock = FakeClock(_START)
+    reader = StateReader(database, clock)
+    request.addfinalizer(reader.close)
+    task = seed_task(connection, clock, title="Degraded record")
+    escalation, packet = seed_escalation(
+        connection,
+        clock,
+        task.id,
+        tmp_path,
+        EscalationReason.DECISION_REQUIRED,
+        write_packet=record != "missing-packet",
+    )
+    if record == "malformed-packet":
+        malformed = packet.replace("## Agent alternatives", "{ ?? }")
+        await asyncio.to_thread(Path(escalation.packet_path).write_text, malformed)
+    target = "E-404" if record == "unknown-decision" else escalation.id
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
+    app = ResolutionHost(resolution_factory(commands, queries, clock, reader), target)
+
+    async with app.run_test(size=_SIZE) as pilot:
+        screen = await wait_for_resolution(app)
+        assert target in resolution_title(screen)
+        assert bool(_rows(screen)) is (record != "unknown-decision")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert queue.pending() == []
 
 
 async def test_cancel_needs_a_second_enter_and_any_other_key_resets_it(

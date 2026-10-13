@@ -1736,10 +1736,42 @@ Refs: spec "Rules"; `plugins/widgets/escalations.py` `_open_resolution`, `dashbo
 
 ### Task 178: Remove the old resolve form
 Refs: `dashboard/palette.py` (resolve fields, evidence collapsibles, summary, guidance, rung, selects and their drafts), the tests listed in the analysis (`test_context_menu_answers_the_recorded_question_without_a_target_picker`, `test_palette_routes_structured_escalation_to_validated_resolution`, `test_resolution_target_keeps_task_identity_once_when_headline_has_a_prefix`, `test_palette_original_packet_scrolls_to_its_last_line`, the degraded-packet and race tests, the attention-route tests and their widget-id helpers in `test_dashboard_app.py`).
-- [ ] Delete the dead palette code and move or delete its tests: keep the behaviour (open without dispatch, one engine command per send, race with another client, draft kept, degraded packet, the real fake-agent end-to-end), delete wording, shape and widget-id assertions; collected cases must not grow and should fall.
-- [ ] `uv run poe check` green; report lines of `palette.py` and test cases before and after.
+- [x] Delete the dead palette code and move or delete its tests: keep the behaviour (open without dispatch, one engine command per send, race with another client, draft kept, degraded packet, the real fake-agent end-to-end), delete wording, shape and widget-id assertions; collected cases must not grow and should fall.
+- [x] `uv run poe check` green; report lines of `palette.py` and test cases before and after.
+  - Proof: the palette no longer has the resolve fields, evidence collapsibles, escalation and resolution selects, resolve drafts, `direct_answer` or the `resolve E-n` route (`palette.py` 2378 to 1889 lines); the Resolve escalation entries only open the resolution screen, and `prepare_palette_resolution` stays because that screen sends through it. Nine old form tests were deleted as covered by `test_dashboard_resolution.py`, and one parametrised test (missing packet, malformed packet, unknown decision) was added there for the degraded cases. Collected cases fell from 1608 to 1598 and `poe check` is green.
 
 ### Task 179: Verify the tenth review, reconcile the reference and docs
 Refs: Tasks 176–178; design 06 §5.5, `tui-workspace.md`, `tui-focus.md`, `tui-parity.md`, the HTML reference resolve modal.
 - [ ] Native check of both layouts and every entry route (colour, `NO_COLOR`, wide to tiny) with before/after against the commit that planned this review; plain and `TERM=dumb NO_COLOR=1` gates; collected cases, functions and lines compared with the start.
 - [ ] HTML reference and design docs match the TUI (exact srcdoc round-trip, Chrome check with a throwaway profile); spec marked delivered; record `docs/release-readiness-2026-10-13-phase11-tenth-review.md`; README links; plan and todo ticked.
+
+
+## Task details redesign (eleventh review)
+
+Scope: [eleventh review](../docs/tui-feedback-eleventh-review.md); the operator approved the briefing and the details list. Execute Tasks 180–185 sequentially after Task 179, one fresh agent per task, root review by the orchestrator.
+
+### Task 180: Briefing data
+Refs: `dashboard/contract.py` `TaskDetailView`, `dashboard/views.py` `task_detail`, `dashboard/activity.py` `RoleViewTail`, `domain/reports.py`, facts (`diff_stat`, `commits`), `Task.counters`, settings (`orchestration.max_iterations`, `roles.implementer.escalate_after`, `orchestration.timeouts.stall`), `PR_OPENED` events.
+- [ ] Pure domain functions (unit table) derive: rework count and limit, total elapsed input (`started_at`), escalation proximity, verdict issue counts by severity, produced numbers (commits, files, lines parsed from the recorded diff-stat summary line, no new git call) and agent-reported test counts, the PR line (state, recorded CI only); the role tail captures the agent's last words (last `Message` text or `TurnEnded.last_message`, one line, bounded); `TaskDetailView` carries the results.
+- [ ] Degraded inputs (no facts, no verdict, no PR, unreadable log) leave the field empty, never a guess.
+
+### Task 181: Briefing render and actions row
+Refs: spec "Briefing"; `dashboard/detail.py` (`_render_view`, `_render_activity`, `_render_ownership`, `_task_situation`, `_task_state_line`), `ui/section.py`, `ui/compact.py` (`StageActivity`, `task_signal_text`, usage rows).
+- [ ] The summary renders the approved wide and compact briefings from Task 180 with `Section`s and drops the removed items; a pure state-to-verbs mapping drives the actions row (verbs also reachable from `Ctrl+P`); rows without data disappear; the same content in the Home inspector, the popup and the task window.
+- [ ] Native colour and `NO_COLOR` renders at wide, 48, 40 columns and tiny for a running, a waiting, a rejected, a Done and a Cancelled task.
+
+### Task 182: Details list and section views
+Refs: spec "Details list"; `TaskDetailViewsScreen`, the view switch in `detail.py`, `app.py` key dispatch.
+- [ ] A list screen (arrows, Enter opens, Esc goes up one level) with the nine sections and their right-hand headlines replaces the Views dropdown for a task; Enter on the focused inspector opens it; the engine event ids, timestamp-evidence rows and recorded window/pane ids leave the section views; Esc semantics as in the spec.
+
+### Task 183: Arrow lists for events, agent activity and relationships
+Refs: spec "Details list" paragraph; the timeline code in `detail.py`, `ui` list helpers, the command-history popup as the interaction precedent.
+- [ ] Events and Agent activity are lists with ↑↓, PgUp/PgDn, End = follow (scroll-up pauses following) and the existing category/role/turn filters; relationships open the related task on Enter; `p`/`n`, the entry dropdown, the Related-task Select and the Follow button are removed.
+
+### Task 184: Remove the old detail code and tests
+Refs: `detail.py` (old summary, Views screen, paging, dropdowns), `test_dashboard_task_detail.py`, `test_task_timeline.py`, `test_task_family_and_blockers.py`, `test_dashboard_app.py` detail tests.
+- [ ] Delete dead code and the shape, wording and widget-id tests; keep the behaviour listed in the spec; report lines and cases before and after (cases must fall).
+
+### Task 185: Verify the eleventh review, reconcile the reference and docs
+Refs: Tasks 180–184; design 06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference detail panels.
+- [ ] Native before/after of every surface and state; plain and `TERM=dumb NO_COLOR=1` gates; HTML reference and design docs match the TUI (exact srcdoc round-trip, Chrome check with a throwaway profile); spec marked delivered; record `docs/release-readiness-2026-10-13-phase11-eleventh-review.md`; README links; plan and todo ticked.
