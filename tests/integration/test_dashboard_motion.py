@@ -1244,7 +1244,7 @@ async def test_usage_motion_callbacks_survive_repeated_screen_teardown(
         reader.close()
 
 
-async def test_task_detail_refreshes_facts_after_a_covered_screen_returns(
+async def test_task_detail_keeps_refreshing_facts_under_a_covering_screen(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -1291,14 +1291,6 @@ async def test_task_detail_refreshes_facts_after_a_covered_screen_returns(
             await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
             TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
             clock.advance(1)
-            await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
-            assert Hold.PAUSED.value not in plain_text(ownership.content)
-
-            await pilot.press("escape")
-            await wait_until(
-                lambda: not isinstance(app.screen, TaskDetailViewsScreen),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
-            )
             await wait_until(
                 lambda: Hold.PAUSED.value in plain_text(ownership.content),
                 timeout=_TASK_ACTIVITY_WAIT_SECONDS,
@@ -1582,7 +1574,9 @@ async def test_task_activity_claims_a_signal_only_for_a_running_current_turn(
     assert completed.latest_signal_at == _START
 
 
+@pytest.mark.parametrize("popup_open", [False, True], ids=["alone", "under-popup"])
 async def test_task_detail_refreshes_recorded_ages_without_database_changes(
+    popup_open: bool,
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -1627,7 +1621,7 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
             widget_names=settings.dashboard.widgets,
             timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
         )
-        async with app.run_test(size=(90, 40)):
+        async with app.run_test(size=(90, 40)) as pilot:
             progress = app.query_one("#task-detail-progress", Static)
             signal = app.query_one("#task-detail-signal", Static)
             identity = app.query_one("#task-detail-identity", Static)
@@ -1635,6 +1629,10 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
                 lambda: "Implement" in plain_text(progress.content),
                 timeout=_TASK_ACTIVITY_WAIT_SECONDS,
             )
+            if popup_open:
+                detail_screen = app.screen
+                await pilot.press("question_mark")
+                await wait_until(lambda: app.screen is not detail_screen, timeout=1)
             tick = settings.dashboard.timeline_refresh_seconds
             signal_at = clock.now()
             log_path.write_text(f"{_row(signal_at, _TURN_NAME, VIEW_SESSION_STARTED_SIGNAL)}\n")

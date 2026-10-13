@@ -44,7 +44,7 @@ from shikiru.ui.popup import (
     PopupFrame,
     prepare_popup,
 )
-from shikiru.ui.screen import widget_is_active, widget_is_attached
+from shikiru.ui.screen import widget_is_attached, widget_is_current
 from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import (
     ALERT_COLOR,
@@ -769,7 +769,7 @@ class TaskDetailPanel(Vertical):
                 self._render_timeline(page)
 
     def _screen_is_active(self) -> bool:
-        if not widget_is_active(self):
+        if not widget_is_current(self):
             return False
         app = cast("App[None]", self.app)
         return app.is_running

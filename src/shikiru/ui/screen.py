@@ -48,11 +48,6 @@ def widget_is_current(widget: Widget) -> bool:
     return screen is not None and screen.is_current
 
 
-def widget_is_active(widget: Widget) -> bool:
-    screen = _screen_for(widget)
-    return screen is not None and screen.is_active
-
-
 def _screen_for(widget: Widget) -> Screen[object] | None:
     if not widget.is_attached:
         return None

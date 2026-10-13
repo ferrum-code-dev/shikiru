@@ -5932,7 +5932,7 @@ async def test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions
         reader.close()
 
 
-async def test_home_shared_detail_refreshes_after_task_detail_closes(
+async def test_home_shared_detail_is_current_after_a_task_detail_popup_closes(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -5989,7 +5989,6 @@ async def test_home_shared_detail_refreshes_after_task_detail_closes(
                 lambda: Hold.PAUSED.value in _rendered_text(task_ownership),
                 timeout=2,
             )
-            assert Hold.PAUSED.value not in _rendered_text(ownership)
             await pilot.press("escape")
             await wait_until(
                 lambda: "Home detail resumes fresh" in _rendered_text(identity), timeout=2
