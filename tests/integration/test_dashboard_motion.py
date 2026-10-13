@@ -79,7 +79,7 @@ from tests.support.dashboard import (
 )
 from tests.support.render import plain_text
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until, yield_control
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until, yield_control
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
@@ -105,7 +105,6 @@ _UPTIME_AFTER_STEP = "Uptime 1m"
 _UPTIME_AFTER_TWO_STEPS = "Uptime 2m"
 _TURN_NAME = "001-implement-i1"
 _STALE_TURN_NAME = "000-implement-i0"
-_TASK_ACTIVITY_WAIT_SECONDS = 2
 _OLD_ITERATION = 1
 _CURRENT_ITERATION = 2
 _INITIAL_USAGE_COST = 0.42
@@ -260,7 +259,7 @@ async def _wait_for_fifo_writer(path: Path) -> int:
             return False
         return True
 
-    await wait_until(open_writer, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+    await wait_until(open_writer, timeout=UI_WAIT_SECONDS)
     assert descriptor is not None
     return descriptor
 
@@ -273,30 +272,30 @@ async def _assert_closed_history_callback_is_safe(
     await pilot.press("escape")
     await wait_until(
         lambda: not isinstance(app.screen, TaskDetailViewsScreen),
-        timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+        timeout=UI_WAIT_SECONDS,
     )
     await pilot.press("v")
     await wait_until(
         lambda: isinstance(app.screen, TaskDetailViewsScreen),
-        timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+        timeout=UI_WAIT_SECONDS,
     )
     choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
     choice.value = FOCUS_COMMAND_HISTORY
     await pilot.click(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}")
     await wait_until(
         lambda: bool(app.screen.query("#command-history-page")),
-        timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+        timeout=UI_WAIT_SECONDS,
     )
     history_screen = app.screen
     await wait_until(
         lambda: any(owner is history_screen for owner, _ in registered_callbacks),
-        timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+        timeout=UI_WAIT_SECONDS,
     )
     callback = next(callback for owner, callback in registered_callbacks if owner is history_screen)
     await pilot.press("escape")
     await wait_until(
         lambda: app.screen is not history_screen,
-        timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+        timeout=UI_WAIT_SECONDS,
     )
     await callback()
     assert app.is_running
@@ -884,7 +883,7 @@ async def test_home_status_blinks_only_for_a_recorded_active_turn(
         async with app.run_test(size=(120, 40)):
             await wait_until(
                 lambda: bool(app.query(f"#task-row-{task.id} > Static")),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             row = app.query_one(f"#task-row-{task.id} > Static", Static)
             other_row = app.query_one(f"#task-row-{other_task.id} > Static", Static)
@@ -911,7 +910,7 @@ async def test_home_status_blinks_only_for_a_recorded_active_turn(
                     lambda expected=expected_bold: (
                         status_is_bold(row, expected) and status_is_bold(other_row, expected)
                     ),
-                    timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                    timeout=UI_WAIT_SECONDS,
                 )
 
             rendered = status_content(row)
@@ -926,11 +925,11 @@ async def test_home_status_blinks_only_for_a_recorded_active_turn(
                     task.id in plain_text(identity.content)
                     and "loading selected task" not in plain_text(identity.content).casefold()
                 ),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             await wait_until(
                 lambda: "Last recorded signal ·" in plain_text(signal.content),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             if animations:
                 detail = await views.task_detail(task.id, include_timeline=False)
@@ -997,24 +996,24 @@ async def test_static_home_refreshes_stall_and_signal_age(
         async with app.run_test(size=(120, 40)):
             await wait_until(
                 lambda: bool(app.query(f"#task-row-{task.id} > Static")),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             row = app.query_one(f"#task-row-{task.id} > Static", Static)
             app.query_one("#queue", QueuePanel).select_task(task.id)
             signal = app.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
             await wait_until(
                 lambda: "Last recorded signal · 0s ago" in plain_text(signal.content),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
 
             clock.advance(_QUIET_TOOL_SECONDS + 1)
             await wait_until(
                 lambda: "stalled" in cast("Content", row.render()).plain,
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             await wait_until(
                 lambda: "Last recorded signal · 1m ago" in plain_text(signal.content),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             row_content = cast("Content", row.render())
             state_offset = row_content.plain.index("Implementing")
@@ -1066,9 +1065,9 @@ async def test_queue_refresh_survives_child_teardown_and_updates_after_recompose
         async with app.run_test(size=(120, 40)):
             await wait_until(
                 lambda: bool(app.query("#task-browser-count")),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
-            await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             queue = app.query_one("#queue", QueuePanel)
             queued_during_recompose = seed_task(
                 connection,
@@ -1087,13 +1086,13 @@ async def test_queue_refresh_survives_child_teardown_and_updates_after_recompose
                     bool(queue.query("#task-browser-count"))
                     and bool(queue.query("#task-browser-list"))
                 ),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
-            await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             clock.advance(interval)
             await wait_until(
                 lambda: bool(app.query(f"#task-row-{queued_during_recompose.id} > Static")),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
 
             added_after_recompose = seed_task(
@@ -1102,11 +1101,11 @@ async def test_queue_refresh_survives_child_teardown_and_updates_after_recompose
                 title="Added after queue teardown",
                 mode=Mode.IMPLEMENT,
             )
-            await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             clock.advance(interval)
             await wait_until(
                 lambda: bool(app.query(f"#task-row-{added_after_recompose.id} > Static")),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             assert app.is_running
     finally:
@@ -1190,7 +1189,7 @@ async def test_usage_motion_callbacks_survive_repeated_screen_teardown(
         async with app.run_test(size=(180, 40)):
             await wait_until(
                 lambda: f"${_INITIAL_USAGE_COST:.2f}" in plain_text(usage.content),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             for cost in _USAGE_REFRESH_COSTS[:-1]:
                 motion_callback = motion_callbacks[-1]
@@ -1222,7 +1221,7 @@ async def test_usage_motion_callbacks_survive_repeated_screen_teardown(
                     lambda current_usage=usage, expected_cost=cost: (
                         f"${expected_cost:.2f}" in plain_text(current_usage.content)
                     ),
-                    timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                    timeout=UI_WAIT_SECONDS,
                 )
 
             active_callback = motion_callbacks[-1]
@@ -1280,20 +1279,20 @@ async def test_task_detail_keeps_refreshing_facts_under_a_covering_screen(
                 lambda: (
                     task.title in plain_text(app.query_one("#task-detail-identity", Static).content)
                 ),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             assert Hold.PAUSED.value not in plain_text(ownership.content)
             await pilot.press("v")
             await wait_until(
                 lambda: isinstance(app.screen, TaskDetailViewsScreen),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
-            await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
             clock.advance(1)
             await wait_until(
                 lambda: Hold.PAUSED.value in plain_text(ownership.content),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
     finally:
         reader.close()
@@ -1319,28 +1318,28 @@ async def test_usage_result_finishing_after_context_screen_teardown_is_discarded
                     task.title
                     in plain_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
                 ),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             await pilot.press("v")
             await wait_until(
                 lambda: isinstance(app.screen, TaskDetailViewsScreen),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
             choice.value = FOCUS_USAGE_DETAILS
             await pilot.click(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}")
             await wait_until(
                 lambda: bool(app.screen.query(UsagePanel)),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             usage = app.screen.query_one(UsagePanel)
             await wait_until(
                 lambda: any(owner is usage for owner, _ in registered_callbacks),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             await wait_until(
                 lambda: f"${_INITIAL_USAGE_COST:.2f}" in plain_text(usage.content),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
 
             report_path = turns_dir(project_dir, task.id) / _INITIAL_TRIAGE_TURN / REPORT_FILENAME
@@ -1357,7 +1356,7 @@ async def test_usage_result_finishing_after_context_screen_teardown_is_discarded
             await pilot.press("escape")
             await wait_until(
                 lambda: not app.screen.query(UsagePanel),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             writer_descriptor = writer_descriptors[0]
             os.write(writer_descriptor, _IN_FLIGHT_REPORT_TEXT.encode())
@@ -1365,7 +1364,7 @@ async def test_usage_result_finishing_after_context_screen_teardown_is_discarded
             writer_descriptors.remove(writer_descriptor)
             await wait_until(
                 pending_refresh.done,
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             await pending_refresh
             assert plain_text(usage.content) == previous_content
@@ -1422,7 +1421,7 @@ async def test_task_usage_details_tick_quota_age_and_reset_without_motion_eviden
                 lambda: (
                     task.title in plain_text(app.query_one("#task-detail-identity", Static).content)
                 ),
-                timeout=2,
+                timeout=UI_WAIT_SECONDS,
             )
             await pilot.press("u")
             sessions = app.screen.query_one("#task-detail-sessions", Static)
@@ -1431,16 +1430,16 @@ async def test_task_usage_details_tick_quota_age_and_reset_without_motion_eviden
                     "reset 10s" in plain_text(sessions.content)
                     and "observed now" in plain_text(sessions.content)
                 ),
-                timeout=2,
+                timeout=UI_WAIT_SECONDS,
             )
-            await wait_until(clock.has_pending_sleep, timeout=2)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             clock.advance(2)
             await wait_until(
                 lambda: (
                     "reset 8s" in plain_text(sessions.content)
                     and "observed 1m ago" in plain_text(sessions.content)
                 ),
-                timeout=2,
+                timeout=UI_WAIT_SECONDS,
             )
     finally:
         reader.close()
@@ -1627,7 +1626,7 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
             identity = app.query_one("#task-detail-identity", Static)
             await wait_until(
                 lambda: "Implement" in plain_text(progress.content),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             if popup_open:
                 detail_screen = app.screen
@@ -1638,7 +1637,7 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
             log_path.write_text(f"{_row(signal_at, _TURN_NAME, VIEW_SESSION_STARTED_SIGNAL)}\n")
             await wait_until(
                 clock.has_pending_sleep,
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
             clock.advance(tick)
             await wait_until(
@@ -1648,16 +1647,16 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
                     and _TURN_NAME not in plain_text(signal.content)
                     and "1s" in plain_text(progress.content)
                 ),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
-            await wait_until(clock.has_pending_sleep, timeout=_TASK_ACTIVITY_WAIT_SECONDS)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             clock.advance(settings.orchestration.timeouts.stall + 1)
             await wait_until(
                 lambda: (
                     GLYPH_STALLED in plain_text(identity.content)
                     and "stalled" in plain_text(progress.content)
                 ),
-                timeout=_TASK_ACTIVITY_WAIT_SECONDS,
+                timeout=UI_WAIT_SECONDS,
             )
     finally:
         reader.close()

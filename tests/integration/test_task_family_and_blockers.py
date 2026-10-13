@@ -52,7 +52,7 @@ from tests.support.dashboard import (
     widget_context,
 )
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -305,7 +305,9 @@ async def _open_detail_view(
 ) -> TaskDetailPanel:
     panel.query_one("#task-detail-usage-inline", Button).focus()
     await pilot.press(TASK_DETAIL_VIEWS_KEY)
-    await wait_until(lambda: isinstance(pilot.app.screen, TaskDetailViewsScreen), timeout=2)
+    await wait_until(
+        lambda: isinstance(pilot.app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS
+    )
     choice = cast("Select[str]", pilot.app.screen.query_one("#task-detail-view-choice", Select))
     choice.value = view_id
     await pilot.press("tab", "enter")
@@ -318,7 +320,7 @@ async def _open_detail_view(
             )
             or panel.active_view == view_id
         ),
-        timeout=2,
+        timeout=UI_WAIT_SECONDS,
     )
     if isinstance(pilot.app.screen, TaskDetailScreen):
         return pilot.app.screen.query_one("#task-detail-panel", TaskDetailPanel)
@@ -399,7 +401,9 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
         assert _static_text(feedback) == ""
 
         await pilot.press("escape")
-        await wait_until(lambda: not isinstance(app.screen, TaskDetailScreen), timeout=2)
+        await wait_until(
+            lambda: not isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
+        )
         search.value = second.title
         await wait_until(
             lambda: f"task-row-{second.id}" in [child.id for child in task_list.children],
@@ -458,7 +462,7 @@ async def _exercise_paged_relationship_navigation(
                 and more_button.region.y >= 0
                 and more_button.region.bottom <= app.size.height
             ),
-            timeout=2.0,
+            timeout=UI_WAIT_SECONDS,
         )
         await pilot.pause()
         await pilot.click(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}")

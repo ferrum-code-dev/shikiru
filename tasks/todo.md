@@ -264,7 +264,7 @@ Ninth-review scope and evidence: [ninth real-project review](../docs/tui-feedbac
   - Proof: native before/after SVG exports (plain and `NO_COLOR`) show bold steel-blue `SHIKIRU` and the `Tasks` count with a lower-case filter label, and the assertion-backed anchors and pinned strings match them. The gate is green (1586 passed, 14 skipped, 91.17 % coverage); collected cases 1605 → 1607.
 - [x] Task 168: Plugin reinstall hint
   - Proof: a `python -I` call with a missing name printed the not-found message before the change; after it both agent and widget messages end with the reinstall hint, and `--reinstall` and `--editable` are confirmed in `uv tool install --help`. The registry test asserts the hint constant, and collected cases stay at 1607. Gate green on the default workers (1586 passed, 14 skipped, 91.16 % coverage).
-- [ ] Task 169: One UI wait budget
+- [x] Task 169: One UI wait budget
 - [ ] Task 170: `pause(); assert` becomes `wait_until`
 - [ ] Task 171: Harden the CPU and take-over tests
 - [ ] Task 172: Command history pages with the arrow keys

@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 
 _POLL_INTERVAL_SECONDS = 0.02
 
+UI_WAIT_SECONDS = 30
+
 _Predicate = Callable[[], bool | Awaitable[bool]]
 
 

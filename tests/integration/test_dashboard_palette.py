@@ -53,7 +53,7 @@ from shikiru.tmux.client import FORMAT_PANE_ID, Tmux, exact_target
 from tests.support.clock import FakeClock
 from tests.support.render import plain_text
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -140,7 +140,7 @@ async def _click_menu_button(
             menu.scroll_to_widget(more_actions, animate=False, immediate=True)
             await pilot.pause()
             await pilot.click(more_actions)
-            await wait_until(lambda parent=parent: parent.display, timeout=2)
+            await wait_until(lambda parent=parent: parent.display, timeout=UI_WAIT_SECONDS)
             break
         parent = parent.parent
     menu.scroll_to_widget(button, animate=False, immediate=True)
@@ -356,7 +356,7 @@ async def _wait_for_ack(screen: PaletteScreen, status: str = "Pending") -> None:
             and screen.query_one("#palette-result-scroll").region.bottom
             <= screen.query_one("#palette-form").region.bottom
         ),
-        timeout=2,
+        timeout=UI_WAIT_SECONDS,
     )
 
 
@@ -394,14 +394,14 @@ async def test_palette_context_targets_message_and_rung_without_id_entry(
 
         menu = screen.query_one("#palette-menu", VerticalScroll)
         await pilot.click("#palette-back-to-menu")
-        await wait_until(lambda: menu.display, timeout=2)
+        await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
         await _click_menu_button(pilot, screen, "palette-menu-action-rung")
         screen.query_one("#rung", Input).value = "codex:sol:high"
         assert not screen.query_one("#palette-submit", Button).disabled, _static_text(
             screen, "#palette-action-state"
         )
         await pilot.click("#palette-submit")
-        await wait_until(lambda: len(queue.pending()) == 2, timeout=2)
+        await wait_until(lambda: len(queue.pending()) == 2, timeout=UI_WAIT_SECONDS)
         assert queue.pending()[1].command == SetRung(
             task_id=task.id,
             role=Role.IMPLEMENTER,
@@ -439,11 +439,11 @@ async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
         assert screen.query_one("#field-message").display
         _assert_fixed_task_context_title(screen, task.id, "Leader")
         message = screen.query_one("#message", TextArea)
-        await wait_until(lambda: app.focused is message, timeout=2)
+        await wait_until(lambda: app.focused is message, timeout=UI_WAIT_SECONDS)
         guidance = "Keep the new parser branch behind the existing validation."
         await pilot.press(*guidance)
         await pilot.click("#palette-back-to-menu")
-        await wait_until(lambda: menu.display, timeout=2)
+        await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
         assert message.text == guidance
         assert queue.pending() == []
 
@@ -451,11 +451,11 @@ async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
         assert message.text == guidance
         assert screen.query_one("#field-role").display
         await pilot.click("#palette-back-to-menu")
-        await wait_until(lambda: menu.display, timeout=2)
+        await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
         await _click_menu_button(pilot, screen, "palette-menu-action-take-over")
         role = cast("Select[str]", screen.query_one("#role", Select))
         assert role.value == Role.IMPLEMENTER.value
-        await wait_until(lambda: app.focused is role, timeout=2)
+        await wait_until(lambda: app.focused is role, timeout=UI_WAIT_SECONDS)
         assert screen.query_one("#field-role").display
         assert not screen.query_one("#field-message").display
         assert queue.pending() == []
@@ -468,7 +468,7 @@ async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
         clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
         await wait_until(
             lambda: not screen.query_one("#palette-menu-action-take-over").display,
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         assert not screen.query_one("#palette-menu-action-message").display
         assert queue.pending() == []
@@ -526,12 +526,12 @@ async def test_context_menu_answers_the_recorded_question_without_a_target_picke
         assert "Which behavior should remain?" in _static_text(screen, "#palette-original-packet")
         assert "Evidence error" not in _static_text(screen, "#palette-evidence-error")
         answer = screen.query_one("#resolution-text", TextArea)
-        await wait_until(lambda: app.focused is answer, timeout=2)
+        await wait_until(lambda: app.focused is answer, timeout=UI_WAIT_SECONDS)
         await pilot.press(*"Keep the recorded call pattern.")
         await pilot.press("enter")
         await pilot.press(*" and update callers.")
         assert answer.text == "Keep the recorded call pattern.\n and update callers."
-        await wait_until(lambda: not submit.disabled, timeout=2)
+        await wait_until(lambda: not submit.disabled, timeout=UI_WAIT_SECONDS)
         assert queue.pending() == []
         await _resize_recorded_answer_form(
             app,
@@ -542,7 +542,7 @@ async def test_context_menu_answers_the_recorded_question_without_a_target_picke
             expected_answer="Keep the recorded call pattern.\n and update callers.",
         )
 
-        await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
+        await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
         command = queue.pending()[0].command
         assert isinstance(command, Resolve)
         assert command.escalation_id == escalation.id
@@ -580,7 +580,7 @@ async def _resize_recorded_answer_form(
                 and popup_frame.content_region.contains_region(popup_close.region)
                 and screen.region.contains_region(popup_close.region)
             ),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         assert close.region.width > 0
         assert close.region.height > 0
@@ -609,7 +609,7 @@ async def _resize_recorded_answer_form(
             and answer.text == expected_answer
             and answer.cursor_location == cursor_location
         ),
-        timeout=2,
+        timeout=UI_WAIT_SECONDS,
     )
     assert await pilot.click("#palette-submit")
 
@@ -708,7 +708,7 @@ async def test_contextual_project_actions_queue_only_after_explicit_submission(
             assert button.region.y >= menu.region.y
             assert button.region.bottom <= menu.region.bottom
             await pilot.click(button)
-            await wait_until(lambda: not menu.display, timeout=2)
+            await wait_until(lambda: not menu.display, timeout=UI_WAIT_SECONDS)
 
             if action == "submit":
                 screen.query_one("#request", TextArea).text = guidance
@@ -716,7 +716,7 @@ async def test_contextual_project_actions_queue_only_after_explicit_submission(
             expected_pending_count = 1 if action == "submit" else 2
             await wait_until(
                 lambda count=expected_pending_count: len(queue.pending()) == count,
-                timeout=2,
+                timeout=UI_WAIT_SECONDS,
             )
 
             if action == "submit":
@@ -728,7 +728,7 @@ async def test_contextual_project_actions_queue_only_after_explicit_submission(
 
             if action == "submit":
                 await pilot.click("#palette-back-to-menu")
-                await wait_until(lambda: menu.display, timeout=2)
+                await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
 
 
 async def test_applied_message_feedback_keeps_next_turn_guidance_and_engine_result(
@@ -762,7 +762,7 @@ async def test_applied_message_feedback_keeps_next_turn_guidance_and_engine_resu
         screen = _screen(app)
         screen.query_one("#message", TextArea).text = "Review the updated evidence."
         await pilot.click("#palette-submit")
-        await wait_until(clock.has_pending_sleep, timeout=2)
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         queued = queue.pending()[0]
         returned = {"queued_for_next_turn": True}
         queue.mark_done(queued.id, returned)
@@ -809,12 +809,12 @@ async def test_palette_target_follows_search_choice_and_stays_manually_editable(
         task_id.value = other_task.id
         await wait_until(
             lambda: task_id.value == other_task.id and task_choice.value == other_task.id,
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         task_id.value = "T-999"
         await wait_until(
             lambda: task_id.value == "T-999" and task_choice.value is Select.BLANK,
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
 
         screen.query_one("#task-search", Input).value = selected_task.title
@@ -857,7 +857,7 @@ async def test_palette_task_search_is_bounded_current_and_retains_selected_targe
         await pilot.press("enter")
         await wait_until(
             lambda: "Showing 52 of 52 matches" in _static_text(screen, "#palette-task-count"),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         assert not screen.query_one("#palette-task-more", Button).display
 
@@ -906,7 +906,7 @@ async def test_palette_serializes_pending_action_and_closes_without_worker_error
         await _open_action(pilot, screen, "message")
         screen.query_one("#message", TextArea).text = "Send once while awaiting acknowledgement."
         await pilot.click("#palette-submit")
-        await wait_until(clock.has_pending_sleep, timeout=2)
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         assert "Sending" in _static_text(screen, "#palette-result")
         assert f"{task.id} · leader" in _static_text(screen, "#palette-result")
         assert len(queue.pending()) == 1
@@ -960,7 +960,7 @@ async def test_palette_shutdown_keeps_a_pending_command_without_stale_ui_refresh
         await _open_action(pilot, screen, "message")
         screen.query_one("#message", TextArea).text = "Keep the durable command on shutdown."
         await pilot.click("#palette-submit")
-        await wait_until(clock.has_pending_sleep, timeout=2)
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         assert len(queue.pending()) == 1
 
     assert len(queue.pending()) == 1
@@ -997,7 +997,7 @@ async def test_palette_keeps_acknowledgement_timeout_pending_with_current_engine
         screen = _screen(app)
         screen.query_one("#message", TextArea).text = "Keep waiting for the engine."
         await pilot.click("#palette-submit")
-        await wait_until(clock.has_pending_sleep, timeout=2)
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         queued = queue.pending()[0]
         clock.advance(COMMAND_ACK_WAIT_SECONDS)
         await _wait_for_ack(screen)
@@ -1049,7 +1049,7 @@ async def test_palette_observes_outcome_after_ack_wait_without_form_edits(
         screen = _screen(app)
         screen.query_one("#message", TextArea).text = "Keep this exact pending form."
         await pilot.click("#palette-submit")
-        await wait_until(clock.has_pending_sleep, timeout=2)
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         pending = queue.pending()[0]
         clock.advance(COMMAND_ACK_WAIT_SECONDS)
         await _wait_for_ack(screen)
@@ -1069,7 +1069,7 @@ async def test_palette_observes_outcome_after_ack_wait_without_form_edits(
                 expected in _static_text(screen, "#palette-result")
                 and not screen.query_one("#palette-submit", Button).disabled
             ),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         assert f"command {pending.id}" in _static_text(screen, "#palette-result")
         assert len(queue.pending()) == 0
@@ -1100,19 +1100,19 @@ async def test_pending_form_guards_survive_form_switches_and_palette_reopen(
         await _open_action(pilot, screen, "message")
         screen.query_one("#message", TextArea).text = "Do not send twice."
         await pilot.click("#palette-submit")
-        await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
+        await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
         say_id = queue.pending()[0].id
 
         menu = screen.query_one("#palette-menu", VerticalScroll)
         await pilot.click("#palette-back-to-menu")
-        await wait_until(lambda: menu.display, timeout=2)
+        await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
         await _click_menu_button(pilot, screen, "palette-menu-action-pause")
         await pilot.click("#palette-submit")
-        await wait_until(lambda: len(queue.pending()) == 2, timeout=2)
+        await wait_until(lambda: len(queue.pending()) == 2, timeout=UI_WAIT_SECONDS)
         pause_id = queue.pending()[1].id
 
         await pilot.click("#palette-back-to-menu")
-        await wait_until(lambda: menu.display, timeout=2)
+        await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
         await _click_menu_button(pilot, screen, "palette-menu-action-message")
         assert screen.query_one("#palette-submit", Button).disabled
         await pilot.click("#palette-submit")
@@ -1155,7 +1155,7 @@ async def test_pending_submit_recovers_after_store_allocates_its_task_id(
         screen = _screen(first_app)
         screen.query_one("#request", TextArea).text = request
         await pilot.click("#palette-submit")
-        await wait_until(lambda: len(queue.pending()) == 1, timeout=2)
+        await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
         queued = queue.pending()[0]
         assert isinstance(queued.command, Submit)
         assert queued.command.task_id is not None
@@ -1201,7 +1201,7 @@ async def test_palette_revalidates_task_state_before_queueing(
         await pilot.click("#palette-submit")
         await wait_until(
             lambda: screen.query_one("#palette-submit", Button).disabled,
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         assert screen.query_one("#palette-submit", Button).disabled
     assert not queue.pending()
@@ -1250,14 +1250,14 @@ async def test_implicit_role_default_tracks_task_selection_until_explicitly_chan
         task_choice.value = implementer_task.id
         await wait_until(
             lambda: task_id.value == implementer_task.id and role.value == Role.IMPLEMENTER.value,
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
 
         role.focus()
         role.value = Role.LEADER.value
         await pilot.pause()
         task_id.value = leader_task.id
-        await wait_until(lambda: task_id.value == leader_task.id, timeout=2)
+        await wait_until(lambda: task_id.value == leader_task.id, timeout=UI_WAIT_SECONDS)
         task_id.value = implementer_task.id
         await pilot.pause()
         assert role.value == Role.LEADER.value
@@ -1514,7 +1514,7 @@ async def test_resolution_target_keeps_task_identity_once_when_headline_has_a_pr
         target.value = escalation.id
         target.focus()
         await pilot.press("enter")
-        await wait_until(lambda: target.expanded, timeout=2)
+        await wait_until(lambda: target.expanded, timeout=UI_WAIT_SECONDS)
         options = target.query_one(OptionList)
         label = next(
             plain_text(options.get_option_at_index(index).prompt)
@@ -1526,7 +1526,7 @@ async def test_resolution_target_keeps_task_identity_once_when_headline_has_a_pr
         assert suffix in label
         assert queue.pending() == []
         await pilot.press("escape")
-        await wait_until(lambda: not target.expanded, timeout=2)
+        await wait_until(lambda: not target.expanded, timeout=UI_WAIT_SECONDS)
         assert queue.pending() == []
 
 
@@ -1576,11 +1576,11 @@ async def test_palette_preserves_resolution_form_after_unrelated_database_update
         assert isinstance(submitted.command.resolution, AcceptResolution)
 
         resolution.focus(scroll_visible=False)
-        await wait_until(lambda: app.focused is resolution, timeout=2)
+        await wait_until(lambda: app.focused is resolution, timeout=UI_WAIT_SECONDS)
         await pilot.pause()
         form.scroll_to(y=_FORM_SCROLL_TEST_OFFSET, animate=False, immediate=True)
         before_scroll = form.scroll_y
-        await wait_until(clock.has_pending_sleep, timeout=2)
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
 
         external = database.connect()
         try:
@@ -1599,7 +1599,7 @@ async def test_palette_preserves_resolution_form_after_unrelated_database_update
                 unrelated_escalation.id in str(option.prompt)
                 for option in screen.query_one("#escalation", Select).query_one(OptionList).options
             ),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         await pilot.pause()
 
@@ -1762,7 +1762,7 @@ async def test_palette_disables_an_escalation_after_another_client_cancels_it(
         screen.query_one("#resolution-text", TextArea).text = guidance
         await pilot.pause()
         assert not screen.query_one("#palette-submit", Button).disabled
-        await wait_until(clock.has_pending_sleep, timeout=2)
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         engine = database.connect()
         try:
             external = await _enqueue_and_cancel(engine, clock, task.id, tmp_path)
@@ -1775,7 +1775,7 @@ async def test_palette_disables_an_escalation_after_another_client_cancels_it(
                 screen.query_one("#palette-submit", Button).disabled
                 and "was resolved" in _static_text(screen, "#palette-escalation-status")
             ),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         assert screen.query_one("#resolution-text", TextArea).text == guidance
         assert queries.command_history().total_count == 2
@@ -1809,13 +1809,13 @@ async def test_palette_shows_engine_rejection_after_resolution_race_without_resu
         guidance = "Answer queued before cancellation."
         screen.query_one("#resolution-text", TextArea).text = guidance
         await pilot.pause()
-        await wait_until(clock.has_pending_sleep, timeout=2)
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         await pilot.click("#palette-submit")
         await _wait_for_ack(screen)
         submitted = queue.pending()
         assert len(submitted) == 1
         assert isinstance(submitted[0].command, Resolve)
-        await wait_until(clock.has_pending_sleep, timeout=2)
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         engine = database.connect()
         try:
             external = await _enqueue_and_cancel(engine, clock, task.id, tmp_path)
@@ -1837,7 +1837,7 @@ async def test_palette_shows_engine_rejection_after_resolution_race_without_resu
         clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
         await wait_until(
             lambda: "Rejected" in _static_text(screen, "#palette-result"),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         assert "already resolved" in _static_text(screen, "#palette-result")
         assert screen.query_one("#resolution-text", TextArea).text == guidance
@@ -1898,7 +1898,7 @@ async def test_palette_takeover_queues_a_task_role_command_and_selects_the_pane_
         await _set_role(pilot, screen, Role.LEADER)
         await pilot.click("#palette-submit")
         if engine_up:
-            await wait_until(clock.has_pending_sleep, timeout=2)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         else:
             await _wait_for_ack(screen)
         queued = queue.pending()
@@ -1917,7 +1917,7 @@ async def test_palette_takeover_queues_a_task_role_command_and_selects_the_pane_
                 text.format(task_id=task.id) in _static_text(screen, "#palette-result")
                 for text in expected
             ),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         assert selected == (["%7"] if outcome == "done" else [])
 
@@ -1958,7 +1958,7 @@ async def test_completed_takeover_selects_the_role_pane_and_its_window(
         await _set_target(pilot, screen, task.id)
         await _set_role(pilot, screen, Role.IMPLEMENTER)
         await pilot.click("#palette-submit")
-        await wait_until(clock.has_pending_sleep, timeout=2)
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         queued = queue.pending()
         assert len(queued) == 1
         queue.mark_done(queued[0].id, {"task_id": task.id})
@@ -2099,7 +2099,7 @@ async def test_palette_preserves_invalid_and_missing_resolve_routes(
         close = screen.query_one("#palette-close", Button)
         await wait_until(
             lambda: app.focused is screen.query_one("#action-search", Input),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         assert cast("Content", close.label).plain in _exported_screen_text(app)
         assert screen.query_one("#palette-submit", Button).disabled

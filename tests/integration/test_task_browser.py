@@ -49,7 +49,7 @@ from tests.support.dashboard import (
     widget_context,
 )
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -512,10 +512,12 @@ async def test_legacy_queue_enter_opens_selected_task_once(
 
     async with WidgetHostApp(widget).run_test(size=(90, 24)) as pilot:
         task_list = widget.query_one("#task-browser-list", ListView)
-        await wait_until(lambda: bool(widget.query(f"#task-row-{task.id}")), timeout=2)
+        await wait_until(
+            lambda: bool(widget.query(f"#task-row-{task.id}")), timeout=UI_WAIT_SECONDS
+        )
         task_list.focus()
         await pilot.press("enter")
-        await wait_until(lambda: opened_task_ids == [task.id], timeout=2)
+        await wait_until(lambda: opened_task_ids == [task.id], timeout=UI_WAIT_SECONDS)
 
 
 async def test_history_load_more_keeps_the_selected_task(

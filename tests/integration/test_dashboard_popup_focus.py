@@ -28,7 +28,7 @@ from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, choose_focus_view, state_views
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -46,7 +46,6 @@ _APP_SIZE = (120, 40)
 _COMPACT_APP_SIZE = (48, 20)
 _OVERFLOWING_HELP_SIZE = (70, 22)
 _OVERFLOWING_WORDS = 400
-_WAIT_SECONDS = 2
 _PROJECT_NAME = "popup-focus"
 _COMMAND_HISTORY_LABEL = "Command history · pending, applied and rejected"
 _USAGE_DETAILS_LABEL = "Usage details"
@@ -55,7 +54,7 @@ _ATTENTION_LABEL = "Attention · decisions, stalls and faults"
 
 
 async def _await_popup(app: DashboardApp, pilot: Pilot[None], origin: Screen[Any]) -> Screen[Any]:
-    await wait_until(lambda: app.screen is not origin, timeout=_WAIT_SECONDS)
+    await wait_until(lambda: app.screen is not origin, timeout=UI_WAIT_SECONDS)
     await pilot.pause()
     return origin
 
@@ -93,7 +92,7 @@ async def _open_standalone_palette(app: DashboardApp, pilot: Pilot[None]) -> Scr
 async def _open_decision_packet(app: DashboardApp, pilot: Pilot[None]) -> Screen[Any]:
     await choose_focus_view(pilot, _ATTENTION_LABEL)
     attention = app.query_one("#escalations", EscalationsPanel)
-    await wait_until(lambda: app.focused is attention, timeout=_WAIT_SECONDS)
+    await wait_until(lambda: app.focused is attention, timeout=UI_WAIT_SECONDS)
     origin = app.screen
     await pilot.press("o")
     return await _await_popup(app, pilot, origin)
@@ -219,7 +218,7 @@ async def test_popup_starts_on_its_useful_control_and_closes_with_escape_or_its_
         origin = await open_popup(popup_app, pilot)
         assert popup_app.focused is popup_app.screen.query_one(target)
         await pilot.press("escape")
-        await wait_until(lambda: popup_app.screen is origin, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: popup_app.screen is origin, timeout=UI_WAIT_SECONDS)
         await open_popup(popup_app, pilot)
         screen = popup_app.screen
         close = screen.query_one(f".{POPUP_CLOSE_CLASS}", Button)
@@ -229,7 +228,7 @@ async def test_popup_starts_on_its_useful_control_and_closes_with_escape_or_its_
             await pilot.press("tab")
         assert popup_app.focused is close
         await pilot.press("enter")
-        await wait_until(lambda: popup_app.screen is origin, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: popup_app.screen is origin, timeout=UI_WAIT_SECONDS)
 
 
 def _scrollbar_width(widget: Widget) -> object:
@@ -248,17 +247,17 @@ async def test_popup_bodies_and_task_lists_use_the_one_column_scrollbar(
         await pilot.press("?")
         await wait_until(
             lambda: bool(popup_app.screen.query("#workspace-help-scroll")),
-            timeout=_WAIT_SECONDS,
+            timeout=UI_WAIT_SECONDS,
         )
         assert _scrollbar_width(popup_app.screen.query_one("#workspace-help-scroll")) == (
             SCROLLBAR_WIDTH
         )
         await pilot.press("escape")
-        await wait_until(lambda: popup_app.screen is home, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: popup_app.screen is home, timeout=UI_WAIT_SECONDS)
         await pilot.press("v")
         await wait_until(
             lambda: bool(popup_app.screen.query("#focus-views-list")),
-            timeout=_WAIT_SECONDS,
+            timeout=UI_WAIT_SECONDS,
         )
         assert _scrollbar_width(popup_app.screen.query_one("#focus-views-list")) == (
             SCROLLBAR_WIDTH
@@ -296,7 +295,7 @@ async def test_overflowing_task_detail_has_a_one_column_scrollbar(
     )
     async with app.run_test(size=size) as pilot:
         body = app.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
-        await wait_until(lambda: body.max_scroll_y > 0, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: body.max_scroll_y > 0, timeout=UI_WAIT_SECONDS)
         await pilot.pause()
         assert body.scrollable_content_region.width == (
             body.region.width - body.styles.gutter.width - SCROLLBAR_WIDTH
@@ -323,7 +322,7 @@ async def test_task_views_select_dropdown_uses_the_one_column_scrollbar(
         await pilot.press("v")
         await wait_until(
             lambda: bool(app.screen.query("#task-detail-view-choice")),
-            timeout=_WAIT_SECONDS,
+            timeout=UI_WAIT_SECONDS,
         )
         choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
         choice.focus()
@@ -341,7 +340,7 @@ async def test_help_body_scrolls_from_its_initial_focus_without_resizing_the_fra
         await pilot.press("?")
         await wait_until(
             lambda: bool(popup_app.screen.query("#workspace-help-scroll")),
-            timeout=_WAIT_SECONDS,
+            timeout=UI_WAIT_SECONDS,
         )
         await pilot.pause()
         help_screen = popup_app.screen
@@ -349,5 +348,5 @@ async def test_help_body_scrolls_from_its_initial_focus_without_resizing_the_fra
         frame = help_screen.query_one("#workspace-help-frame")
         frame_region = frame.region
         await pilot.press("pagedown")
-        await wait_until(lambda: body.scroll_y > 0, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: body.scroll_y > 0, timeout=UI_WAIT_SECONDS)
         assert frame.region == frame_region

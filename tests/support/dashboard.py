@@ -23,7 +23,7 @@ from shikiru.dashboard.views import StateDashboardViews
 from shikiru.operator.queries import OperatorQueries
 from shikiru.ui.theme import install_theme
 from tests.support.render import plain_text
-from tests.support.waiting import wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,7 +39,6 @@ if TYPE_CHECKING:
 
 REPO_AHEAD = 1
 REPO_DIRTY = 2
-FOCUS_VIEW_WAIT_SECONDS = 2
 RESOURCES = ResourceView(10.0, 40.0, 4.0, 2.0, 0.2)
 
 
@@ -102,7 +101,7 @@ async def choose_focus_view(pilot: Pilot[None], label: str) -> None:
     await pilot.press("v")
     await wait_until(
         lambda: bool(pilot.app.screen.query("#focus-views-list")),
-        timeout=FOCUS_VIEW_WAIT_SECONDS,
+        timeout=UI_WAIT_SECONDS,
     )
     menu = pilot.app.screen
     view_list = menu.query_one("#focus-views-list", ListView)
@@ -116,7 +115,7 @@ async def choose_focus_view(pilot: Pilot[None], label: str) -> None:
     await pilot.press("enter")
     await wait_until(
         lambda: pilot.app.screen is not menu,
-        timeout=FOCUS_VIEW_WAIT_SECONDS,
+        timeout=UI_WAIT_SECONDS,
     )
     await pilot.pause()
 

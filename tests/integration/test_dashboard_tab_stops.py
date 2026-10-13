@@ -30,7 +30,7 @@ from tests.support.dashboard import (
 )
 from tests.support.render import plain_text
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -43,7 +43,6 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.usefixtures("colour_terminal")
 _START = datetime(2026, 1, 1, tzinfo=UTC)
-_WAIT_SECONDS = 2
 _WIDE = (120, 40)
 _COMPACT = (48, 20)
 _TINY = (20, 8)
@@ -146,7 +145,7 @@ def recent_home(connection: Connection, reader: StateReader, tmp_path: Path) -> 
 
 async def _settled(app: DashboardApp, pilot: Pilot[None], *, decision: bool) -> EscalationsPanel:
     bar = app.query_one("#escalations", EscalationsPanel)
-    await wait_until(lambda: bar.allow_focus() is decision, timeout=_WAIT_SECONDS)
+    await wait_until(lambda: bar.allow_focus() is decision, timeout=UI_WAIT_SECONDS)
     await pilot.pause()
     return bar
 
@@ -231,7 +230,7 @@ async def test_focused_readout_scrolls_with_page_keys_and_keeps_the_task_selecti
         await pilot.press("pagedown")
         await wait_until(
             lambda: sum(scroller.scroll_y for scroller in scrollers) > before,
-            timeout=_WAIT_SECONDS,
+            timeout=UI_WAIT_SECONDS,
         )
         assert task_list.index == selected
 
@@ -246,7 +245,7 @@ async def test_quiet_bar_is_not_a_tab_stop_but_views_attention_still_reaches_it(
         assert not bar.has_class("armed")
         assert bar not in await _tab_cycle(quiet_home, pilot)
         await choose_focus_view(pilot, _ATTENTION_LABEL)
-        await wait_until(lambda: quiet_home.focused is bar, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: quiet_home.focused is bar, timeout=UI_WAIT_SECONDS)
 
 
 async def _settled_lists(app: DashboardApp, pilot: Pilot[None]) -> tuple[ListView, ListView]:
@@ -254,7 +253,7 @@ async def _settled_lists(app: DashboardApp, pilot: Pilot[None]) -> tuple[ListVie
     recent = app.query_one("#task-browser-recent-list", ListView)
     await wait_until(
         lambda: app.focused is active and bool(recent.children),
-        timeout=_WAIT_SECONDS,
+        timeout=UI_WAIT_SECONDS,
     )
     await pilot.pause()
     return active, recent
@@ -278,7 +277,7 @@ async def test_tab_sweeps_skip_recent_until_down_hands_the_stop_over(
             assert recent not in stops
             assert not _unhighlighted_lists(stops, (active, recent))
         await pilot.press("down")
-        await wait_until(lambda: recent.highlighted_child is not None, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: recent.highlighted_child is not None, timeout=UI_WAIT_SECONDS)
         await pilot.press("tab")
         assert recent_home.focused is recent
         stops = await _tab_cycle(recent_home, pilot)
@@ -294,7 +293,7 @@ async def test_clicking_a_recent_row_from_an_active_selection_focuses_and_highli
         active, recent = await _settled_lists(recent_home, pilot)
         row = recent.children[0]
         await pilot.click(f"#{row.id}")
-        await wait_until(lambda: recent.highlighted_child is row, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: recent.highlighted_child is row, timeout=UI_WAIT_SECONDS)
         assert recent_home.focused is recent
         assert active.highlighted_child is None
         identity = plain_text(recent_home.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
@@ -307,7 +306,7 @@ async def test_escape_clears_the_selection_and_the_list_that_held_focus_leaves_n
     async with recent_home.run_test(size=_WIDE) as pilot:
         active, recent = await _settled_lists(recent_home, pilot)
         await pilot.press("escape")
-        await wait_until(lambda: active.highlighted_child is None, timeout=_WAIT_SECONDS)
+        await wait_until(lambda: active.highlighted_child is None, timeout=UI_WAIT_SECONDS)
         assert recent_home.focused is active
         await pilot.press("tab")
         stops = await _tab_cycle(recent_home, pilot)

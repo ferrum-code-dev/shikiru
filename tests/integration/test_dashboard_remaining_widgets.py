@@ -83,7 +83,7 @@ from tests.support.dashboard import WidgetHostApp, widget_context
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT
 from tests.support.render import plain_text
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -376,7 +376,7 @@ async def _assert_home_task_opens(
     task_list.index = 0
     await pilot.press("enter")
     identity = app.query_one("#task-detail-identity", Static)
-    await wait_until(lambda: task_id in plain_text(identity.content), timeout=2)
+    await wait_until(lambda: task_id in plain_text(identity.content), timeout=UI_WAIT_SECONDS)
     assert app.screen is home_screen
     assert task_id in plain_text(identity.content)
     assert title in plain_text(identity.content)
@@ -399,9 +399,9 @@ async def _assert_diagnostics_refresh_after_commit(
     sources: DashboardSources,
     initial: ResourceView,
 ) -> None:
-    await wait_until(clock.has_pending_sleep, timeout=2)
+    await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
     await pilot.resize_terminal(99, 50)
-    await wait_until(lambda: app.size.width == 99, timeout=2)
+    await wait_until(lambda: app.size.width == 99, timeout=UI_WAIT_SECONDS)
     _record_open_engine_fault(
         connection,
         clock,
@@ -416,7 +416,7 @@ async def _assert_diagnostics_refresh_after_commit(
             text in " ".join(_project_diagnostics_text(app.screen).split())
             for text in ("Faults 2 open", "fault after resize")
         ),
-        timeout=2,
+        timeout=UI_WAIT_SECONDS,
     )
     diagnostics = _assert_project_diagnostics_facts(
         app.screen,
@@ -496,7 +496,7 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
         await pilot.press("o")
         await wait_until(
             lambda: bool(pilot.app.screen.query("#escalation-packet-close")),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         packet_screen = pilot.app.screen
         packet_close = packet_screen.query_one("#escalation-packet-close", Button)
@@ -510,7 +510,7 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
                 and packet_screen.region.contains_region(packet_close.region)
                 and not packet_scroll.scrollable_content_region.contains_region(packet_close.region)
             ),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         packet_view = cast("Static", packet_screen.query_one("#escalation-packet"))
         packet_copy = cast("str", packet_view.content)
@@ -518,7 +518,7 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
         assert "Evidence error:" in packet_copy
         assert f"Original packet:\n{packet}" in packet_copy
         await pilot.click("#escalation-packet-close")
-        await wait_until(lambda: pilot.app.screen is home, timeout=2)
+        await wait_until(lambda: pilot.app.screen is home, timeout=UI_WAIT_SECONDS)
         widget.focus()
         await pilot.press("r")
         assert actions == ["resolve E-1"]
@@ -582,7 +582,7 @@ async def test_attention_keeps_unreadable_decision_and_does_not_create_its_packe
                 escalation.id
                 in plain_text(panel.query_one("#escalation-panels").query(Static)[0].content)
             ),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         group_text = plain_text(panel.query_one("#escalation-panels").query(Static)[0].content)
         assert group_text.count(task.id) == 1
@@ -635,7 +635,7 @@ async def test_attention_refreshes_after_another_client_resolves_without_stealin
                     escalation.id
                     in plain_text(panel.query_one("#escalation-panels").query(Static)[0].content)
                 ),
-                timeout=2,
+                timeout=UI_WAIT_SECONDS,
             )
             assert context.views.workspace_summary().attention == 1
             panel.focus()
@@ -657,7 +657,7 @@ async def test_attention_refreshes_after_another_client_resolves_without_stealin
                     "engine fault"
                     in plain_text(panel.query_one("#escalation-panels").query(Static)[0].content)
                 ),
-                timeout=2,
+                timeout=UI_WAIT_SECONDS,
             )
             assert pilot.app.focused is panel
             assert pilot.app.screen is active_screen
@@ -674,7 +674,7 @@ async def test_attention_refreshes_after_another_client_resolves_without_stealin
                         panel.query_one("#escalation-panels").query(Static)[0].content
                     )
                 ),
-                timeout=2,
+                timeout=UI_WAIT_SECONDS,
             )
             assert context.views.attention().decisions == 0
             assert pilot.app.focused is panel
@@ -737,7 +737,7 @@ async def test_dialogue_filters_noise_and_enter_shows_the_full_implementer_text(
         await pilot.press("enter")
         await wait_until(
             lambda: bool(pilot.app.screen.query("#dialogue-text-close")),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         dialogue_screen = pilot.app.screen
         dialogue_close = dialogue_screen.query_one("#dialogue-text-close", Button)
@@ -753,12 +753,12 @@ async def test_dialogue_filters_noise_and_enter_shows_the_full_implementer_text(
                     dialogue_close.region
                 )
             ),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         full_text = cast("Static", dialogue_screen.query_one("#dialogue-full-text"))
         assert cast("str", full_text.content) == bubbles[-2].text
         await pilot.click("#dialogue-text-close")
-        await wait_until(lambda: pilot.app.screen is home, timeout=2)
+        await wait_until(lambda: pilot.app.screen is home, timeout=UI_WAIT_SECONDS)
 
 
 async def test_usage_projection_keeps_project_and_task_scope_and_cost_evidence_separate(
@@ -1060,7 +1060,9 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
     )
     async with app.run_test(size=(100, 50)) as pilot:
         resource_panel = app.query_one("#resources", Static)
-        await wait_until(lambda: "Stale" in plain_text(resource_panel.content), timeout=2)
+        await wait_until(
+            lambda: "Stale" in plain_text(resource_panel.content), timeout=UI_WAIT_SECONDS
+        )
         await pilot.pause()
         resource_lines = _rendered_widget_lines(resource_panel)
         resource_text = "\n".join(resource_lines)
@@ -1077,7 +1079,9 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
 
         home_screen = app.screen
         assert await pilot.click("#resources")
-        await wait_until(lambda: bool(app.screen.query("#context-widget-frame")), timeout=2)
+        await wait_until(
+            lambda: bool(app.screen.query("#context-widget-frame")), timeout=UI_WAIT_SECONDS
+        )
         diagnostics = _assert_project_diagnostics_facts(
             app.screen,
             fault_count=1,
@@ -1098,7 +1102,7 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
         )
 
         await pilot.press("escape")
-        await wait_until(lambda: app.screen is home_screen, timeout=2)
+        await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
 
         await _assert_home_task_opens(app, pilot, home_screen, task.id, task.title)
 
@@ -1225,7 +1229,7 @@ async def test_the_disk_sample_reaches_the_views_with_its_run_size_and_free_leve
     async def measured() -> bool:
         return (await views.disk()).shikiru_bytes is not None
 
-    await wait_until(measured, timeout=2)
+    await wait_until(measured, timeout=UI_WAIT_SECONDS)
     disk = await views.disk()
 
     assert disk.state is DiagnosticSampleState.AVAILABLE
@@ -1287,7 +1291,9 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
     async with app.run_test(size=(100, 50)) as pilot:
         home_screen = app.screen
         await pilot.press("v")
-        await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
+        await wait_until(
+            lambda: bool(app.screen.query("#focus-views-list")), timeout=UI_WAIT_SECONDS
+        )
         view_list = app.screen.query_one("#focus-views-list", ListView)
         choices = [item for item in view_list.children if isinstance(item, ListItem)]
         docker_index = next(
@@ -1298,21 +1304,23 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         view_list.focus()
         view_list.index = docker_index
         await pilot.press("enter")
-        await wait_until(lambda: app.screen is not home_screen, timeout=2)
-        await wait_until(lambda: bool(app.screen.query("#docker")), timeout=2)
+        await wait_until(lambda: app.screen is not home_screen, timeout=UI_WAIT_SECONDS)
+        await wait_until(lambda: bool(app.screen.query("#docker")), timeout=UI_WAIT_SECONDS)
         docker_panel = app.screen.query_one("#docker", Static)
         await wait_until(
             lambda: "failed" in plain_text(docker_panel.content),
-            timeout=2,
+            timeout=UI_WAIT_SECONDS,
         )
         assert "invalid JSON" in plain_text(docker_panel.content)
         task_row = app.query_one(f"#task-row-{task.id} > Static", Static)
         assert task.title in plain_text(task_row.content)
 
         await pilot.press("escape")
-        await wait_until(lambda: app.screen is home_screen, timeout=2)
+        await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
         assert await pilot.click("#resources")
-        await wait_until(lambda: bool(app.screen.query("#context-widget-frame")), timeout=2)
+        await wait_until(
+            lambda: bool(app.screen.query("#context-widget-frame")), timeout=UI_WAIT_SECONDS
+        )
         diagnostics = _assert_project_diagnostics_facts(
             app.screen,
             fault_count=1,
@@ -1324,7 +1332,7 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         assert views.command_history().entries == command_history_before
 
         await pilot.press("escape")
-        await wait_until(lambda: app.screen is home_screen, timeout=2)
+        await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
         await _assert_home_task_opens(app, pilot, home_screen, task.id, task.title)
 
 
