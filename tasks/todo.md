@@ -278,7 +278,7 @@ Tenth-review scope and evidence: [tenth review, escalation resolution panel](../
 - [x] Task 176: Resolution view model
 - [x] Task 177: Escalation resolution screen
 - [x] Task 178: Remove the old resolve form
-- [ ] Task 179: Verify the tenth review, reconcile the reference and docs
+- [x] Task 179: Verify the tenth review, reconcile the reference and docs
 
 Eleventh-review scope and evidence: [eleventh review, task details](../docs/tui-feedback-eleventh-review.md).
 

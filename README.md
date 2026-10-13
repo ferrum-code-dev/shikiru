@@ -76,6 +76,7 @@ The [2026-10-12 sixth-review record](docs/release-readiness-2026-10-12-phase11-s
 The [2026-10-12 seventh-review record](docs/release-readiness-2026-10-12-phase11-seventh-review.md) verifies Tasks 151–155 (Project Diagnostics sections, Docker essentials and scope, the Disk section, timer refresh) and the HTML reference.
 The [2026-10-13 eighth-review record](docs/release-readiness-2026-10-13-phase11-eighth-review.md) verifies Tasks 156–165 (leaner tests, stale and age hints only after a failure, one refresh moment, the `.shikiru` size and `‼` marker, sentence-case titles, the task detail following under popups) and the HTML reference.
 The [2026-10-13 ninth-review record](docs/release-readiness-2026-10-13-phase11-ninth-review.md) verifies Tasks 167–173 (bold `SHIKIRU` and the `Tasks` heading, the plugin reinstall hint, a steadier test suite, command history paged with the arrow keys and coloured without a raw result) and the HTML reference.
+The [2026-10-13 tenth-review record](docs/release-readiness-2026-10-13-phase11-tenth-review.md) verifies Tasks 176–178 (every escalation is resolved on one choice-list screen instead of the palette form, opened for one concrete escalation from the bar, the Home strip, the task menu and `Ctrl+P`) and the HTML reference.
 The [Focus specification](docs/tui-focus.md) describes current routes and evidence rules; the
 [parity record](docs/tui-parity.md) preserves the measured Phase 10 audit and its historical artifacts.
 

@@ -1742,8 +1742,10 @@ Refs: `dashboard/palette.py` (resolve fields, evidence collapsibles, summary, gu
 
 ### Task 179: Verify the tenth review, reconcile the reference and docs
 Refs: Tasks 176–178; design 06 §5.5, `tui-workspace.md`, `tui-focus.md`, `tui-parity.md`, the HTML reference resolve modal.
-- [ ] Native check of both layouts and every entry route (colour, `NO_COLOR`, wide to tiny) with before/after against the commit that planned this review; plain and `TERM=dumb NO_COLOR=1` gates; collected cases, functions and lines compared with the start.
-- [ ] HTML reference and design docs match the TUI (exact srcdoc round-trip, Chrome check with a throwaway profile); spec marked delivered; record `docs/release-readiness-2026-10-13-phase11-tenth-review.md`; README links; plan and todo ticked.
+- [x] Native check of both layouts and every entry route (colour, `NO_COLOR`, wide to tiny) with before/after against the commit that planned this review; plain and `TERM=dumb NO_COLOR=1` gates; collected cases, functions and lines compared with the start.
+  - Proof: the real `DashboardApp` over throwaway projects, against a `cbe2fe8` worktree, showed both approved layouts at 100x40, 48, 40 columns and 80x8 in colour and `NO_COLOR`, all five entry routes opening with nothing dispatched, the five send paths queueing one `Resolve` each (Home Pending), rejection, resolved-elsewhere, missing packet and unknown id; the baseline opened the old palette form. Collected cases 1,607 to 1,598, functions 951 to 943, `tests/` lines 60,565 to 59,508; plain gate 1,577 passed, 90.34 %, and the `TERM=dumb NO_COLOR=1` gate is green too (1,577 passed, 91.12 %).
+- [x] HTML reference and design docs match the TUI (exact srcdoc round-trip, Chrome check with a throwaway profile); spec marked delivered; record `docs/release-readiness-2026-10-13-phase11-tenth-review.md`; README links; plan and todo ticked.
+  - Proof: the reference resolve modal is the Choose-list panel (exact `srcdoc` round-trip, SHA-256 `022525320ba2c46c9eed1158a4e6e3b70ac590199652d2918df3558483f41d66`), checked in headless Chrome under a throwaway profile against the native colours at wide, compact and tiny, colour and No color, with the keyboard and click behaviour; 06 §5.5/§6.4, the workspace, Focus and parity documents, both READMEs and the spec are updated and the record is written.
 
 
 ## Task details redesign (eleventh review)
