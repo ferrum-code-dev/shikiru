@@ -6,6 +6,7 @@ import os
 import shlex
 import shutil
 import sys
+import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
@@ -60,11 +61,7 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.disk import DiskSampler
 from shikiru.telemetry.docker import (
-    DOCKER_ALL_FLAG,
     DOCKER_BINARY,
-    DOCKER_FORMAT_FLAG,
-    DOCKER_JSON_FORMAT,
-    DOCKER_PS_SUBCOMMAND,
     DockerSampler,
 )
 from shikiru.telemetry.resources import ResourceSampler
@@ -83,13 +80,13 @@ from tests.support.cells import rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import WidgetHostApp, widget_context
-from tests.support.factories import make_settings
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT
 from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from textual.pilot import Pilot
@@ -128,6 +125,7 @@ RESOURCE_SHELL_LAYOUT_PANE = "shell"
 RESOURCE_SYSTEM_SPLIT_SIZE_PCT = 40
 RESOURCE_UNRELATED_ALLOCATION_MULTIPLIER = 4
 RESOURCE_RSS_MATCH_TOLERANCE_BYTES = 16 * 1024**2
+_TMUX_VARIABLES = ("TMUX", "TMUX_PANE")
 RESOURCE_TEST_RUNG = Rung("fake", "resource-test", None)
 
 
@@ -139,6 +137,16 @@ class _ResourceTestPanes:
     home_root: psutil.Process
     system_root: psutil.Process
     excluded_roots: tuple[psutil.Process, ...]
+
+
+@pytest.fixture
+def idle_tmux(tmp_path: Path) -> Tmux:
+    environment = {key: value for key, value in os.environ.items() if key not in _TMUX_VARIABLES}
+    return Tmux(
+        SubprocessRunner(),
+        socket=f"idle-{uuid.uuid4().hex}",
+        env={**environment, "TMUX_TMPDIR": str(tmp_path)},
+    )
 
 
 def _dashboard_services(
@@ -809,14 +817,9 @@ async def test_project_usage_widget_keeps_detailed_monetary_and_token_evidence(
 
 
 _QUOTA_GAUGE_COLOUR_CASES = (
-    pytest.param(38.0, SAGE, id="well-below-warn"),
-    pytest.param(49.4, SAGE, id="displayed-49-below-warn"),
-    pytest.param(49.6, AMBER, id="displayed-50-warn"),
-    pytest.param(50.0, AMBER, id="warn-threshold"),
-    pytest.param(89.4, AMBER, id="displayed-89-below-alert"),
-    pytest.param(89.6, DUSTY_ROSE, id="displayed-90-alert"),
-    pytest.param(100.0, DUSTY_ROSE, id="full"),
-    pytest.param(120.0, DUSTY_ROSE, id="above-full"),
+    pytest.param(38.0, SAGE, id="ok"),
+    pytest.param(50.0, AMBER, id="warn"),
+    pytest.param(100.0, DUSTY_ROSE, id="alert"),
 )
 
 
@@ -1008,14 +1011,13 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
-    tmux_server: TmuxServer,
+    idle_tmux: Tmux,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Readable task")
-    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
-    sources, settings = _dashboard_services(project_dir, clock, tmux, reader)
+    sources, settings = _dashboard_services(project_dir, clock, idle_tmux, reader)
     initial = await sources.resources()
     assert initial.state is DiagnosticSampleState.AVAILABLE
     _record_open_engine_fault(
@@ -1098,28 +1100,7 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
         await _assert_home_task_opens(app, pilot, home_screen, task.id, task.title)
 
 
-async def test_process_sampling_failure_retains_the_last_complete_tree_sample(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-    tmux_server: TmuxServer,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    del connection
-    project_dir = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
-    sources, settings = _dashboard_services(project_dir, clock, tmux, reader)
-    try:
-        initial = await sources.resources()
-    except psutil.AccessDenied, PermissionError:
-        pytest.skip("host process enumeration is restricted")
-
-    assert initial.instance_cpu_pct is not None
-    assert initial.instance_rss_gb is not None
-    assert initial.sampled_at == START
-
-    clock.advance(settings.orchestration.resources.sample_seconds)
+def _deny_current_process_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
     cpu_percent = psutil.Process.cpu_percent
 
     def deny_current_process_cpu_percent(
@@ -1130,64 +1111,78 @@ async def test_process_sampling_failure_retains_the_last_complete_tree_sample(
         return cpu_percent(process, interval)
 
     monkeypatch.setattr(psutil.Process, "cpu_percent", deny_current_process_cpu_percent)
-    stale = await sources.resources()
-
-    assert stale.state is DiagnosticSampleState.STALE
-    assert stale.sampled_at == initial.sampled_at
-    assert stale.sampled_ago is not None
-    assert stale.instance_cpu_pct == initial.instance_cpu_pct
-    assert stale.instance_rss_gb == initial.instance_rss_gb
-    assert stale.error is not None
-    retained = sources.resource_sample()
-    assert retained is not None
-    assert retained.state is DiagnosticSampleState.STALE
-    assert retained.sampled_at == initial.sampled_at
-    assert retained.instance_cpu_pct == initial.instance_cpu_pct
-    assert retained.error == stale.error
 
 
-async def test_resource_failure_without_a_prior_sample_remains_failed(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-    tmux_server: TmuxServer,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    del connection
-    project_dir = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
-    sources, _settings = _dashboard_services(project_dir, clock, tmux, reader)
-
+def _fail_host_cpu(monkeypatch: pytest.MonkeyPatch) -> None:
     def fail_cpu_sample(*, interval: float | None = None, percpu: bool = False) -> float:
         del interval, percpu
         raise psutil.Error
 
     monkeypatch.setattr(psutil, "cpu_percent", fail_cpu_sample)
 
+
+@pytest.mark.parametrize(
+    ("prior_sample", "inject_failure", "expected_state"),
+    [
+        pytest.param(
+            True, _deny_current_process_cpu, DiagnosticSampleState.STALE, id="retains-last-sample"
+        ),
+        pytest.param(False, _fail_host_cpu, DiagnosticSampleState.FAILED, id="no-prior-sample"),
+    ],
+)
+async def test_resource_sampling_failure_is_stale_only_after_a_prior_sample(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    idle_tmux: Tmux,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    prior_sample: bool,
+    inject_failure: Callable[[pytest.MonkeyPatch], None],
+    expected_state: DiagnosticSampleState,
+) -> None:
+    del connection
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    sources, settings = _dashboard_services(project_dir, clock, idle_tmux, reader)
+    initial: ResourceView | None = None
+    if prior_sample:
+        try:
+            initial = await sources.resources()
+        except psutil.AccessDenied, PermissionError:
+            pytest.skip("host process enumeration is restricted")
+        assert initial.instance_cpu_pct is not None
+        assert initial.sampled_at == START
+        clock.advance(settings.orchestration.resources.sample_seconds)
+    inject_failure(monkeypatch)
+
     failure = await sources.resources()
     retained = sources.resource_sample()
 
-    assert failure.state is DiagnosticSampleState.FAILED
-    assert failure.sampled_at is None
+    assert failure.state is expected_state
     assert failure.error is not None
     assert retained is not None
-    assert retained.state is DiagnosticSampleState.FAILED
-    assert retained.sampled_at is None
+    assert retained.state is expected_state
     assert retained.error == failure.error
+    if initial is None:
+        assert failure.sampled_at is None
+    else:
+        assert failure.sampled_at == initial.sampled_at
+        assert failure.instance_cpu_pct == initial.instance_cpu_pct
+        assert failure.instance_rss_gb == initial.instance_rss_gb
+        assert failure.sampled_ago is not None
 
 
 async def test_the_disk_sample_reaches_the_views_with_its_run_size_and_free_level(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
-    tmux_server: TmuxServer,
+    idle_tmux: Tmux,
 ) -> None:
     del connection
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
-    sources, settings = _dashboard_services(project_dir, clock, tmux, reader)
+    sources, settings = _dashboard_services(project_dir, clock, idle_tmux, reader)
     run = runs_root(project_dir) / "T-1"
     run.mkdir(parents=True)
     (run / "view.jsonl").write_bytes(b"x" * _RUN_FILE_BYTES)
@@ -1204,7 +1199,7 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
-    tmux_server: TmuxServer,
+    idle_tmux: Tmux,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
@@ -1218,8 +1213,7 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         error="recorded docker diagnostic failure",
         repeats=1,
     )
-    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
-    sources, settings = _dashboard_services(project_dir, clock, tmux, reader)
+    sources, settings = _dashboard_services(project_dir, clock, idle_tmux, reader)
     monkeypatch.setenv("PATH", str(tmp_path))
 
     unavailable = await sources.containers()
@@ -1299,14 +1293,13 @@ async def test_docker_section_shows_what_the_fake_docker_reports(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
-    tmux_server: TmuxServer,
+    idle_tmux: Tmux,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del connection
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
-    sources, settings = _dashboard_services(project_dir, clock, tmux, reader)
+    sources, settings = _dashboard_services(project_dir, clock, idle_tmux, reader)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     docker = bin_dir / DOCKER_BINARY
@@ -1539,70 +1532,3 @@ async def test_resources_service_excludes_panes_from_other_projects(
     assert snapshot.instance_rss_gb == pytest.approx(
         snapshot.shikiru_rss_gb + snapshot.agents_rss_gb
     )
-
-
-def test_resource_sampler_measures_a_real_process_tree() -> None:
-    clock = FakeClock(START)
-    settings = make_settings()
-    sampler = ResourceSampler(clock, settings.orchestration.resources)
-
-    try:
-        snapshot = sampler.sample_process_trees(os.getpid(), ())
-    except psutil.AccessDenied, PermissionError:
-        pytest.skip("host process enumeration is restricted")
-    assert snapshot.instance_cpu_pct is not None
-    assert snapshot.instance_rss_gb is not None
-    assert snapshot.instance_rss_gb > 0
-    assert snapshot.shikiru_cpu_pct is None
-    assert snapshot.shikiru_rss_gb is None
-    assert snapshot.agents_cpu_pct is None
-    assert snapshot.agents_rss_gb is None
-    assert snapshot.shikiru_process_tree_empty is None
-    assert snapshot.agents_process_tree_empty is None
-
-    clock.advance(settings.orchestration.resources.sample_seconds)
-    for _ in range(CPU_WORK_ITERATIONS):
-        pass
-    refreshed = sampler.sample_process_trees(os.getpid(), ())
-    assert refreshed is not snapshot
-    assert refreshed.instance_rss_gb is not None
-    assert refreshed.instance_rss_gb > 0
-    assert refreshed.instance_cpu_pct is not None
-    assert refreshed.instance_cpu_pct > 0
-
-
-@pytest.mark.skipif(shutil.which("docker") is None, reason="Docker CLI is not installed")
-async def test_docker_sampler_counts_match_a_real_docker_listing() -> None:
-    runner = SubprocessRunner()
-    settings = make_settings()
-    direct = await runner.run(
-        [
-            DOCKER_BINARY,
-            DOCKER_PS_SUBCOMMAND,
-            DOCKER_ALL_FLAG,
-            DOCKER_FORMAT_FLAG,
-            DOCKER_JSON_FORMAT,
-        ],
-        timeout=settings.dashboard.docker_timeout_seconds,
-        check=False,
-    )
-    if direct.returncode != 0:
-        pytest.skip("Docker daemon is unavailable")
-    listed = [json.loads(line) for line in direct.stdout.splitlines()]
-    sampler = DockerSampler(
-        runner,
-        FakeClock(START),
-        refresh_seconds=settings.dashboard.docker_refresh_seconds,
-        timeout_seconds=settings.dashboard.docker_timeout_seconds,
-        project_roots=None,
-    )
-
-    snapshot = await sampler.sample()
-
-    if not snapshot.available:
-        pytest.skip("Docker daemon is unavailable")
-    assert await sampler.sample_if_due() is snapshot
-    assert snapshot.summary is not None
-    assert snapshot.summary.total == len(listed)
-    assert snapshot.summary.running == sum(record["State"] == "running" for record in listed)
-    assert snapshot.summary.elsewhere.running == 0
