@@ -305,19 +305,6 @@ def _plain_lines(widget: UsagePanel) -> list[str]:
     return ["".join(char for char, _ in cells) for cells in rendered_lines(widget)]
 
 
-async def test_usage_popup_title_is_the_single_project_usage_label(
-    connection: Connection, reader: StateReader, tmp_path: Path
-) -> None:
-    del connection
-    project_dir = write_minimal_project(tmp_path)
-    app = dashboard_app(reader, project_dir, FakeClock(_START), widget_names=["usage"])
-    async with app.run_test(size=_WIDE) as pilot:
-        await choose_focus_view(pilot, _HOME_USAGE_ENTRY)
-        await wait_until(lambda: bool(app.screen.query(UsagePanel)), timeout=_WAIT_SECONDS)
-        title = app.screen.query_one("#context-widget-title", Static)
-        assert str(title.render()) == _PROJECT_USAGE_TITLE
-
-
 async def test_panel_renders_totals_by_agent_and_limits_in_the_operator_styles(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
@@ -326,6 +313,19 @@ async def test_panel_renders_totals_by_agent_and_limits_in_the_operator_styles(
     panel = UsagePanel(widget_context(reader, write_minimal_project(tmp_path), clock))
     async with WidgetHostApp(panel).run_test(size=_WIDE):
         assert await _settled_lines(panel) == _FULL_LAYOUT
+        text = "\n".join(_plain_lines(panel))
+        totals, rest = text.split("By agent")
+        by_agent, limits = rest.split("Limits")
+        for fact in ("API billed", "subscription", "API-equivalent", "Coverage", "Billing"):
+            assert text.count(fact) == 1
+        assert "sessions" in totals
+        assert "sessions" not in by_agent + limits
+        assert "runs" not in totals + limits
+        assert "resets" not in totals + by_agent
+        assert not any(
+            word in text
+            for word in ("billing_mode", "operator_config", "provider_reported", "New sessions")
+        )
 
 
 def _single_agent_state(
@@ -462,29 +462,6 @@ async def test_panel_without_runs_says_so_under_the_unknown_totals(
         ]
 
 
-async def test_every_fact_appears_once_and_removed_details_stay_out(
-    connection: Connection, reader: StateReader, tmp_path: Path
-) -> None:
-    clock = FakeClock(_START)
-    _seed_full(connection, clock)
-    panel = UsagePanel(widget_context(reader, write_minimal_project(tmp_path), clock))
-    async with WidgetHostApp(panel).run_test(size=_WIDE):
-        await _settled_lines(panel)
-        text = "\n".join(_plain_lines(panel))
-        totals, rest = text.split("By agent")
-        by_agent, limits = rest.split("Limits")
-        for fact in ("API billed", "subscription", "API-equivalent", "Coverage", "Billing"):
-            assert text.count(fact) == 1
-        assert "sessions" in totals
-        assert "sessions" not in by_agent + limits
-        assert "runs" not in totals + limits
-        assert "resets" not in totals + by_agent
-        assert not any(
-            word in text
-            for word in ("billing_mode", "operator_config", "provider_reported", "New sessions")
-        )
-
-
 _SHARED_AGE_LIMITS = [
     f"claude 5h {GAUGE_GLYPHS[2]} 38% resets 1h 40m",
     f"       weekly {GAUGE_GLYPHS[4]} 91% resets 74h 0m",
@@ -545,17 +522,6 @@ _COMPACT_LAYOUT = [
 ]
 
 
-async def test_compact_width_wraps_rows_only_at_group_separators(
-    connection: Connection, reader: StateReader, tmp_path: Path
-) -> None:
-    clock = FakeClock(_START)
-    _seed_full(connection, clock)
-    panel = UsagePanel(widget_context(reader, write_minimal_project(tmp_path), clock))
-    async with WidgetHostApp(panel).run_test(size=_COMPACT):
-        await _settled_lines(panel)
-        assert _plain_lines(panel) == _COMPACT_LAYOUT
-
-
 _TINY_LAYOUT = [
     "Totals",
     "5 sessions",
@@ -603,18 +569,29 @@ _TINY_LAYOUT = [
 ]
 
 
-async def test_tiny_width_stacks_labels_above_whole_values(
-    connection: Connection, reader: StateReader, tmp_path: Path
+@pytest.mark.parametrize(
+    ("size", "expected"),
+    [
+        pytest.param(_COMPACT, _COMPACT_LAYOUT, id="wraps-only-at-group-separators"),
+        pytest.param(_TINY, _TINY_LAYOUT, id="stacks-labels-above-whole-values"),
+    ],
+)
+async def test_narrow_widths_wrap_rows_without_splitting_values(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    size: tuple[int, int],
+    expected: list[str],
 ) -> None:
     clock = FakeClock(_START)
     _seed_full(connection, clock)
     panel = UsagePanel(widget_context(reader, write_minimal_project(tmp_path), clock))
-    async with WidgetHostApp(panel).run_test(size=_TINY):
+    async with WidgetHostApp(panel).run_test(size=size):
         await _settled_lines(panel)
-        assert _plain_lines(panel) == _TINY_LAYOUT
+        assert _plain_lines(panel) == expected
 
 
-async def test_tiny_popup_keeps_every_section_label_in_a_scrolling_body(
+async def test_tiny_popup_is_titled_and_keeps_every_section_label_in_a_scrolling_body(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
     _seed_full(connection, FakeClock(_START))
@@ -626,6 +603,8 @@ async def test_tiny_popup_keeps_every_section_label_in_a_scrolling_body(
         await wait_until(lambda: bool(app.screen.query(UsagePanel)), timeout=_WAIT_SECONDS)
         panel = app.screen.query_one(UsagePanel)
         await _settled_lines(panel)
+        title = app.screen.query_one("#context-widget-title", Static)
+        assert str(title.render()) == _PROJECT_USAGE_TITLE
         lines = _plain_lines(panel)
         assert all(label in lines for label in ("Totals", "By agent", "Limits"))
         assert app.screen.query_one("#context-widget-content", VerticalScroll).max_scroll_y > 0
