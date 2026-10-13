@@ -1622,11 +1622,13 @@ Refs: eighth-review title case; title audit (`dashboard/app.py`, `dashboard/pale
 
 ### Task 165: Verify the eighth review
 Refs: Tasks 156–164.
-- [ ] Native check of every finding on the real popup (before/after where reproducible), normal and `TERM=dumb NO_COLOR=1` gates, collected-case and line counts before the cleanup and now.
+- [x] Native check of every finding on the real popup (before/after where reproducible), normal and `TERM=dumb NO_COLOR=1` gates, collected-case and line counts before the cleanup and now.
+  - Proof: findings 1 to 8 were driven on the real app against a throwaway project with a fake `docker`, before (`0d55954` worktree) and after: no leading rule, no `observed`/`stale` flicker over 13 s, bare Docker and Disk headings except `stale · observed …`, `.shikiru measuring…` then the size, bar and popup refreshing at the same instants, `‼` at warn and alert in colour and `NO_COLOR`, Uptime ticking under the popup. The task detail froze its follow under a popup (same defect as 8) and `883f297` fixed it. Collected cases 1,665 to 1,605, functions 994 to 950, test lines 62,017 to 60,423; `uv run poe check` and `TERM=dumb NO_COLOR=1 uv run poe check` green on `883f297` (the default-worker gate needed three re-runs for one test change and two load flakes that pass alone).
 
 ### Task 166: Reconcile the HTML reference, design docs and release record
 Refs: Tasks 160–165; eighth-review specification.
-- [ ] Revise the HTML reference (Project diagnostics: no leading rule, no age hints, `.shikiru` row, `‼` marker, sentence-case titles throughout), update 05/06 and tui-parity, write the eighth-review record, mark the spec delivered, clean owned processes and sockets.
+- [x] Revise the HTML reference (Project diagnostics: no leading rule, no age hints, `.shikiru` row, `‼` marker, sentence-case titles throughout), update 05/06 and tui-parity, write the eighth-review record, mark the spec delivered, clean owned processes and sockets.
+  - Proof: the HTML app was decoded, edited and re-encoded with an exact round trip, and headless Chrome per-character readouts of 368 popup lines (wide and compact, colour and `NO_COLOR`) match the native dumps except the sample's Agents and engine-uptime rows. Designs 06, 02, Focus and parity, both READMEs, the spec and the record `docs/release-readiness-2026-10-13-phase11-eighth-review.md` are updated; Chrome profiles, worktree and scratch files were removed.
 
 ### Eighth-review issue coverage
 

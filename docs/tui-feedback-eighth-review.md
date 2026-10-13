@@ -1,6 +1,6 @@
 # Phase 11 eighth real-project review
 
-Status: planned (Tasks 156–166, 2026-10-13). This specification refines the [seventh review](tui-feedback-seventh-review.md). **The TUI is the source of truth**: the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 166).
+Status: delivered (Tasks 156–166, 2026-10-13; see the [record](release-readiness-2026-10-13-phase11-eighth-review.md)). This specification refines the [seventh review](tui-feedback-seventh-review.md). **The TUI is the source of truth**: the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 166).
 
 Analysis: four read-only static analyses (Sonnet 5.5 medium for refresh/header and the integration-test audit, Haiku 5.5 xhigh for titles/`!!`/`.shikiru` size and the unit-test audit). Nothing was run.
 

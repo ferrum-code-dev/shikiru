@@ -255,5 +255,5 @@ Eighth-review scope and evidence: [eighth real-project review](../docs/tui-feedb
 - [x] Task 162: No leading rule or blank above Resources; `‼` marker for low disk space
 - [x] Task 163: Disk `.shikiru` size
 - [x] Task 164: Sentence-case titles everywhere
-- [ ] Task 165: Verify the eighth review
-- [ ] Task 166: Reconcile the HTML reference, design docs and release record
+- [x] Task 165: Verify the eighth review
+- [x] Task 166: Reconcile the HTML reference, design docs and release record
