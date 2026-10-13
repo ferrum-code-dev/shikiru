@@ -6,7 +6,6 @@ import json
 import os
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -82,6 +81,7 @@ from tests.support.waiting import wait_until, yield_control
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
+    from pathlib import Path
 
     from rich.text import Text
     from textual.content import Content
@@ -306,24 +306,6 @@ def _build_views(
         focus_task=task.id,
         settings=settings,
     )
-
-
-def _capture_home_status(app: DashboardApp, *, animations: bool) -> None:
-    configured_directory = os.environ.get(_NATIVE_VISUAL_REVIEW_DIR_ENV)
-    if configured_directory is None:
-        return
-    capture_directory = Path(configured_directory)
-    capture_directory.mkdir(parents=True, exist_ok=True)
-    output_kind = (
-        "color"
-        if os.environ.get("TERM") == "xterm-256color"
-        and "NO_COLOR" not in os.environ
-        and "FORCE_COLOR" not in os.environ
-        else "mono"
-    )
-    motion_kind = "motion" if animations else "static"
-    output_path = capture_directory / f"task113-home-status-{motion_kind}-{output_kind}.svg"
-    output_path.write_text(app.export_screenshot(), encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -943,7 +925,6 @@ async def test_home_status_blinks_only_for_a_recorded_active_turn(
                 lambda: "Last recorded signal ·" in plain_text(signal.content),
                 timeout=_TASK_ACTIVITY_WAIT_SECONDS,
             )
-            _capture_home_status(app, animations=animations)
             if animations:
                 detail = await views.task_detail(task.id, include_timeline=False)
                 assert detail is not None

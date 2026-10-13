@@ -127,28 +127,28 @@ _COST_BASIS_BILLED = "billed"
 _BILLING_WIDGET_WAIT_SECONDS = 2
 _SCROLL_SETTLE_TIMEOUT_SECONDS = 2
 _RESPONSIVE_TASK_SIZES = ((120, 40), (48, 20), (36, 20), (48, 14), (20, 8))
-_TASK99_STAGE_START_SECONDS = 3
-_TASK99_LEADER_START_SECONDS = 4
-_TASK99_IMPLEMENTER_SIGNAL_SECONDS = 6
-_TASK99_LATEST_SIGNAL_SECONDS = 8
-_TASK99_DETAIL_NOW_SECONDS = 9
-_TASK99_TIMELINE_PAGE_SIZE = 1
-_TASK99_HISTORY_OVERFLOW_EXTRA = 2
-_TASK99_OLD_ITERATION = 1
-_TASK99_CURRENT_ITERATION = 2
+_STAGE_START_SECONDS = 3
+_LEADER_START_SECONDS = 4
+_IMPLEMENTER_SIGNAL_SECONDS = 6
+_LATEST_SIGNAL_SECONDS = 8
+_DETAIL_NOW_SECONDS = 9
+_TIMELINE_PAGE_SIZE = 1
+_HISTORY_OVERFLOW_EXTRA = 2
+_OLD_ITERATION = 1
+_CURRENT_ITERATION = 2
 
 
-def _write_task99_role_signals(project_root: Path, task_id: str) -> None:
+def _write_role_signals(project_root: Path, task_id: str) -> None:
     implementer_path = view_log_path(run_dir(project_root, task_id), Role.IMPLEMENTER.value)
     implementer_path.parent.mkdir(parents=True)
     implementer_rows = (
         {
-            "ts": (START + timedelta(seconds=_TASK99_LEADER_START_SECONDS)).isoformat(),
+            "ts": (START + timedelta(seconds=_LEADER_START_SECONDS)).isoformat(),
             "turn": "02-implement-i1",
             "signal": "SessionStarted",
         },
         {
-            "ts": (START + timedelta(seconds=_TASK99_IMPLEMENTER_SIGNAL_SECONDS)).isoformat(),
+            "ts": (START + timedelta(seconds=_IMPLEMENTER_SIGNAL_SECONDS)).isoformat(),
             "turn": "02-implement-i1",
             "signal": "ToolFinished",
         },
@@ -159,14 +159,14 @@ def _write_task99_role_signals(project_root: Path, task_id: str) -> None:
     leader_path = view_log_path(run_dir(project_root, task_id), Role.LEADER.value)
     leader_path.parent.mkdir(parents=True)
     leader_row = {
-        "ts": (START + timedelta(seconds=_TASK99_LATEST_SIGNAL_SECONDS)).isoformat(),
+        "ts": (START + timedelta(seconds=_LATEST_SIGNAL_SECONDS)).isoformat(),
         "turn": "03-verify-i1",
         "signal": "ToolStarted",
     }
     leader_path.write_text(f"{json.dumps(leader_row)}\n", encoding="utf-8")
 
 
-def _append_task99_step(
+def _append_step_event(
     events: EventLog,
     task_id: str,
     step: Step,
@@ -1628,7 +1628,7 @@ async def test_latest_signal_keeps_global_role_identity_past_filtered_evidence_a
         task.id,
         Transition.stay(task, step=Step.VERIFY, status=Status.RUNNING),
     )
-    clock.advance(_TASK99_STAGE_START_SECONDS)
+    clock.advance(_STAGE_START_SECONDS)
     events.append(
         EventKind.STEP_STARTED,
         task_id=task.id,
@@ -1643,7 +1643,7 @@ async def test_latest_signal_keeps_global_role_identity_past_filtered_evidence_a
         billing_declaration=BillingDeclaration(BILLING_MODE_API, BILLING_SOURCE_OPERATOR_CONFIG),
     )
     runs.close(implementer.id)
-    clock.advance(_TASK99_LEADER_START_SECONDS - _TASK99_STAGE_START_SECONDS)
+    clock.advance(_LEADER_START_SECONDS - _STAGE_START_SECONDS)
     leader = runs.start(
         task.id,
         Role.LEADER,
@@ -1653,14 +1653,14 @@ async def test_latest_signal_keeps_global_role_identity_past_filtered_evidence_a
             BILLING_SOURCE_OPERATOR_CONFIG,
         ),
     )
-    clock.advance(_TASK99_IMPLEMENTER_SIGNAL_SECONDS - _TASK99_LEADER_START_SECONDS)
-    _write_task99_role_signals(project_root, task.id)
-    clock.advance(_TASK99_DETAIL_NOW_SECONDS - _TASK99_LATEST_SIGNAL_SECONDS)
+    clock.advance(_IMPLEMENTER_SIGNAL_SECONDS - _LEADER_START_SECONDS)
+    _write_role_signals(project_root, task.id)
+    clock.advance(_DETAIL_NOW_SECONDS - _LATEST_SIGNAL_SECONDS)
     settings = load_settings(project_root)
     settings = settings.model_copy(
         update={
             "dashboard": settings.dashboard.model_copy(
-                update={"timeline_page_size": _TASK99_TIMELINE_PAGE_SIZE}
+                update={"timeline_page_size": _TIMELINE_PAGE_SIZE}
             )
         }
     )
@@ -1690,8 +1690,8 @@ async def test_latest_signal_keeps_global_role_identity_past_filtered_evidence_a
     assert detail.latest_signal_identity == "signal:leader:0"
     assert detail.latest_signal_role == Role.LEADER.value
     assert detail.latest_signal_turn == "03-verify-i1"
-    assert detail.latest_signal_at == START + timedelta(seconds=_TASK99_LATEST_SIGNAL_SECONDS)
-    assert detail.actual_stage_started_at == START + timedelta(seconds=_TASK99_STAGE_START_SECONDS)
+    assert detail.latest_signal_at == START + timedelta(seconds=_LATEST_SIGNAL_SECONDS)
+    assert detail.actual_stage_started_at == START + timedelta(seconds=_STAGE_START_SECONDS)
     assert not detail.latest_signal_uncertain
 
     tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
@@ -1734,7 +1734,7 @@ async def test_first_recorded_plan_or_implement_transition_marks_triage_bypassed
         task.id,
         Transition.stay(task, step=step, status=Status.RUNNING),
     )
-    _append_task99_step(events, task.id, step, task.iteration)
+    _append_step_event(events, task.id, step, task.iteration)
 
     detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
 
@@ -1816,7 +1816,7 @@ async def test_older_iteration_report_does_not_complete_the_reentered_stage(
     events.append(EventKind.TASK_QUEUED, task_id=task.id, message="queued")
     runs = RunStore(connection, clock)
     previous = runs.start(task.id, case.role, case.rung)
-    _append_task99_step(events, task.id, case.step, _TASK99_OLD_ITERATION)
+    _append_step_event(events, task.id, case.step, _OLD_ITERATION)
     events.append(
         EventKind.TURN_STARTED,
         task_id=task.id,
@@ -1827,7 +1827,7 @@ async def test_older_iteration_report_does_not_complete_the_reentered_stage(
             "agent": case.rung.agent,
             "model": case.rung.model,
             "effort": case.rung.effort,
-            "iteration": _TASK99_OLD_ITERATION,
+            "iteration": _OLD_ITERATION,
             "run_id": previous.id,
             "turn": case.turn,
         },
@@ -1842,10 +1842,10 @@ async def test_older_iteration_report_does_not_complete_the_reentered_stage(
     )
     current_transition = replace(
         Transition.stay(task, step=case.step, status=Status.RUNNING),
-        iteration=_TASK99_CURRENT_ITERATION,
+        iteration=_CURRENT_ITERATION,
     )
     TaskStore(connection, clock).apply_transition(task.id, current_transition)
-    _append_task99_step(events, task.id, case.step, _TASK99_CURRENT_ITERATION)
+    _append_step_event(events, task.id, case.step, _CURRENT_ITERATION)
 
     detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
 
@@ -1863,8 +1863,8 @@ async def test_rework_and_truncated_workflow_history_keep_stage_outcomes_honest(
     task = seed_task(connection, clock, title="Implementation rework", mode=Mode.IMPLEMENT)
     events = EventLog(connection, clock)
     events.append(EventKind.TASK_QUEUED, task_id=task.id, message="queued")
-    _append_task99_step(events, task.id, Step.IMPLEMENT, _TASK99_OLD_ITERATION)
-    _append_task99_step(events, task.id, Step.VERIFY, _TASK99_OLD_ITERATION)
+    _append_step_event(events, task.id, Step.IMPLEMENT, _OLD_ITERATION)
+    _append_step_event(events, task.id, Step.VERIFY, _OLD_ITERATION)
     events.append(
         EventKind.VERDICT,
         task_id=task.id,
@@ -1873,10 +1873,10 @@ async def test_rework_and_truncated_workflow_history_keep_stage_outcomes_honest(
     )
     current_transition = replace(
         Transition.stay(task, step=Step.IMPLEMENT, status=Status.RUNNING),
-        iteration=_TASK99_CURRENT_ITERATION,
+        iteration=_CURRENT_ITERATION,
     )
     TaskStore(connection, clock).apply_transition(task.id, current_transition)
-    _append_task99_step(events, task.id, Step.IMPLEMENT, _TASK99_CURRENT_ITERATION)
+    _append_step_event(events, task.id, Step.IMPLEMENT, _CURRENT_ITERATION)
     turns_root = turns_dir(project_root, task.id)
     _write_report_turn(
         turns_root,
@@ -1900,9 +1900,9 @@ async def test_rework_and_truncated_workflow_history_keep_stage_outcomes_honest(
         truncated.id,
         Transition.stay(truncated_task, step=Step.VERIFY, status=Status.RUNNING),
     )
-    _append_task99_step(events, truncated.id, Step.TRIAGE, _TASK99_OLD_ITERATION)
-    _append_task99_step(events, truncated.id, Step.VERIFY, _TASK99_OLD_ITERATION)
-    for _ in range(TASK_DETAIL_EVENT_LIMIT + _TASK99_HISTORY_OVERFLOW_EXTRA):
+    _append_step_event(events, truncated.id, Step.TRIAGE, _OLD_ITERATION)
+    _append_step_event(events, truncated.id, Step.VERIFY, _OLD_ITERATION)
+    for _ in range(TASK_DETAIL_EVENT_LIMIT + _HISTORY_OVERFLOW_EXTRA):
         events.append(EventKind.NUDGE, task_id=truncated.id, message="retained activity")
 
     incomplete = await state_views(reader, project_root, clock, StubServices()).task_detail(

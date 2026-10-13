@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import re
 from datetime import UTC, datetime
 from html import unescape
@@ -117,23 +116,6 @@ def _services(
 
 def _screen(app: PaletteApp) -> PaletteScreen:
     return cast("PaletteScreen", app.screen)
-
-
-def _capture_palette(app: PaletteApp, name: str) -> None:
-    configured_directory = os.environ.get(_NATIVE_VISUAL_REVIEW_DIR_ENV)
-    if configured_directory is None:
-        return
-    capture_dir = Path(configured_directory)
-    capture_dir.mkdir(parents=True, exist_ok=True)
-    output_kind = (
-        "color"
-        if os.environ.get("TERM") == "xterm-256color"
-        and "NO_COLOR" not in os.environ
-        and "FORCE_COLOR" not in os.environ
-        else "mono"
-    )
-    path = capture_dir / name.replace("-color.svg", f"-{output_kind}.svg")
-    path.write_text(app.export_screenshot(), encoding="utf-8")
 
 
 def _exported_screen_text(app: PaletteApp) -> str:
@@ -518,7 +500,6 @@ async def test_context_menu_answers_the_recorded_question_without_a_target_picke
         screen = _screen(app)
         answer_button = screen.query_one("#palette-menu-answer", Button)
         assert answer_button.display
-        _capture_palette(app, "task101-answer-healthy-menu-120x32-color.svg")
         await _click_menu_button(pilot, screen, "palette-menu-answer")
         assert not screen.query_one("#field-escalation").display
         assert not screen.query_one("#field-task-search").display
@@ -542,7 +523,6 @@ async def test_context_menu_answers_the_recorded_question_without_a_target_picke
         assert "Change behavior" in _static_text(screen, "#palette-original-packet")
         assert "Which behavior should remain?" in _static_text(screen, "#palette-original-packet")
         assert "Evidence error" not in _static_text(screen, "#palette-evidence-error")
-        _capture_palette(app, "task101-answer-healthy-recorded-packet-120x32-color.svg")
         answer = screen.query_one("#resolution-text", TextArea)
         await wait_until(lambda: app.focused is answer, timeout=2)
         await pilot.press(*"Keep the recorded call pattern.")
@@ -582,7 +562,6 @@ async def _resize_recorded_answer_form(
     preferred_region = frame.region
     preferred_viewport = (app.size.width, app.size.height)
     cursor_location = answer.cursor_location
-    _capture_palette(app, "task127-answer-wide-color.svg")
     for width, height in (
         _FORM_COMPACT_SIZE,
         _FORM_NARROW_SIZE,
@@ -620,9 +599,6 @@ async def _resize_recorded_answer_form(
         assert answer.text == expected_answer
         assert answer.cursor_location == cursor_location
         assert queue.pending() == []
-        _capture_palette(app, f"task127-answer-{width}x{height}-color.svg")
-        if width == 20:
-            _capture_palette(app, "task101-answer-healthy-recorded-packet-20x8-color.svg")
     await pilot.resize_terminal(*preferred_viewport)
     await wait_until(
         lambda: (
@@ -633,7 +609,6 @@ async def _resize_recorded_answer_form(
         ),
         timeout=2,
     )
-    _capture_palette(app, "task127-answer-wide-restored-color.svg")
     assert await pilot.click("#palette-submit")
 
 
@@ -1839,7 +1814,6 @@ async def test_palette_disables_an_escalation_after_another_client_cancels_it(
             ),
             timeout=2,
         )
-        _capture_palette(app, "task101-answer-stale-resolution-120x32-color.svg")
         assert screen.query_one("#resolution-text", TextArea).text == guidance
         assert queries.command_history().total_count == 2
 

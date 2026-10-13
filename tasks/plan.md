@@ -1568,8 +1568,9 @@ Scope: [eighth real-project review](../docs/tui-feedback-eighth-review.md), plan
 
 ### Task 156: Remove screenshot-capture side effects and task-numbered test names
 Refs: `tests/integration/test_dashboard_app.py` (`_capture_task99*`, `test_task99_native_compact_inspector_matches_recorded_workflow`, `_record_task99_population`, `_home_review_services`, 73 `_capture_task99(...)` calls), `test_dashboard_palette.py` (`_capture_palette`, `task101-*`, `task127-*`), `test_dashboard_motion.py` (`_capture_home_status`); AGENTS.md "Test value".
-- [ ] Delete the capture generator test and every capture helper and call whose only effect is writing SVGs (`SHIKIRU_NATIVE_VISUAL_REVIEW_DIR`); delete fixtures used only by them; rename any remaining `test_taskNN_*` by behaviour; the assertions of the surviving tests are unchanged.
-- [ ] `uv run poe check` green; report functions, collected cases and lines before and after.
+- [x] Delete the capture generator test and every capture helper and call whose only effect is writing SVGs (`SHIKIRU_NATIVE_VISUAL_REVIEW_DIR`); delete fixtures used only by them; rename any remaining `test_taskNN_*` by behaviour; the assertions of the surviving tests are unchanged.
+- [x] `uv run poe check` green; report functions, collected cases and lines before and after.
+  Proof: the capture generator test (its home/detail/evidence/usage routes and the 59s-to-1m live age are still covered by the motion and task-detail tests), all capture helpers and about 90 SVG-writing calls were removed, and task-numbered helpers renamed by behaviour. Collected cases 1665 to 1664, test functions 803 to 802, tests/integration lines 49551 to 48687. `uv run poe check` green (1643 passed, 91 % coverage).
 
 ### Task 157: Fold and simplify `test_dashboard_app.py`
 Refs: integration-test audit (help, NO_COLOR, attention-answer, contextual-draft, widget-config, default-widgets groups; the five largest layout tests); keep the regressions listed there (in-flight report discard, rejected-command recovery, pending/palette races, draft preservation, popup Esc/close reachability, resize selection/focus, reorder reading position).

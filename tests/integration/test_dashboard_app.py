@@ -7,10 +7,9 @@ import re
 import shlex
 import sys
 from dataclasses import asdict, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from html import unescape
 from itertools import pairwise
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import psutil
@@ -50,7 +49,6 @@ from shikiru.agents.contracts import (
     BillingDeclaration,
     Rung,
     Usage,
-    role_dir,
 )
 from shikiru.bootstrap import dashboard_tmux_binding
 from shikiru.clock import SystemClock
@@ -88,19 +86,14 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_REPORT,
     TASK_DETAIL_REQUEST,
     TASK_DETAIL_SESSIONS,
-    TASK_DETAIL_SIGNAL,
     TASK_DETAIL_SITUATION,
-    TASK_DETAIL_TIMELINE_ENTRY,
     TASK_DETAIL_TIMELINE_NEWER,
     TASK_DETAIL_TIMELINE_OLDER,
-    TASK_DETAIL_TIMELINE_TITLE,
-    TASK_DETAIL_USAGE_INLINE_BUTTON,
     TASK_DETAIL_VERDICT,
     TASK_DETAIL_VIEWS_OPEN_BUTTON,
     TASK_DETAIL_WORKSPACE,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_RELATIONSHIPS,
-    TASK_VIEW_SUMMARY,
     TASK_VIEW_USAGE,
     TaskDetailBody,
     TaskDetailPanel,
@@ -117,23 +110,16 @@ from shikiru.domain.commands import (
     RetryResolution,
     Say,
     Stop,
-    Submit,
 )
 from shikiru.domain.escalation import Escalation, EscalationStatus, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
-    CURRENT_TURN_LINK_NAME,
     REPORT_FILENAME,
     REPORT_KIND_FILENAME,
-    ImplementationReport,
     ReportKind,
-    TriageReport,
-)
-from shikiru.domain.reports import (
-    TestRun as AgentTestRun,
 )
 from shikiru.domain.scheduling import WaitReason
-from shikiru.domain.steps import ACTING_ROLE, Step, Transition, first_step, next_step
+from shikiru.domain.steps import Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Task
 from shikiru.engine.escalations import PacketContext, render_packet
 from shikiru.engine.turn_processes import TurnProcesses, read_turn_pid, turn_pid_path
@@ -161,7 +147,6 @@ from shikiru.telemetry.resources import ResourceProcessRoots, ResourceSampler
 from shikiru.tmux.client import Tmux, exact_target, tmux_key_label
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.ui.compact import format_cpu_pct
-from shikiru.view_log import view_log_path
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -179,7 +164,6 @@ _DASHBOARD_WAIT_TIMEOUT_SECONDS = 2
 _COMPACT_RESOLUTION_CONTEXT_SCROLL_ROWS = 5
 _COMMAND_FEEDBACK_CLOCK_ADVANCE_SECONDS = 120
 _COMMAND_HISTORY_INITIAL_SIZE = (100, 34)
-_DASHBOARD_DETAIL_VIEW_TIMEOUT_SECONDS = 5
 COMMAND_HISTORY_TEST_LIMIT = 10
 TASK_PAGE_TEST_EVENT_COUNT = 2
 TASK_PAGE_TEST_RELATIONSHIP_COUNT = 25
@@ -202,7 +186,6 @@ _STACKED_LOWER_BOUNDARY_HOME_SIZE = (54, 24)
 _LIST_ONLY_BOUNDARY_HOME_SIZE = (53, 24)
 _COMPACT_HOME_SIZE = (48, 20)
 _NARROW_TASK_SIZE = (36, 20)
-_COMPACT_TASK_SIZES = (_COMPACT_HOME_SIZE, _NARROW_TASK_SIZE)
 _FOOTER_EDGE_WIDTHS = (54, 72, 73, 100, 120, 160)
 _SHORT_HOME_SIZE = (36, 14)
 _COMPACT_SHORT_WIDE_HOME_SIZE = (48, 14)
@@ -214,7 +197,6 @@ _PALETTE_ZERO_WIDTH_REPRODUCTION_SIZES = (
     _PALETTE_ZERO_WIDTH_SIZE,
     _PALETTE_NARROW_SAFE_SIZE,
 )
-_DETAIL_REVIEW_COMPACT_SIZES = (*_COMPACT_TASK_SIZES, _SHORT_HOME_SIZE, _TINY_HOME_SIZE)
 _HOME_REVIEW_SIZES = (
     _MEASURED_HOME_SIZE,
     _WIDE_HOME_SIZE,
@@ -233,29 +215,7 @@ _ESTIMATED_INPUT_TOKENS = 200
 _ESTIMATED_OUTPUT_TOKENS = 100
 _API_BILLED_COST_USD = 0.42
 _API_EQUIVALENT_ESTIMATE_USD = 0.11
-_TASK99_TRIAGE_DURATION_SECONDS = 30
-_TASK99_IMPLEMENT_DURATION_SECONDS = 90
-_TASK99_VERIFY_DURATION_SECONDS = 180
-_TASK99_SIGNAL_AGE_SECONDS = 59
-_TASK99_AGE_BOUNDARY_ADVANCE_SECONDS = 1
-_TASK99_TIMELINE_REFRESH_SECONDS = 1
-_TASK99_API_INPUT_TOKENS = 1_731
-_TASK99_API_OUTPUT_TOKENS = 284
-_TASK99_API_CACHE_READ_TOKENS = 91
-_TASK99_API_CACHE_WRITE_TOKENS = 17
-_TASK99_API_COST_USD = 0.37
-_TASK99_SUBSCRIPTION_INPUT_TOKENS = 683
-_TASK99_SUBSCRIPTION_OUTPUT_TOKENS = 149
-_TASK99_SUBSCRIPTION_CACHE_READ_TOKENS = 37
-_TASK99_SUBSCRIPTION_CACHE_WRITE_TOKENS = 8
-_TASK99_SELECTED_TITLE = "Verify compact task"
-_TASK99_LONG_TITLE = "A deliberately long recorded task title that wraps on compact Home"
-_TASK99_SIGNAL_ROW = "ToolStarted"
-_TASK99_SIGNAL_NAME = "pytest"
-_TASK99_CURRENT_TURN = "03-verify-i1"
-_TASK99_IMPLEMENT_TURN = "02-implement-i1"
-_TASK99_TRIAGE_TURN = "01-triage-i0"
-NATIVE_VISUAL_REVIEW_DIR_ENV = "SHIKIRU_NATIVE_VISUAL_REVIEW_DIR"
+_TIMELINE_REFRESH_SECONDS = 1
 _FORM_CONTENT_TRAILING_GAP_ROWS = 3
 _RESOURCE_AGENT_SESSION_ID = "task110-resource-session"
 _RESOURCE_AGENT_PROMPT = "wait for the next instruction"
@@ -363,7 +323,7 @@ def _rendered_task_detail_sections(app: DashboardApp) -> tuple[str, ...]:
     )
 
 
-def _task99_widget_text(widget: Static) -> str:
+def _widget_text(widget: Static) -> str:
     return "\n".join(_rendered_widget_lines(widget))
 
 
@@ -377,322 +337,6 @@ def _seed_paused_escalated_task(connection: Connection) -> str:
     )
     tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
     return task.id
-
-
-def _append_task99_stage_start(events: EventLog, task: Task, step: Step) -> None:
-    events.append(
-        EventKind.STEP_STARTED,
-        task_id=task.id,
-        message=f"{step.value} stage started",
-        data={
-            "step": step.value,
-            "role": ACTING_ROLE[step].value,
-            "iteration": task.iteration,
-        },
-    )
-
-
-def _write_task99_report_turn(
-    project_dir: Path,
-    task_id: str,
-    turn: str,
-    kind: ReportKind,
-    report: TriageReport | ImplementationReport,
-) -> Path:
-    turn_dir = turns_dir(project_dir, task_id) / turn
-    turn_dir.mkdir(parents=True, exist_ok=True)
-    (turn_dir / REPORT_KIND_FILENAME).write_text(kind.value, encoding="utf-8")
-    (turn_dir / REPORT_FILENAME).write_text(report.model_dump_json(), encoding="utf-8")
-    return turn_dir
-
-
-def _write_task99_signal(
-    project_dir: Path,
-    task_id: str,
-    role: Role,
-    *,
-    turn: str,
-    observed_at: datetime,
-    signal: str,
-    name: str,
-) -> None:
-    path = view_log_path(run_dir(project_dir, task_id), role.value)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps({"ts": observed_at.isoformat(), "turn": turn, "signal": signal, "name": name})
-        + "\n",
-        encoding="utf-8",
-    )
-
-
-def _record_task99_triage(
-    connection: Connection,
-    project_dir: Path,
-    clock: FakeClock,
-    settings: Settings,
-) -> Task:
-    tasks = TaskStore(connection, clock)
-    events = EventLog(connection, clock)
-    task = seed_task(connection, clock, title=_TASK99_SELECTED_TITLE)
-    events.append(EventKind.TASK_QUEUED, task_id=task.id, message="Task submitted")
-    tasks.apply_transition(task.id, first_step(task))
-    _append_task99_stage_start(events, task, Step.TRIAGE)
-    triage = TriageReport(
-        title=task.title,
-        mode=Mode.IMPLEMENT,
-        complexity="normal",
-        acceptance_criteria=["Recorded implementation passes verification"],
-        references=[],
-    )
-    _write_task99_report_turn(project_dir, task.id, _TASK99_TRIAGE_TURN, ReportKind.TRIAGE, triage)
-
-    clock.advance(_TASK99_TRIAGE_DURATION_SECONDS)
-    task = tasks.require(task.id)
-    tasks.apply_transition(task.id, next_step(task, triage, settings))
-    return tasks.require(task.id)
-
-
-def _record_task99_implementation(
-    connection: Connection,
-    project_dir: Path,
-    clock: FakeClock,
-    settings: Settings,
-    task: Task,
-) -> tuple[Task, ImplementationReport]:
-    tasks = TaskStore(connection, clock)
-    events = EventLog(connection, clock)
-    runs = RunStore(connection, clock)
-    _append_task99_stage_start(events, task, Step.IMPLEMENT)
-    implementer = runs.start(
-        task.id,
-        Role.IMPLEMENTER,
-        Rung("codex", "gpt-6-luna", "low"),
-        billing_declaration=BillingDeclaration(
-            BILLING_MODE_API,
-            BILLING_SOURCE_OPERATOR_CONFIG,
-        ),
-    )
-    implementer_turn_data = {
-        "role": Role.IMPLEMENTER.value,
-        "agent": "codex",
-        "model": "gpt-6-luna",
-        "effort": "low",
-        "run_id": implementer.id,
-        "turn": _TASK99_IMPLEMENT_TURN,
-        "step": Step.IMPLEMENT.value,
-        "iteration": task.iteration,
-    }
-    events.append(
-        EventKind.TURN_STARTED,
-        task_id=task.id,
-        message="Implementer started recorded implementation",
-        data=implementer_turn_data,
-    )
-    runs.record_usage(
-        implementer.id,
-        Usage(
-            _TASK99_API_INPUT_TOKENS,
-            _TASK99_API_OUTPUT_TOKENS,
-            _TASK99_API_CACHE_READ_TOKENS,
-            _TASK99_API_CACHE_WRITE_TOKENS,
-            _TASK99_API_COST_USD,
-            COST_BASIS_BILLED,
-            None,
-        ),
-    )
-    implementer_report = ImplementationReport(
-        status="completed",
-        summary="Checks pass; reviewing the recorded report.",
-        commits=[],
-        tests=[AgentTestRun(name="focused checks", result="passed")],
-        trackers_updated=False,
-    )
-    _write_task99_report_turn(
-        project_dir,
-        task.id,
-        _TASK99_IMPLEMENT_TURN,
-        ReportKind.IMPLEMENTATION,
-        implementer_report,
-    )
-
-    clock.advance(_TASK99_IMPLEMENT_DURATION_SECONDS)
-    events.append(
-        EventKind.TURN_COMPLETED,
-        task_id=task.id,
-        message="Implementer completed the recorded implementation",
-        data={
-            **implementer_turn_data,
-            "usage_delta": {
-                "input_tokens": _TASK99_API_INPUT_TOKENS,
-                "output_tokens": _TASK99_API_OUTPUT_TOKENS,
-                "cache_read_tokens": _TASK99_API_CACHE_READ_TOKENS,
-                "cache_write_tokens": _TASK99_API_CACHE_WRITE_TOKENS,
-                "cost_usd": _TASK99_API_COST_USD,
-            },
-        },
-    )
-    runs.close(implementer.id)
-    task = tasks.require(task.id)
-    tasks.apply_transition(task.id, next_step(task, implementer_report, settings))
-    return tasks.require(task.id), implementer_report
-
-
-def _record_task99_verification(
-    connection: Connection,
-    project_dir: Path,
-    clock: FakeClock,
-    task: Task,
-) -> None:
-    events = EventLog(connection, clock)
-    runs = RunStore(connection, clock)
-    _append_task99_stage_start(events, task, Step.VERIFY)
-    verify_turn = turns_dir(project_dir, task.id) / _TASK99_CURRENT_TURN
-    verify_turn.mkdir(parents=True)
-    leader = runs.start(
-        task.id,
-        Role.LEADER,
-        Rung("claude", "sonnet", "medium"),
-        billing_declaration=BillingDeclaration(
-            BILLING_MODE_SUBSCRIPTION,
-            BILLING_SOURCE_OPERATOR_CONFIG,
-        ),
-    )
-    runs.set_session(leader.id, "task99-current-leader-session", "resume task99")
-    runs.record_usage(
-        leader.id,
-        Usage(
-            _TASK99_SUBSCRIPTION_INPUT_TOKENS,
-            _TASK99_SUBSCRIPTION_OUTPUT_TOKENS,
-            _TASK99_SUBSCRIPTION_CACHE_READ_TOKENS,
-            _TASK99_SUBSCRIPTION_CACHE_WRITE_TOKENS,
-            None,
-            COST_BASIS_UNKNOWN,
-            None,
-        ),
-    )
-    events.append(
-        EventKind.TURN_STARTED,
-        task_id=task.id,
-        message="Leader started verification",
-        data={
-            "role": Role.LEADER.value,
-            "agent": "claude",
-            "model": "sonnet",
-            "effort": "medium",
-            "run_id": leader.id,
-            "turn": _TASK99_CURRENT_TURN,
-            "step": Step.VERIFY.value,
-            "iteration": task.iteration,
-        },
-    )
-    _write_task99_signal(
-        project_dir,
-        task.id,
-        Role.IMPLEMENTER,
-        turn=_TASK99_IMPLEMENT_TURN,
-        observed_at=clock.now() - timedelta(seconds=1),
-        signal="ToolFinished",
-        name="pytest",
-    )
-    leader_role_dir = role_dir(run_dir(project_dir, task.id), Role.LEADER.value)
-    leader_role_dir.mkdir(parents=True, exist_ok=True)
-    (leader_role_dir / CURRENT_TURN_LINK_NAME).symlink_to(verify_turn, target_is_directory=True)
-
-    clock.advance(_TASK99_VERIFY_DURATION_SECONDS - _TASK99_SIGNAL_AGE_SECONDS)
-    _write_task99_signal(
-        project_dir,
-        task.id,
-        Role.LEADER,
-        turn=_TASK99_CURRENT_TURN,
-        observed_at=clock.now(),
-        signal=_TASK99_SIGNAL_ROW,
-        name=_TASK99_SIGNAL_NAME,
-    )
-    clock.advance(_TASK99_SIGNAL_AGE_SECONDS)
-
-
-def _record_task99_other_tasks(
-    connection: Connection,
-    clock: FakeClock,
-    verifying_task_id: str,
-) -> tuple[str, str]:
-    tasks = TaskStore(connection, clock)
-    runs = RunStore(connection, clock)
-    events = EventLog(connection, clock)
-    decision = seed_task(
-        connection,
-        clock,
-        title="Choose recovery",
-        mode=Mode.IMPLEMENT,
-    )
-    decision = tasks.require(decision.id)
-    tasks.apply_transition(
-        decision.id,
-        Transition.stay(decision, step=Step.VERIFY, status=Status.ESCALATED),
-    )
-    EscalationStore(connection, clock).open(
-        decision.id,
-        step=Step.VERIFY,
-        reason=EscalationReason.DECISION_REQUIRED,
-        headline="Choose whether the task should continue",
-        packet_path=".shikiru/escalations/task99-decision.md",
-        options=options_for(EscalationReason.DECISION_REQUIRED),
-    )
-
-    waiting = seed_task(connection, clock, title="Wait dependency")
-    tasks.set_depends_on(waiting.id, (verifying_task_id,))
-    tasks.set_wait_reason(waiting.id, WaitReason.DEPENDENCY)
-    paused = seed_task(connection, clock, title="Paused follow-up")
-    tasks.set_holds(paused.id, frozenset({Hold.PAUSED}))
-    owned = seed_task(connection, clock, title="Owned follow-up")
-    tasks.apply_transition(owned.id, first_step(owned))
-    owned_run = runs.start(owned.id, Role.LEADER, Rung("claude", "sonnet", "medium"))
-    runs.mark_taken_over(owned_run.id)
-    tasks.set_holds(owned.id, frozenset({Hold.INTERVENTION}))
-    seed_task(connection, clock, title="Queued follow-up")
-    recent = seed_task(connection, clock, title="Recent Done")
-    tasks.apply_transition(
-        recent.id,
-        Transition.stay(recent, step=None, status=Status.DONE),
-    )
-    events.append(EventKind.TASK_DONE, task_id=recent.id, message="Task completed")
-    return decision.id, recent.id
-
-
-def _record_task99_population(
-    connection: Connection,
-    project_dir: Path,
-    clock: FakeClock,
-    settings: Settings,
-) -> tuple[str, str, str]:
-    task = _record_task99_triage(connection, project_dir, clock, settings)
-    task, _ = _record_task99_implementation(connection, project_dir, clock, settings, task)
-    _record_task99_verification(connection, project_dir, clock, task)
-    decision_id, recent_id = _record_task99_other_tasks(connection, clock, task.id)
-    queue = CommandQueue(connection, clock)
-    for queued in queue.pending():
-        assert isinstance(queued.command, Submit)
-        assert queued.command.task_id is not None
-        queue.mark_done(queued.id, {"task_id": queued.command.task_id})
-    return task.id, decision_id, recent_id
-
-
-def _capture_task99(app: DashboardApp, name: str) -> Path | None:
-    configured_directory = os.environ.get(NATIVE_VISUAL_REVIEW_DIR_ENV)
-    if configured_directory is None:
-        return None
-    capture_dir = Path(configured_directory)
-    capture_dir.mkdir(parents=True, exist_ok=True)
-    output_kind = (
-        "color"
-        if os.environ.get("TERM") == "xterm-256color"
-        and "NO_COLOR" not in os.environ
-        and "FORCE_COLOR" not in os.environ
-        else "mono"
-    )
-    path = capture_dir / name.replace("-color.svg", f"-{output_kind}.svg")
-    path.write_text(app.export_screenshot(), encoding="utf-8")
-    return path
 
 
 def _exported_screen_text(app: DashboardApp) -> str:
@@ -788,12 +432,12 @@ async def _assert_popup_close_reachable(
     )
 
 
-def _task99_settings(project_dir: Path) -> Settings:
+def _settings_without_animations(project_dir: Path) -> Settings:
     settings = load_settings(project_dir)
     dashboard = settings.dashboard.model_copy(
         update={
             "animations": False,
-            "timeline_refresh_seconds": _TASK99_TIMELINE_REFRESH_SECONDS,
+            "timeline_refresh_seconds": _TIMELINE_REFRESH_SECONDS,
         }
     )
     return settings.model_copy(update={"dashboard": dashboard})
@@ -808,359 +452,15 @@ async def _select_home_task(app: DashboardApp, task_id: str) -> None:
     await wait_until(
         lambda: (
             task_list.highlighted_child is row
-            and task_id in _task99_widget_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            and task_id in _widget_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
         ),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-
-
-async def _capture_task99_home_size(
-    reader: StateReader,
-    *,
-    project_dir: Path,
-    clock: FakeClock,
-    settings: Settings,
-    selected_task_id: str,
-    size: tuple[int, int],
-) -> None:
-    widget_names = ["header", "queue", "escalations", "usage", "resources"]
-    app = _app(
-        reader,
-        project_dir,
-        widget_names=widget_names,
-        services=(
-            _home_review_services(project_dir, clock, engine_running=False)
-            if os.environ.get(NATIVE_VISUAL_REVIEW_DIR_ENV)
-            else StubServices(engine_running=False)
-        ),
-        clock=clock,
-        settings=settings,
-    )
-    async with app.run_test(size=size):
-        await wait_until(
-            lambda: bool(app.query(f"#task-row-{selected_task_id}")),
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
-        await _select_home_task(app, selected_task_id)
-        identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-        progress = app.query_one(f"#{TASK_DETAIL_PROGRESS}", Static)
-        signal = app.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
-        sessions = app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
-        await wait_until(
-            lambda: (
-                _TASK99_SELECTED_TITLE in _task99_widget_text(identity)
-                and "Verifying" in _task99_widget_text(identity)
-            ),
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
-        assert "Verify" in _task99_widget_text(progress), _task99_widget_text(progress)
-        assert "Verifying" in _task99_widget_text(identity), _task99_widget_text(identity)
-        signal_text = _task99_widget_text(signal)
-        assert _TASK99_SIGNAL_ROW in signal_text
-        assert "59s ago" in signal_text
-        assert f"{Role.LEADER.value}/{_TASK99_CURRENT_TURN}" not in signal_text
-        assert "Leader" in _task99_widget_text(sessions), _task99_widget_text(sessions)
-        detail_text = "\n".join(
-            _task99_widget_text(app.query_one(f"#{identifier}", Static))
-            for identifier in (
-                TASK_DETAIL_IDENTITY,
-                TASK_DETAIL_PROGRESS,
-                TASK_DETAIL_SITUATION,
-                TASK_DETAIL_SIGNAL,
-                "task-detail-task-usage",
-                TASK_DETAIL_SESSIONS,
-            )
-        )
-        assert selected_task_id in detail_text
-        assert "Implementer" in detail_text
-        assert "Used" in detail_text
-        assert "Current" in detail_text
-        assert "gpt-6-luna" in detail_text
-        assert "sonnet" in detail_text
-        attention = app.query_one("#escalations", EscalationsPanel)
-        attention_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
-        assert f"{selected_task_id} · No decision needed" in _task99_widget_text(attention_row)
-        assert _TASK99_SELECTED_TITLE in _task99_widget_text(identity)
-        _capture_task99(app, f"home-selected-{size[0]}x{size[1]}-color.svg")
-
-
-async def _capture_task99_compact_home_route(
-    reader: StateReader,
-    *,
-    project_dir: Path,
-    clock: FakeClock,
-    settings: Settings,
-    selected_task_id: str,
-    size: tuple[int, int],
-) -> None:
-    app = _app(
-        reader,
-        project_dir,
-        widget_names=["header", "queue", "escalations", "usage", "resources"],
-        services=(
-            _home_review_services(project_dir, clock, engine_running=False)
-            if os.environ.get(NATIVE_VISUAL_REVIEW_DIR_ENV)
-            else StubServices(engine_running=False)
-        ),
-        clock=clock,
-        settings=settings,
-    )
-    async with app.run_test(size=size) as pilot:
-        await wait_until(
-            lambda: bool(app.query(f"#task-row-{selected_task_id}")),
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
-        task_list = app.query_one("#task-browser-list", ListView)
-        row = app.query_one(f"#task-row-{selected_task_id}", ListItem)
-        task_list.focus()
-        task_list.index = tuple(task_list.children).index(row)
-        await wait_until(
-            lambda: task_list.highlighted_child is row,
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
-        _capture_task99(app, f"home-list-selected-{size[0]}x{size[1]}-color.svg")
-        home_screen = app.screen
-        await pilot.press("enter")
-        assert app.screen is home_screen
-        detail = app.query_one("#task-detail-panel", TaskDetailPanel)
-        body = app.query_one("#task-detail-body", TaskDetailBody)
-        identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-        progress = app.query_one(f"#{TASK_DETAIL_PROGRESS}", Static)
-        signal = app.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
-        expected_identity = "Verify" if size == _NARROW_TASK_SIZE else _TASK99_SELECTED_TITLE
-        await wait_until(
-            lambda: (
-                expected_identity in plain_text(identity.content)
-                and "Verify" in plain_text(progress.content)
-            ),
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
-        body.scroll_to_widget(signal, animate=False)
-        await wait_until(
-            lambda: _TASK99_SIGNAL_ROW in _task99_widget_text(signal),
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
-        assert detail.active_view == TASK_VIEW_SUMMARY
-        root = app.query_one("#focus-main", Horizontal)
-        root.scroll_to_widget(detail, animate=False, immediate=True)
-        await pilot.pause()
-        await wait_until(
-            lambda: detail.region.overlaps(root.scrollable_content_region),
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
-        _capture_task99(app, f"home-inline-detail-{size[0]}x{size[1]}-color.svg")
-
-
-async def _capture_task99_detail_size(
-    reader: StateReader,
-    *,
-    project_dir: Path,
-    clock: FakeClock,
-    settings: Settings,
-    selected_task_id: str,
-    size: tuple[int, int],
-) -> None:
-    screen_clock = FakeClock(clock.now())
-    app = _app(
-        reader,
-        project_dir,
-        focus_task=selected_task_id,
-        widget_names=["header", "queue", "escalations", "usage", "resources"],
-        services=(
-            _home_review_services(project_dir, screen_clock, engine_running=False)
-            if os.environ.get(NATIVE_VISUAL_REVIEW_DIR_ENV)
-            else StubServices(engine_running=False)
-        ),
-        clock=screen_clock,
-        settings=settings,
-    )
-    async with app.run_test(size=size) as pilot:
-        panel = app.query_one("#task-detail-panel", TaskDetailPanel)
-        identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-        expected_identity = "Verify" if size == _NARROW_TASK_SIZE else _TASK99_SELECTED_TITLE
-        await wait_until(
-            lambda: expected_identity in plain_text(identity.content),
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
-        _capture_task99(app, f"dash-task-{size[0]}x{size[1]}-color.svg")
-        if size in _DETAIL_REVIEW_COMPACT_SIZES:
-            await _assert_task99_live_age_and_routes(
-                app,
-                pilot,
-                panel,
-                screen_clock,
-                size=size,
-            )
-
-
-async def _assert_task99_live_age_and_routes(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    panel: TaskDetailPanel,
-    clock: FakeClock,
-    *,
-    size: tuple[int, int],
-) -> None:
-    signal = app.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
-    body = app.query_one("#task-detail-body", TaskDetailBody)
-    body.scroll_to_widget(signal, animate=False)
-    await wait_until(
-        lambda: "59s ago" in _task99_widget_text(signal),
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    if size == _COMPACT_HOME_SIZE:
-        await wait_until(clock.has_pending_sleep, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
-        clock.advance(_TASK99_AGE_BOUNDARY_ADVANCE_SECONDS)
-        await wait_until(
-            lambda: "1m ago" in _task99_widget_text(signal),
-            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-        )
-
-    evidence_button = panel.query_one(f"#{TASK_DETAIL_EVIDENCE_INLINE_BUTTON}", Button)
-    evidence_button.focus()
-    await wait_until(
-        lambda: evidence_button.region.bottom <= app.size.height,
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    await pilot.press("enter")
-    await wait_until(
-        lambda: isinstance(app.screen, TaskDetailScreen),
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    evidence_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
-    await wait_until(
-        lambda: (
-            evidence_panel.active_view == TASK_VIEW_EVIDENCE
-            and "Evidence"
-            in _task99_widget_text(app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_TITLE}", Static))
-        ),
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    timeline_entry = cast(
-        "Select[str]", app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select)
-    )
-    await wait_until(
-        lambda: timeline_entry.value != Select.BLANK,
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    _capture_task99(app, f"task-evidence-{size[0]}x{size[1]}-color.svg")
-    await pilot.press("escape")
-    await wait_until(
-        lambda: not isinstance(app.screen, TaskDetailScreen),
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    usage_button = panel.query_one(f"#{TASK_DETAIL_USAGE_INLINE_BUTTON}", Button)
-    usage_button.focus()
-    await wait_until(
-        lambda: usage_button.region.bottom <= app.size.height,
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    await pilot.press("enter")
-    await wait_until(
-        lambda: isinstance(app.screen, TaskDetailScreen),
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    usage_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
-    await wait_until(
-        lambda: (
-            usage_panel.active_view == TASK_VIEW_USAGE
-            and "API"
-            in _task99_widget_text(app.screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static))
-        ),
-        timeout=_DASHBOARD_DETAIL_VIEW_TIMEOUT_SECONDS,
-    )
-    _capture_task99(app, f"task-usage-{size[0]}x{size[1]}-color.svg")
-
-
-async def test_task99_native_compact_inspector_matches_recorded_workflow(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = FakeClock(_TEST_START)
-    settings = _task99_settings(project_dir)
-    selected_task_id, _, recent_task_id = _record_task99_population(
-        connection,
-        project_dir,
-        clock,
-        settings,
-    )
-    reader = StateReader(database, clock)
-    try:
-        for size in (
-            _MEASURED_HOME_SIZE,
-            _STANDARD_HOME_SIZE,
-            _WIDE_HOME_SIZE,
-            _SHORT_WIDE_HOME_SIZE,
-            _STACKED_INSPECTOR_HOME_SIZE,
-        ):
-            await _capture_task99_home_size(
-                reader,
-                project_dir=project_dir,
-                clock=clock,
-                settings=settings,
-                selected_task_id=selected_task_id,
-                size=size,
-            )
-        for size in _DETAIL_REVIEW_COMPACT_SIZES:
-            await _capture_task99_compact_home_route(
-                reader,
-                project_dir=project_dir,
-                clock=clock,
-                settings=settings,
-                selected_task_id=selected_task_id,
-                size=size,
-            )
-        for size in (
-            _MEASURED_HOME_SIZE,
-            _STANDARD_HOME_SIZE,
-            _WIDE_HOME_SIZE,
-            _SHORT_WIDE_HOME_SIZE,
-            _STACKED_INSPECTOR_HOME_SIZE,
-            *_DETAIL_REVIEW_COMPACT_SIZES,
-        ):
-            await _capture_task99_detail_size(
-                reader,
-                project_dir=project_dir,
-                clock=clock,
-                settings=settings,
-                selected_task_id=selected_task_id,
-                size=size,
-            )
-        recent = TaskStore(connection, clock).require(recent_task_id)
-        TaskStore(connection, clock).apply_transition(
-            recent.id,
-            replace(
-                Transition.stay(recent, step=None, status=Status.DONE),
-                title=_TASK99_LONG_TITLE,
-            ),
-        )
-        wrap_app = _app(
-            reader,
-            project_dir,
-            widget_names=["header", "queue", "escalations", "usage", "resources"],
-            services=(
-                _home_review_services(project_dir, clock, engine_running=False)
-                if os.environ.get(NATIVE_VISUAL_REVIEW_DIR_ENV)
-                else StubServices(engine_running=False)
-            ),
-            clock=clock,
-            settings=settings,
-        )
-        async with wrap_app.run_test(size=_MEASURED_HOME_SIZE):
-            await wait_until(
-                lambda: bool(wrap_app.query(f"#task-row-{recent_task_id}")),
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            await _select_home_task(wrap_app, recent_task_id)
-            _capture_task99(wrap_app, "home-long-title-wrap-101x35-color.svg")
-    finally:
-        reader.close()
 
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+    from pathlib import Path
 
     from textual.content import Content
     from textual.pilot import Pilot
@@ -1288,7 +588,6 @@ async def _capture_compact_resolution_context(
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     await _assert_rendered_palette_header_identity(app, task_id, escalation_id)
-    _capture_task99(app, "task118-resolution-context-48x20-color.svg")
 
 
 async def _exercise_native_resolution_select(
@@ -1338,7 +637,6 @@ async def _assert_compact_resolution_controls(
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     await _assert_rendered_palette_header_identity(app, task_id, escalation_id)
-    _capture_task99(app, "task118-resolution-error-48x20-color.svg")
     assert queue.pending() == []
     return retry_rung
 
@@ -1949,7 +1247,7 @@ def _record_mixed_billing(runs: RunStore, task_id: str) -> None:
     )
 
 
-def _seed_task111_usage(connection: Connection, clock: SystemClock) -> None:
+def _seed_project_usage(connection: Connection, clock: SystemClock) -> None:
     task = seed_task(connection, clock, title="Project totals with mixed billing")
     runs = RunStore(connection, clock)
     _record_mixed_billing(runs, task.id)
@@ -2109,26 +1407,6 @@ async def _assert_mixed_home_readouts(app: DashboardApp) -> None:
     assert "Operator owns" in attention_text
 
 
-def _capture_home_screenshot(app: DashboardApp, size: tuple[int, int]) -> Path | None:
-    configured_directory = os.environ.get(NATIVE_VISUAL_REVIEW_DIR_ENV)
-    if configured_directory is None:
-        return None
-    capture_dir = Path(configured_directory)
-    capture_dir.mkdir(parents=True, exist_ok=True)
-    color_mode = (
-        "color"
-        if os.environ.get("TERM") == "xterm-256color"
-        and "NO_COLOR" not in os.environ
-        and "FORCE_COLOR" not in os.environ
-        else "mono"
-    )
-    capture_path = capture_dir / (
-        f"mixed-home-{size[0]}x{size[1]}-{color_mode}-selected-second.svg"
-    )
-    capture_path.write_text(app.export_screenshot(), encoding="utf-8")
-    return capture_path
-
-
 async def _assert_mixed_home_task_rows(
     app: DashboardApp,
     row_ids: tuple[tuple[str, ...], str, str, str],
@@ -2182,7 +1460,6 @@ async def _assert_mixed_home_task_rows(
             tuple((item.id, item.region) for item in active_rows),
         )
     assert recent_task.region.bottom <= recent_list.region.bottom
-    _capture_home_screenshot(app, size)
     attention = app.query_one("#escalations", EscalationsPanel)
     attention_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
     attention_text = " ".join(_rendered_widget_lines(attention_row))
@@ -2505,7 +1782,6 @@ async def _assert_cached_resource_views(
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     await pilot.pause()
-    _capture_task99(app, f"task117-resource-home-{size[0]}x{size[1]}-color.svg")
     if size == _COMPACT_HOME_SIZE:
         readouts = app.query_one("#focus-readouts", VerticalScroll)
         assert not readouts.allow_focus()
@@ -2518,7 +1794,6 @@ async def _assert_cached_resource_views(
             ),
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )
-        _capture_task99(app, "task117-resource-home-48x20-scrolled-color.svg")
         await pilot.press("home")
         await wait_until(lambda: readouts.scroll_y == 0, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
         readouts.post_message(
@@ -2619,7 +1894,6 @@ async def _assert_project_diagnostics_view(
         lambda: all(group in _exported_screen_text(app) for group in expected_groups),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    _capture_task99(app, f"task117-project-diagnostics-{size[0]}x{size[1]}-color.svg")
     assert "Scope" not in _exported_screen_text(app)
 
 
@@ -3324,9 +2598,6 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             assert "missing-packet.md" in _rendered_text(
                 screen.query_one("#palette-evidence-error", Static)
             )
-            if size == _TINY_HOME_SIZE:
-                _capture_task99(app, "task118-answer-20x8-color.svg")
-            _capture_task99(app, f"task108-answer-{size[0]}x{size[1]}-color.svg")
             assert queue.pending() == []
 
             guidance = "Preserve the existing call pattern."
@@ -3378,7 +2649,6 @@ async def _assert_keyboard_answer_enter_and_cancel(
     *,
     home_screen: object,
     queue: CommandQueue,
-    size: tuple[int, int],
 ) -> None:
     answer = screen.query_one("#resolution-text", TextArea)
     await wait_until(
@@ -3386,7 +2656,6 @@ async def _assert_keyboard_answer_enter_and_cancel(
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     await pilot.pause()
-    _capture_task99(app, f"task118-answer-{size[0]}x{size[1]}-color.svg")
     await pilot.press("enter")
     assert answer.text == "\n"
     assert queue.pending() == []
@@ -3482,7 +2751,6 @@ async def test_home_list_enter_opens_the_attention_answer_and_waits_for_submit(
             assert related.id in attention_text
             assert "Enter answer" in attention_text
             assert queue.pending() == []
-            _capture_task99(app, f"task118-attention-{size[0]}x{size[1]}-color.svg")
 
             await pilot.press("enter")
             await wait_until(
@@ -3519,7 +2787,6 @@ async def test_home_list_enter_opens_the_attention_answer_and_waits_for_submit(
                 screen,
                 home_screen=home_screen,
                 queue=queue,
-                size=size,
             )
             await _submit_mouse_opened_answer(
                 app,
@@ -3608,7 +2875,6 @@ async def test_home_list_enter_opens_the_selected_resolution_without_dispatching
             await _exercise_native_resolution_select(app, pilot, resolution, queue)
             await _assert_rendered_palette_header_identity(app, task.id, escalation.id)
             if size == _COMPACT_HOME_SIZE:
-                _capture_task99(app, f"task118-resolution-{size[0]}x{size[1]}-color.svg")
                 retry_rung = await _assert_compact_resolution_controls(
                     app,
                     screen,
@@ -3623,9 +2889,6 @@ async def test_home_list_enter_opens_the_selected_resolution_without_dispatching
                     timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
                 )
                 await _assert_rendered_palette_header_identity(app, task.id, escalation.id)
-                _capture_task99(app, "task118-resolution-20x8-color.svg")
-            else:
-                _capture_task99(app, f"task118-resolution-{size[0]}x{size[1]}-color.svg")
             assert queue.pending() == []
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
@@ -3823,10 +3086,6 @@ async def test_attention_routes_non_answer_decisions_to_explicit_resolution(
                 question,
             )
             assert queue.pending() == []
-            _capture_task99(
-                app,
-                f"task102-non-answer-{widget_name}-{resolution_kind.value}-100x35-color.svg",
-            )
 
             resolution.value = resolution_kind.value
             await pilot.pause()
@@ -4049,7 +3308,6 @@ async def test_attention_non_answer_route_keeps_an_earlier_answer_draft_on_its_t
                 ResolutionKind.CANCEL.value,
             }
             assert queue.pending() == []
-            _capture_task99(app, "task102-non-answer-attention-101x35-color.svg")
 
             resolution.value = ResolutionKind.CANCEL.value
             await pilot.pause()
@@ -4482,9 +3740,6 @@ async def _assert_command_feedback_footer(
     )
     await pilot.pause()
     _assert_rendered_command_summary(app, status, mono=mono)
-    _capture_task99(
-        app, "task120-compact-footer-mono.svg" if mono else "task120-wide-footer-color.svg"
-    )
     home_screen = app.screen
     if mono:
         await pilot.click(status)
@@ -4625,7 +3880,6 @@ async def _assert_command_history_initial_shortcuts(
     await wait_until(lambda: "page 2" in _rendered_text(page), timeout=2)
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
-    _capture_task99(app, "task127-command-history-page2-color.svg")
     next_button.focus()
     await pilot.press("p")
     await wait_until(lambda: "page 1" in _rendered_text(page), timeout=2)
@@ -4668,7 +3922,6 @@ async def _assert_command_history_filter_shortcuts(
     history_filter.focus()
     await pilot.press("enter")
     await wait_until(lambda: history_filter.expanded, timeout=2)
-    _capture_task99(app, "task127-command-history-select-expanded-color.svg")
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
     for shortcut in (COMMAND_HISTORY_PREVIOUS_SHORTCUT, COMMAND_HISTORY_NEXT_SHORTCUT):
@@ -4689,7 +3942,6 @@ async def _assert_command_history_filter_shortcuts(
     await wait_until(lambda: "No commands recorded." in _rendered_text(history_copy), timeout=2)
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
-    _capture_task99(app, "task127-command-history-empty-color.svg")
     history_filter.value = "all"
     await wait_until(lambda: history_filter.value == "all", timeout=2)
     await wait_until(lambda: f"#{applied_id} · Applied" in _rendered_text(history_copy), timeout=2)
@@ -4768,7 +4020,6 @@ async def _assert_command_history_last_page_and_refresh(
     assert app.focused is focus_before_refresh
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
-    _capture_task99(app, "task127-command-history-refreshed-color.svg")
     assert history_scroll.scroll_y == history_scroll.max_scroll_y
     await _resize_command_history_to_compact_and_close(
         app,
@@ -4804,7 +4055,6 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
         app = _app(reader, project_dir, widget_names=[])
         async with app.run_test(size=_COMMAND_HISTORY_INITIAL_SIZE) as pilot:
             home_screen = app.screen
-            _capture_task99(app, "task127-command-history-home-before-color.svg")
             await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
             await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
             history_frame = app.screen.query_one("#command-history-frame")
@@ -4826,7 +4076,6 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
             await wait_until(lambda: "page 1" in _rendered_text(page), timeout=2)
             preferred_region = history_frame.region
             controls_y = history_controls.region.y
-            _capture_task99(app, "task127-command-history-wide-color.svg")
             assert f"#{pending.id} · Pending" not in _rendered_text(history_copy)
             await _assert_command_history_initial_shortcuts(
                 app,
@@ -4864,7 +4113,6 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
                 history_scroll=history_scroll,
                 preferred_region=preferred_region,
             )
-            _capture_task99(app, "task127-command-history-home-after-color.svg")
         for initial_size in (_TINY_HOME_SIZE, _SHORT_HOME_SIZE):
             await _assert_initial_command_history_size_restoration(
                 reader,
@@ -4903,7 +4151,6 @@ async def test_empty_command_history_opened_tiny_restores_fixed_chrome(
                 frame_selector="#command-history-frame",
                 body_selector="#command-history-scroll",
             )
-            _capture_task99(app, "task127-command-history-empty-initial-20x8-color.svg")
             await pilot.resize_terminal(*_COMMAND_HISTORY_INITIAL_SIZE)
             history_filter = cast(
                 "Select[str]", screen.query_one("#command-history-filter", Select)
@@ -4927,7 +4174,6 @@ async def test_empty_command_history_opened_tiny_restores_fixed_chrome(
                 frame_selector="#command-history-frame",
                 body_selector="#command-history-scroll",
             )
-            _capture_task99(app, "task127-command-history-empty-restored-wide-color.svg")
             assert await pilot.click("#command-history-close")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
     finally:
@@ -4947,7 +4193,7 @@ async def _assert_initial_command_history_size_restoration(
         home_screen = app.screen
         await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
         await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
-        initial_geometry = await _assert_initial_history_pages(app, pilot, initial_size)
+        initial_geometry = await _assert_initial_history_pages(app, pilot)
         await _assert_initial_history_empty_size_restoration(
             app,
             pilot,
@@ -4968,7 +4214,6 @@ async def _assert_initial_command_history_size_restoration(
 async def _assert_initial_history_pages(
     app: DashboardApp,
     pilot: Pilot[None],
-    initial_size: tuple[int, int],
 ) -> tuple[Region, int, int]:
     screen = app.screen
     frame = screen.query_one("#command-history-frame")
@@ -4988,10 +4233,6 @@ async def _assert_initial_history_pages(
     initial_region = frame.region
     initial_controls_y = controls.region.y
     initial_content_height = body.virtual_size.height
-    _capture_task99(
-        app,
-        f"task127-command-history-initial-{initial_size[0]}x{initial_size[1]}-color.svg",
-    )
     while not next_page.disabled:
         previous_content = _rendered_text(copy)
         next_page.focus()
@@ -5045,10 +4286,6 @@ async def _assert_initial_history_empty_size_restoration(
     assert frame.region == preferred_region
     _assert_command_history_controls_reachable(screen, frame, controls)
     _assert_command_history_title_visible(screen, frame)
-    _capture_task99(
-        app,
-        f"task127-command-history-empty-{initial_size[0]}x{initial_size[1]}-wide-color.svg",
-    )
     await pilot.resize_terminal(*initial_size)
     await wait_until(
         lambda: (
@@ -5062,10 +4299,6 @@ async def _assert_initial_history_empty_size_restoration(
     assert frame.region == initial_region
     assert controls.region.y == initial_controls_y
     _assert_command_history_title_visible(screen, frame)
-    _capture_task99(
-        app,
-        f"task127-command-history-empty-{initial_size[0]}x{initial_size[1]}-color.svg",
-    )
     await pilot.resize_terminal(*_COMMAND_HISTORY_INITIAL_SIZE)
     await wait_until(lambda: frame.region == preferred_region, timeout=2)
 
@@ -5112,10 +4345,6 @@ async def _assert_initial_history_live_restoration(
     assert frame.region == initial_region
     assert controls.region.y == initial_controls_y
     _assert_command_history_title_visible(screen, frame)
-    _capture_task99(
-        app,
-        f"task127-command-history-live-{initial_size[0]}x{initial_size[1]}-color.svg",
-    )
     await pilot.resize_terminal(*_COMMAND_HISTORY_INITIAL_SIZE)
     await wait_until(
         lambda: (
@@ -5126,10 +4355,6 @@ async def _assert_initial_history_live_restoration(
     )
     _assert_command_history_controls_reachable(screen, frame, controls)
     _assert_command_history_title_visible(screen, frame)
-    _capture_task99(
-        app,
-        f"task127-command-history-restored-{initial_size[0]}x{initial_size[1]}-color.svg",
-    )
 
 
 async def _assert_task_timeline_page_shortcuts(app: DashboardApp, pilot: Pilot[None]) -> None:
@@ -5298,7 +4523,6 @@ async def _resize_command_history_to_compact_and_close(
         body_selector="#command-history-scroll",
     )
     assert frame.region.height < preferred_region.height
-    _capture_task99(app, "task127-command-history-compact-color.svg")
     assert scroll.max_scroll_y > 0
     await pilot.resize_terminal(*_TINY_HOME_SIZE)
     await wait_until(
@@ -5323,7 +4547,6 @@ async def _resize_command_history_to_compact_and_close(
     assert previous.is_on_screen
     assert next_page.is_on_screen
     assert frame.region.height < preferred_region.height
-    _capture_task99(app, "task127-command-history-20x8-color.svg")
     assert await pilot.click(previous)
     await wait_until(
         lambda: (
@@ -5347,7 +4570,6 @@ async def _resize_command_history_to_compact_and_close(
     await wait_until(lambda: app.focused is focused_widget, timeout=2)
     assert frame.region == preferred_region
     assert controls.region.y == controls_y
-    _capture_task99(app, "task127-command-history-restored-color.svg")
     assert await pilot.click("#command-history-close")
     await wait_until(lambda: app.screen is home_screen, timeout=2)
 
@@ -5397,7 +4619,6 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
             assert footer.display is (height >= 9)
             assert not status.is_on_screen if height < 9 else status.region.bottom <= height
             assert footer.region.right <= width
-            _capture_task99(app, f"task120-home-footer-{width}x{height}-color.svg")
             home_screen = app.screen
             if height >= 9:
                 assert status.display, (status.label, status.size, status.content_size)
@@ -5431,7 +4652,6 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
                     frame_selector="#command-history-frame",
                     body_selector="#command-history-scroll",
                 )
-                _capture_task99(app, "task127-command-history-tiny-route-color.svg")
     finally:
         reader.close()
 
@@ -5500,8 +4720,6 @@ async def _assert_home_resize_matrix(
                 detail_panel.region,
             )
         _assert_home_navigation_fits(app, width, height)
-        if (width, height) == _WIDE_SHORT_HOME_SIZE:
-            _capture_task99(app, "task101-home-short-wide-80x14-color.svg")
         if (width, height) == _COMPACT_HOME_SIZE:
             selected_item = app.query_one(f"#task-row-{task.id}", ListItem)
             assert selected_item.region.height <= list_view.scrollable_content_region.height
@@ -5537,7 +4755,6 @@ async def _assert_tiny_home_task_routes(
         ),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    _capture_task99(app, "task102-home-selected-scroll-settled-20x8-color.svg")
     assert root.scroll_y <= root.max_scroll_y
     assert selected_item.region.y >= root.scrollable_content_region.y
     assert selected_item.region.bottom <= root.scrollable_content_region.bottom, (
@@ -5745,16 +4962,13 @@ async def _exercise_contextual_draft_and_evidence_route(
     assert palette.query_one("#palette-menu-view-usage").display
     assert not palette.query_one("#palette-menu-task-views").display
     assert palette.query_one("#palette-menu-diagnostics").display
-    _capture_task99(app, "task101-context-menu-101x35-color.svg")
     await _click_palette_menu_button(pilot, palette, "palette-menu-more-actions")
     await wait_until(
         lambda: palette.query_one("#palette-menu-task-views").display,
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
     assert palette.query_one("#palette-menu-view-secondary").display
-    _capture_task99(app, "task101-context-menu-more-101x35-color.svg")
     await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
-    _capture_task99(app, "task101-message-form-101x35-color.svg")
     guidance = "Retain this task scoped guidance after closing."
     await pilot.press(*guidance)
     await _resize_contextual_message_form(app, pilot, palette, guidance)
@@ -5826,7 +5040,6 @@ async def _resize_contextual_message_form(
             assert frame.content_region.contains_region(button.region)
             assert button.region.right <= width
             assert button.region.bottom < height
-        _capture_task99(app, f"task101-message-form-{width}x{height}-color.svg")
     await pilot.resize_terminal(*_STANDARD_HOME_SIZE)
     await wait_until(
         lambda: app.focused is message and message.cursor_location == cursor,
@@ -6644,7 +5857,6 @@ async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
                 app,
                 pilot,
                 task.id,
-                size,
             )
             evidence_panel = evidence_screen.query_one("#task-detail-panel", TaskDetailPanel)
             assert evidence_panel.active_view == TASK_VIEW_EVIDENCE
@@ -6678,7 +5890,6 @@ async def _open_compact_task_evidence_route(
     app: DashboardApp,
     pilot: Pilot[None],
     task_id: str,
-    size: tuple[int, int],
 ) -> tuple[Widget, ListView, TaskDetailScreen]:
     home = cast("Widget", app.screen)
     list_view = app.query_one("#task-browser-list", ListView)
@@ -6692,7 +5903,6 @@ async def _open_compact_task_evidence_route(
         lambda: isinstance(app.screen, PaletteScreen),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    _capture_task99(app, f"task112-context-menu-{size[0]}x{size[1]}-color.svg")
     menu = cast("PaletteScreen", app.screen).query_one("#palette-menu", VerticalScroll)
     menu.scroll_to_widget(
         menu.query_one("#palette-menu-view-secondary", Button),
@@ -6727,7 +5937,6 @@ async def _open_compact_task_evidence_route(
     assert views_content.region.contains_region(choice.region)
     assert views_content.region.contains_region(open_button.region)
     assert views.region.contains_region(close_button.region)
-    _capture_task99(app, f"task112-task-views-{size[0]}x{size[1]}-color.svg")
     await pilot.press("enter")
     await wait_until(
         lambda: isinstance(app.screen, TaskDetailScreen),
@@ -6846,7 +6055,6 @@ async def _assert_home_inline_secondary_routes(
     )
     assert task_id in _rendered_text(evidence_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
     assert home_screen.is_mounted
-    _capture_task99(app, f"task108-evidence-{app.size.width}x{app.size.height}-color.svg")
     await pilot.press("escape")
     await wait_until(lambda: app.screen is home_screen, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
     await pilot.press("u")
@@ -6859,7 +6067,6 @@ async def _assert_home_inline_secondary_routes(
         TASK_VIEW_USAGE
     )
     assert task_id in _rendered_text(usage_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-    _capture_task99(app, f"task108-usage-{app.size.width}x{app.size.height}-color.svg")
     assert reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count == before_commands
     await pilot.press("escape")
     await wait_until(lambda: app.screen is home_screen, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
@@ -6902,7 +6109,6 @@ async def test_home_help_works_with_keyboard_without_color(
                 body_selector="#workspace-help-scroll",
             )
             assert help_scroll.region.height < help_copy.region.height
-            _capture_task99(app, f"task115-help-{size[0]}x{size[1]}-mono.svg")
             if size == _TINY_HOME_SIZE:
                 await pilot.resize_terminal(*_WIDE_HOME_SIZE)
                 await wait_until(
@@ -6915,7 +6121,6 @@ async def test_home_help_works_with_keyboard_without_color(
                 )
                 preferred_region = help_screen.query_one("#workspace-help-frame").region
                 assert preferred_region.height < _WIDE_HOME_SIZE[1]
-                _capture_task99(app, "task127-help-initially-tiny-restored-wide-mono.svg")
                 await pilot.resize_terminal(*_TINY_HOME_SIZE)
                 await wait_until(
                     lambda: (
@@ -6954,7 +6159,7 @@ async def test_home_help_preserves_rendered_home_origins_and_close_reachability(
     clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Popup underlay task")
     reader = StateReader(database, clock)
-    settings = _task99_settings(project_dir)
+    settings = _settings_without_animations(project_dir)
     app = _app(
         reader,
         project_dir,
@@ -6981,7 +6186,6 @@ async def test_home_help_preserves_rendered_home_origins_and_close_reachability(
             home_selection = task_list.index
             home_focus = home.focused
             before_origins = _rendered_home_origins(app)
-            _capture_task99(app, "task115-home-before-120x40-color.svg")
 
             await pilot.press("?")
             await wait_until(
@@ -7001,7 +6205,6 @@ async def test_home_help_preserves_rendered_home_origins_and_close_reachability(
             during_origins = _rendered_home_origins(app)
             assert during_origins == before_origins
             assert home_root.scroll_y == home_scroll_y
-            _capture_task99(app, "task115-help-120x40-color.svg")
 
             close = help_screen.query_one("#workspace-help-close", Button)
             assert help_screen.focused is help_scroll
@@ -7021,7 +6224,6 @@ async def test_home_help_preserves_rendered_home_origins_and_close_reachability(
             assert home.focused is home_focus
             assert task_list.index == home_selection
             assert task.title in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-            _capture_task99(app, "task115-home-after-120x40-color.svg")
 
             await _assert_compact_home_help_preserves_rendered_origins(app, pilot, task)
     finally:
@@ -7050,7 +6252,6 @@ async def _assert_compact_home_help_preserves_rendered_origins(
     compact_scroll_y = home_root.scroll_y
     compact_origins = _rendered_visible_home_origins(app)
     compact_focus = home.focused
-    _capture_task99(app, "task127-home-compact-before-color.svg")
     await pilot.press("?")
     await wait_until(
         lambda: bool(app.screen.query("#workspace-help-close")),
@@ -7063,7 +6264,6 @@ async def _assert_compact_home_help_preserves_rendered_origins(
         frame_selector="#workspace-help-frame",
         body_selector="#workspace-help-scroll",
     )
-    _capture_task99(app, "task127-home-compact-help-color.svg")
     await pilot.click("#workspace-help-close")
     await wait_until(
         lambda: app.screen is home,
@@ -7076,7 +6276,6 @@ async def _assert_compact_home_help_preserves_rendered_origins(
     assert home_root.scroll_y == compact_scroll_y
     assert home.focused is compact_focus
     assert task_list.index == home_selection
-    _capture_task99(app, "task127-home-compact-after-color.svg")
 
 
 async def _assert_evidence_editor_shortcut_precedence(
@@ -7088,7 +6287,6 @@ async def _assert_evidence_editor_shortcut_precedence(
     await pilot.press("e")
     await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=2)
     evidence_screen = app.screen
-    _capture_task99(app, f"task108-evidence-{app.size.width}x{app.size.height}-color.svg")
     role_select = cast(
         "Select[str]", evidence_screen.query_one("#task-detail-timeline-role", Select)
     )
@@ -7188,7 +6386,6 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
             await pilot.pause()
-            _capture_task99(app, f"task108-usage-{app.size.width}x{app.size.height}-color.svg")
             await pilot.click("#task-detail-popup-close")
             await wait_until(lambda: app.screen is home, timeout=2)
             assert task_list.highlighted_child is not None
@@ -7249,7 +6446,6 @@ async def test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions
             )
             await _select_home_task(app, task.id)
             search = home.query_one("#task-browser-search", Input)
-            _capture_task99(app, f"task108-dashboard-{size[0]}x{size[1]}-color.svg")
             search.focus()
 
             await pilot.press("f12")
@@ -7264,7 +6460,6 @@ async def test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions
             assert home_row.region.width > 0
             assert task.id in _rendered_text(palette.query_one("#palette-menu-context", Static))
             screenshot_text = _exported_screen_text(app)
-            _capture_task99(app, f"task108-actions-{size[0]}x{size[1]}-color.svg")
             if size == _WIDE_HOME_SIZE:
                 assert task.title in screenshot_text
             else:
@@ -7630,7 +6825,7 @@ async def test_configured_usage_and_docker_views_remain_reachable(
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
-    _seed_task111_usage(connection, clock)
+    _seed_project_usage(connection, clock)
     reader = StateReader(database, clock)
 
     class CachedResources(StubServices):
@@ -7676,7 +6871,6 @@ async def test_configured_usage_and_docker_views_remain_reachable(
                 raw in usage_text
                 for raw in ("operator_config", "provider_reported", "billing_mode")
             )
-            _capture_task99(app, f"task111-project-totals-{size[0]}x{size[1]}-color.svg")
             await pilot.click("#context-widget-close")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
 
@@ -7688,7 +6882,6 @@ async def test_configured_usage_and_docker_views_remain_reachable(
             resources = app.screen.query_one("#project-diagnostics-resources", Static)
             assert "CPU 37%" in " ".join(_rendered_widget_lines(resources))
             assert services.resource_reads == 1
-            _capture_task99(app, f"task108-resource-details-{size[0]}x{size[1]}-color.svg")
             await pilot.click("#context-widget-close")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
 
@@ -7697,7 +6890,6 @@ async def test_configured_usage_and_docker_views_remain_reachable(
             docker = app.screen.query_one("#docker", Static)
             assert docker.region.width > 0
             assert _rendered_text(docker)
-            _capture_task99(app, f"task108-diagnostics-{size[0]}x{size[1]}-color.svg")
     finally:
         reader.close()
 

@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 import shlex
 import stat
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from shikiru.clock import SystemClock
@@ -29,6 +26,8 @@ from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from shikiru.domain.tasks import Task
     from tests.support.tmux import TmuxServer
 
@@ -40,7 +39,6 @@ _PALETTE_COMMAND = (
     "--origin-pane",
     FORMAT_PANE_ID,
 )
-_NATIVE_VISUAL_REVIEW_DIRECTORY = "SHIKIRU_NATIVE_VISUAL_REVIEW_DIR"
 
 
 async def _bound_space_tokens(tmux_server: TmuxServer) -> list[str]:
@@ -129,15 +127,6 @@ async def _exercise_live_home_palette_routes(
         actions_text = await pane_text()
         assert "Actions" in actions_text
         assert "TASKS" in actions_text
-        native_directory = os.environ.get(_NATIVE_VISUAL_REVIEW_DIRECTORY)
-        if native_directory is not None:
-            capture_directory = Path(native_directory)
-            await asyncio.to_thread(capture_directory.mkdir, parents=True, exist_ok=True)
-            await asyncio.to_thread(
-                (capture_directory / "task108-prefix-space-actions-pane.txt").write_text,
-                actions_text,
-                encoding="utf-8",
-            )
         assert (
             await tmux_server.run("display-message", "-p", "-t", pane_id, "#{pane_pid}")
         ).stdout.strip() == str(pane_pid)
