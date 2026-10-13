@@ -1586,8 +1586,9 @@ Refs: audit verdicts for `test_dashboard_palette.py`, `test_dashboard_task_detai
 
 ### Task 159: Trim unit tables and fold tmux/workspace/config tests
 Refs: unit-test audit (`test_domain_docker.py`, `test_domain_steps.py`, `test_domain_levels.py`, `test_domain_runs.py`, `test_ui_glyphs.py`, `test_ui_age.py`/`size`/`cpu_format`, `test_config_settings.py`, `test_config_loader.py`), `test_tmux_session.py`, `test_workspace_roots.py`.
-- [ ] Merge malformed-input, first-step, verify-ladder and integrate-conflict tests into tables; trim repeated boundary cases to one pair per threshold; delete the redundant packaged-defaults and project-overrides tests; move `slugify` to unit; merge the two exclude tests and the two session-option tests.
-- [ ] `uv run poe check` green; report before and after.
+- [x] Merge malformed-input, first-step, verify-ladder and integrate-conflict tests into tables; trim repeated boundary cases to one pair per threshold; delete the redundant packaged-defaults and project-overrides tests; move `slugify` to unit; merge the two exclude tests and the two session-option tests.
+- [x] `uv run poe check` green; report before and after.
+  Proof: collected cases 1618 to 1595 across twelve files (docker malformed-input, first-step, verify-ladder, integrate-conflict and exclude-append tests folded; repeated boundary cases trimmed; two subsumed config tests deleted; `slugify` moved to unit). Rejected: deleting `test_missing_pane_is_dead` (only coverage of the killed-pane branch) and merging the two tmux session tests (different setups). `uv run poe check` green first run (1574 passed, 91 % coverage).
 
 ### Task 160: Stale only after a failure; age hint only when stale
 Refs: eighth-review hints; `dashboard/services.py` `resource_sample`, `dashboard/diagnostics_sections.py`, `ui/section.py` `observation`, `plugins/widgets/{docker,disk}.py`; 06 §5.4.
