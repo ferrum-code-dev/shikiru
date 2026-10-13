@@ -1115,6 +1115,17 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-modal select:focus { border-color:var(--shk-accent); outline:1px solid var(--shk-accent); outline-offset:0; }
 #shikiru-focus-steel .shk-menu-item { display:flex; flex-wrap:wrap; gap:5px 12px; padding:6px 7px !important; width:100%; }
 #shikiru-focus-steel .shk-menu-item:first-child { background:var(--shk-selected); }
+#shikiru-focus-steel .shk-res-head { display:flex; justify-content:space-between; gap:8px; color:var(--shk-dim); }
+#shikiru-focus-steel .shk-res-rows { display:grid; grid-template-columns:9ch minmax(0,1fr); overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-res-rule { border-top:1px solid var(--shk-edge); margin:6px 0; }
+#shikiru-focus-steel .shk-res-choose { margin-bottom:2px; }
+#shikiru-focus-steel .shk-res-list { outline:0; }
+#shikiru-focus-steel .shk-res-choice { display:grid; grid-template-columns:3ch minmax(0,1fr); width:100%; }
+#shikiru-focus-steel .shk-res-choice.is-selected { background:var(--shk-selected); }
+#shikiru-focus-steel .shk-res-mark { white-space:pre; }
+#shikiru-focus-steel .shk-res-choice &gt; span:last-child { overflow-wrap:anywhere; }
+#shikiru-focus-steel .shk-modal .shk-res-answer { margin:2px 0 4px 3ch; width:calc(100% - 3ch); }
+#shikiru-focus-steel .shk-terminal button.shk-res-tried { display:block; width:100%; color:var(--shk-dim); }
 #shikiru-focus-steel .shk-modal label { display:block; color:var(--shk-dim); margin:9px 0 4px; }
 #shikiru-focus-steel .shk-feedback { margin:8px 0; color:var(--shk-good); }
 #shikiru-focus-steel .shk-terminal.shk-compact { max-width:380px; margin:0 auto; padding:12px 12px 0; }
@@ -1237,7 +1248,7 @@ html&gt;body{padding:0}&lt;/style&gt;
   const modalSelections = {};
   const modalScrollTop = {};
   const modalFrames = {
-    menu:[460,340], evidence:[460,260], resolve:[460,330], message:[460,330],
+    menu:[460,340], evidence:[460,260], resolve:[460,410], message:[460,330],
     takeover:[460,300], handback:[460,260], usage:[460,360], projectusage:[460,360],
     commands:[520,390], history:[520,390], diagnostics:[452,390], docker:[452,260], disk:[452,220], faults:[452,240], widgets:[460,300],
     views:[460,330], submitted:[420,240], help:[420,290]
@@ -1506,34 +1517,68 @@ html&gt;body{padding:0}&lt;/style&gt;
   });
   new MutationObserver(markDiagnosticLines).observe(root, {childList:true, subtree:true});
   window.addEventListener(&#x27;resize&#x27;, markDiagnosticLines);
+  const resolveQuestion = &#x27;Which failures should the parser retry?&#x27;;
+  const resolveTried = &#x27;Implementer round 2 added the retry loop; the Leader verdict found no rule for syntax errors.&#x27;;
+  const resolveChoices = [
+    {kind:&#x27;answer&#x27;,label:&#x27;Retry transient I/O errors&#x27;,consequence:&#x27;Syntax errors fail at once.&#x27;,recommended:true},
+    {kind:&#x27;answer&#x27;,label:&#x27;Fail fast&#x27;,consequence:&#x27;Never retry.&#x27;},
+    {kind:&#x27;own&#x27;,label:&#x27;Write your own answer…&#x27;},
+    {kind:&#x27;cancel&#x27;,label:&#x27;Cancel task&#x27;,consequence:&#x27;Cancel the task and keep its branch; preserve its worktree when uncommitted work remains or it is off its task branch.&#x27;}
+  ];
+  const resolveOwnIndex = resolveChoices.findIndex(choice =&gt; choice.kind===&#x27;own&#x27;);
+  const resolveState = {};
+  const resolveSent = new Set();
+  const resolveOpen = id =&gt; {
+    delete resolveState[id];
+    if (resolveSent.delete(id) &amp;&amp; modalDrafts[id]) delete modalDrafts[id].answer;
+  };
+  const resolveSubmit = id =&gt; {
+    delete resolveState[id];
+    resolveSent.add(id);
+    overlays[id] = &#x27;submitted&#x27;;
+  };
+  const resolveOf = id =&gt; {
+    if (!resolveState[id]) {
+      const own = Boolean(modalDrafts[id]?.answer?.trim());
+      resolveState[id] = {selected:own?resolveOwnIndex:0, armed:false, tried:false, own};
+    }
+    return resolveState[id];
+  };
+  const resolveRow = (id, choice, index, state) =&gt; {
+    const selected = index===state.selected;
+    const armed = selected &amp;&amp; state.armed;
+    const tone = choice.kind===&#x27;cancel&#x27; ? &#x27;shk-bad&#x27; : &#x27;shk-accent&#x27;;
+    const bar = selected ? &#x27;▌&#x27; : &#x27; &#x27;;
+    const star = choice.recommended ? &#x27;★&#x27; : &#x27; &#x27;;
+    const label = armed ? &#x27;Press Enter again to cancel&#x27; : choice.label;
+    const weight = selected || armed ? &#x27; shk-bold&#x27; : &#x27;&#x27;;
+    const marks = choice.consequence ? `${bar}${star} \n${bar}  ` : `${bar}${star} `;
+    const consequence = choice.consequence ? `&lt;br&gt;&lt;span class=&quot;shk-dim&quot;&gt;${esc(choice.consequence)}&lt;/span&gt;` : &#x27;&#x27;;
+    const answer = choice.kind===&#x27;own&#x27; &amp;&amp; state.own ? `&lt;textarea class=&quot;shk-res-answer&quot; data-draft=&quot;answer&quot; rows=&quot;3&quot; aria-label=&quot;Your answer to the Leader&quot;&gt;${esc(modalDrafts[id]?.answer || &#x27;&#x27;)}&lt;/textarea&gt;` : &#x27;&#x27;;
+    return `&lt;button type=&quot;button&quot; class=&quot;shk-res-choice${selected?&#x27; is-selected&#x27;:&#x27;&#x27;}&quot; role=&quot;option&quot; aria-selected=&quot;${selected}&quot; data-resolve-choice=&quot;${index}&quot;&gt;&lt;span class=&quot;shk-res-mark ${tone}${weight}&quot;&gt;${marks}&lt;/span&gt;&lt;span&gt;&lt;span class=&quot;${tone}${weight}&quot;&gt;${esc(label)}&lt;/span&gt;${consequence}&lt;/span&gt;&lt;/button&gt;${answer}`;
+  };
+  const resolveContent = (id, task) =&gt; {
+    const state = resolveOf(id);
+    const tiny = width.value===&#x27;tiny&#x27;;
+    const question = `&lt;span class=&quot;shk-strong&quot;&gt;${resolveQuestion}&lt;/span&gt;`;
+    const decision = tiny ? `&lt;div&gt;${question}&lt;/div&gt;` : `&lt;div class=&quot;shk-res-head&quot;&gt;&lt;span&gt;Decision&lt;/span&gt;&lt;span&gt;waiting ${esc(task.age)}&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-res-rows&quot;&gt;&lt;span class=&quot;shk-dim&quot;&gt;Task&lt;/span&gt;&lt;span&gt;&lt;span class=&quot;shk-strong&quot;&gt;${task.id}&lt;/span&gt; · ${esc(task.title)}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;Question&lt;/span&gt;${question}&lt;/div&gt;&lt;div class=&quot;shk-res-rule&quot;&gt;&lt;/div&gt;`;
+    const choose = tiny ? &#x27;&#x27; : &#x27;&lt;div class=&quot;shk-res-head shk-res-choose&quot;&gt;&lt;span class=&quot;shk-accent shk-bold&quot;&gt;Choose&lt;/span&gt;&lt;span&gt;↑↓ select · Enter send&lt;/span&gt;&lt;/div&gt;&#x27;;
+    const rows = resolveChoices.map((choice, index) =&gt; resolveRow(id, choice, index, state)).join(&#x27;&#x27;);
+    const tried = `&lt;div class=&quot;shk-res-rule&quot;&gt;&lt;/div&gt;&lt;button type=&quot;button&quot; class=&quot;shk-res-tried&quot; data-resolve-tried=&quot;true&quot; aria-expanded=&quot;${state.tried}&quot;&gt;What was tried ${state.tried?&#x27;▾&#x27;:&#x27;▸&#x27;}&lt;/button&gt;${state.tried?`&lt;div class=&quot;shk-dim&quot;&gt;${esc(resolveTried)}&lt;/div&gt;`:&#x27;&#x27;}`;
+    return `${decision}${choose}&lt;div class=&quot;shk-res-list&quot; role=&quot;listbox&quot; tabindex=&quot;0&quot; aria-label=&quot;Choices&quot;&gt;${rows}&lt;/div&gt;${tried}`;
+  };
   const modal = (id, task) =&gt; {
     const kind=overlays[id];
     if (!kind) return &#x27;&#x27;;
-    const headings={menu:&#x27;Actions&#x27;,views:&#x27;Views&#x27;,widgets:&#x27;Configured widgets&#x27;,evidence:&#x27;Evidence and reports&#x27;,resolve:&#x27;Answer decision · E-7&#x27;,message:&#x27;Message a role&#x27;,takeover:&#x27;Take over a role&#x27;,handback:&#x27;Hand back a role&#x27;,usage:&#x27;Task usage&#x27;,projectusage:&#x27;Project usage&#x27;,commands:&#x27;Command history&#x27;,history:&#x27;Command history&#x27;,diagnostics:&#x27;Project diagnostics&#x27;,docker:&#x27;Diagnostics · docker&#x27;,disk:&#x27;Diagnostics · disk&#x27;,faults:&#x27;Diagnostics · faults&#x27;,submitted:&#x27;Preview result&#x27;,help:&#x27;Help&#x27;};
+    const resolveHeading = () =&gt; width.value===&#x27;tiny&#x27; ? &#x27;T-42 · Decision required&#x27; : `${width.value===&#x27;compact&#x27;?&#x27;Resolve&#x27;:&#x27;Resolve escalation&#x27;} · E-7 · T-42`;
+    const headings={menu:&#x27;Actions&#x27;,views:&#x27;Views&#x27;,widgets:&#x27;Configured widgets&#x27;,evidence:&#x27;Evidence and reports&#x27;,resolve:resolveHeading(),message:&#x27;Message a role&#x27;,takeover:&#x27;Take over a role&#x27;,handback:&#x27;Hand back a role&#x27;,usage:&#x27;Task usage&#x27;,projectusage:&#x27;Project usage&#x27;,commands:&#x27;Command history&#x27;,history:&#x27;Command history&#x27;,diagnostics:&#x27;Project diagnostics&#x27;,docker:&#x27;Diagnostics · docker&#x27;,disk:&#x27;Diagnostics · disk&#x27;,faults:&#x27;Diagnostics · faults&#x27;,submitted:&#x27;Preview result&#x27;,help:&#x27;Help&#x27;};
     let content=&#x27;&#x27;;
     let footer=&#x27;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · Esc&lt;/button&gt;&#x27;;
     if (kind===&#x27;menu&#x27;) content=menu(task);
     if (kind===&#x27;views&#x27;) content=views();
     if (kind===&#x27;widgets&#x27;) content=&#x27;&lt;div class=&quot;shk-heading&quot;&gt;Configured widgets · illustrative&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;resources&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Focus readout&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;docker&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Diagnostics view&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;faults&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Diagnostics view&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Example routes only · no live project configuration is read.&lt;/div&gt;&#x27;;
     if (kind===&#x27;evidence&#x27; &amp;&amp; task) content=`&lt;div class=&quot;shk-insight&quot;&gt;${esc(task.evidence)}&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Recorded sources · sample data&lt;/div&gt;`;
-    if (kind===&#x27;resolve&#x27; &amp;&amp; task) {
-      const answer = modalDrafts[id]?.answer || &#x27;&#x27;;
-      content=&#x27;&lt;div class=&quot;shk-wait&quot;&gt;Which failures should the parser retry?&lt;/div&gt;&lt;div class=&quot;shk-insight&quot;&gt;Leader suggests: retry transient I/O errors. Syntax errors should fail immediately.&lt;/div&gt;&lt;label for=&quot;shk-answer-&#x27;+id+&#x27;&quot;&gt;Answer · guidance for the Leader&lt;/label&gt;&lt;textarea id=&quot;shk-answer-&#x27;+id+&#x27;&quot; data-draft=&quot;answer&quot; rows=&quot;2&quot; placeholder=&quot;Retry transient I/O errors only.&quot;&gt;&#x27;+esc(answer)+&#x27;&lt;/textarea&gt;&lt;div class=&quot;shk-dim&quot;&gt;Answer → consult → continue implementation&lt;/div&gt;&#x27;;
-      footer=&#x27;&lt;button type=&quot;button&quot; data-submit=&quot;answer&quot; class=&quot;shk-inline-action&quot;&gt;Submit answer&lt;/button&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · Esc&lt;/button&gt;&#x27;;
-    }
-    if (kind===&#x27;message&#x27; &amp;&amp; task) {
-      const drafts = modalDrafts[id] || {};
-      content=`&lt;label for=&quot;shk-role-${id}&quot;&gt;Role&lt;/label&gt;&lt;select id=&quot;shk-role-${id}&quot; data-draft=&quot;messageRole&quot;&gt;&lt;option${drafts.messageRole === &#x27;Leader&#x27; || !drafts.messageRole ? &#x27; selected&#x27; : &#x27;&#x27;}&gt;Leader&lt;/option&gt;&lt;option${drafts.messageRole === &#x27;Implementer&#x27; ? &#x27; selected&#x27; : &#x27;&#x27;}&gt;Implementer&lt;/option&gt;&lt;/select&gt;&lt;label for=&quot;shk-message-${id}&quot;&gt;Guidance&lt;/label&gt;&lt;textarea id=&quot;shk-message-${id}&quot; data-draft=&quot;message&quot; rows=&quot;2&quot; placeholder=&quot;Add the missing redirect edge case.&quot;&gt;${esc(drafts.message || &#x27;&#x27;)}&lt;/textarea&gt;&lt;div class=&quot;shk-dim&quot;&gt;Queued for this role&#x27;s next turn&lt;/div&gt;`;
-      footer=&#x27;&lt;button type=&quot;button&quot; data-submit=&quot;message&quot; class=&quot;shk-inline-action&quot;&gt;Queue message&lt;/button&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · Esc&lt;/button&gt;&#x27;;
-    }
-    if (kind===&#x27;takeover&#x27; &amp;&amp; task) {
-      const takeoverRole = modalDrafts[id]?.takeoverRole || task.role;
-      content=`&lt;label for=&quot;shk-take-role-${id}&quot;&gt;Role&lt;/label&gt;&lt;select id=&quot;shk-take-role-${id}&quot; data-draft=&quot;takeoverRole&quot;&gt;&lt;option${takeoverRole === task.role ? &#x27; selected&#x27; : &#x27;&#x27;}&gt;${esc(task.role)}&lt;/option&gt;&lt;option${takeoverRole !== task.role ? &#x27; selected&#x27; : &#x27;&#x27;}&gt;${task.role===&#x27;Leader&#x27;?&#x27;Implementer&#x27;:&#x27;Leader&#x27;}&lt;/option&gt;&lt;/select&gt;&lt;div class=&quot;shk-insight&quot;&gt;Stop this task&#x27;s current turn and open the role session interactively. This task stays held until you hand back every role.&lt;/div&gt;`;
-      footer=&#x27;&lt;button type=&quot;button&quot; data-submit=&quot;takeover&quot; class=&quot;shk-inline-action&quot;&gt;Take over role&lt;/button&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · Esc&lt;/button&gt;&#x27;;
-    }
-    if (kind===&#x27;handback&#x27; &amp;&amp; task) { content=&#x27;&lt;div class=&quot;shk-insight&quot;&gt;Hand the Leader session back to automation. Another role ownership or pause would still hold this task.&lt;/div&gt;&#x27;; footer=&#x27;&lt;button type=&quot;button&quot; data-submit=&quot;handback&quot; class=&quot;shk-inline-action&quot;&gt;Hand back role&lt;/button&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · Esc&lt;/button&gt;&#x27;; }
-    if (kind===&#x27;usage&#x27; &amp;&amp; task) content=sampleUsage[task.id]?taskUsage(task,false)+`&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${task.id===&#x27;T-43&#x27;?&#x27;Claude: 9k input / 2k output · subscription&lt;br&gt;Codex: 18k input / 3k output · $0.46 reported API charge&#x27;:&#x27;Recorded usage grouped by role, agent and model&#x27;}&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Subscription fees belong to the account. No per-task subscription charge is reported.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Billing mode: explicitly declared · sample declaration&lt;/div&gt;`:&#x27;&lt;div class=&quot;shk-dim&quot;&gt;Usage details are omitted from this preview.&lt;/div&gt;&#x27;;
-    if (kind===&#x27;projectusage&#x27;) content=&#x27;&lt;div class=&quot;shk-u-row&quot;&gt;&lt;span class=&quot;shk-u-label&quot;&gt;Totals&lt;/span&gt;&lt;span class=&quot;shk-u-values&quot;&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-strong&quot;&gt;14&lt;/span&gt; sessions&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-accent shk-bold&quot;&gt;412k&lt;/span&gt; tokens&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-good shk-bold&quot;&gt;$4.82&lt;/span&gt; API&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-u-row&quot;&gt;&lt;span class=&quot;shk-u-label&quot;&gt;Tokens&lt;/span&gt;&lt;span class=&quot;shk-u-values&quot;&gt;&lt;span class=&quot;shk-u-group&quot;&gt;in &lt;span class=&quot;shk-accent shk-bold&quot;&gt;320k&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;out &lt;span class=&quot;shk-accent shk-bold&quot;&gt;92k&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;cache r &lt;span class=&quot;shk-accent shk-bold&quot;&gt;4.1M&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;w &lt;span class=&quot;shk-accent shk-bold&quot;&gt;120k&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-u-row&quot;&gt;&lt;span class=&quot;shk-u-label&quot;&gt;Coverage&lt;/span&gt;&lt;span class=&quot;shk-u-values&quot;&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-strong&quot;&gt;12&lt;/span&gt; reported&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-strong&quot;&gt;2&lt;/span&gt; without tokens&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-u-row&quot;&gt;&lt;span class=&quot;shk-u-label&quot;&gt;Billing&lt;/span&gt;&lt;span class=&quot;shk-u-values&quot;&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-strong&quot;&gt;6&lt;/span&gt; subscription&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-strong&quot;&gt;5&lt;/span&gt; API billed&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-strong&quot;&gt;3&lt;/span&gt; unknown&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-u-row&quot;&gt;&lt;span class=&quot;shk-u-label&quot;&gt;&lt;/span&gt;&lt;span class=&quot;shk-u-values&quot;&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-wait&quot;&gt;est. $6.50&lt;/span&gt; API-equivalent (4 sessions)&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-u-section&quot;&gt;By agent&lt;/div&gt;&lt;div class=&quot;shk-u-row&quot;&gt;&lt;span class=&quot;shk-u-label shk-u-name&quot;&gt;claude&lt;/span&gt;&lt;span class=&quot;shk-u-values&quot;&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-strong&quot;&gt;8&lt;/span&gt; runs&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-accent shk-bold&quot;&gt;290k&lt;/span&gt; tokens&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-good shk-bold&quot;&gt;$4.82&lt;/span&gt; billed&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;2 cost unknown&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-u-row&quot;&gt;&lt;span class=&quot;shk-u-label shk-u-name&quot;&gt;codex&lt;/span&gt;&lt;span class=&quot;shk-u-values&quot;&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-strong&quot;&gt;6&lt;/span&gt; runs&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-accent shk-bold&quot;&gt;122k&lt;/span&gt; tokens&lt;/span&gt;&lt;span class=&quot;shk-u-group&quot;&gt;&lt;span class=&quot;shk-wait&quot;&gt;est. $6.50&lt;/span&gt;&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-u-section&quot;&gt;Limits&lt;/div&gt;&lt;div class=&quot;shk-u-row&quot;&gt;&lt;span class=&quot;shk-u-label shk-u-name&quot;&gt;claude&lt;/span&gt;&lt;span class=&quot;shk-u-values&quot;&gt;&lt;span class=&quot;shk-u-group&quot;&gt;5h &lt;span class=&quot;shk-good&quot;&gt;◑ 38%&lt;/span&gt; resets 1h 40m&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-u-row&quot;&gt;&lt;span class=&quot;shk-u-label shk-u-name&quot;&gt;&lt;/span&gt;&lt;span class=&quot;shk-u-values&quot;&gt;&lt;span class=&quot;shk-u-group&quot;&gt;weekly &lt;span class=&quot;shk-bad&quot;&gt;● 91%&lt;/span&gt; resets 74h 0m&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-u-row&quot;&gt;&lt;span class=&quot;shk-u-label shk-u-name&quot;&gt;codex&lt;/span&gt;&lt;span class=&quot;shk-u-values&quot;&gt;&lt;span class=&quot;shk-u-group&quot;&gt;5h &lt;span class=&quot;shk-wait&quot;&gt;◑ 62%&lt;/span&gt; resets 2h 15m&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-u-section&quot;&gt;observed 2m ago&lt;/div&gt;&#x27;;
+    if (kind===&#x27;resolve&#x27; &amp;&amp; task) { content=resolveContent(id, task); footer=&#x27;&#x27;; }
     if (kind===&#x27;commands&#x27; || kind===&#x27;history&#x27;) {
       content=historyContent();
       const rows=historyRows();
@@ -1546,14 +1591,14 @@ html&gt;body{padding:0}&lt;/style&gt;
     if (kind===&#x27;faults&#x27;) content=faultsSection(scene.value===&#x27;decision&#x27;, false);
     if (kind===&#x27;submitted&#x27;) { content=&#x27;&lt;div class=&quot;shk-feedback&quot;&gt;Preview action complete&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;A real command result appears as Pending, Applied or Rejected.&lt;/div&gt;&#x27;; footer=&#x27;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · Esc&lt;/button&gt;&#x27;; }
     if (kind===&#x27;help&#x27;) content=&#x27;&lt;div&gt;Up / Down select a task&lt;/div&gt;&lt;div&gt;Esc close popup · Esc clear selection&lt;/div&gt;&lt;div&gt;Ctrl+P actions · v views&lt;/div&gt;&lt;div&gt;e evidence · u usage · ? help&lt;/div&gt;&lt;div&gt;History: ← newer · → older&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Page controls disable at their ends. The arrows page only while the status filter is collapsed.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Native Select: first Esc collapses options; next Esc closes the popup.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;New task windows remain in the background until explicitly selected.&lt;/div&gt;&#x27;;
-    return `&lt;div class=&quot;shk-modal-wrap&quot;&gt;&lt;section class=&quot;shk-modal&quot; style=&quot;${modalFrame(kind)}&quot; aria-label=&quot;${headings[kind]}&quot; role=&quot;dialog&quot;&gt;&lt;div class=&quot;shk-modal-head&quot;&gt;&lt;h4&gt;${headings[kind]}${task &amp;&amp; ![&#x27;projectusage&#x27;,&#x27;diagnostics&#x27;,&#x27;commands&#x27;,&#x27;history&#x27;,&#x27;help&#x27;,&#x27;views&#x27;,&#x27;widgets&#x27;,&#x27;submitted&#x27;,&#x27;docker&#x27;,&#x27;disk&#x27;,&#x27;faults&#x27;].includes(kind)?` · ${task.id}`:&#x27;&#x27;}&lt;/h4&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot; aria-label=&quot;Esc ×&quot;&gt;Esc ×&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scroll&quot;&gt;&lt;div class=&quot;shk-modal-body&quot; tabindex=&quot;0&quot;&gt;${content}&lt;div class=&quot;shk-validation&quot; role=&quot;alert&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scrollbar&quot; aria-hidden=&quot;true&quot;&gt;&lt;div class=&quot;shk-modal-scroll-thumb&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-footer&quot;&gt;${footer}&lt;/div&gt;&lt;/section&gt;&lt;/div&gt;`;
+    return `&lt;div class=&quot;shk-modal-wrap&quot;&gt;&lt;section class=&quot;shk-modal&quot; style=&quot;${modalFrame(kind)}&quot; aria-label=&quot;${headings[kind]}&quot; role=&quot;dialog&quot;&gt;&lt;div class=&quot;shk-modal-head&quot;&gt;&lt;h4&gt;${headings[kind]}${task &amp;&amp; ![&#x27;projectusage&#x27;,&#x27;diagnostics&#x27;,&#x27;commands&#x27;,&#x27;history&#x27;,&#x27;help&#x27;,&#x27;views&#x27;,&#x27;widgets&#x27;,&#x27;submitted&#x27;,&#x27;docker&#x27;,&#x27;disk&#x27;,&#x27;faults&#x27;,&#x27;resolve&#x27;].includes(kind)?` · ${task.id}`:&#x27;&#x27;}&lt;/h4&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot; aria-label=&quot;Esc ×&quot;&gt;Esc ×&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scroll&quot;&gt;&lt;div class=&quot;shk-modal-body&quot; tabindex=&quot;0&quot;&gt;${content}&lt;div class=&quot;shk-validation&quot; role=&quot;alert&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scrollbar&quot; aria-hidden=&quot;true&quot;&gt;&lt;div class=&quot;shk-modal-scroll-thumb&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;${footer?`&lt;div class=&quot;shk-modal-footer&quot;&gt;${footer}&lt;/div&gt;`:&#x27;&#x27;}&lt;/section&gt;&lt;/div&gt;`;
   };
   const storeModalSelection = (field,id) =&gt; {
     if (field.tagName !== &#x27;TEXTAREA&#x27;) return;
     modalSelections[id] ||= {};
     modalSelections[id][field.dataset.draft] = {start:field.selectionStart,end:field.selectionEnd,direction:field.selectionDirection};
   };
-  const modalTarget = updated =&gt; updated.querySelector(&#x27;.shk-modal [data-draft], .shk-modal .shk-menu-item&#x27;) || updated.querySelector(&#x27;.shk-modal-body&#x27;);
+  const modalTarget = updated =&gt; updated.querySelector(&#x27;.shk-modal [data-draft]&#x27;) || updated.querySelector(&#x27;.shk-modal .shk-menu-item, .shk-modal .shk-res-list&#x27;) || updated.querySelector(&#x27;.shk-modal-body&#x27;);
   const taskTarget = (updated,id) =&gt; updated.querySelector(`.shk-task-row[data-task=&quot;${selections[id]}&quot;]`) || updated.querySelector(&#x27;.shk-task-row&#x27;);
   const focusElement = (field,id) =&gt; {
     if (!field) return;
@@ -1676,6 +1721,38 @@ html&gt;body{padding:0}&lt;/style&gt;
   window.addEventListener(&#x27;resize&#x27;, () =&gt; {
     for (const body of root.querySelectorAll(&#x27;.shk-modal-body&#x27;)) updateModalScrollbar(body);
   });
+  const resolveActivate = (id, index) =&gt; {
+    const state = resolveOf(id);
+    const choice = resolveChoices[index];
+    const confirming = state.armed &amp;&amp; index===state.selected;
+    state.selected = index;
+    state.armed = false;
+    if (choice.kind===&#x27;own&#x27;) state.own = true;
+    else if (choice.kind===&#x27;cancel&#x27; &amp;&amp; !confirming) state.armed = true;
+    else resolveSubmit(id);
+  };
+  const resolveKey = (event, id) =&gt; {
+    const state = resolveOf(id);
+    if (event.target.tagName===&#x27;TEXTAREA&#x27;) {
+      if (event.key!==&#x27;Enter&#x27;) return false;
+      if (event.ctrlKey) {
+        event.target.setRangeText(&#x27;\n&#x27;, event.target.selectionStart, event.target.selectionEnd, &#x27;end&#x27;);
+        return true;
+      }
+      if (event.target.value.trim()) resolveSubmit(id);
+      return true;
+    }
+    if (event.key===&#x27;Enter&#x27;) resolveActivate(id, state.selected);
+    else if ([&#x27;ArrowUp&#x27;,&#x27;ArrowDown&#x27;].includes(event.key)) {
+      state.armed = false;
+      state.selected = Math.min(Math.max(state.selected+(event.key===&#x27;ArrowDown&#x27;?1:-1), 0), resolveChoices.length-1);
+    } else if (event.key.toLowerCase()===&#x27;t&#x27;) {
+      state.armed = false;
+      state.tried = !state.tried;
+    } else if (state.armed &amp;&amp; ![&#x27;Shift&#x27;,&#x27;Control&#x27;,&#x27;Alt&#x27;,&#x27;Meta&#x27;,&#x27;Tab&#x27;].includes(event.key)) state.armed = false;
+    else return false;
+    return true;
+  };
   root.addEventListener(&#x27;click&#x27;, event =&gt; {
     const button=event.target.closest(&#x27;button&#x27;);
     if (!button || !root.contains(button)) return;
@@ -1705,6 +1782,8 @@ html&gt;body{padding:0}&lt;/style&gt;
       return;
     }
     if (button.dataset.task) selections[id]=button.dataset.task;
+    if (button.dataset.resolveChoice) resolveActivate(id, Number(button.dataset.resolveChoice));
+    if (button.dataset.resolveTried) resolveOf(id).tried = !resolveOf(id).tried;
     if (button.dataset.open===&#x27;taskwindow&#x27;) {
       activeWindow=&#x27;task&#x27;;
       delete overlays[id];
@@ -1713,6 +1792,7 @@ html&gt;body{padding:0}&lt;/style&gt;
       return;
     }
     if (button.dataset.open) {
+      if (button.dataset.open===&#x27;resolve&#x27;) resolveOpen(id);
       overlays[id]=button.dataset.open;
       if (button.dataset.open===&#x27;history&#x27; || button.dataset.open===&#x27;commands&#x27;) historyPage=0;
     }
@@ -1760,9 +1840,10 @@ html&gt;body{padding:0}&lt;/style&gt;
       if (nextPage&lt;0 || nextPage&gt;=pageCount) handled=false;
       else historyPage=nextPage;
     }
+    else if (overlays[id]===&#x27;resolve&#x27; &amp;&amp; resolveKey(event,id)) {}
     else if (editing) return;
     else if (!overlays[id] &amp;&amp; [&#x27;ArrowUp&#x27;,&#x27;ArrowDown&#x27;].includes(event.key) &amp;&amp; event.target.closest(&#x27;.shk-attention&#x27;)) {event.preventDefault();return;}
-    else if (event.key===&#x27;Enter&#x27; &amp;&amp; !overlays[id] &amp;&amp; hasDecision() &amp;&amp; !event.target.closest(&#x27;button[data-open]&#x27;) &amp;&amp; (!selections[id] || selections[id]===decisionTaskId)) {selections[id]=decisionTaskId;overlays[id]=&#x27;resolve&#x27;;}
+    else if (event.key===&#x27;Enter&#x27; &amp;&amp; !overlays[id] &amp;&amp; hasDecision() &amp;&amp; !event.target.closest(&#x27;button[data-open]&#x27;) &amp;&amp; (!selections[id] || selections[id]===decisionTaskId)) {selections[id]=decisionTaskId;resolveOpen(id);overlays[id]=&#x27;resolve&#x27;;}
     else if (!overlays[id] &amp;&amp; event.ctrlKey &amp;&amp; event.key.toLowerCase()===&#x27;p&#x27;) overlays[id]=&#x27;menu&#x27;;
     else if (!overlays[id] &amp;&amp; event.key.toLowerCase()===&#x27;e&#x27; &amp;&amp; selections[id]) overlays[id]=&#x27;evidence&#x27;;
     else if (!overlays[id] &amp;&amp; event.key.toLowerCase()===&#x27;u&#x27; &amp;&amp; selections[id]) overlays[id]=&#x27;usage&#x27;;
