@@ -1658,8 +1658,9 @@ Refs: `plugins/widgets/header.py:88`, `plugins/widgets/queue.py` `_render_count`
 
 ### Task 168: Plugin reinstall hint
 Refs: `agents/registry.py` `load_unique_entry_point` (the single producer), `dashboard/app.py` `_load_widget`, README.md Quick start, design 07 runtime row.
-- [ ] One named constant appended to the not-found message only; README (after the install block) and design 07 state that a change to plugin entry points needs `uv tool install . --reinstall` (editable: `uv tool install --editable . --reinstall`).
-- [ ] The registry not-found test asserts the hint through the constant; no wording test.
+- [x] One named constant appended to the not-found message only; README (after the install block) and design 07 state that a change to plugin entry points needs `uv tool install . --reinstall` (editable: `uv tool install --editable . --reinstall`).
+- [x] The registry not-found test asserts the hint through the constant; no wording test.
+  - Proof: a `python -I` call with a missing name printed `no agent plugin named 'no-such-agent' is registered or installed` and the dashboard widget equivalent before the change; after it both end with the reinstall hint, and `--reinstall` and `--editable` are confirmed in `uv tool install --help`. The registry test asserts the hint constant on the existing missing-plugin case, and collected cases stay at 1607. Gate green on the default workers (1586 passed, 14 skipped, 91.16 % coverage).
 
 ### Task 169: One UI wait budget
 Refs: `tests/support/waiting.py`, `tests/support/dashboard.py` `FOCUS_VIEW_WAIT_SECONDS`, the module constants in `test_dashboard_app.py`, `test_dashboard_escalation_follow.py`, `test_dashboard_tab_stops.py`, `test_dashboard_popup_focus.py`, `test_dashboard_motion.py`, `test_dashboard_task_detail.py`, the literal `timeout=2` calls (about 330), `pyproject.toml` per-test `timeout`.

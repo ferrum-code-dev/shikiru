@@ -31,6 +31,8 @@ shikiru submit "Implement task 20 from Phase 2 in tasks/plan.md"
 shikiru attach
 ```
 
+After pulling a change that adds, removes or renames a widget or agent plugin (an entry point in `pyproject.toml`), reinstall with `uv tool install . --reinstall` (editable: `uv tool install --editable . --reinstall`). Entry points are written at install time, so an editable install needs the reinstall too.
+
 Choose an explicit model supported by each selected agent in the wizard. `shikiru init --yes`
 writes editable defaults with model placeholders; review the role ladders and run `shikiru doctor`
 before starting.

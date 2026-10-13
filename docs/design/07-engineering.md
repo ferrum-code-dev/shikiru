@@ -4,7 +4,7 @@
 
 | Concern | Choice |
 |---|---|
-| Runtime | Python 3.14, uv (`uv tool install .` from the Shikiru checkout) |
+| Runtime | Python 3.14, uv (`uv tool install .` from the Shikiru checkout; after a change to plugin entry points in `pyproject.toml`, reinstall with `uv tool install . --reinstall`, editable `uv tool install --editable . --reinstall`, since entry points are written at install time) |
 | CLI / TUI | Typer + Rich / Textual (pinned minor versions) |
 | Validation | pydantic v2 |
 | Config | `tomllib` |

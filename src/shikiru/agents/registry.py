@@ -13,6 +13,10 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import Agent, AgentContext, AgentFactory
 
 AGENT_ENTRY_POINT_GROUP = "shikiru.agents"
+PLUGIN_REINSTALL_HINT = (
+    "a typo in the name gives this error too; if the name is right, reinstall from the checkout: "
+    "uv tool install . --reinstall (editable: uv tool install --editable . --reinstall)"
+)
 
 
 class AgentPluginError(ConfigError):
@@ -34,7 +38,7 @@ def load_unique_entry_point(
     """
     matches = [entry_point for entry_point in entry_points(group=group) if entry_point.name == name]
     if not matches:
-        message = f"no {kind} named {name!r} is registered or installed"
+        message = f"no {kind} named {name!r} is registered or installed; {PLUGIN_REINSTALL_HINT}"
         raise error_type(message)
     if len(matches) > 1:
         distributions = ", ".join(_distribution_name(match) for match in matches)

@@ -6,7 +6,7 @@ import pytest
 
 import shikiru.agents.registry as registry_module
 from shikiru.agents.contracts import Agent, AgentContext
-from shikiru.agents.registry import AgentPluginError, AgentRegistry
+from shikiru.agents.registry import PLUGIN_REINSTALL_HINT, AgentPluginError, AgentRegistry
 from shikiru.clock import SystemClock
 from shikiru.process import SubprocessRunner
 from tests.support.entry_points import ambiguous_entry_points
@@ -19,8 +19,10 @@ def _context() -> AgentContext:
 def test_create_names_the_plugin_when_none_is_registered_or_installed() -> None:
     registry = AgentRegistry()
 
-    with pytest.raises(AgentPluginError):
+    with pytest.raises(AgentPluginError) as excinfo:
         registry.create("no-such-agent", _context())
+
+    assert PLUGIN_REINSTALL_HINT in str(excinfo.value)
 
 
 def test_create_names_the_plugin_when_its_factory_raises() -> None:
