@@ -247,7 +247,7 @@ Seventh-review scope and evidence: [seventh real-project review](../docs/tui-fee
 Eighth-review scope and evidence: [eighth real-project review](../docs/tui-feedback-eighth-review.md).
 
 - [x] Task 156: Remove screenshot-capture side effects and task-numbered test names
-- [ ] Task 157: Fold and simplify `test_dashboard_app.py`
+- [x] Task 157: Fold and simplify `test_dashboard_app.py`
 - [ ] Task 158: Fold the rest of the dashboard-family integration tests
 - [ ] Task 159: Trim unit tables and fold tmux/workspace/config tests
 - [ ] Task 160: Stale only after a failure; age hint only when stale
