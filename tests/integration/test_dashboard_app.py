@@ -1016,7 +1016,7 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
                 return all(
                     value in visible
                     for value in (
-                        "no decision needed",
+                        "No decision needed",
                         owned.id,
                         paused.id,
                         "intervention",
