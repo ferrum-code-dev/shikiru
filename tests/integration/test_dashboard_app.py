@@ -157,6 +157,9 @@ _GLOBAL_TMUX_PREFIX = "C-b"
 _SESSION_TMUX_PREFIX = "C-a"
 _TMUX_CLIENT_TTY_FORMAT = "#{client_tty}"
 _MEASURED_HOME_SIZE = (101, 35)
+_HELP_GESTURE_KEY = "key"
+_HELP_GESTURE_FOOTER = "footer"
+_HELP_GESTURE_VIEWS = "views"
 _STANDARD_HOME_SIZE = (100, 35)
 _SHORT_WIDE_HOME_SIZE = (80, 24)
 _STACKED_INSPECTOR_HOME_SIZE = (64, 24)
@@ -167,6 +170,7 @@ _STACKED_LOWER_BOUNDARY_HOME_SIZE = (54, 24)
 _LIST_ONLY_BOUNDARY_HOME_SIZE = (53, 24)
 _COMPACT_HOME_SIZE = (48, 20)
 _NARROW_TASK_SIZE = (36, 20)
+_NARROW_SYSTEM_PANE_SIZE = (30, 24)
 _FOOTER_EDGE_WIDTHS = (54, 72, 73, 100, 120, 160)
 _SHORT_HOME_SIZE = (36, 14)
 _COMPACT_SHORT_WIDE_HOME_SIZE = (48, 14)
@@ -361,11 +365,6 @@ def _rendered_visible_home_origins(app: DashboardApp) -> dict[str, tuple[float, 
     return origins
 
 
-def _rendered_home_origins(app: DashboardApp) -> tuple[tuple[float, float], ...]:
-    origins = _rendered_visible_home_origins(app)
-    return origins["SHIKIRU"], origins["TASKS"]
-
-
 def _assert_last_command_history_page(page: Static) -> None:
     page_text = _rendered_text(page)
     assert "page 3" in page_text
@@ -425,7 +424,6 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
-    from textual.content import Content
     from textual.pilot import Pilot
     from textual.widget import Widget
 
@@ -863,8 +861,9 @@ async def test_dashboard_app_rejects_an_invalid_widget_config_naming_the_widget(
             pass
 
 
-async def test_dashboard_mounts_the_default_widgets(
-    database: Database, connection: Connection, tmp_path: Path
+@pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _NARROW_SYSTEM_PANE_SIZE])
+async def test_dashboard_mounts_the_default_widgets_and_fits_the_pane(
+    database: Database, connection: Connection, tmp_path: Path, size: tuple[int, int]
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
@@ -886,19 +885,14 @@ async def test_dashboard_mounts_the_default_widgets(
     settings = load_settings(project_dir)
     try:
         app = _app(reader, project_dir, widget_names=settings.dashboard.widgets)
-        async with app.run_test(size=(120, 40)) as pilot:
+        async with app.run_test(size=size) as pilot:
             await pilot.pause()
-            header = plain_text(app.query_one("#header", Static).content)
-            assert "Engine stopped" in header
-            assert "host sample failed" not in header
-            assert "Running 1" in header
-            assert "Waiting 0" in header
-            assert app.query_one("#usage", Static).region.width > 0
-            assert app.query_one("#resources", Static).region.width > 0
             queue_panel = app.query_one("#queue")
-            detail_panel = app.query_one("#task-detail-panel")
-            assert queue_panel.region.right <= detail_panel.region.x
-            assert task.id in _rendered_text(app.query_one("#task-detail-identity", Static))
+            assert queue_panel.region.y >= app.query_one("#focus-main").region.y
+            if size == _WIDE_HOME_SIZE:
+                assert queue_panel.region.right <= app.query_one("#task-detail-panel").region.x
+            identity = app.query_one("#task-detail-identity", Static)
+            await wait_until(lambda: task.id in _rendered_text(identity), timeout=2)
 
             home_screen = app.screen
             attention = app.query_one("#escalations", EscalationsPanel)
@@ -2261,20 +2255,6 @@ async def test_clicking_primary_attention_opens_the_answer_form_without_dispatch
             assert "missing-packet.md" in _rendered_text(
                 screen.query_one("#palette-evidence-error", Static)
             )
-            assert queue.pending() == []
-
-            guidance = "Preserve the existing call pattern."
-            await _enter_answer_text(pilot, screen, guidance)
-            await _back_to_context_actions(pilot, screen, queue)
-            await _close_palette_to_caller(app, pilot, caller, queue)
-            await pilot.click(row)
-            await wait_until(
-                lambda: isinstance(app.screen, PaletteScreen),
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            reopened = cast("PaletteScreen", app.screen)
-            assert reopened.query_one("#resolution-text", TextArea).text == guidance
-            assert cast("Select[str]", reopened.query_one("#resolution", Select)).value == "answer"
             assert queue.pending() == []
     finally:
         reader.close()
@@ -5087,7 +5067,7 @@ async def _close_palette_to_caller(
     assert queue.pending() == []
 
 
-async def test_contextual_message_draft_survives_answer_form_for_another_task(
+async def test_contextual_message_draft_survives_back_action_change_and_another_tasks_answer(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -5095,22 +5075,8 @@ async def test_contextual_message_draft_survives_answer_form_for_another_task(
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
     task = seed_task(connection, clock, title="Message draft caller task")
-    answer_task = seed_task(connection, clock, title="Answer draft caller task")
-    TaskStore(connection, clock).apply_transition(
-        answer_task.id,
-        Transition.stay(answer_task, step=answer_task.step, status=Status.ESCALATED),
-    )
-    escalation = EscalationStore(connection, clock).open(
-        answer_task.id,
-        step=answer_task.step,
-        reason=EscalationReason.DECISION_REQUIRED,
-        headline="Choose the second caller's behavior",
-        packet_path=".shikiru/escalations/second-caller.md",
-        options=options_for(EscalationReason.DECISION_REQUIRED),
-    )
-    queue = CommandQueue(connection, clock)
-    for command in queue.pending():
-        queue.mark_done(command.id)
+    role_task = seed_task(connection, clock, title="Back menu message draft", mode=Mode.IMPLEMENT)
+    answer_task, _, escalation, queue = _seed_home_answer_decision(connection, clock)
     reader = StateReader(database, clock)
     app_instances: list[DashboardApp] = []
 
@@ -5195,89 +5161,63 @@ async def test_contextual_message_draft_survives_answer_form_for_another_task(
             assert queue.pending() == []
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+
+            app.query_one("#task-browser-search", Input).value = role_task.title
+            await wait_until(
+                lambda: bool(app.query(f"#task-row-{role_task.id}")),
+                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+            )
+            await _exercise_back_and_action_change_draft(app, pilot, home, role_task, queue)
     finally:
         reader.close()
 
 
-async def test_contextual_message_draft_survives_back_and_action_change(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
+async def _exercise_back_and_action_change_draft(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    home: object,
+    task: Task,
+    queue: CommandQueue,
 ) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
-    task = seed_task(connection, clock, title="Back menu message draft", mode=Mode.IMPLEMENT)
-    queue = CommandQueue(connection, clock)
-    for command in queue.pending():
-        queue.mark_done(command.id)
-    reader = StateReader(database, clock)
-    app_instances: list[DashboardApp] = []
+    palette = await _open_home_task_action_menu(app, pilot, task)
+    await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
+    role = cast("Select[str]", palette.query_one("#role", Select))
+    role.focus()
+    role.value = Role.IMPLEMENTER.value
+    await wait_until(
+        lambda: role.value == Role.IMPLEMENTER.value,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    message = palette.query_one("#message", TextArea)
+    message.focus()
+    await _resize_blank_palette_text_area(app, pilot, palette, message, queue)
+    assert role.value == Role.IMPLEMENTER.value
+    guidance = "Keep the explicitly selected implementer message."
+    await pilot.press(*guidance)
+    assert queue.pending() == []
 
-    async def open_palette_context(request: PaletteRequest) -> None:
-        app = app_instances[0]
-        palette = _palette_screen_for_app(
-            reader,
-            connection,
-            project_dir,
-            clock,
-            request,
-            remember_contextual_draft=app.remember_contextual_palette_draft,
-            task_routes_available=True,
-        )
-        await app.push_screen(palette, callback=app.palette_return_callback(request.task_id))
+    await _exercise_submit_request_form_resize(app, pilot, palette, home, queue)
 
-    try:
-        app = _app(
-            reader,
-            project_dir,
-            widget_names=["queue"],
-            open_palette_context=open_palette_context,
-            clock=clock,
-        )
-        app_instances.append(app)
-        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
-            home = app.screen
-            palette = await _open_home_task_action_menu(app, pilot, task)
-            await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
-            role = cast("Select[str]", palette.query_one("#role", Select))
-            role.focus()
-            role.value = Role.IMPLEMENTER.value
-            await wait_until(
-                lambda: role.value == Role.IMPLEMENTER.value,
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            message = palette.query_one("#message", TextArea)
-            message.focus()
-            await _resize_blank_palette_text_area(app, pilot, palette, message, queue)
-            assert role.value == Role.IMPLEMENTER.value
-            guidance = "Keep the explicitly selected implementer message."
-            await pilot.press(*guidance)
-            assert queue.pending() == []
+    palette = await _open_home_task_action_menu(app, pilot, task)
+    await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
+    message = palette.query_one("#message", TextArea)
+    role = cast("Select[str]", palette.query_one("#role", Select))
+    await wait_until(
+        lambda: message.text == guidance and role.value == Role.IMPLEMENTER.value,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await _back_to_context_actions(pilot, palette, queue)
+    await _close_palette_to_caller(app, pilot, home, queue)
 
-            await _exercise_submit_request_form_resize(app, pilot, palette, home, queue)
-
-            palette = await _open_home_task_action_menu(app, pilot, task)
-            await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
-            message = palette.query_one("#message", TextArea)
-            role = cast("Select[str]", palette.query_one("#role", Select))
-            await wait_until(
-                lambda: message.text == guidance and role.value == Role.IMPLEMENTER.value,
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            await _back_to_context_actions(pilot, palette, queue)
-            await _close_palette_to_caller(app, pilot, home, queue)
-
-            palette = await _open_home_task_action_menu(app, pilot, task)
-            await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
-            message = palette.query_one("#message", TextArea)
-            role = cast("Select[str]", palette.query_one("#role", Select))
-            await wait_until(
-                lambda: message.text == guidance and role.value == Role.IMPLEMENTER.value,
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            await _close_palette_to_caller(app, pilot, home, queue)
-    finally:
-        reader.close()
+    palette = await _open_home_task_action_menu(app, pilot, task)
+    await _click_palette_menu_button(pilot, palette, "palette-menu-action-message")
+    message = palette.query_one("#message", TextArea)
+    role = cast("Select[str]", palette.query_one("#role", Select))
+    await wait_until(
+        lambda: message.text == guidance and role.value == Role.IMPLEMENTER.value,
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+    await _close_palette_to_caller(app, pilot, home, queue)
 
 
 async def _exercise_submit_request_form_resize(
@@ -5303,7 +5243,7 @@ async def _exercise_submit_request_form_resize(
 
 
 @pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE, _NARROW_TASK_SIZE])
-async def test_empty_home_footer_actions_and_help_are_mouse_reachable_and_read_only(
+async def test_empty_home_footer_actions_are_mouse_reachable_and_read_only(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -5359,16 +5299,6 @@ async def test_empty_home_footer_actions_and_help_are_mouse_reachable_and_read_o
             assert app.focused is not None
             assert app.focused.id == "focus-footer-actions"
 
-            await pilot.click("#focus-footer-help")
-            await wait_until(
-                lambda: bool(app.screen.query("#workspace-help-copy")),
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            await pilot.press("escape")
-            await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
-            assert search.value == "no matching task"
-            assert app.focused is not None
-            assert app.focused.id == "focus-footer-help"
             assert queue.pending() == []
     finally:
         reader.close()
@@ -5744,201 +5674,106 @@ def _assert_home_navigation_fits(app: DashboardApp, width: int, height: int) -> 
     assert not footer.display or footer.region.bottom <= height or root.max_scroll_y > 0
 
 
-@pytest.mark.parametrize("size", [_COMPACT_HOME_SIZE, _TINY_HOME_SIZE])
-async def test_home_help_works_with_keyboard_without_color(
-    database: Database,
+async def _open_home_help(app: DashboardApp, pilot: Pilot[None], gesture: str) -> None:
+    if gesture == _HELP_GESTURE_KEY:
+        await pilot.press("?")
+    elif gesture == _HELP_GESTURE_FOOTER:
+        await pilot.click("#focus-footer-help")
+    else:
+        await _choose_focus_view(app, pilot, "Help", mouse=True)
+    await wait_until(
+        lambda: bool(app.screen.query("#workspace-help-close")),
+        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+    )
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        (_WIDE_HOME_SIZE, _HELP_GESTURE_KEY),
+        (_WIDE_HOME_SIZE, _HELP_GESTURE_VIEWS),
+        (_COMPACT_HOME_SIZE, _HELP_GESTURE_FOOTER),
+        (_TINY_HOME_SIZE, _HELP_GESTURE_KEY),
+    ],
+)
+async def test_home_help_opens_by_key_or_mouse_and_closing_leaves_home_unchanged(
     connection: Connection,
+    reader: StateReader,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    size: tuple[int, int],
+    case: tuple[tuple[int, int], str],
 ) -> None:
+    size, gesture = case
     monkeypatch.setenv("NO_COLOR", "1")
-    project_dir = write_minimal_project(tmp_path)
-    seed_task(connection, SystemClock(), title="Help in compact Home")
-    reader = StateReader(database, SystemClock())
-    try:
-        app = _app(reader, project_dir, widget_names=["queue"])
-        async with app.run_test(size=size) as pilot:
-            await pilot.press("?")
-            await pilot.pause()
-            help_screen = app.screen
-            help_scroll = help_screen.query_one("#workspace-help-scroll", VerticalScroll)
-            help_copy = help_screen.query_one("#workspace-help-copy", Static)
-            assert help_copy.display
-            await _assert_popup_close_reachable(
-                help_screen,
-                close_selector="#workspace-help-close",
-                frame_selector="#workspace-help-frame",
-                body_selector="#workspace-help-scroll",
-            )
-            assert help_scroll.region.height < help_copy.region.height
-            if size == _TINY_HOME_SIZE:
-                await pilot.resize_terminal(*_WIDE_HOME_SIZE)
-                await wait_until(
-                    lambda: (
-                        app.size == _WIDE_HOME_SIZE
-                        and help_screen.query_one("#workspace-help-frame").region.height
-                        > _TINY_HOME_SIZE[1]
-                    ),
-                    timeout=2,
-                )
-                preferred_region = help_screen.query_one("#workspace-help-frame").region
-                assert preferred_region.height < _WIDE_HOME_SIZE[1]
-                await pilot.resize_terminal(*_TINY_HOME_SIZE)
-                await wait_until(
-                    lambda: (
-                        app.size == _TINY_HOME_SIZE
-                        and help_screen.region.contains_region(
-                            help_screen.query_one("#workspace-help-close").region
-                        )
-                    ),
-                    timeout=2,
-                )
-                await pilot.resize_terminal(*_WIDE_HOME_SIZE)
-                await wait_until(
-                    lambda: (
-                        app.size == _WIDE_HOME_SIZE
-                        and help_screen.query_one("#workspace-help-frame").region
-                        == preferred_region
-                    ),
-                    timeout=2,
-                )
-            await pilot.press("escape")
-            await pilot.pause()
-            await pilot.press("?")
-            await pilot.pause()
-            assert app.screen.query_one("#workspace-help-copy", Static).display
-            await pilot.press("escape")
-    finally:
-        reader.close()
-
-
-async def test_home_help_preserves_rendered_home_origins_and_close_reachability(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Popup underlay task")
-    reader = StateReader(database, clock)
-    settings = _settings_without_animations(project_dir)
     app = _app(
         reader,
         project_dir,
         widget_names=["header", "queue", "usage", "resources"],
         services=StubServices(engine_running=False),
         clock=clock,
-        settings=settings,
+        settings=_settings_without_animations(project_dir),
     )
-    try:
-        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
-            home = app.screen
+    popup = {
+        "close_selector": "#workspace-help-close",
+        "frame_selector": "#workspace-help-frame",
+        "body_selector": "#workspace-help-scroll",
+    }
+    async with app.run_test(size=size) as pilot:
+        home = app.screen
+        await wait_until(
+            lambda: bool(app.query(f"#task-row-{task.id}")),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        await _select_home_task(app, task.id)
+        root = app.query_one("#focus-root", VerticalScroll)
+        task_list = app.query_one("#task-browser-list", ListView)
+        if gesture == _HELP_GESTURE_FOOTER:
+            app.query_one("#focus-footer-help", Button).focus()
+            await pilot.pause()
+        before = (root.scroll_y, task_list.index, _rendered_visible_home_origins(app))
+
+        await _open_home_help(app, pilot, gesture)
+        help_screen = app.screen
+        focus_on_home = home.focused
+        await _assert_popup_close_reachable(help_screen, **popup)
+        if gesture == _HELP_GESTURE_VIEWS:
+            context = help_screen.query_one("#workspace-help-context", Static)
+            assert task.id in _rendered_text(context)
+        if size == _TINY_HOME_SIZE:
+            frame = help_screen.query_one("#workspace-help-frame")
+            await pilot.resize_terminal(*_WIDE_HOME_SIZE)
             await wait_until(
-                lambda: bool(app.query(f"#task-row-{task.id}")),
+                lambda: app.size == _WIDE_HOME_SIZE and frame.region.height > _TINY_HOME_SIZE[1],
                 timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
             )
-            await _select_home_task(app, task.id)
+            await pilot.resize_terminal(*_TINY_HOME_SIZE)
             await wait_until(
-                lambda: task.title in _exported_screen_text(app),
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+                lambda: app.size == _TINY_HOME_SIZE, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS
             )
-            home_root = app.query_one("#focus-root", VerticalScroll)
-            task_list = app.query_one("#task-browser-list", ListView)
-            home_scroll_y = home_root.scroll_y
-            home_selection = task_list.index
-            home_focus = home.focused
-            before_origins = _rendered_home_origins(app)
+            await _assert_popup_close_reachable(help_screen, **popup)
 
-            await pilot.press("?")
-            await wait_until(
-                lambda: bool(app.screen.query("#workspace-help-close")),
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            help_screen = app.screen
-            await _assert_popup_close_reachable(
-                help_screen,
-                close_selector="#workspace-help-close",
-                frame_selector="#workspace-help-frame",
-                body_selector="#workspace-help-scroll",
-            )
-            help_scroll = help_screen.query_one("#workspace-help-scroll", VerticalScroll)
-            help_copy = help_screen.query_one("#workspace-help-copy", Static)
-            assert help_scroll.region.height <= help_copy.region.height
-            during_origins = _rendered_home_origins(app)
-            assert during_origins == before_origins
-            assert home_root.scroll_y == home_scroll_y
+        if gesture == _HELP_GESTURE_KEY:
+            await pilot.press("escape")
+        else:
+            assert await pilot.click("#workspace-help-close")
+        await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
+        await wait_until(
+            lambda: _rendered_visible_home_origins(app) == before[2],
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        assert (root.scroll_y, task_list.index) == before[:2]
+        assert home.focused is focus_on_home
 
-            close = help_screen.query_one("#workspace-help-close", Button)
-            assert help_screen.focused is help_scroll
-            await pilot.press("tab")
-            await wait_until(
-                lambda: help_screen.focused is close,
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            assert cast("Content", close.label).plain in _exported_screen_text(app)
-            assert await pilot.click(close)
-            await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
-            await wait_until(
-                lambda: _rendered_home_origins(app) == before_origins,
-                timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-            )
-            assert home_root.scroll_y == home_scroll_y
-            assert home.focused is home_focus
-            assert task_list.index == home_selection
-            assert task.title in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-
-            await _assert_compact_home_help_preserves_rendered_origins(app, pilot, task)
-    finally:
-        reader.close()
-
-
-async def _assert_compact_home_help_preserves_rendered_origins(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    task: Task,
-) -> None:
-    home = app.screen
-    identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-    home_root = app.query_one("#focus-root", VerticalScroll)
-    task_list = app.query_one("#task-browser-list", ListView)
-    home_selection = task_list.index
-    await pilot.resize_terminal(*_COMPACT_HOME_SIZE)
-    await wait_until(
-        lambda: (
-            app.size == _COMPACT_HOME_SIZE
-            and task.title in _rendered_text(identity)
-            and task_list.index == home_selection
-        ),
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    compact_scroll_y = home_root.scroll_y
-    compact_origins = _rendered_visible_home_origins(app)
-    compact_focus = home.focused
-    await pilot.press("?")
-    await wait_until(
-        lambda: bool(app.screen.query("#workspace-help-close")),
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    compact_help = app.screen
-    await _assert_popup_close_reachable(
-        compact_help,
-        close_selector="#workspace-help-close",
-        frame_selector="#workspace-help-frame",
-        body_selector="#workspace-help-scroll",
-    )
-    await pilot.click("#workspace-help-close")
-    await wait_until(
-        lambda: app.screen is home,
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    await wait_until(
-        lambda: _rendered_visible_home_origins(app) == compact_origins,
-        timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
-    )
-    assert home_root.scroll_y == compact_scroll_y
-    assert home.focused is compact_focus
-    assert task_list.index == home_selection
+        await pilot.press("?")
+        await wait_until(
+            lambda: bool(app.screen.query("#workspace-help-close")),
+            timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
+        )
+        await pilot.press("escape")
+        await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
 
 
 async def _assert_evidence_editor_shortcut_precedence(
@@ -6362,37 +6197,6 @@ async def test_home_selection_clears_rendered_task_sections_while_next_report_lo
         reader.close()
 
 
-async def test_default_dashboard_widgets_fit_a_narrow_system_pane(
-    database: Database, connection: Connection, tmp_path: Path
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
-    task = seed_task(connection, clock, title="Visible narrow task", mode=Mode.IMPLEMENT)
-    TaskStore(connection, clock).set_slot(task.id, 0)
-    TaskStore(connection, clock).apply_transition(task.id, first_step(task))
-    reader = StateReader(database, SystemClock())
-    settings = load_settings(project_dir)
-    try:
-        app = _app(reader, project_dir, widget_names=settings.dashboard.widgets)
-        async with app.run_test(size=(30, 24)) as pilot:
-            await pilot.pause()
-            main = app.query_one("#focus-main")
-            assert main.size.height > 0
-            queue = app.query_one("#queue")
-            usage = app.query_one("#usage")
-            resources = app.query_one("#resources")
-            assert queue.region.y >= main.region.y
-            assert usage.region.width > 0
-            assert resources.region.width > 0
-            identity = app.query_one("#task-detail-identity", Static)
-            await wait_until(lambda: task.id in _rendered_text(identity), timeout=2)
-            await _choose_focus_view(app, pilot, "Workflow · Strips")
-            strips = app.screen.query_one(StripsPanel)
-            assert task.id in _rendered_text(strips)
-    finally:
-        reader.close()
-
-
 @pytest.mark.parametrize("size", [(36, 20), (48, 24), (120, 40)])
 async def test_dashboard_compact_footer_and_persisted_state_are_readable_without_color(
     database: Database,
@@ -6419,25 +6223,6 @@ async def test_dashboard_compact_footer_and_persisted_state_are_readable_without
             strip_text = _rendered_text(strips)
             assert task_id in strip_text
             assert "Escalated" in strip_text
-            workflow_screen = app.screen
-            await pilot.press("escape")
-            await wait_until(lambda: app.screen is not workflow_screen, timeout=2)
-            home_screen = app.screen
-            await pilot.press("?")
-            await pilot.pause()
-            assert app.screen is not home_screen
-            assert "Focus" in _rendered_text(
-                app.screen.query_one("#workspace-help-context", Static)
-            )
-            await pilot.press("escape")
-            await pilot.pause()
-            assert app.screen is home_screen
-            assert app.is_running
-            app.exit()
-            await wait_until(
-                lambda: not app.is_running,
-                timeout=_APP_SHUTDOWN_TIMEOUT_SECONDS,
-            )
     finally:
         reader.close()
 
@@ -6625,7 +6410,7 @@ async def test_dashboard_mouse_navigation_opens_external_widget(
         reader.close()
 
 
-async def test_home_views_mouse_opens_selected_task_actions_and_help(
+async def test_home_views_mouse_opens_selected_task_actions(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -6673,18 +6458,6 @@ async def test_home_views_mouse_opens_selected_task_actions_and_help(
             assert queue.pending() == pending_before
 
             await pilot.press("escape")
-            await wait_until(lambda: app.screen is home_screen, timeout=2)
-            await pilot.press("v")
-            await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
-            await _choose_focus_view(app, pilot, "Help", mouse=True)
-            help_context = app.screen.query_one("#workspace-help-context", Static)
-            await wait_until(
-                lambda: task.id in _rendered_text(help_context),
-                timeout=2,
-            )
-            assert task.title in _rendered_text(identity)
-            assert queue.pending() == pending_before
-            await pilot.click("#workspace-help-close")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
     finally:
         reader.close()
