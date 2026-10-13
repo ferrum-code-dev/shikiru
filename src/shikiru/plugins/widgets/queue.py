@@ -1273,7 +1273,7 @@ class QueuePanel(Vertical):
                 )
             )
             if view.search:
-                count += f" · Search: {view.search}"
+                count += f" · search: {view.search}"
             if view.selected_task_missing and view.selected_task is not None:
                 count += f" · selected {view.selected_task.task_id} remains outside this view"
         self._count.update(count)

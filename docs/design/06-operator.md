@@ -309,6 +309,8 @@ Every colour, glyph and movement answers one of three questions: *who acts*, *wh
 
 **Diagnostics sections** (Tasks 151–154): every section of the Project Diagnostics popup and the standalone Docker, Disk and Faults views draws the Usage panel's neutral-border rule and grey heading, grey labels, bold primary-text row names and bold steel-blue figures. `NO_COLOR` keeps those bold weights and maps each colour to its Textual luminance grey. The Disk free level shows a ` ‼` marker at warn and alert, so it stays readable under `NO_COLOR`.
 
+**Title casing** (Task 164): every displayed title, heading, menu entry, button, hint and action name uses sentence case: the first word is capitalised and the rest lower case except proper nouns and identifiers (Shikiru, Docker, Esc, Ctrl, task IDs, key names). Segments after ` · ` and labels after a key are lower case (`Diagnostics · docker`, `u details`, `Ctrl+P actions`). The masthead `SHIKIRU` and the surface heading `TASKS` are the only upper-case exceptions. Stored values, command kinds and file formats are unchanged.
+
 | Token | Colour | Meaning |
 |---|---|---|
 | `background` | `#11151b` | Application background |

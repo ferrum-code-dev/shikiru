@@ -534,7 +534,7 @@ class OperatorQueries:
     def _command_entry(self, row: StoredCommand) -> CommandHistoryEntry:
         return CommandHistoryEntry(
             id=row.id,
-            action=row.command.kind.value.replace("_", " ").title(),
+            action=row.command.kind.value.replace("_", " ").capitalize(),
             target=_command_target(row.command, self._project),
             status=row.status,
             result=row.result,

@@ -48,9 +48,9 @@ _OVERFLOWING_HELP_SIZE = (70, 22)
 _OVERFLOWING_WORDS = 400
 _WAIT_SECONDS = 2
 _PROJECT_NAME = "popup-focus"
-_COMMAND_HISTORY_LABEL = "Command history · Pending, Applied and Rejected"
+_COMMAND_HISTORY_LABEL = "Command history · pending, applied and rejected"
 _USAGE_DETAILS_LABEL = "Usage details"
-_DIALOGUE_LABEL = "Activity · Dialogue"
+_DIALOGUE_LABEL = "Activity · dialogue"
 _ATTENTION_LABEL = "Attention · decisions, stalls and faults"
 
 

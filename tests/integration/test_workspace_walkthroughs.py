@@ -702,7 +702,7 @@ async def test_dashboard_queued_submit_survives_engine_and_dashboard_restarts_on
             await runtime.wait_for(
                 lambda: "Applied" in _plain(status) and "Submit" in _plain(status)
             )
-            await choose_focus_view(pilot, "Command history · Pending, Applied and Rejected")
+            await choose_focus_view(pilot, "Command history · pending, applied and rejected")
             history = restarted.screen.query_one("#command-history-copy", Static)
             await runtime.wait_for(
                 lambda: f"#{pending.id} · Applied" in _plain(history) and task_id in _plain(history)

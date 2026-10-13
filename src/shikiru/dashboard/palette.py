@@ -2132,7 +2132,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         if action == _ACTION_RESOLVE:
             selected_resolution = self._selected_value(_FIELD_RESOLUTION)
             submit_label = (
-                "Submit Answer"
+                "Submit answer"
                 if selected_resolution == ResolutionKind.ANSWER
                 else "Submit retry"
                 if selected_resolution == ResolutionKind.RETRY
@@ -2189,7 +2189,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             label = "Applied"
             details = (
                 "guidance queued for the selected role's next turn"
-                if entry.action == CommandKind.SAY.value.title()
+                if entry.action == CommandKind.SAY.value.capitalize()
                 else "engine applied the command effect"
             )
             returned = self._returned_result_value(entry.result)

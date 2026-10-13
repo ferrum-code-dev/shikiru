@@ -331,7 +331,7 @@ def _assert_project_diagnostics_facts(
 ) -> str:
     diagnostics = " ".join(_project_diagnostics_text(screen).split())
     assert plain_text(screen.query_one("#context-widget-title", Static).render()) == (
-        "Project Diagnostics"
+        "Project diagnostics"
     )
     assert "Status Not running" in diagnostics
     assert f"Faults {fault_count} open" in diagnostics
@@ -1293,7 +1293,7 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         docker_index = next(
             index
             for index, item in enumerate(choices)
-            if plain_text(item.query_one(Label).render()) == "Diagnostics · Docker"
+            if plain_text(item.query_one(Label).render()) == "Diagnostics · docker"
         )
         view_list.focus()
         view_list.index = docker_index

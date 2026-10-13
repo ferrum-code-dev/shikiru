@@ -911,7 +911,7 @@ async def test_dashboard_mounts_the_default_widgets_and_fits_the_pane(
                 timeout=2,
             )
 
-            await _choose_focus_view(app, pilot, "Diagnostics · Faults")
+            await _choose_focus_view(app, pilot, "Diagnostics · faults")
             faults = app.screen.query_one("#faults", Static)
             await wait_until(
                 lambda: "host sample failed" in "\n".join(_rendered_widget_lines(faults)),
@@ -1016,7 +1016,7 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
                 return all(
                     value in visible
                     for value in (
-                        "No decision needed",
+                        "no decision needed",
                         owned.id,
                         paused.id,
                         "intervention",
@@ -1717,7 +1717,7 @@ async def _assert_project_diagnostics_view(
     diagnostic_resources = app.screen.query_one("#project-diagnostics-resources", Static)
     diagnostic_engine = app.screen.query_one("#project-diagnostics-engine", Static)
     assert plain_text(app.screen.query_one("#context-widget-title", Static).render()) == (
-        "Project Diagnostics"
+        "Project diagnostics"
     )
 
     def collapsed(widget: Static) -> str:
@@ -2110,7 +2110,7 @@ async def test_focus_operational_counts_and_contextual_task_filters(
                 timeout=2,
             )
             assert app.query_one("#escalations").display is True
-            await _choose_focus_view(app, pilot, "Task filter · Waiting")
+            await _choose_focus_view(app, pilot, "Task filter · waiting")
             count = app.query_one("#task-browser-count", Static)
             await wait_until(
                 lambda: plain_text(count.content).startswith("TASKS · Waiting · 1 of 1"),
@@ -3239,7 +3239,7 @@ async def test_dashboard_restart_recovers_another_clients_rejected_command(
                 timeout=2,
             )
             await _choose_focus_view(
-                restarted_app, pilot, "Command history · Pending, Applied and Rejected"
+                restarted_app, pilot, "Command history · pending, applied and rejected"
             )
             await wait_until(
                 lambda: bool(restarted_app.screen.query("#command-history-page")), timeout=2
@@ -3680,7 +3680,7 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
         app = _app(reader, project_dir, widget_names=[])
         async with app.run_test(size=_COMMAND_HISTORY_INITIAL_SIZE) as pilot:
             home_screen = app.screen
-            await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
+            await _choose_focus_view(app, pilot, "Command history · pending, applied and rejected")
             await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
             history_frame = app.screen.query_one("#command-history-frame")
             history_controls = app.screen.query_one("#command-history-controls")
@@ -3762,7 +3762,7 @@ async def _assert_initial_command_history_size_restoration(
     queue = CommandQueue(connection, clock)
     async with app.run_test(size=initial_size) as pilot:
         home_screen = app.screen
-        await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
+        await _choose_focus_view(app, pilot, "Command history · pending, applied and rejected")
         await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
         initial_geometry = await _assert_initial_history_pages(app, pilot)
         await _assert_initial_history_empty_size_restoration(
@@ -4202,7 +4202,7 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
                 await wait_until(lambda: app.screen is home_screen, timeout=2)
             else:
                 assert not status.is_on_screen
-            await _choose_focus_view(app, pilot, "Command history · Pending, Applied and Rejected")
+            await _choose_focus_view(app, pilot, "Command history · pending, applied and rejected")
             await wait_until(lambda: bool(app.screen.query("#command-history-page")), timeout=2)
             page = cast("Static", app.screen.query_one("#command-history-page"))
             frame = app.screen.query_one("#command-history-frame")
@@ -4792,7 +4792,7 @@ async def _exercise_task_secondary_menu_routes(
         body_selector="#context-widget-content",
     )
     assert _rendered_text(widget_screen.query_one("#context-widget-title", Static)) == (
-        "Project Diagnostics"
+        "Project diagnostics"
     )
     assert queue.pending() == []
     await pilot.click("#context-widget-close")
@@ -4822,7 +4822,7 @@ async def _exercise_task_secondary_menu_routes(
         lambda: bool(app.screen.query("#context-widget-frame")),
         timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
     )
-    assert "Faults" in _rendered_text(app.screen.query_one("#context-widget-title", Static))
+    assert "faults" in _rendered_text(app.screen.query_one("#context-widget-title", Static))
     assert queue.pending() == []
 
 
@@ -6170,7 +6170,7 @@ async def test_dashboard_compact_footer_and_persisted_state_are_readable_without
             assert app.focused.parent is footer
             assert footer.region.height >= 2
             assert footer.region.bottom <= app.size.height
-            await _choose_focus_view(app, pilot, "Workflow · Strips")
+            await _choose_focus_view(app, pilot, "Workflow · strips")
             strips = app.screen.query_one(StripsPanel)
             strip_text = _rendered_text(strips)
             assert task_id in strip_text
@@ -6193,7 +6193,7 @@ async def test_dashboard_activity_widget_is_openable_by_keyboard_and_back(
         app = _app(reader, project_dir, widget_names=["header", "dialogue", "usage"])
         async with app.run_test(size=(36, 20)) as pilot:
             home_screen = app.screen
-            await _choose_focus_view(app, pilot, "Activity · Dialogue")
+            await _choose_focus_view(app, pilot, "Activity · dialogue")
             assert app.screen is not home_screen
             dialogue_table = cast(
                 "DataTable[object]", app.screen.query_one("#dialogue-table", DataTable)
@@ -6285,7 +6285,7 @@ async def test_configured_usage_and_docker_views_remain_reachable(
             await pilot.click("#context-widget-close")
             await wait_until(lambda: app.screen is home_screen, timeout=2)
 
-            await _choose_focus_view(app, pilot, "Diagnostics · Docker")
+            await _choose_focus_view(app, pilot, "Diagnostics · docker")
             assert home_screen.is_mounted
             docker = app.screen.query_one("#docker", Static)
             assert docker.region.width > 0
@@ -6332,10 +6332,10 @@ async def test_dashboard_mouse_navigation_opens_external_widget(
                 if isinstance(item, ListItem)
                 and _rendered_text(item.query_one(Static)).startswith("Extensions ·")
             )
-            assert extension_labels.index("Extensions · Later-Widget") < extension_labels.index(
-                "Extensions · Outside-Widget"
+            assert extension_labels.index("Extensions · later-widget") < extension_labels.index(
+                "Extensions · outside-widget"
             )
-            await _choose_focus_view(app, pilot, "Extensions · Later-Widget", mouse=True)
+            await _choose_focus_view(app, pilot, "Extensions · later-widget", mouse=True)
             later_panel = app.screen.query_one("#later-external-widget-panel", Static)
             assert later_panel.region.width > 0
             await pilot.press("escape")
@@ -6343,7 +6343,7 @@ async def test_dashboard_mouse_navigation_opens_external_widget(
 
             await pilot.press("v")
             await wait_until(lambda: bool(app.screen.query("#focus-views-list")), timeout=2)
-            await _choose_focus_view(app, pilot, "Extensions · Outside-Widget", mouse=True)
+            await _choose_focus_view(app, pilot, "Extensions · outside-widget", mouse=True)
             assert app.screen is not workspace_screen
             extension_panel = app.screen.query_one("#external-widget-panel", Static)
             assert extension_panel.region.width > 0

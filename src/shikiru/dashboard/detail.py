@@ -396,10 +396,10 @@ class TaskDetailPanel(Vertical):
             )
             with Horizontal(id=TASK_DETAIL_SUMMARY_USAGE):
                 yield Static("", id="task-detail-task-usage", markup=False)
-                yield Button("u Details", id=TASK_DETAIL_USAGE_INLINE_BUTTON)
+                yield Button("u details", id=TASK_DETAIL_USAGE_INLINE_BUTTON)
             yield Static("", id=TASK_DETAIL_SESSIONS, classes="task-detail-section")
             with Horizontal(id="task-detail-evidence-link"):
-                yield Button("e Evidence", id=TASK_DETAIL_EVIDENCE_INLINE_BUTTON)
+                yield Button("e evidence", id=TASK_DETAIL_EVIDENCE_INLINE_BUTTON)
             yield Static(
                 "", id=TASK_DETAIL_CONTEXT_INFO, classes="task-detail-section", markup=False
             )
@@ -419,8 +419,8 @@ class TaskDetailPanel(Vertical):
                     yield Button("Open related task", id=TASK_DETAIL_OPEN_RELATED)
                 yield Static("Page 1", id=TASK_DETAIL_RELATIONSHIP_PAGE)
                 with Horizontal():
-                    yield Button("p Previous", id=TASK_DETAIL_PREVIOUS_RELATIONSHIPS)
-                    yield Button("n Next", id=TASK_DETAIL_MORE_RELATIONSHIPS)
+                    yield Button("p previous", id=TASK_DETAIL_PREVIOUS_RELATIONSHIPS)
+                    yield Button("n next", id=TASK_DETAIL_MORE_RELATIONSHIPS)
             yield Static(
                 "Evidence timeline",
                 id=TASK_DETAIL_TIMELINE_TITLE,
@@ -448,8 +448,8 @@ class TaskDetailPanel(Vertical):
                 yield Input(placeholder="Any turn", id=TASK_DETAIL_TIMELINE_TURN)
                 yield Button("Apply filters", id=TASK_DETAIL_TIMELINE_FILTER)
             with HorizontalScroll(id=TASK_DETAIL_TIMELINE_NAVIGATION):
-                yield Button("p Previous", id=TASK_DETAIL_TIMELINE_NEWER)
-                yield Button("n Next", id=TASK_DETAIL_TIMELINE_OLDER)
+                yield Button("p previous", id=TASK_DETAIL_TIMELINE_NEWER)
+                yield Button("n next", id=TASK_DETAIL_TIMELINE_OLDER)
                 yield Button("Follow latest", id=TASK_DETAIL_TIMELINE_FOLLOW)
             yield Static("", id=TASK_DETAIL_TIMELINE_STATUS, markup=False)
             yield Select(

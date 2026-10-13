@@ -1616,8 +1616,9 @@ Refs: eighth-review Disk; `telemetry/disk.py`, `dashboard/contract.py` `DiskView
 
 ### Task 164: Sentence-case titles everywhere
 Refs: eighth-review title case; title audit (`dashboard/app.py`, `dashboard/palette.py`, `operator/queries.py`, `dashboard/detail.py`, `dashboard/wizard.py`, help copy); 06 §6.1.
-- [ ] Apply the pattern in the spec to every outlier (popup titles, ` · ` segments, after-key labels, action names, help copy); keep `SHIKIRU` and `TASKS` and document the exception in 06 §6.1; update the tests that pin the old strings.
-- [ ] A scan (script in the record, not a test) shows no remaining Title Case title; native check of Views, help and command history.
+- [x] Apply the pattern in the spec to every outlier (popup titles, ` · ` segments, after-key labels, action names, help copy); keep `SHIKIRU` and `TASKS` and document the exception in 06 §6.1; update the tests that pin the old strings.
+- [x] A scan (script in the record, not a test) shows no remaining Title Case title; native check of Views, help and command history.
+  - Proof: a one-off AST scan of src string literals for Title Case titles found 71 candidates before and 54 after, the remainder being docstrings and proper names (Shikiru, Docker, Claude, Leader, Operator, Resume, Doctor, Ctrl+P). Views, help, command history, the task secondary menu and the diagnostics popup were driven in the real Textual app by the updated integration tests. `uv run poe check` is green (1583 passed).
 
 ### Task 165: Verify the eighth review
 Refs: Tasks 156–164.

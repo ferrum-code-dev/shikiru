@@ -110,7 +110,7 @@ class InitWizardApp(App[InitWizardResult | None]):
             with Horizontal(id="wizard-navigation"):
                 yield Button("Back", id="wizard-back")
                 yield Button("Next", variant="primary", id="wizard-next")
-                yield Button("Run Doctor", variant="primary", id="wizard-finish")
+                yield Button("Run doctor", variant="primary", id="wizard-finish")
                 yield Button("Cancel", id="wizard-cancel")
 
     def on_mount(self) -> None:
@@ -260,7 +260,7 @@ class InitWizardApp(App[InitWizardResult | None]):
         next_button.display = self._step < len(WIZARD_STEPS) - 1 and self._config_path is None
         finish_button = self.query_one("#wizard-finish", Button)
         finish_button.display = self._step == len(WIZARD_STEPS) - 1 or self._config_path is not None
-        finish_button.label = "Exit" if self._config_path is not None else "Run Doctor"
+        finish_button.label = "Exit" if self._config_path is not None else "Run doctor"
         if self.focused is next_button and not next_button.display:
             finish_button.focus()
         cow_result = self.query_one("#cow-result", Static)

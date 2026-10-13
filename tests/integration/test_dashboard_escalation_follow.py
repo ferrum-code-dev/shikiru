@@ -199,8 +199,8 @@ async def test_bar_follows_the_selected_task_without_moving_focus_or_writing_com
         assert home.decisions[home.second.id] in home.amber_bold_texts()
         assert home.second.id in home.bold_texts()
         await _select(home, pilot, home.plain)
-        await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
-        assert f"{home.plain.id} · No decision needed" in home.text()
+        await wait_until(lambda: "no decision needed" in home.text(), timeout=_WAIT_SECONDS)
+        assert f"{home.plain.id} · no decision needed" in home.text()
         assert _NO_HINT_ACTIONS in home.text()
         assert not home.bar.has_class("armed")
         assert home.plain.id in home.bold_texts()
@@ -230,7 +230,7 @@ async def test_other_decisions_are_counted_only_while_any_remain(
     async with home.app.run_test(size=_WIDE) as pilot:
         await pilot.pause()
         await _select(home, pilot, home.plain)
-        await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
+        await wait_until(lambda: "no decision needed" in home.text(), timeout=_WAIT_SECONDS)
         assert home.other_decisions() == shown
 
 
@@ -248,7 +248,7 @@ async def test_enter_on_the_list_opens_the_form_of_the_followed_escalation_only(
         assert home.palette_actions == [f"resolve {home.decisions[home.second.id]}"]
         home.palette_actions.clear()
         await _select(home, pilot, home.plain)
-        await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
+        await wait_until(lambda: "no decision needed" in home.text(), timeout=_WAIT_SECONDS)
         await pilot.press("enter")
         await pilot.pause()
         assert home.palette_actions == []
@@ -260,9 +260,9 @@ async def test_clicking_a_task_row_and_clearing_the_selection_move_the_bar(
     async with home.app.run_test(size=_WIDE) as pilot:
         await _settled(home, pilot)
         await pilot.click(f"#task-row-{home.plain.id}")
-        await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
+        await wait_until(lambda: "no decision needed" in home.text(), timeout=_WAIT_SECONDS)
         await pilot.press("escape")
-        await wait_until(lambda: "No decision needed" not in home.text(), timeout=_WAIT_SECONDS)
+        await wait_until(lambda: "no decision needed" not in home.text(), timeout=_WAIT_SECONDS)
         assert home.bar.has_class("armed")
         assert home.app.focused is home.app.query_one(_TASK_LIST)
 
@@ -313,7 +313,7 @@ async def test_up_and_down_do_nothing_while_the_bar_has_focus_and_the_list_still
             assert _scroll_offsets(home.app) == offsets
         task_list.focus()
         await _select(home, pilot, home.plain)
-        await wait_until(lambda: "No decision needed" in home.text(), timeout=_WAIT_SECONDS)
+        await wait_until(lambda: "no decision needed" in home.text(), timeout=_WAIT_SECONDS)
         assert task_list.highlighted_child is not highlighted
 
 

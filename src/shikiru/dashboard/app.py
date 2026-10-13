@@ -277,8 +277,8 @@ def _contextual_widget_label(name: str, placement: WidgetPlacement) -> str:
         WidgetPlacement.WORKFLOW: "Workflow",
         WidgetPlacement.EXTENSIONS: "Extensions",
     }.get(placement)
-    label = name.replace("_", " ").title()
-    return f"{category} · {label}" if category is not None else label
+    label = name.replace("_", " ")
+    return f"{category} · {label}" if category is not None else label.capitalize()
 
 
 @dataclass(frozen=True)
@@ -575,12 +575,12 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
             lines = [
                 "Escape: return to the compact task summary or Home",
                 "v: choose reports, request, evidence, relationships, workspace or plugins",
-                "u: open task usage Details",
+                "u: open task usage details",
                 "Ctrl+P: open applicable operator actions for this task",
-                "Evidence and relationships: p Previous · n Next",
+                "Evidence and relationships: p previous · n next",
                 "Mouse: Views offers task sections, Actions and Help",
                 "Navigation to task and role windows is under Workspace and existing role targets",
-                "Command Applied means queued/applied by the engine;",
+                "Command applied means queued/applied by the engine;",
                 "an agent may consume guidance later",
             ]
         else:
@@ -590,7 +590,7 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "Ctrl+P: open contextual operator actions",
                 "/: search task ID or title",
                 "v: open filters, history and configured secondary views",
-                "History: p Previous · n Next",
+                "History: p previous · n next",
                 "Mouse: select a task; use its detail controls for views and actions",
                 "?: show this help",
             ]
@@ -726,8 +726,8 @@ class _CommandHistoryScreen(ModalScreen[None]):
                 yield Static("Loading command history…", id=_COMMAND_HISTORY_COPY, markup=False)
             yield Label("", id=_COMMAND_HISTORY_PAGE, classes=POPUP_SECONDARY_CLASS)
             with Horizontal(id="command-history-controls"):
-                yield Button("p Previous", id=_COMMAND_HISTORY_PREVIOUS, disabled=True)
-                yield Button("n Next", id=_COMMAND_HISTORY_NEXT, disabled=True)
+                yield Button("p previous", id=_COMMAND_HISTORY_PREVIOUS, disabled=True)
+                yield Button("n next", id=_COMMAND_HISTORY_NEXT, disabled=True)
 
     async def on_mount(self) -> None:
         self._apply_compact_layout(self.size.width, self.size.height)
@@ -756,9 +756,9 @@ class _CommandHistoryScreen(ModalScreen[None]):
             "Hist." if compact or tiny else "Command history"
         )
         self.query_one(f"#{_COMMAND_HISTORY_PREVIOUS}", Button).label = (
-            "p" if compact else "p Previous"
+            "p" if compact else "p previous"
         )
-        self.query_one(f"#{_COMMAND_HISTORY_NEXT}", Button).label = "n" if compact else "n Next"
+        self.query_one(f"#{_COMMAND_HISTORY_NEXT}", Button).label = "n" if compact else "n next"
 
     def _limit_history_body(self, viewport_height: int) -> None:
         if not self.is_mounted:
@@ -1377,7 +1377,7 @@ class DashboardApp(App[None]):
             choices.extend(
                 _ContextChoice(
                     f"{FOCUS_TASK_FILTER_PREFIX}{task_filter.value}",
-                    f"Task filter · {task_filter.value.title()}",
+                    f"Task filter · {task_filter.value}",
                     task_filter=task_filter,
                 )
                 for task_filter in TaskBrowserFilter
@@ -1394,7 +1394,7 @@ class DashboardApp(App[None]):
         choices.append(
             _ContextChoice(
                 FOCUS_COMMAND_HISTORY,
-                "Command history · Pending, Applied and Rejected",
+                "Command history · pending, applied and rejected",
                 command_history=True,
             )
         )
@@ -1440,7 +1440,7 @@ class DashboardApp(App[None]):
         choices = [
             _ContextChoice(
                 FOCUS_COMMAND_HISTORY,
-                "Command history · Pending, Applied and Rejected",
+                "Command history · pending, applied and rejected",
                 command_history=True,
             )
         ]
@@ -1494,7 +1494,7 @@ class DashboardApp(App[None]):
             ),
         )
         await self.push_screen(
-            _ContextWidgetScreen("Project Diagnostics", panel),
+            _ContextWidgetScreen("Project diagnostics", panel),
             callback=lambda _: self.refresh_task_detail_after_resume(),
         )
 

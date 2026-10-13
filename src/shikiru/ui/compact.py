@@ -1042,7 +1042,7 @@ def _not_escalated_status(
     action_hint: str,
     width: int | None,
 ) -> Text:
-    status = Text.assemble((task_id, _BOLD_PRIMARY), (" · No decision needed", PRIMARY_TEXT_COLOR))
+    status = Text.assemble((task_id, _BOLD_PRIMARY), (" · no decision needed", PRIMARY_TEXT_COLOR))
     if other_decisions:
         noun = "decision" if other_decisions == 1 else "decisions"
         status.append(f" · {other_decisions} {noun} on other tasks", style=SECONDARY_TEXT_COLOR)

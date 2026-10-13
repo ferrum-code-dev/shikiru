@@ -596,7 +596,7 @@ async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_d
             widget_names=settings.dashboard.widgets,
         )
         async with app.run_test(size=(180, 40)) as pilot:
-            await choose_focus_view(pilot, "Workflow · Strips")
+            await choose_focus_view(pilot, "Workflow · strips")
             strips = pilot.app.screen.query_one(StripsPanel)
             await wait_until(clock.has_pending_sleep, timeout=1)
 
@@ -2186,7 +2186,7 @@ async def test_disabled_animations_keep_countdowns_live_without_animating_frames
             usage_screen = pilot.app.screen
             await pilot.press("escape")
             await wait_until(lambda: pilot.app.screen is not usage_screen, timeout=1)
-            await choose_focus_view(pilot, "Workflow · Strips")
+            await choose_focus_view(pilot, "Workflow · strips")
             assert pilot.app.screen.query_one(StripsPanel).is_mounted
             initial_frames = tuple(
                 panel_view.spinner_frame for item in views.strips() for panel_view in item.panels
