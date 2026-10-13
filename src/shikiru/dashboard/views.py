@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, replace
 from datetime import datetime
+from functools import partial
 from typing import TYPE_CHECKING, Protocol
 
 from shikiru.agents.contracts import (
@@ -243,6 +244,7 @@ class StateDashboardViews:
         self._clock = clock
         self._motion = motion
         self._usage_version = -1
+        self._resource_listeners: list[Callable[[], None]] = []
         self._project_usage_cache: tuple[list[UsageView], dict[str, list[QuotaWindow]]] | None = (
             None
         )
@@ -1487,7 +1489,15 @@ class StateDashboardViews:
 
     async def resources(self) -> ResourceView:
         """Return the current host and engine/task-pane process-tree sample."""
-        return await self._sources.resources()
+        view = await self._sources.resources()
+        for listener in tuple(self._resource_listeners):
+            listener()
+        return view
+
+    def on_resources_refreshed(self, callback: Callable[[], None]) -> Callable[[], None]:
+        """Call `callback` after every `resources()` call; return the unsubscribe function."""
+        self._resource_listeners.append(callback)
+        return partial(self._resource_listeners.remove, callback)
 
     def resource_sample(self) -> ResourceView | None:
         """Return the latest resource observation without triggering a new sample."""

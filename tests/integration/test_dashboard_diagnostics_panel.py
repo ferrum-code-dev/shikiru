@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from textual.pilot import Pilot
 
     from shikiru.dashboard.app import DashboardApp
+    from shikiru.dashboard.views import StateDashboardViews
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
 
@@ -215,10 +216,18 @@ def _panel(
     services: StubServices,
     clock: FakeClock | None = None,
 ) -> ProjectDiagnosticsPanel:
-    views = state_views(
+    return ProjectDiagnosticsPanel(_views(reader, tmp_path, services, clock), reader.watch, ())
+
+
+def _views(
+    reader: StateReader,
+    tmp_path: Path,
+    services: StubServices,
+    clock: FakeClock | None = None,
+) -> StateDashboardViews:
+    return state_views(
         reader, write_minimal_project(tmp_path), clock or FakeClock(_START), services
     )
-    return ProjectDiagnosticsPanel(views, reader.watch, _REFRESH_SECONDS, ())
 
 
 def _section(panel: ProjectDiagnosticsPanel, section_id: str) -> list[list[Cell]]:
@@ -318,25 +327,56 @@ async def test_engine_section_shows_the_recorded_uptime_and_the_open_fault_count
         )
 
 
-async def test_values_follow_the_cache_on_the_timer_without_any_commit_or_new_sample(
+async def test_values_follow_the_resources_bar_refresh_without_any_commit_or_new_sample(
     reader: StateReader, tmp_path: Path
 ) -> None:
     services = _Services(_SAMPLE)
-    panel = _panel(reader, tmp_path, services)
-    async with WidgetHostApp(panel).run_test(size=_WIDE):
+    views = _views(reader, tmp_path, services)
+    panel = ProjectDiagnosticsPanel(views, reader.watch, ())
+    async with WidgetHostApp(panel).run_test(size=_WIDE) as pilot:
         await wait_until(
             lambda: "5.0%" in _text_of(panel, RESOURCES_SECTION_ID), timeout=_WAIT_SECONDS
         )
         services.resource_observation = replace(_SAMPLE, host_cpu_pct=42.0, sampled_ago="1m")
         services.engine_running = True
-        await wait_until(
-            lambda: (
-                "42%" in _text_of(panel, RESOURCES_SECTION_ID)
-                and "Running" in _text_of(panel, ENGINE_SECTION_ID)
-            ),
-            timeout=_WAIT_SECONDS,
-        )
+        await pilot.pause()
+        assert "5.0%" in _text_of(panel, RESOURCES_SECTION_ID)
         assert services.samples_taken == 0
+
+        await views.resources()
+        await pilot.pause()
+
+        assert "42%" in _text_of(panel, RESOURCES_SECTION_ID)
+        assert "Running" in _text_of(panel, ENGINE_SECTION_ID)
+        assert services.samples_taken == 1
+
+
+_REFRESH_OUTCOMES = [
+    pytest.param(_SAMPLE, id="sampled-or-fresh-cache"),
+    pytest.param(
+        replace(_SAMPLE, state=DiagnosticSampleState.STALE, error="cpu probe failed"), id="stale"
+    ),
+    pytest.param(
+        replace(_SAMPLE, state=DiagnosticSampleState.FAILED, error="cpu probe failed"), id="failed"
+    ),
+]
+
+
+@pytest.mark.parametrize("outcome", _REFRESH_OUTCOMES)
+async def test_resource_subscribers_hear_every_refresh_until_they_unsubscribe(
+    reader: StateReader, tmp_path: Path, outcome: ResourceView
+) -> None:
+    services = _Services(outcome)
+    views = _views(reader, tmp_path, services)
+    heard: list[str] = []
+    unsubscribe = views.on_resources_refreshed(lambda: heard.append("refreshed"))
+
+    await views.resources()
+    await views.resources()
+    unsubscribe()
+    await views.resources()
+
+    assert heard == ["refreshed", "refreshed"]
 
 
 async def _open_popup(app: DashboardApp, pilot: Pilot[None]) -> None:

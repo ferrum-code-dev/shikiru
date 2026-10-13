@@ -14,6 +14,8 @@ from shikiru.ui.screen import widget_is_attached
 from shikiru.ui.section import Section, grey, number, row_name, wrap_groups
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from rich.console import Console, ConsoleOptions, RenderResult
     from textual.widget import Widget
 
@@ -69,12 +71,20 @@ class FaultsPanel(GatedStatic):
         """Hold the read-only dashboard view and its state-change subscription."""
         super().__init__(id="faults")
         self._widget_context = context
+        self._unsubscribe_resources: Callable[[], None] | None = None
 
     def on_mount(self) -> None:
-        """Render current fault streaks and refresh on a timer and after durable changes."""
+        """Render fault streaks; refresh with the Resources bar and on durable changes."""
         self._refresh()
-        self.set_interval(self._widget_context.resources_refresh_seconds, self._refresh)
+        self._unsubscribe_resources = self._widget_context.views.on_resources_refreshed(
+            self._refresh
+        )
         self.run_worker(self._widget_context.on_change(self._refresh_if_attached), exclusive=True)
+
+    def on_unmount(self) -> None:
+        if self._unsubscribe_resources is not None:
+            self._unsubscribe_resources()
+            self._unsubscribe_resources = None
 
     async def _refresh_if_attached(self) -> None:
         self._refresh()

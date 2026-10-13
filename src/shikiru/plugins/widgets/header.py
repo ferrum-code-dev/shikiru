@@ -11,7 +11,7 @@ from rich.text import Text
 from shikiru.dashboard.contract import DiagnosticSampleState, WidgetPlacement
 from shikiru.ui.age import format_duration
 from shikiru.ui.gated_static import GatedStatic
-from shikiru.ui.screen import widget_is_active, widget_is_attached
+from shikiru.ui.screen import widget_is_attached, widget_is_current
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
@@ -251,11 +251,11 @@ class HeaderPanel(GatedStatic):
 
     async def on_resize(self, event: events.Resize) -> None:
         del event
-        if widget_is_active(self):
+        if widget_is_current(self):
             await self._refresh()
 
     async def _refresh_if_active(self) -> None:
-        if widget_is_active(self):
+        if widget_is_current(self):
             await self._refresh()
 
     async def _refresh_if_attached(self) -> None:

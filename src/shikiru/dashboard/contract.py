@@ -927,6 +927,10 @@ class DashboardViews(Protocol):
         """Return the latest timestamped resource observation without sampling again."""
         ...
 
+    def on_resources_refreshed(self, callback: Callable[[], None]) -> Callable[[], None]:
+        """Call `callback` after every `resources()` call; return the unsubscribe function."""
+        ...
+
     async def containers(self) -> DockerView:
         """Return the current Docker sample and whether Docker is available."""
         ...

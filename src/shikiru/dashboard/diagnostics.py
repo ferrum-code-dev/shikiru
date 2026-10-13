@@ -11,6 +11,8 @@ from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_attached
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from textual.app import ComposeResult
     from textual.widget import Widget
     from textual.worker import Worker
@@ -33,18 +35,17 @@ class ProjectDiagnosticsPanel(VerticalGroup):
         self,
         views: DashboardViews,
         on_change: OnChangeRegistration,
-        refresh_seconds: float,
         widgets: tuple[Widget, ...],
     ) -> None:
         """Use existing dashboard projections and the configured diagnostics widgets in order."""
         super().__init__(id="project-diagnostics")
         self._views = views
         self._on_change = on_change
-        self._refresh_seconds = refresh_seconds
         self._widgets = widgets
         self._resources = GatedStatic(id=RESOURCES_SECTION_ID, markup=False)
         self._engine = GatedStatic(id=ENGINE_SECTION_ID, markup=False)
         self._change_worker: Worker[None] | None = None
+        self._unsubscribe_resources: Callable[[], None] | None = None
 
     def compose(self) -> ComposeResult:
         """Build the permanent sections, then the configured diagnostics widgets."""
@@ -53,15 +54,18 @@ class ProjectDiagnosticsPanel(VerticalGroup):
         yield from self._widgets
 
     def on_mount(self) -> None:
-        """Render the cached observations and keep them current on a timer and on commits."""
+        """Render the cached observations and follow the Resources bar's refreshes and commits."""
         self._refresh()
-        self.set_interval(self._refresh_seconds, self._refresh)
+        self._unsubscribe_resources = self._views.on_resources_refreshed(self._refresh)
         self._change_worker = self.run_worker(
             self._on_change(self._refresh_if_attached),
             group=DIAGNOSTICS_REFRESH_GROUP,
         )
 
     def on_unmount(self) -> None:
+        if self._unsubscribe_resources is not None:
+            self._unsubscribe_resources()
+            self._unsubscribe_resources = None
         if self._change_worker is not None:
             self._change_worker.cancel()
 

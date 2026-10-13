@@ -4,6 +4,7 @@ import asyncio
 import errno
 import json
 import os
+import re
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
@@ -46,6 +47,7 @@ from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.queue import QueuePanel
 from shikiru.plugins.widgets.strips import StripsPanel
 from shikiru.plugins.widgets.usage import UsagePanel
+from shikiru.process import ProcessIdentity
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
@@ -96,6 +98,11 @@ if TYPE_CHECKING:
     from tests.support.store import Connection
 
 _START = datetime(2026, 1, 1, tzinfo=UTC)
+_UPTIME_IDENTITY = ProcessIdentity(4321, 1_700_000_000.0)
+_UPTIME_STEP_SECONDS = 60
+_UPTIME_AT_START = "Uptime 0s"
+_UPTIME_AFTER_STEP = "Uptime 1m"
+_UPTIME_AFTER_TWO_STEPS = "Uptime 2m"
 _TURN_NAME = "001-implement-i1"
 _STALE_TURN_NAME = "000-implement-i0"
 _TASK_ACTIVITY_WAIT_SECONDS = 2
@@ -1710,7 +1717,7 @@ async def test_home_attention_count_updates_from_motion_without_database_changes
         reader.close()
 
 
-async def test_focus_header_motion_waits_for_home_when_modal_opens_and_closes(
+async def test_home_header_and_attention_keep_ticking_under_a_pushed_screen(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -1728,7 +1735,22 @@ async def test_focus_header_motion_waits_for_home_when_modal_opens_and_closes(
     task, _ = _seed_dashboard_state(connection, clock)
     reader = StateReader(database, clock)
     try:
-        views = _build_views(reader, project_dir, settings, clock, task)
+        EventLog(connection, clock).append(
+            EventKind.ENGINE_STARTED,
+            message="engine started",
+            data={
+                "engine_pid": _UPTIME_IDENTITY.pid,
+                "engine_process_started_at": _UPTIME_IDENTITY.started_at,
+            },
+        )
+        views = state_views(
+            reader,
+            project_dir,
+            clock,
+            StubServices(engine_running=True, engine_process_identity=_UPTIME_IDENTITY),
+            focus_task=task.id,
+            settings=settings,
+        )
         _write_session_start_only_log(project_dir, task)
 
         async def open_palette(action: str) -> None:
@@ -1750,23 +1772,22 @@ async def test_focus_header_motion_waits_for_home_when_modal_opens_and_closes(
         )
         async with app.run_test(size=(100, 30)) as pilot:
             status = app.query_one("#escalations", Static)
+            header = app.query_one("#header", Static)
             home_screen = pilot.app.screen
             await wait_until(clock.has_pending_sleep, timeout=1)
             assert "No decisions needed" in plain_text(status.content)
+            assert _uptime_text(header) == _UPTIME_AT_START
 
             await pilot.press("?")
             await wait_until(lambda: pilot.app.screen is not home_screen, timeout=1)
-            clock.advance(3)
-            await wait_until(clock.has_pending_sleep, timeout=1)
-            assert "No decisions needed" in plain_text(status.content)
+            clock.advance(_UPTIME_STEP_SECONDS)
+            await wait_until(lambda: task.id in plain_text(status.content), timeout=1)
+            await wait_until(lambda: _uptime_text(header) == _UPTIME_AFTER_STEP, timeout=1)
 
             await pilot.press("escape")
             await wait_until(lambda: pilot.app.screen is home_screen, timeout=1)
-            clock.advance(1)
-            await wait_until(
-                lambda: task.id in plain_text(status.content),
-                timeout=1,
-            )
+            clock.advance(_UPTIME_STEP_SECONDS)
+            await wait_until(lambda: _uptime_text(header) == _UPTIME_AFTER_TWO_STEPS, timeout=1)
             assert views.attention().stalls == 1
     finally:
         reader.close()
@@ -2331,3 +2352,8 @@ def _detail_marker(view: TaskDetailView) -> str:
         ),
         "",
     )
+
+
+def _uptime_text(header: Static) -> str:
+    match = re.search(r"Uptime \d+[hms](?: \d+m)?", plain_text(header.content))
+    return match.group(0) if match else ""

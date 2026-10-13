@@ -70,7 +70,6 @@ from shikiru.ui.popup import (
 )
 from shikiru.ui.screen import (
     TabStopScreen,
-    widget_is_active,
     widget_is_attached,
     widget_is_current,
 )
@@ -985,7 +984,7 @@ class _HomeAttentionStatus(Static):
             event.stop()
 
     async def _refresh_if_active(self) -> None:
-        if widget_is_active(self):
+        if widget_is_current(self):
             await self._refresh()
 
     async def _refresh_if_attached(self) -> None:
@@ -1489,7 +1488,6 @@ class DashboardApp(App[None]):
         panel = ProjectDiagnosticsPanel(
             self._views,
             self._on_change,
-            self._resources_refresh_seconds,
             tuple(
                 self._create_widget(name, placement=WidgetPlacement.DIAGNOSTICS)
                 for name in self._widget_names_by_placement.get(WidgetPlacement.DIAGNOSTICS, ())
