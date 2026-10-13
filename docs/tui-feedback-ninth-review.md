@@ -1,6 +1,6 @@
 # Phase 11 ninth real-project review
 
-Status: planned (Tasks 167–174). This specification refines the [eighth review](tui-feedback-eighth-review.md). **The TUI is the source of truth**: the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 174).
+Status: delivered (Tasks 167–174, 2026-10-13; see the [record](release-readiness-2026-10-13-phase11-ninth-review.md)). This specification refines the [eighth review](tui-feedback-eighth-review.md). **The TUI is the source of truth**: the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 174).
 
 Analysis: three read-only static analyses (Sonnet 5.5 medium for the flaky tests, Haiku 5.5 xhigh for the Command history popup and for titles, plugin error and AGENTS.md). Nothing was run; claims marked *unconfirmed* are reproduced by the implementing task first.
 

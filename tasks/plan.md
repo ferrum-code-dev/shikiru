@@ -1696,8 +1696,10 @@ Proof: rows render as styled Text (grey id and separators, bold amber/sage/dusty
 
 ### Task 174: Verify the ninth review, reconcile reference, docs and AGENTS.md
 Refs: Tasks 167–173; HTML reference (`.shk-brand` weight, `Tasks`, history footer arrows and their keydown); AGENTS.md "Test value".
-- [ ] AGENTS.md "Test value" gains the audit lines (at most three sentences) only after the sweep; `uv run poe check` plain and `TERM=dumb NO_COLOR=1` green on the default worker count, plus the repeated-run numbers of 169–171; native before/after of every item; collected cases, functions and lines compared with 1605 / 950 / 60,423.
-- [ ] HTML reference and design docs match the TUI (decode, edit, re-encode with an exact round-trip, Chrome check with a throwaway profile); spec marked delivered, release record `docs/release-readiness-2026-10-13-phase11-ninth-review.md`, README links, plan and todo ticked.
+- [x] AGENTS.md "Test value" gains the audit lines (at most three sentences) only after the sweep; `uv run poe check` plain and `TERM=dumb NO_COLOR=1` green on the default worker count, plus the repeated-run numbers of 169–171; native before/after of every item; collected cases, functions and lines compared with 1605 / 950 / 60,423.
+  - Proof: native before/after of every item against `0b42f70` (Home titles, plugin hint, the full history popup at four sizes in colour and `NO_COLOR`, palette stored commands); plain and `TERM=dumb NO_COLOR=1` gates green on the default workers (1586 passed, 14 skipped each); 1607 cases, 951 functions, 60,569 test lines (1605 / 950 / 60,423 at `0b42f70`). The AGENTS.md sentences are worded for new tests because the sweep was descoped (70 sites remain).
+- [x] HTML reference and design docs match the TUI (decode, edit, re-encode with an exact round-trip, Chrome check with a throwaway profile); spec marked delivered, release record `docs/release-readiness-2026-10-13-phase11-ninth-review.md`, README links, plan and todo ticked.
+  - Proof: srcdoc decoded, edited and re-encoded with an exact round-trip, bytes outside it unchanged; headless Chrome under a throwaway profile matched the native colours, weights and ArrowLeft/ArrowRight paging at wide, compact and tiny, colour and No color. Record `docs/release-readiness-2026-10-13-phase11-ninth-review.md`, HTML SHA-256 `5267e34b…81d6`.
 
 | Request | Implementation / verification |
 |---|---|
