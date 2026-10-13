@@ -271,4 +271,4 @@ Ninth-review scope and evidence: [ninth real-project review](../docs/tui-feedbac
   - Proof: before the change, Right from the initial focus left the page at 1 (the probe's wait for page 2 timed out after 30 s) and the buttons read `p previous`/`n next`. After it, native Textual dumps at 100×34, 48×20 and 20×8, with and without `NO_COLOR`, show `← newer`/`→ older` with the arrow span `#83bddd`, bare arrows and `1 · 20/52` when compact, and the Help line `History: ← newer · → older`; Left/Right page from the initial and collapsed focus and stay inert while the Select is expanded. The p/n assertions were converted in place (collected cases 1607 before and after), the 8 history and keyboard tests pass, and the gate is green (1586 passed, 14 skipped, 91.16 % coverage).
 - [x] Task 173: Coloured rows, no raw result
 - [x] Task 174: Verify the ninth review, reconcile reference, docs and AGENTS.md
-- [ ] Task 175: Reveal the whole evidence-export result in the palette
+- [x] Task 175: Reveal the whole evidence-export result in the palette

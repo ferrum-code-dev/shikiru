@@ -1712,5 +1712,7 @@ Refs: Tasks 167–173; HTML reference (`.shk-brand` weight, `Tasks`, history foo
 
 ### Task 175: Reveal the whole evidence-export result in the palette
 Refs: `dashboard/palette.py` `_reveal_result` (runs before the result `Static`'s final layout, leaving the form one row short: scroll_y 25 of 26); `tests/integration/test_task_evidence_export.py::test_palette_export_controls_and_full_result_remain_reachable`; found by Task 170, recorded in the ninth-review record as an open limit.
-- [ ] Reproduce on the unchanged code (the form scroll stops one row short after the export result appears), fix the reveal so it scrolls after the result is laid out (no timing hack), keep the test asserting the observable (result fully contained, scrolled to the end) and drop any workaround Task 170 added to it.
-- [ ] `uv run poe check` green; native check at the sizes the test uses; update the ninth-review record's open-limit line (the limit is closed).
+- [x] Reproduce on the unchanged code (the form scroll stops one row short after the export result appears), fix the reveal so it scrolls after the result is laid out (no timing hack), keep the test asserting the observable (result fully contained, scrolled to the end) and drop any workaround Task 170 added to it.
+- [x] `uv run poe check` green; native check at the sizes the test uses; update the ninth-review record's open-limit line (the limit is closed).
+
+Proof: reproduced under 10 `yes` hogs on the unchanged code (form scroll stuck short, 2 of 12 runs failed the unchanged-product expectation); `_reveal_result` now uses `form.scroll_end(animate=False)`, which Textual defers until after layout. 20 of 20 loaded runs and 10 of 10 quiet runs of the test pass without compensating scrolls; `poe check` green (1586 passed, 14 skipped, 1607 collected).

@@ -481,16 +481,12 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
         assert cast("Select[str]", screen.query_one("#export-signals", Select)).value == ("exclude")
         result_scroll = screen.query_one("#palette-result-scroll")
         await wait_until(
-            lambda: result_scroll.max_scroll_y > 0,
-            timeout=EXPORT_WAIT_SECONDS,
-        )
-        form.scroll_to_widget(result_scroll, animate=False, immediate=True)
-        await wait_until(
             lambda: (
                 result_scroll.region.y >= form.region.y
                 and result_scroll.region.bottom <= screen.size.height
                 and frame.content_region.contains_region(result_scroll.region)
                 and form.content_region.contains_region(result_scroll.region)
+                and form.scroll_y == form.max_scroll_y
             ),
             timeout=EXPORT_WAIT_SECONDS,
         )

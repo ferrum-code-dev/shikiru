@@ -2223,9 +2223,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
 
     def _reveal_result(self) -> None:
         if self._is_current_screen():
-            form = self.query_one("#palette-form", VerticalScroll)
-            result = self.query_one("#palette-result-scroll", VerticalScroll)
-            form.scroll_to_widget(result, animate=False, immediate=True)
+            self.query_one("#palette-form", VerticalScroll).scroll_end(animate=False)
 
     def _is_current_screen(self) -> bool:
         app = cast("App[None]", self.app)
