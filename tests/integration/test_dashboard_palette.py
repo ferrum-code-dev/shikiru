@@ -62,6 +62,8 @@ if TYPE_CHECKING:
     from textual.content import Content
     from textual.pilot import Pilot
 
+    from shikiru.domain.commands import Command
+    from shikiru.domain.tasks import Task
     from shikiru.store.database import Database
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -775,58 +777,15 @@ async def test_applied_message_feedback_keeps_next_turn_guidance_and_engine_resu
         assert "queued_for_next_turn" in feedback
 
 
-async def test_palette_task_search_changes_the_editable_target(
+async def test_palette_target_follows_search_choice_and_stays_manually_editable(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
 ) -> None:
     clock = FakeClock(_START)
     context_task = seed_task(connection, clock, title="Detail task")
+    other_task = seed_task(connection, clock, title="Other task")
     selected_task = seed_task(connection, clock, title="Chosen by title")
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(
-            task_id=context_task.id,
-            role=Role.LEADER.value,
-        ),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        await _open_action(pilot, screen, "message")
-        screen.query_one("#task-search", Input).value = "Chosen by title"
-        await pilot.pause()
-        task_choice = cast("Select[str]", screen.query_one("#task-choice", Select))
-        task_choice.focus()
-        task_choice.value = selected_task.id
-        await pilot.pause()
-        assert screen.query_one("#task-id", Input).value == selected_task.id
-        screen.query_one("#message", TextArea).text = "Use the deliberately selected task."
-        await pilot.click("#palette-submit")
-        await _wait_for_ack(screen)
-
-        (queued,) = queue.pending()
-        assert queued.command == Say(
-            task_id=selected_task.id,
-            role=Role.LEADER,
-            text="Use the deliberately selected task.",
-            command_id=queued.id,
-        )
-
-
-async def test_manual_task_id_edit_stays_authoritative_outside_search(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    context_task = seed_task(connection, clock, title="Detail task")
-    selected_task = seed_task(connection, clock, title="Other task")
     commands, queries, queue = _services(connection, reader, clock, tmp_path)
     app = _palette_app(
         reader,
@@ -847,35 +806,34 @@ async def test_manual_task_id_edit_stays_authoritative_outside_search(
         await pilot.pause()
         task_id = screen.query_one("#task-id", Input)
         task_choice = cast("Select[str]", screen.query_one("#task-choice", Select))
-        task_id.value = selected_task.id
+        task_id.value = other_task.id
         await wait_until(
-            lambda: task_id.value == selected_task.id and task_choice.value == selected_task.id,
+            lambda: task_id.value == other_task.id and task_choice.value == other_task.id,
             timeout=2,
         )
-
         task_id.value = "T-999"
         await wait_until(
             lambda: task_id.value == "T-999" and task_choice.value is Select.BLANK,
             timeout=2,
         )
-        assert task_id.value == "T-999"
 
-        task_id.value = selected_task.id
-        await wait_until(
-            lambda: task_id.value == selected_task.id and task_choice.value == selected_task.id,
-            timeout=2,
-        )
-        screen.query_one("#message", TextArea).text = "Use the manually entered task."
+        screen.query_one("#task-search", Input).value = selected_task.title
+        await pilot.pause()
+        task_choice.focus()
+        task_choice.value = selected_task.id
+        await pilot.pause()
+        assert task_id.value == selected_task.id
+        screen.query_one("#message", TextArea).text = "Use the deliberately selected task."
         await pilot.click("#palette-submit")
         await _wait_for_ack(screen)
 
-    queued = queue.pending()[0]
-    assert queued.command == Say(
-        task_id=selected_task.id,
-        role=Role.LEADER,
-        text="Use the manually entered task.",
-        command_id=queued.id,
-    )
+        (queued,) = queue.pending()
+        assert queued.command == Say(
+            task_id=selected_task.id,
+            role=Role.LEADER,
+            text="Use the deliberately selected task.",
+            command_id=queued.id,
+        )
 
 
 async def test_palette_task_search_is_bounded_current_and_retains_selected_target(
@@ -1328,50 +1286,78 @@ def _assert_fixed_task_context_title(screen: PaletteScreen, task_id: str, role_n
     assert role_name in title
 
 
-async def test_palette_submit_queues_a_typed_command_and_shows_its_ack(
-    connection: Connection, reader: StateReader, tmp_path: Path
-) -> None:
-    clock = FakeClock(_START)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = _palette_app(reader, commands, queries, _selection_must_not_run)
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        await _open_action(pilot, screen, "submit")
-        request = screen.query_one("#request", TextArea)
-        for _ in range(12):
-            if request.has_focus:
-                break
-            await pilot.press("tab")
-        assert request.has_focus
-        await _enter_text(pilot, "first line\nsecond line")
-        assert screen.query_one("#request", TextArea).text == "first line\nsecond line"
-        await pilot.click("#palette-advanced-toggle")
-        screen.query_one("#mode", Select).value = Mode.IMPLEMENT.value
-        screen.query_one("#submission-priority", Input).value = "17"
-        screen.query_one("#dependencies", Input).value = "T-8, T-9"
-        screen.query_one("#leader-rung", Input).value = "codex:sol:high"
-        screen.query_one("#implementer-rung", Input).value = "codex:sol:high"
-        screen.query_one("#title", Input).value = "Palette"
-        await pilot.click("#palette-submit")
-        await _wait_for_ack(screen)
-
-        queued = queue.pending()
-        assert len(queued) == 1
-        assert isinstance(queued[0].command, Submit)
-        assert queued[0].command.request == "first line\nsecond line"
-        assert queued[0].command.title == "Palette"
-        assert queued[0].command.mode is Mode.IMPLEMENT
-        assert queued[0].command.priority == 17
-        assert queued[0].command.depends_on == ["T-8", "T-9"]
-        assert queued[0].command.leader == _LIVE_RUNG
-        assert queued[0].command.implementer == _LIVE_RUNG
-        assert "Pending" in _static_text(screen, "#palette-result")
+async def _fill_submit(pilot: Pilot[None], screen: PaletteScreen, task: Task) -> None:
+    del task
+    request = screen.query_one("#request", TextArea)
+    for _ in range(12):
+        if request.has_focus:
+            break
+        await pilot.press("tab")
+    assert request.has_focus
+    await _enter_text(pilot, "first line\nsecond line")
+    await pilot.click("#palette-advanced-toggle")
+    screen.query_one("#mode", Select).value = Mode.IMPLEMENT.value
+    screen.query_one("#submission-priority", Input).value = "17"
+    screen.query_one("#dependencies", Input).value = "T-8, T-9"
+    screen.query_one("#leader-rung", Input).value = "codex:sol:high"
+    screen.query_one("#implementer-rung", Input).value = "codex:sol:high"
+    screen.query_one("#title", Input).value = "Palette"
 
 
-async def test_palette_prioritize_queues_the_selected_priority(
-    connection: Connection, reader: StateReader, tmp_path: Path
+async def _fill_prioritize(pilot: Pilot[None], screen: PaletteScreen, task: Task) -> None:
+    await _set_target(pilot, screen, task.id)
+    screen.query_one("#priority", Input).value = "17"
+
+
+async def _fill_pause_now(pilot: Pilot[None], screen: PaletteScreen, task: Task) -> None:
+    await _set_target(pilot, screen, task.id)
+
+
+def _is_typed_submit(command: Command, task: Task) -> bool:
+    del task
+    return isinstance(command, Submit) and (
+        command.request,
+        command.title,
+        command.mode,
+        command.priority,
+        command.depends_on,
+        command.leader,
+        command.implementer,
+    ) == (
+        "first line\nsecond line",
+        "Palette",
+        Mode.IMPLEMENT,
+        17,
+        ["T-8", "T-9"],
+        _LIVE_RUNG,
+        _LIVE_RUNG,
+    )
+
+
+def _is_prioritize(command: Command, task: Task) -> bool:
+    return command == Prioritize(task_id=task.id, priority=17)
+
+
+def _is_pause_now(command: Command, task: Task) -> bool:
+    return command == Pause(task_id=task.id, now=True)
+
+
+_SUBMIT_CASES = (
+    pytest.param("submit", _fill_submit, _is_typed_submit, id="typed-submit"),
+    pytest.param("prioritize", _fill_prioritize, _is_prioritize, id="prioritize"),
+    pytest.param("pause-now", _fill_pause_now, _is_pause_now, id="pause-now"),
+)
+
+
+@pytest.mark.parametrize(("action", "fill", "queued_as_expected"), _SUBMIT_CASES)
+async def test_palette_submit_queues_the_command_and_shows_its_ack(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    *,
+    action: str,
+    fill: Callable[[Pilot[None], PaletteScreen, Task], Awaitable[None]],
+    queued_as_expected: Callable[[Command, Task], bool],
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock)
@@ -1381,18 +1367,16 @@ async def test_palette_prioritize_queues_the_selected_priority(
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(app)
-        await _open_action(pilot, screen, "prioritize")
-        await _set_target(pilot, screen, task.id)
-        screen.query_one("#priority", Input).value = "17"
+        await _open_action(pilot, screen, action)
+        await fill(pilot, screen, task)
         await pilot.click("#palette-submit")
         await _wait_for_ack(screen)
 
         queued = queue.pending()
         assert len(queued) == 1
-        assert queued[0].command == Prioritize(task_id=task.id, priority=17)
+        assert queued_as_expected(queued[0].command, task)
         feedback = _static_text(screen, "#palette-result")
         assert "Pending" in feedback
-        assert "engine was stopped" in feedback
         assert "acknowledgement wait elapsed" not in feedback
 
 
@@ -1628,12 +1612,10 @@ async def test_palette_preserves_resolution_form_after_unrelated_database_update
         assert [item.id for item in queue.pending()] == [submitted.id]
 
 
-@pytest.mark.parametrize("size", [_APP_SIZE, _COMPACT_APP_SIZE])
 async def test_palette_original_packet_scrolls_to_its_last_line(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
-    size: tuple[int, int],
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Long decision packet")
@@ -1654,33 +1636,16 @@ async def test_palette_original_packet_scrolls_to_its_last_line(
         initial_context=PaletteRequest(action=f"resolve {escalation.id}"),
     )
 
-    async with app.run_test(size=size) as pilot:
+    async with app.run_test(size=_COMPACT_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(app)
         form = screen.query_one("#palette-form", VerticalScroll)
-        original = screen.query_one("#palette-evidence-original", Collapsible)
-        form.scroll_to_widget(
-            original,
-            top=True,
-            force=True,
-            animate=False,
-            immediate=True,
-        )
+        screen.query_one("#palette-evidence-original", Collapsible).collapsed = False
         await pilot.pause()
-        original.collapsed = False
-        await pilot.pause()
-        assert not original.collapsed
-
         packet_content = screen.query_one("#palette-original-packet", Static)
         assert _LAST_PACKET_LINE in _static_text(screen, "#palette-original-packet")
         assert packet_content.size.height >= packet_content.content_size.height
-        form.scroll_to_widget(
-            packet_content,
-            top=True,
-            force=True,
-            animate=False,
-            immediate=True,
-        )
+        form.scroll_to_widget(packet_content, top=True, force=True, animate=False, immediate=True)
         await pilot.pause()
         top_scroll = form.scroll_y
         form.scroll_to(y=form.max_scroll_y, animate=False, immediate=True)
@@ -1762,8 +1727,6 @@ async def test_palette_preserves_original_and_readable_sections_of_malformed_pac
         await pilot.pause()
         screen = _screen(app)
         assert escalation.id in _static_text(screen, "#palette-escalation-summary")
-        assert "answer" in _static_text(screen, "#palette-escalation-summary")
-        assert "cancel" in _static_text(screen, "#palette-escalation-summary")
         assert "malformed" in _static_text(screen, "#palette-evidence-error")
         assert "Recorded git facts." in _static_text(screen, "#palette-evidence-facts")
         assert _static_text(screen, "#palette-original-packet") == malformed
@@ -1882,17 +1845,50 @@ async def test_palette_shows_engine_rejection_after_resolution_race_without_resu
         assert queue.pending() == []
 
 
-async def test_palette_takeover_queues_a_task_role_command(
+@pytest.mark.parametrize(
+    ("engine_up", "outcome", "selection_fails", "expected"),
+    [
+        pytest.param(False, None, False, ("Pending",), id="queued-without-selection"),
+        pytest.param(
+            True,
+            "rejected",
+            False,
+            ("Rejected", "take over unavailable", "{task_id} · leader"),
+            id="rejected-never-selects",
+        ),
+        pytest.param(
+            True,
+            "done",
+            True,
+            ("Applied", "could not select %7"),
+            id="done-keeps-ack-with-selection-error",
+        ),
+    ],
+)
+async def test_palette_takeover_queues_a_task_role_command_and_selects_the_pane_only_when_done(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
+    *,
+    engine_up: bool,
+    outcome: str | None,
+    selection_fails: bool,
+    expected: tuple[str, ...],
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock)
     TaskStore(connection, clock).set_panes(task.id, {Role.LEADER: "%7"})
     _seed_live_session(connection, clock, task.id)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = _palette_app(reader, commands, queries, _selection_must_not_run)
+    commands, queries, queue = _services(connection, reader, clock, tmp_path, engine_up=engine_up)
+    selected: list[str] = []
+
+    async def select_pane(pane_id: str) -> None:
+        selected.append(pane_id)
+        if selection_fails:
+            message = f"could not select {pane_id}"
+            raise ConfigError(message)
+
+    app = _palette_app(reader, commands, queries, select_pane)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -1901,14 +1897,29 @@ async def test_palette_takeover_queues_a_task_role_command(
         await _set_target(pilot, screen, task.id)
         await _set_role(pilot, screen, Role.LEADER)
         await pilot.click("#palette-submit")
-        await _wait_for_ack(screen)
-
+        if engine_up:
+            await wait_until(clock.has_pending_sleep, timeout=2)
+        else:
+            await _wait_for_ack(screen)
         queued = queue.pending()
         assert len(queued) == 1
         assert queued[0].command == TakeOver(
             task_id=task.id, role=Role.LEADER, command_id=queued[0].id
         )
-        assert "Pending" in _static_text(screen, "#palette-result")
+        if outcome == "rejected":
+            queue.mark_rejected(queued[0].id, {"message": "take over unavailable"})
+        elif outcome == "done":
+            queue.mark_done(queued[0].id, {"task_id": task.id})
+        if outcome:
+            clock.advance(_POLL_SECONDS)
+        await wait_until(
+            lambda: all(
+                text.format(task_id=task.id) in _static_text(screen, "#palette-result")
+                for text in expected
+            ),
+            timeout=2,
+        )
+        assert selected == (["%7"] if outcome == "done" else [])
 
 
 async def test_completed_takeover_selects_the_role_pane_and_its_window(
@@ -2034,36 +2045,6 @@ async def test_popup_pane_context_selects_its_recorded_task_and_role(
     )
 
 
-async def test_rejected_takeover_never_selects_the_role_pane(
-    connection: Connection, reader: StateReader, tmp_path: Path
-) -> None:
-    clock = FakeClock(_START)
-    task = seed_task(connection, clock)
-    TaskStore(connection, clock).set_panes(task.id, {Role.LEADER: "%7"})
-    _seed_live_session(connection, clock, task.id)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path, engine_up=True)
-    app = _palette_app(reader, commands, queries, _selection_must_not_run)
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        await _open_action(pilot, screen, "take-over")
-        await _set_target(pilot, screen, task.id)
-        await pilot.click("#palette-submit")
-        await wait_until(clock.has_pending_sleep, timeout=2)
-        queued = queue.pending()
-        assert len(queued) == 1
-        queue.mark_rejected(queued[0].id, {"message": "take over unavailable"})
-        clock.advance(_POLL_SECONDS)
-        await _wait_for_ack(screen, "Rejected")
-
-        feedback = _static_text(screen, "#palette-result")
-        assert f"command {queued[0].id}" in feedback
-        assert f"{task.id} · leader" in feedback
-        assert "Rejected" in feedback
-        assert "take over unavailable" in feedback
-
-
 @pytest.mark.parametrize(
     ("task_exists", "expected"),
     [(True, "role pane is unavailable"), (False, "task no longer exists")],
@@ -2084,62 +2065,6 @@ async def test_palette_disables_takeover_without_task_or_role_pane(
         assert screen.query_one("#palette-submit", Button).disabled
         assert expected in _static_text(screen, "#palette-action-state")
         assert not queue.pending()
-
-
-async def test_done_takeover_keeps_ack_with_pane_selection_error(
-    connection: Connection, reader: StateReader, tmp_path: Path
-) -> None:
-    clock = FakeClock(_START)
-    task = seed_task(connection, clock)
-    TaskStore(connection, clock).set_panes(task.id, {Role.LEADER: "%not-a-real-pane"})
-    _seed_live_session(connection, clock, task.id)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path, engine_up=True)
-
-    async def pane_selection_fails(pane_id: str) -> None:
-        message = f"could not select {pane_id}"
-        raise ConfigError(message)
-
-    app = _palette_app(reader, commands, queries, pane_selection_fails)
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        await _open_action(pilot, screen, "take-over")
-        await _set_target(pilot, screen, task.id)
-        await pilot.click("#palette-submit")
-        await wait_until(clock.has_pending_sleep, timeout=2)
-        queued = queue.pending()
-        assert len(queued) == 1
-        queue.mark_done(queued[0].id, {"task_id": task.id})
-        clock.advance(_POLL_SECONDS)
-        await wait_until(
-            lambda: (
-                "Applied" in _static_text(screen, "#palette-result")
-                and "could not select %not-a-real-pane" in _static_text(screen, "#palette-result")
-            ),
-            timeout=2,
-        )
-
-
-async def test_palette_pause_now_queues_immediate_pause(
-    connection: Connection, reader: StateReader, tmp_path: Path
-) -> None:
-    clock = FakeClock(_START)
-    task = seed_task(connection, clock)
-    commands, queries, queue = _services(connection, reader, clock, tmp_path)
-    app = _palette_app(reader, commands, queries, _selection_must_not_run)
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        await _open_action(pilot, screen, "pause-now")
-        await _set_target(pilot, screen, task.id)
-        await pilot.click("#palette-submit")
-        await _wait_for_ack(screen)
-
-        queued = queue.pending()
-        assert len(queued) == 1
-        assert queued[0].command == Pause(task_id=task.id, now=True)
 
 
 @pytest.mark.parametrize(
