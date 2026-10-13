@@ -126,7 +126,7 @@ async def _exercise_live_home_palette_routes(
         await wait_until(actions_open, timeout=5)
         actions_text = await pane_text()
         assert "Actions" in actions_text
-        assert "TASKS" in actions_text
+        assert "Tasks" in actions_text
         assert (
             await tmux_server.run("display-message", "-p", "-t", pane_id, "#{pane_pid}")
         ).stdout.strip() == str(pane_pid)
@@ -137,7 +137,7 @@ async def _exercise_live_home_palette_routes(
         await wait_until(actions_open, timeout=5)
         actions_text = await pane_text()
         assert "Actions" in actions_text
-        assert "TASKS" in actions_text
+        assert "Tasks" in actions_text
         await tmux_server.run("send-keys", "-t", pane_id, "Escape")
         await wait_until(actions_closed, timeout=5)
 

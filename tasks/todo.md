@@ -260,7 +260,8 @@ Eighth-review scope and evidence: [eighth real-project review](../docs/tui-feedb
 
 Ninth-review scope and evidence: [ninth real-project review](../docs/tui-feedback-ninth-review.md).
 
-- [ ] Task 167: `Tasks` heading and bold `SHIKIRU`
+- [x] Task 167: `Tasks` heading and bold `SHIKIRU`
+  - Proof: native before/after SVG exports (plain and `NO_COLOR`) show bold steel-blue `SHIKIRU` and the `Tasks` count with a lower-case filter label, and the assertion-backed anchors and pinned strings match them. The gate is green (1586 passed, 14 skipped, 91.17 % coverage); collected cases 1605 → 1607.
 - [ ] Task 168: Plugin reinstall hint
 - [ ] Task 169: One UI wait budget
 - [ ] Task 170: `pause(); assert` becomes `wait_until`

@@ -203,11 +203,11 @@ async def test_queue_filter_change_renders_after_skipped_ticks(
     async with WidgetHostApp(queue).run_test() as pilot:
         await pilot.pause()
         await ticks.tick()
-        assert "History" not in plain_text(_count_content(queue))
+        assert "history" not in plain_text(_count_content(queue))
 
         await queue.activate_filter(TaskBrowserFilter.HISTORY)
 
-        assert "History" in plain_text(_count_content(queue))
+        assert "history" in plain_text(_count_content(queue))
 
 
 async def test_strips_motion_tick_with_unchanged_state_keeps_the_rendered_content(

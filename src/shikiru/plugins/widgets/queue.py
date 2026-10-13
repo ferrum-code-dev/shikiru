@@ -1261,21 +1261,17 @@ class QueuePanel(Vertical):
         is_default_focus = (
             self._focus_layout and view.filter is TaskBrowserFilter.ALL and not view.search
         )
-        if is_default_focus and not view.selected_task_missing:
-            count = Text("TASKS", style=STEEL_BLUE)
+        if is_default_focus:
+            count = Text("Tasks")
         else:
             count = Text(
-                "TASKS"
-                if is_default_focus
-                else (
-                    f"TASKS · {FILTER_LABELS[view.filter]} · "
-                    f"{len(view.rows)} of {view.matching_count}"
-                )
+                f"Tasks · {FILTER_LABELS[view.filter].lower()} · "
+                f"{len(view.rows)} of {view.matching_count}"
             )
-            if view.search:
-                count += f" · Search: {view.search}"
-            if view.selected_task_missing and view.selected_task is not None:
-                count += f" · selected {view.selected_task.task_id} remains outside this view"
+        if view.search:
+            count += f" · Search: {view.search}"
+        if view.selected_task_missing and view.selected_task is not None:
+            count += f" · selected {view.selected_task.task_id} remains outside this view"
         self._count.update(count)
 
     def _render_preview(self, view: TaskBrowserView) -> None:

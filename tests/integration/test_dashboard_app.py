@@ -153,6 +153,8 @@ TASK_PAGE_TEST_TIMELINE_PAGE_SIZE = 1
 _EXTERNAL_WIDGET_NAME = "outside-widget"
 _LATER_EXTERNAL_WIDGET_NAME = "later-widget"
 _WIDE_HOME_SIZE = (120, 40)
+_HEADER_AND_COUNT_ANCHORS = ("SHIKIRU", "Tasks")
+_HEADER_ANCHORS = ("SHIKIRU",)
 _PROJECT_SESSION_NAME = "project"
 _GLOBAL_TMUX_PREFIX = "C-b"
 _SESSION_TMUX_PREFIX = "C-a"
@@ -347,7 +349,9 @@ async def _assert_rendered_palette_header_identity(
     assert "Esc \u00d7" in header
 
 
-def _rendered_visible_home_origins(app: DashboardApp) -> dict[str, tuple[float, float]]:
+def _rendered_visible_home_origins(
+    app: DashboardApp, anchors: tuple[str, ...]
+) -> dict[str, tuple[float, float]]:
     elements: list[tuple[str, float, float]] = []
     for attributes, content in re.findall(
         r"<text\b([^>]*)>(.*?)</text>", app.export_screenshot(), re.DOTALL
@@ -359,10 +363,10 @@ def _rendered_visible_home_origins(app: DashboardApp) -> dict[str, tuple[float, 
             elements.append((label, float(x.group(1)), float(y.group(1))))
 
     origins: dict[str, tuple[float, float]] = {}
-    for anchor in ("SHIKIRU", "TASKS"):
+    for anchor in anchors:
         origin = next(((x, y) for text, x, y in elements if text == anchor), None)
-        if origin is not None:
-            origins[anchor] = origin
+        assert origin is not None, f"{anchor} is not rendered"
+        origins[anchor] = origin
     return origins
 
 
@@ -2113,7 +2117,7 @@ async def test_focus_operational_counts_and_contextual_task_filters(
             await _choose_focus_view(app, pilot, "Task filter · waiting")
             count = app.query_one("#task-browser-count", Static)
             await wait_until(
-                lambda: plain_text(count.content).startswith("TASKS · Waiting · 1 of 1"),
+                lambda: plain_text(count.content).startswith("Tasks · waiting · 1 of 1"),
                 timeout=2,
             )
             assert waiting.title in plain_text(
@@ -5642,10 +5646,10 @@ async def _open_home_help(app: DashboardApp, pilot: Pilot[None], gesture: str) -
 @pytest.mark.parametrize(
     "case",
     [
-        (_WIDE_HOME_SIZE, _HELP_GESTURE_KEY),
-        (_WIDE_HOME_SIZE, _HELP_GESTURE_VIEWS),
-        (_COMPACT_HOME_SIZE, _HELP_GESTURE_FOOTER),
-        (_TINY_HOME_SIZE, _HELP_GESTURE_KEY),
+        (_WIDE_HOME_SIZE, _HELP_GESTURE_KEY, _HEADER_AND_COUNT_ANCHORS),
+        (_WIDE_HOME_SIZE, _HELP_GESTURE_VIEWS, _HEADER_AND_COUNT_ANCHORS),
+        (_COMPACT_HOME_SIZE, _HELP_GESTURE_FOOTER, _HEADER_ANCHORS),
+        (_TINY_HOME_SIZE, _HELP_GESTURE_KEY, _HEADER_ANCHORS),
     ],
 )
 async def test_home_help_opens_by_key_or_mouse_and_closing_leaves_home_unchanged(
@@ -5653,9 +5657,9 @@ async def test_home_help_opens_by_key_or_mouse_and_closing_leaves_home_unchanged
     reader: StateReader,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    case: tuple[tuple[int, int], str],
+    case: tuple[tuple[int, int], str, tuple[str, ...]],
 ) -> None:
-    size, gesture = case
+    size, gesture, anchors = case
     monkeypatch.setenv("NO_COLOR", "1")
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_TEST_START)
@@ -5685,7 +5689,7 @@ async def test_home_help_opens_by_key_or_mouse_and_closing_leaves_home_unchanged
         if gesture == _HELP_GESTURE_FOOTER:
             app.query_one("#focus-footer-help", Button).focus()
             await pilot.pause()
-        before = (root.scroll_y, task_list.index, _rendered_visible_home_origins(app))
+        before = (root.scroll_y, task_list.index, _rendered_visible_home_origins(app, anchors))
 
         await _open_home_help(app, pilot, gesture)
         help_screen = app.screen
@@ -5713,7 +5717,7 @@ async def test_home_help_opens_by_key_or_mouse_and_closing_leaves_home_unchanged
             assert await pilot.click("#workspace-help-close")
         await wait_until(lambda: app.screen is home, timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS)
         await wait_until(
-            lambda: _rendered_visible_home_origins(app) == before[2],
+            lambda: _rendered_visible_home_origins(app, anchors) == before[2],
             timeout=_DASHBOARD_WAIT_TIMEOUT_SECONDS,
         )
         assert (root.scroll_y, task_list.index) == before[:2]

@@ -438,7 +438,7 @@ async def test_browser_keeps_selection_while_search_filter_state_and_history_cha
         await pilot.pause()
 
         assert widget.query_one(f"#task-row-{queued.id}")
-        assert "Waiting" in _static_text(widget.query_one("#task-browser-count", Static))
+        assert "waiting" in _static_text(widget.query_one("#task-browser-count", Static))
         selected_preview = widget.query_one("#task-browser-preview", Static)
         assert selected.id in _static_text(selected_preview)
         assert "Parser retry queued" in _static_text(

@@ -19,6 +19,7 @@ from shikiru.ui.tokens import (
     SAGE,
     SECONDARY_TEXT_COLOR,
     STEEL_BLUE,
+    STYLE_BOLD,
 )
 
 if TYPE_CHECKING:
@@ -85,7 +86,7 @@ def _home_header_text(
     checkout = _checkout_text(view)
     compact_header = identity_width + runtime_width + MIN_HEADER_GAP > width
     identity_text = Text.assemble(
-        ("SHIKIRU", STEEL_BLUE),
+        ("SHIKIRU", f"{STYLE_BOLD} {STEEL_BLUE}"),
         (f" {view.project}", PRIMARY_TEXT_COLOR),
     )
     if view.repo.root is not None:

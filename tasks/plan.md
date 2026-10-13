@@ -1651,8 +1651,10 @@ Scope: [ninth real-project review](../docs/tui-feedback-ninth-review.md), planne
 
 ### Task 167: `Tasks` heading and bold `SHIKIRU`
 Refs: `plugins/widgets/header.py:88`, `plugins/widgets/queue.py` `_render_count` (about 1260–1279), `ui/tokens.py` `STYLE_BOLD`; 06 §6.1; tests that pin `TASKS` (`test_dashboard_app.py` anchors helper and the count assertion, `test_tmux_palette_binding.py`).
-- [ ] `SHIKIRU` renders bold steel blue (bold survives `NO_COLOR`); the heading reads `Tasks`, the filter label after ` · ` is lower case; the redundant explicit style in the default-focus branch goes; 06 §6.1 names `SHIKIRU` as the only upper-case exception.
-- [ ] Update the pinned strings; make the anchor helper fail when an anchor is missing instead of skipping it; at most one span test for the bold brand. Native colour and `NO_COLOR` render.
+- [x] `SHIKIRU` renders bold steel blue (bold survives `NO_COLOR`); the heading reads `Tasks`, the filter label after ` · ` is lower case; the redundant explicit style in the default-focus branch goes; 06 §6.1 names `SHIKIRU` as the only upper-case exception.
+  - Proof: a native Textual SVG export before the change showed `SHIKIRU` regular steel blue (grey under `NO_COLOR`) and the count `TASKS` / `TASKS · Waiting · 1 of 1`; after it `SHIKIRU` is bold (bold kept under `NO_COLOR`) and the count reads `Tasks` / `Tasks · waiting · 1 of 1`, with steel blue still applied by the count CSS. The default-focus count branch collapsed into the shared path, since the CSS colour made its explicit style redundant. Gate green (1586 passed, 14 skipped, 91.17 % coverage).
+- [x] Update the pinned strings; make the anchor helper fail when an anchor is missing instead of skipping it; at most one span test for the bold brand. Native colour and `NO_COLOR` render.
+  - Proof: the anchor helper now asserts each anchor, and each help case declares the anchors its size paints, since the compact and tiny layouts paint no `Tasks` count (a finding that corrects the static analysis). Two pinned strings the analysis missed (`History` and `Waiting` in the count line of `test_dashboard_motion_skips.py` and `test_task_browser.py`) are lower case now. One span test asserts the bold brand in colour and `NO_COLOR` modes; it fails on the old header. Collected cases 1605 → 1607 (the new behaviour's two cases).
 
 ### Task 168: Plugin reinstall hint
 Refs: `agents/registry.py` `load_unique_entry_point` (the single producer), `dashboard/app.py` `_load_widget`, README.md Quick start, design 07 runtime row.

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+import pytest
 from rich.cells import cell_len
 from rich.text import Text
 from textual.widgets import Static
@@ -18,6 +19,7 @@ from shikiru.plugins.widgets.strips import StripsPanel, StripsWidget
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
+from tests.support.cells import rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, WidgetHostApp, state_views, widget_context
@@ -33,6 +35,7 @@ if TYPE_CHECKING:
 
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
+BRAND = "SHIKIRU"
 
 
 def _plain(content: object) -> str:
@@ -132,6 +135,26 @@ async def test_header_preserves_stale_and_unavailable_checkout_facts(
             assert "SHIKIRU demo" in rendered
             assert str(project_dir.resolve()) in rendered
             assert all(fact in rendered for fact in expected_facts)
+
+
+@pytest.mark.usefixtures("connection")
+@pytest.mark.parametrize("no_color", [False, True], ids=["colour", "no_color"])
+async def test_header_brand_is_bold_and_stays_bold_under_no_color(
+    reader: StateReader,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_color: bool,
+) -> None:
+    if no_color:
+        monkeypatch.setenv("NO_COLOR", "1")
+    project_dir = write_minimal_project(tmp_path)
+    context = widget_context(reader, project_dir, FakeClock(START))
+    widget = cast("HeaderPanel", HeaderWidget().create(context))
+    async with WidgetHostApp(widget).run_test():
+        await wait_until(lambda: BRAND in _plain(widget.content), timeout=5.0)
+        brand = rendered_lines(widget)[0][: len(BRAND)]
+    assert "".join(char for char, _ in brand) == BRAND
+    assert all(bold for _, (bold, _) in brand)
 
 
 async def test_header_does_not_count_an_escalated_slot_as_occupied(
