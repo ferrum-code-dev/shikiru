@@ -43,31 +43,16 @@ def _next(task: Task, outcome: Outcome) -> Transition:
     return next_step(task, outcome, _SETTINGS)
 
 
-def test_first_step_with_no_mode_starts_at_triage() -> None:
-    task = make_task(mode=None)
+@pytest.mark.parametrize(
+    ("mode", "step", "iteration"),
+    [(None, Step.TRIAGE, 0), (Mode.PLAN, Step.PLAN, 0), (Mode.IMPLEMENT, Step.IMPLEMENT, 1)],
+)
+def test_first_step_follows_the_mode_and_starts_implementation_at_iteration_one(
+    mode: Mode | None, step: Step, iteration: int
+) -> None:
+    transition = first_step(make_task(mode=mode))
 
-    transition = first_step(task)
-
-    assert transition.step is Step.TRIAGE
-    assert transition.iteration == 0
-
-
-def test_first_step_with_mode_plan_skips_triage() -> None:
-    task = make_task(mode=Mode.PLAN)
-
-    transition = first_step(task)
-
-    assert transition.step is Step.PLAN
-    assert transition.iteration == 0
-
-
-def test_first_step_with_mode_implement_starts_at_iteration_one() -> None:
-    task = make_task(mode=Mode.IMPLEMENT)
-
-    transition = first_step(task)
-
-    assert transition.step is Step.IMPLEMENT
-    assert transition.iteration == 1
+    assert (transition.step, transition.iteration) == (step, iteration)
 
 
 @pytest.mark.parametrize(
@@ -274,54 +259,39 @@ def test_verify_changes_requested_increments_iteration_and_rejections() -> None:
     assert transition.rung_index.get(Role.IMPLEMENTER, 0) == 0
 
 
-def test_verify_changes_requested_at_escalate_after_bumps_the_rung_and_resets() -> None:
-    task = make_task(step=Step.VERIFY, counters=Counters(rejections_on_rung=ESCALATE_AFTER - 1))
-
-    transition = _next(task, make_verdict(decision="changes_requested"))
-
-    assert transition.rung_index[Role.IMPLEMENTER] == 1
-    assert transition.counters.rejections_on_rung == 0
+_OVERRIDE = Rung(agent="claude", model="haiku", effort=None)
+_TOP_RUNG = len(_SETTINGS.roles.implementer.ladder) - 1
 
 
-def test_verify_changes_requested_at_escalate_after_keeps_the_new_iterations_consult_reset() -> (
-    None
-):
+@pytest.mark.parametrize(
+    ("rung", "override", "rung_after", "rejections_after", "cleared"),
+    [
+        (0, None, 1, 0, {}),
+        (0, _OVERRIDE, 1, 0, {Role.IMPLEMENTER: _OVERRIDE}),
+        (_TOP_RUNG, None, _TOP_RUNG, ESCALATE_AFTER, {}),
+    ],
+)
+def test_verify_changes_requested_at_escalate_after_bumps_the_rung_until_the_top(
+    rung: int,
+    override: Rung | None,
+    rung_after: int,
+    rejections_after: int,
+    cleared: dict[Role, Rung],
+) -> None:
     task = make_task(
         step=Step.VERIFY,
+        rung_index={Role.IMPLEMENTER: rung},
         counters=Counters(rejections_on_rung=ESCALATE_AFTER - 1, consults=2),
+        overrides={Role.IMPLEMENTER: override} if override else {},
     )
 
     transition = _next(task, make_verdict(decision="changes_requested"))
 
+    assert transition.rung_index[Role.IMPLEMENTER] == rung_after
+    assert transition.counters.rejections_on_rung == rejections_after
     assert transition.counters.consults == 0
-
-
-def test_verify_changes_requested_bumping_the_rung_clears_the_observed_override() -> None:
-    override = Rung(agent="claude", model="haiku", effort=None)
-    task = make_task(
-        step=Step.VERIFY,
-        counters=Counters(rejections_on_rung=ESCALATE_AFTER - 1),
-        overrides={Role.IMPLEMENTER: override},
-    )
-
-    transition = _next(task, make_verdict(decision="changes_requested"))
-
-    assert transition.cleared_overrides == {Role.IMPLEMENTER: override}
+    assert transition.cleared_overrides == cleared
     assert transition.set_overrides == {}
-
-
-def test_verify_changes_requested_at_the_top_of_the_ladder_keeps_counting() -> None:
-    top_index = len(_SETTINGS.roles.implementer.ladder) - 1
-    task = make_task(
-        step=Step.VERIFY,
-        rung_index={Role.IMPLEMENTER: top_index},
-        counters=Counters(rejections_on_rung=ESCALATE_AFTER - 1),
-    )
-
-    transition = _next(task, make_verdict(decision="changes_requested"))
-
-    assert transition.rung_index[Role.IMPLEMENTER] == top_index
-    assert transition.counters.rejections_on_rung == ESCALATE_AFTER
     assert transition.status is Status.RUNNING
 
 
@@ -346,45 +316,38 @@ def test_verify_supersede_cancels_and_enqueues_new_tasks() -> None:
     assert transition.repoint_dependents is True
 
 
-def test_integrate_conflict_accept_continues_integrating() -> None:
-    task = make_task(step=Step.INTEGRATE, status=Status.INTEGRATING)
+@pytest.mark.parametrize(
+    ("decision", "rounds", "rounds_after", "status", "reason"),
+    [
+        ("accept", 0, 0, Status.INTEGRATING, None),
+        ("accept", 1, 1, Status.INTEGRATING, None),
+        ("changes_requested", 0, 1, Status.INTEGRATING, None),
+        (
+            "changes_requested",
+            CONFLICT_ROUNDS - 1,
+            CONFLICT_ROUNDS,
+            Status.ESCALATED,
+            EscalationReason.INTEGRATION_CONFLICT,
+        ),
+    ],
+)
+def test_integrate_conflict_verdicts_count_rounds_until_they_are_exhausted(
+    decision: Literal["accept", "changes_requested"],
+    rounds: int,
+    rounds_after: int,
+    status: Status,
+    reason: EscalationReason | None,
+) -> None:
+    task = make_task(
+        step=Step.INTEGRATE, status=Status.INTEGRATING, counters=Counters(conflict_rounds=rounds)
+    )
 
-    transition = _next(task, make_verdict(decision="accept"))
+    transition = _next(task, make_verdict(decision=decision))
 
-    assert transition.status is Status.INTEGRATING
+    assert transition.counters.conflict_rounds == rounds_after
+    assert transition.status is status
+    assert transition.escalation_reason is reason
     assert transition.step is Step.INTEGRATE
-
-
-def test_integrate_conflict_accept_does_not_reset_conflict_rounds() -> None:
-    task = make_task(
-        step=Step.INTEGRATE, status=Status.INTEGRATING, counters=Counters(conflict_rounds=1)
-    )
-
-    transition = _next(task, make_verdict(decision="accept"))
-
-    assert transition.counters.conflict_rounds == 1
-
-
-def test_integrate_conflict_changes_requested_counts_a_round() -> None:
-    task = make_task(step=Step.INTEGRATE, status=Status.INTEGRATING)
-
-    transition = _next(task, make_verdict(decision="changes_requested"))
-
-    assert transition.counters.conflict_rounds == 1
-    assert transition.status is Status.INTEGRATING
-
-
-def test_integrate_conflict_rounds_exhausted_raises_integration_conflict() -> None:
-    task = make_task(
-        step=Step.INTEGRATE,
-        status=Status.INTEGRATING,
-        counters=Counters(conflict_rounds=CONFLICT_ROUNDS - 1),
-    )
-
-    transition = _next(task, make_verdict(decision="changes_requested"))
-
-    assert transition.status is Status.ESCALATED
-    assert transition.escalation_reason is EscalationReason.INTEGRATION_CONFLICT
 
 
 def test_integrate_conflict_rejects_a_supersede_verdict() -> None:
