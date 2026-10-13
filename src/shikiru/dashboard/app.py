@@ -419,6 +419,13 @@ class _ContextWidgetScreen(ModalScreen[None]):
         self.dismiss()
 
 
+_COMMAND_STATUS_STYLES = {
+    CommandFeedbackStatus.PENDING: f"{AMBER} bold",
+    CommandFeedbackStatus.APPLIED: f"{SAGE} bold",
+    CommandFeedbackStatus.REJECTED: f"{DUSTY_ROSE} bold",
+}
+
+
 def _command_history_text(history: CommandHistoryView) -> str:
     if not history.entries:
         return "No commands recorded."
@@ -521,14 +528,7 @@ def _command_rejection_cause(
 def _command_summary_text(history: CommandHistoryView) -> Text:
     entry = history.entries[0]
     summary = Text()
-    summary.append(
-        entry.status.value,
-        style={
-            CommandFeedbackStatus.PENDING: f"{AMBER} bold",
-            CommandFeedbackStatus.APPLIED: f"{SAGE} bold",
-            CommandFeedbackStatus.REJECTED: f"{DUSTY_ROSE} bold",
-        }[entry.status],
-    )
+    summary.append(entry.status.value, style=_COMMAND_STATUS_STYLES[entry.status])
     detail = f"{entry.action} {entry.target}"
     if entry.status is CommandFeedbackStatus.PENDING:
         queued_at = _command_queue_time(entry.queued_at)
