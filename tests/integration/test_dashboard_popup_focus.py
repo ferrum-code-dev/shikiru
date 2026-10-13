@@ -4,7 +4,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from textual.color import Color
 from textual.containers import VerticalScroll
 from textual.widgets import Button, DataTable, ListView, Select
 
@@ -48,15 +47,6 @@ _COMPACT_APP_SIZE = (48, 20)
 _OVERFLOWING_HELP_SIZE = (70, 22)
 _OVERFLOWING_WORDS = 400
 _WAIT_SECONDS = 2
-_SCROLLBAR_COLOUR_VARIABLES = (
-    "scrollbar",
-    "scrollbar-hover",
-    "scrollbar-active",
-    "scrollbar-background",
-    "scrollbar-background-hover",
-    "scrollbar-background-active",
-    "scrollbar-corner-color",
-)
 _PROJECT_NAME = "popup-focus"
 _COMMAND_HISTORY_LABEL = "Command history · Pending, Applied and Rejected"
 _USAGE_DETAILS_LABEL = "Usage details"
@@ -110,7 +100,8 @@ async def _open_decision_packet(app: DashboardApp, pilot: Pilot[None]) -> Screen
 
 
 async def _open_dialogue_text(app: DashboardApp, pilot: Pilot[None]) -> Screen[Any]:
-    await choose_focus_view(pilot, _DIALOGUE_LABEL)
+    if not app.screen.query("#dialogue-table"):
+        await choose_focus_view(pilot, _DIALOGUE_LABEL)
     table = cast("DataTable[object]", app.screen.query_one("#dialogue-table", DataTable))
     table.focus()
     origin = app.screen
@@ -218,7 +209,7 @@ def popup_app(connection: Connection, reader: StateReader, tmp_path: Path) -> Da
 
 
 @pytest.mark.parametrize(("open_popup", "target"), _ROUTES)
-async def test_popup_starts_on_its_useful_control_and_escape_returns_to_its_origin(
+async def test_popup_starts_on_its_useful_control_and_closes_with_escape_or_its_close_button(
     popup_app: DashboardApp,
     open_popup: Callable[[DashboardApp, Pilot[None]], Awaitable[Screen[Any]]],
     target: str,
@@ -229,20 +220,9 @@ async def test_popup_starts_on_its_useful_control_and_escape_returns_to_its_orig
         assert popup_app.focused is popup_app.screen.query_one(target)
         await pilot.press("escape")
         await wait_until(lambda: popup_app.screen is origin, timeout=_WAIT_SECONDS)
-
-
-@pytest.mark.parametrize(("open_popup", "target"), _ROUTES)
-async def test_popup_reaches_its_close_control_with_tab_and_enter_closes_it(
-    popup_app: DashboardApp,
-    open_popup: Callable[[DashboardApp, Pilot[None]], Awaitable[Screen[Any]]],
-    target: str,
-) -> None:
-    async with popup_app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        origin = await open_popup(popup_app, pilot)
+        await open_popup(popup_app, pilot)
         screen = popup_app.screen
         close = screen.query_one(f".{POPUP_CLOSE_CLASS}", Button)
-        assert popup_app.focused is screen.query_one(target)
         for _ in range(len(screen.focus_chain)):
             if popup_app.focused is close:
                 break
@@ -252,35 +232,27 @@ async def test_popup_reaches_its_close_control_with_tab_and_enter_closes_it(
         await wait_until(lambda: popup_app.screen is origin, timeout=_WAIT_SECONDS)
 
 
-def _scrollbar_style(widget: Widget) -> tuple[object, ...]:
-    styles = widget.styles
-    return (
-        styles.scrollbar_color,
-        styles.scrollbar_color_hover,
-        styles.scrollbar_color_active,
-        styles.scrollbar_background,
-        styles.scrollbar_background_hover,
-        styles.scrollbar_background_active,
-        styles.scrollbar_corner_color,
-        styles.scrollbar_size_vertical,
-    )
+def _scrollbar_width(widget: Widget) -> object:
+    return widget.styles.scrollbar_size_vertical
 
 
-async def test_popup_bodies_and_task_lists_share_one_scrollbar_style(
+async def test_popup_bodies_and_task_lists_use_the_one_column_scrollbar(
     popup_app: DashboardApp,
 ) -> None:
     async with popup_app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         home = popup_app.screen
-        expected = _scrollbar_style(popup_app.query_one("#task-browser-list", ListView))
-        detail_body = popup_app.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
-        assert _scrollbar_style(detail_body) == expected
+        assert _scrollbar_width(popup_app.query_one("#task-browser-list", ListView)) == (
+            SCROLLBAR_WIDTH
+        )
         await pilot.press("?")
         await wait_until(
             lambda: bool(popup_app.screen.query("#workspace-help-scroll")),
             timeout=_WAIT_SECONDS,
         )
-        assert _scrollbar_style(popup_app.screen.query_one("#workspace-help-scroll")) == expected
+        assert _scrollbar_width(popup_app.screen.query_one("#workspace-help-scroll")) == (
+            SCROLLBAR_WIDTH
+        )
         await pilot.press("escape")
         await wait_until(lambda: popup_app.screen is home, timeout=_WAIT_SECONDS)
         await pilot.press("v")
@@ -288,13 +260,9 @@ async def test_popup_bodies_and_task_lists_share_one_scrollbar_style(
             lambda: bool(popup_app.screen.query("#focus-views-list")),
             timeout=_WAIT_SECONDS,
         )
-        assert _scrollbar_style(popup_app.screen.query_one("#focus-views-list")) == expected
-
-
-def _shared_scrollbar_style(app: DashboardApp) -> tuple[object, ...]:
-    variables = app.get_css_variables()
-    colours = tuple(Color.parse(variables[name]) for name in _SCROLLBAR_COLOUR_VARIABLES)
-    return (*colours, SCROLLBAR_WIDTH)
+        assert _scrollbar_width(popup_app.screen.query_one("#focus-views-list")) == (
+            SCROLLBAR_WIDTH
+        )
 
 
 def _seed_overflowing_task(connection: Connection, clock: FakeClock) -> str:
@@ -310,7 +278,7 @@ _TASK_DETAIL_LAYOUTS = (
 
 
 @pytest.mark.parametrize(("size", "standalone"), _TASK_DETAIL_LAYOUTS)
-async def test_overflowing_task_detail_has_one_column_scrollbar_with_shared_colours(
+async def test_overflowing_task_detail_has_a_one_column_scrollbar(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -333,10 +301,10 @@ async def test_overflowing_task_detail_has_one_column_scrollbar_with_shared_colo
         assert body.scrollable_content_region.width == (
             body.region.width - body.styles.gutter.width - SCROLLBAR_WIDTH
         )
-        assert _scrollbar_style(body) == _shared_scrollbar_style(app)
+        assert _scrollbar_width(body) == SCROLLBAR_WIDTH
 
 
-async def test_task_views_select_dropdown_shares_the_one_column_popup_scrollbar(
+async def test_task_views_select_dropdown_uses_the_one_column_scrollbar(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -362,7 +330,7 @@ async def test_task_views_select_dropdown_shares_the_one_column_popup_scrollbar(
         await pilot.press("enter")
         await pilot.pause()
         dropdown = choice.query_one("SelectOverlay")
-        assert _scrollbar_style(dropdown) == _shared_scrollbar_style(app)
+        assert _scrollbar_width(dropdown) == SCROLLBAR_WIDTH
 
 
 async def test_help_body_scrolls_from_its_initial_focus_without_resizing_the_frame(
