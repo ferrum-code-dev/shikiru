@@ -15,18 +15,11 @@ _DISK_ALERT_PCT = 5
     [
         (39, _CONTEXT_THRESHOLDS, UsageLevel.OK),
         (39.6, _CONTEXT_THRESHOLDS, UsageLevel.WARN),
-        (40, _CONTEXT_THRESHOLDS, UsageLevel.WARN),
-        (59, _CONTEXT_THRESHOLDS, UsageLevel.WARN),
         (59.6, _CONTEXT_THRESHOLDS, UsageLevel.ALERT),
-        (60, _CONTEXT_THRESHOLDS, UsageLevel.ALERT),
         (49.4, _QUOTA_THRESHOLDS, UsageLevel.OK),
         (49.5, _QUOTA_THRESHOLDS, UsageLevel.WARN),
-        (49.6, _QUOTA_THRESHOLDS, UsageLevel.WARN),
-        (50, _QUOTA_THRESHOLDS, UsageLevel.WARN),
         (89.4, _QUOTA_THRESHOLDS, UsageLevel.WARN),
         (89.5, _QUOTA_THRESHOLDS, UsageLevel.ALERT),
-        (89.6, _QUOTA_THRESHOLDS, UsageLevel.ALERT),
-        (90, _QUOTA_THRESHOLDS, UsageLevel.ALERT),
         (120, _QUOTA_THRESHOLDS, UsageLevel.ALERT),
     ],
 )

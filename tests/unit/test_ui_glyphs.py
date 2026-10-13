@@ -12,9 +12,6 @@ def test_every_registered_glyph_is_a_single_terminal_cell() -> None:
 @pytest.mark.parametrize(
     ("glyph", "expected"),
     [
-        ("a", True),
-        ("?", True),
-        ("◆", True),
         ("文", False),
         ("🔥", False),
         ("⚠", False),

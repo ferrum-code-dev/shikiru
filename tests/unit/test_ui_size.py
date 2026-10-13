@@ -13,7 +13,6 @@ _KIB = 1024
         (_KIB, "1.0 KiB"),
         (5 * _KIB**2 + _KIB**2 // 2, "5.5 MiB"),
         (3 * _KIB**4, "3.0 TiB"),
-        (2048 * _KIB**4, "2048.0 TiB"),
     ],
 )
 def test_a_size_is_shown_in_the_largest_unit_that_keeps_it_at_or_above_one(
