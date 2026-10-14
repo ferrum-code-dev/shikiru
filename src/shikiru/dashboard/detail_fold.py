@@ -89,38 +89,29 @@ class DetailFold(Vertical):
             super().__init__()
             self.fold = fold
 
-    class Chosen(Message):
-        """A header without a body was activated."""
-
-        def __init__(self, fold: DetailFold) -> None:
-            super().__init__()
-            self.fold = fold
-
     def __init__(
         self,
         view_id: str,
         title: str,
-        body: Sequence[Widget] | None = None,
+        body: Sequence[Widget],
         *,
         is_open: bool = False,
     ) -> None:
-        """Hold the section's view id and name; a fold without a body is a plain choice."""
+        """Hold the section's view id, name and body."""
         super().__init__()
         self.view_id = view_id
         self.title = title
         self.headline: str | None = None
         self.header = FoldHeader(self)
-        self._body = Vertical(*body, classes="fold-body") if body is not None else None
-        self._open = is_open and body is not None
+        self._body = Vertical(*body, classes="fold-body")
+        self._open = is_open
         self._focused = False
-        if self._body is not None:
-            self._body.display = self._open
+        self._body.display = self._open
 
     def compose(self) -> ComposeResult:
-        """Yield the header, then the body when the fold has one."""
+        """Yield the header, then the body."""
         yield self.header
-        if self._body is not None:
-            yield self._body
+        yield self._body
 
     def on_mount(self) -> None:
         """Paint the header once it exists."""
@@ -144,12 +135,12 @@ class DetailFold(Vertical):
     @property
     def focus_target(self) -> Widget:
         """The row list inside an open body, otherwise the header."""
-        lists = self._body.query(RowList) if self._body is not None and self._open else None
+        lists = self._body.query(RowList) if self._open else None
         return lists.first(RowList) if lists else self.header
 
     def set_open(self, is_open: bool) -> None:
         """Show or hide the body and tell the owner when the state changed."""
-        if self._body is None or is_open == self._open:
+        if is_open == self._open:
             return
         self._open = is_open
         self._body.display = is_open
@@ -168,10 +159,7 @@ class DetailFold(Vertical):
             self.paint()
 
     def activate(self) -> None:
-        """Open a closed fold, or move into the list of an open one; a choice posts `Chosen`."""
-        if self._body is None:
-            self.post_message(self.Chosen(self))
-            return
+        """Open a closed fold, or move into the list of an open one."""
         self.set_open(True)
         self.call_after_refresh(self.folds.focus_fold, self)
 

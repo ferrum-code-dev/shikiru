@@ -1355,9 +1355,6 @@ class DashboardApp(App[None]):
             placement=placement,
             home_attention_present=self._focus_task is None,
             open_contextual_view=self._open_contextual_view,
-            task_contextual_views=tuple(
-                (choice.label, choice.choice_id) for choice in self._task_context_choices()
-            ),
         )
 
     async def _activate_home_summary(self, summary: str) -> None:
@@ -1463,36 +1460,6 @@ class DashboardApp(App[None]):
                     _ContextChoice(
                         f"widget-{name}",
                         label,
-                        widget_name=name,
-                        placement=placement,
-                    )
-                )
-        return tuple(choices)
-
-    def _task_context_choices(self) -> tuple[_ContextChoice, ...]:
-        choices = [
-            _ContextChoice(
-                FOCUS_COMMAND_HISTORY,
-                "Command history · pending, applied and rejected",
-                command_history=True,
-            )
-        ]
-        for name in self._configured_widget_names:
-            placement = self._widget_placements[name]
-            if placement is WidgetPlacement.PROJECT_USAGE:
-                choices.append(
-                    _ContextChoice(
-                        FOCUS_USAGE_DETAILS,
-                        _PROJECT_USAGE_TITLE,
-                        widget_name=name,
-                        placement=WidgetPlacement.DETAILED_USAGE,
-                    )
-                )
-            else:
-                choices.append(
-                    _ContextChoice(
-                        f"widget-{name}",
-                        _contextual_widget_label(name, placement),
                         widget_name=name,
                         placement=placement,
                     )
@@ -1620,11 +1587,7 @@ class DashboardApp(App[None]):
 
     def _find_context_choice(self, choice_id: str) -> _ContextChoice | None:
         return next(
-            (
-                item
-                for item in (*self._context_choices(), *self._task_context_choices())
-                if item.choice_id == choice_id
-            ),
+            (item for item in self._context_choices() if item.choice_id == choice_id),
             None,
         )
 

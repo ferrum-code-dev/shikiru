@@ -7,8 +7,9 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from rich.text import Text
 from textual.containers import VerticalScroll
-from textual.widgets import Button, DataTable, Input, ListView, Select, Static, TextArea
+from textual.widgets import Button, Input, ListView, Select, Static, TextArea
 
 import shikiru.agents.registry as registry_module
 from shikiru.agents.contracts import (
@@ -212,7 +213,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
-    from rich.text import Text
     from textual.pilot import Pilot
     from textual.screen import Screen
     from textual.widget import Widget
@@ -324,7 +324,10 @@ def _dashboard_app(
 
 
 def _text(widget: Static) -> str:
-    return cast("Text", widget.render()).plain
+    content = widget.content
+    if isinstance(content, Text):
+        return content.plain
+    return content if isinstance(content, str) else plain_text(content)
 
 
 def _visible_text_area_text(text_area: TextArea) -> str:
@@ -489,61 +492,6 @@ async def _open_task_view(
         lambda: view_id in app.screen.query_one("#task-detail-panel", TaskDetailPanel).open_views,
         timeout=UI_WAIT_SECONDS,
     )
-
-
-async def _open_task_context_choice(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    choice_id: str,
-) -> None:
-    await choose_details_entry(pilot, choice_id)
-    await wait_until(
-        lambda: bool(app.screen.query("#context-widget-frame")), timeout=UI_WAIT_SECONDS
-    )
-
-
-async def _assert_task_dialogue_is_scoped(
-    app: DashboardApp,
-    pilot: Pilot[None],
-) -> None:
-    await _open_task_context_choice(app, pilot, "widget-dialogue")
-    dialogue = cast("DataTable[object]", app.screen.query_one("#dialogue-table", DataTable))
-    assert dialogue.row_count == 2
-    dialogue_text = " ".join(
-        plain_text(cell) for row in range(dialogue.row_count) for cell in dialogue.get_row_at(row)
-    )
-    assert "Focused activity only" in dialogue_text
-    assert "recorded fault" in dialogue_text
-    assert "Unrelated activity" not in dialogue_text
-    await pilot.press("escape")
-
-
-async def _assert_task_usage_is_scoped(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    task_id: str,
-    agent: str,
-    other_agent: str,
-) -> None:
-    await _open_task_context_choice(app, pilot, "usage")
-    usage_text = plain_text(app.screen.query_one("#usage", Static).content)
-    assert f"Task {task_id}" in usage_text
-    assert agent in usage_text
-    assert "4" in usage_text
-    assert other_agent not in usage_text
-    assert "900" not in usage_text
-    await pilot.press("escape")
-
-
-async def _assert_task_context_extensions_and_workspace_are_available(
-    app: DashboardApp,
-    pilot: Pilot[None],
-) -> None:
-    await _open_task_context_choice(app, pilot, f"widget-{EXTENSION_WIDGET}")
-    assert app.screen.query_one("#task-view-extension-panel", Static).region.width > 0
-    await pilot.press("escape")
-    await _open_task_view(app, pilot, TASK_VIEW_WORKSPACE)
-    assert app.screen.query_one("#task-detail-window", Button).region.width > 0
 
 
 def _write_report_turn(
@@ -2024,10 +1972,7 @@ async def _assert_responsive_task_actions(
 async def _assert_task_context_keeps_priority(app: DashboardApp, pilot: Pilot[None]) -> None:
     await choose_details_entry(pilot, TASK_VIEW_CONTEXT)
     await wait_until(
-        lambda: (
-            "Dispatch priority · 5"
-            in _text(app.screen.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static))
-        ),
+        lambda: "Priority 5" in _text(app.screen.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)),
         timeout=UI_WAIT_SECONDS,
     )
 
@@ -2387,7 +2332,7 @@ async def test_resume_availability_includes_an_intervention_only_hold(
         reader.close()
 
 
-async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_reachable(
+async def test_fixed_task_view_shows_no_project_widgets_and_keeps_workspace_reachable(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -2396,31 +2341,6 @@ async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_re
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     focused = seed_task(connection, clock, title="Focused task", mode=Mode.IMPLEMENT)
-    unrelated = seed_task(connection, clock, title="Unrelated task", mode=Mode.IMPLEMENT)
-    focused_run = RunStore(connection, clock).start(
-        focused.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0]
-    )
-    RunStore(connection, clock).record_usage(
-        focused_run.id,
-        Usage(4, 2, 0, 0, 0.1, "billed", 10),
-    )
-    other_run = RunStore(connection, clock).start(unrelated.id, Role.IMPLEMENTER, LEADER_RUNG)
-    RunStore(connection, clock).record_usage(
-        other_run.id,
-        Usage(900, 700, 0, 0, 4.0, "billed", 80),
-    )
-    EventLog(connection, clock).append(
-        EventKind.TURN_COMPLETED,
-        task_id=focused.id,
-        message="focused turn completed",
-        data={"role": Role.IMPLEMENTER.value, "summary": "Focused activity only"},
-    )
-    EventLog(connection, clock).append(
-        EventKind.TURN_COMPLETED,
-        task_id=unrelated.id,
-        message="other turn completed",
-        data={"role": Role.IMPLEMENTER.value, "summary": "Unrelated activity"},
-    )
     EscalationStore(connection, clock).open(
         focused.id,
         step=None,
@@ -2428,12 +2348,6 @@ async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_re
         headline="Attention",
         packet_path="unused.packet",
         options=(),
-    )
-    EventLog(connection, clock).append(
-        EventKind.ENGINE_FAULT,
-        task_id=focused.id,
-        message="recorded fault",
-        data={"scope": "scheduler", "error": "task read failed", "recoverable": True, "repeat": 1},
     )
     previous_entry_points = registry_module.entry_points
 
@@ -2468,15 +2382,8 @@ async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_re
                 app.screen.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)
             )
             await pilot.press("escape")
-            await _assert_task_dialogue_is_scoped(app, pilot)
-            await _assert_task_usage_is_scoped(
-                app,
-                pilot,
-                focused.id,
-                focused_run.agent,
-                other_run.agent,
-            )
-            await _assert_task_context_extensions_and_workspace_are_available(app, pilot)
+            await _open_task_view(app, pilot, TASK_VIEW_WORKSPACE)
+            assert app.screen.query_one("#task-detail-window", Button).region.width > 0
     finally:
         reader.close()
 
@@ -2659,8 +2566,8 @@ _SECTION_CASES = [
     _SectionCase(DetailsSection.EVENTS, TASK_VIEW_EVIDENCE, TaskTimelineCategory.ACTIVITY, False),
     _SectionCase(DetailsSection.AGENT_ACTIVITY, TASK_VIEW_AGENT, TaskTimelineCategory.SIGNAL, True),
     _SectionCase(DetailsSection.USAGE, TASK_VIEW_USAGE, None, False),
-    _SectionCase(DetailsSection.WORKSPACE, TASK_VIEW_WORKSPACE, None, False),
     _SectionCase(DetailsSection.BLOCKERS, TASK_VIEW_RELATIONSHIPS, None, True),
+    _SectionCase(DetailsSection.WORKSPACE, TASK_VIEW_WORKSPACE, None, False),
     _SectionCase(DetailsSection.SETTINGS, TASK_VIEW_CONTEXT, None, False),
 ]
 

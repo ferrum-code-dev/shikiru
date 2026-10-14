@@ -60,7 +60,6 @@ from shikiru.dashboard.contract import (
 from shikiru.dashboard.detail import (
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BRIEFING,
-    TASK_DETAIL_CRITERIA,
     TASK_DETAIL_DECISIONS,
     TASK_DETAIL_DETAILS_BUTTON,
     TASK_DETAIL_IDENTITY,
@@ -267,7 +266,6 @@ _TASK_DETAIL_SECTION_IDS = (
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_REQUEST,
-    TASK_DETAIL_CRITERIA,
     TASK_DETAIL_RESULTS,
     TASK_DETAIL_DECISIONS,
     TASK_DETAIL_WORKSPACE,
@@ -3825,27 +3823,6 @@ async def _exercise_task_secondary_menu_routes(
     assert queue.pending() == []
     await pilot.click("#context-widget-close")
     await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
-
-    await _open_task_context_menu(app, pilot, list_view)
-    menu = cast("PaletteScreen", app.screen).query_one("#palette-menu", VerticalScroll)
-    menu.scroll_to_widget(
-        menu.query_one("#palette-menu-view-secondary", Button),
-        animate=False,
-        immediate=True,
-    )
-    await pilot.pause()
-    await _click_palette_menu_button(
-        pilot,
-        cast("PaletteScreen", app.screen),
-        "palette-menu-view-secondary",
-    )
-    await pick_details_entry(pilot, "widget-faults")
-    await wait_until(
-        lambda: bool(app.screen.query("#context-widget-frame")),
-        timeout=UI_WAIT_SECONDS,
-    )
-    assert "faults" in _rendered_text(app.screen.query_one("#context-widget-title", Static))
-    assert queue.pending() == []
 
 
 async def test_task_context_menu_closes_and_opens_secondary_views_without_commands(

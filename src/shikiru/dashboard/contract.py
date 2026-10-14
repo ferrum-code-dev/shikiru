@@ -942,6 +942,5 @@ class WidgetContext:
     placement: WidgetPlacement = WidgetPlacement.EXTENSIONS
     home_attention_present: bool = False
     open_contextual_view: OpenContextualView | None = None
-    task_contextual_views: tuple[tuple[str, str], ...] = ()
     animations: bool = True
     activate_attention_decision: ActivateAttentionDecision | None = None

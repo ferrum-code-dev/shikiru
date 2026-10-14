@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 GROUP_SEPARATOR = " · "
 LABEL_GAP = 1
+VALUE_OVERFLOW = "fold"
 HEADING_MIN_GAP = 1
 STACKED_BELOW_WIDTH = 32
 OBSERVED_WORD = "observed"
@@ -99,7 +100,7 @@ def labelled_rows(rows: list[Row], width: int, label_width: int) -> RenderableTy
     value_width = width - label_width - LABEL_GAP
     grid = Table.grid()
     grid.add_column(width=label_width + LABEL_GAP, no_wrap=True)
-    grid.add_column(width=value_width)
+    grid.add_column(width=value_width, overflow=VALUE_OVERFLOW)
     for label, groups in rows:
         grid.add_row(label, wrap_groups(groups, value_width))
     return grid

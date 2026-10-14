@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.console import Group
 from rich.text import Text
 
 from shikiru.dashboard.briefing_view import (
+    BRANCH_ARROW,
+    BRANCH_LABEL,
     COMMITS_LABEL,
     MINUS,
     PR_LABEL,
@@ -40,6 +43,16 @@ OPEN_LABEL = "Open"
 ROUND_LABEL = "Round"
 YOU_LABEL = "You"
 NOTHING_RECORDED = "Nothing is recorded yet."
+CRITERIA_LABEL = "Acceptance criteria"
+NO_CRITERIA = "No validated acceptance criteria are recorded."
+CRITERION_LEAD = "\N{BULLET} "
+PATH_LABEL = "Path"
+HOME_MARK = "~"
+MODE_LABEL = "Mode"
+SUBMITTED_LABEL = "Submitted"
+REQUEUED_LABEL = "Requeued"
+STATUS_REASON_LABEL = "Status reason"
+PRIORITY_LABEL = "Priority"
 MORE_COMMITS = "+{count} more"
 ADDED_TASKS = "added {ids}"
 ACCEPTED_WORD = "accepted"
@@ -177,3 +190,79 @@ class DecisionsBody:
         """Yield the labelled rows in order, or the nothing-recorded note."""
         del console
         yield _body(options.max_width, _decision_rows(self.view), [])
+
+
+@dataclass(frozen=True)
+class DescriptionBody:
+    """The Task description fold body: the request, then the acceptance criteria as a list."""
+
+    view: TaskDetailView
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        """Yield the request text and the criteria list."""
+        del console, options
+        yield Text(self.view.request)
+        yield grey(CRITERIA_LABEL)
+        criteria = self.view.acceptance_criteria
+        if not criteria:
+            yield grey(NO_CRITERIA)
+        for item in criteria:
+            yield Text.assemble(grey(CRITERION_LEAD), item)
+
+
+def home_shortened(path: str, home: Path) -> str:
+    """Return `path` as `~/...` when it lies under `home`, otherwise unchanged."""
+    location = Path(path)
+    return (
+        str(Path(HOME_MARK) / location.relative_to(home)) if location.is_relative_to(home) else path
+    )
+
+
+def _workspace_rows(view: TaskDetailView, home: Path) -> list[Row]:
+    rows: list[Row] = []
+    if view.branch:
+        base = view.results.base if view.results is not None else None
+        target = view.branch if base is None else f"{view.branch} {BRANCH_ARROW} {base}"
+        rows.append((grey(BRANCH_LABEL), (Text(target),)))
+    rows.append((grey(PATH_LABEL), (Text(home_shortened(view.worktree_path, home)),)))
+    return rows
+
+
+@dataclass(frozen=True)
+class WorkspaceBody:
+    """The Workspace fold body: the task branch and where its worktree lives."""
+
+    view: TaskDetailView
+    home: Path
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        """Yield the labelled branch and path rows."""
+        del console
+        yield _body(options.max_width, _workspace_rows(self.view, self.home), [])
+
+
+def _present(value: str | None, style: str = "") -> Text | None:
+    return Text(value, style=style) if value else None
+
+
+def _settings_rows(view: TaskDetailView) -> list[Row]:
+    entries = (
+        (MODE_LABEL, _present(view.mode)),
+        (SUBMITTED_LABEL, _present(view.submitted_age)),
+        (REQUEUED_LABEL, _present(view.requeued_age)),
+        (STATUS_REASON_LABEL, _present(view.status_reason, AMBER)),
+        (PRIORITY_LABEL, None if view.priority is None else Text(str(view.priority))),
+    )
+    return [(grey(label), (value,)) for label, value in entries if value is not None]
+
+
+@dataclass(frozen=True)
+class SettingsBody:
+    """The Settings fold body: mode, ages, status reason and dispatch priority."""
+
+    view: TaskDetailView
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        """Yield the labelled settings rows."""
+        del console
+        yield _body(options.max_width, _settings_rows(self.view), [])

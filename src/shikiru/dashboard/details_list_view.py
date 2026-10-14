@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 _ARROWS = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW}"
 EVENTS_HINT = f"{_ARROWS} select · PgUp/PgDn page · End follow"
-RELATIONSHIPS_HINT = f"{_ARROWS} select · Enter open · PgUp/PgDn page"
+RELATIONSHIPS_HINT = f"{_ARROWS} select · Enter open"
 ROW_LEAD = "  "
 _HEADLINE_GAP = "  "
 DECISION_OPEN = "decision open"
@@ -40,15 +40,15 @@ _BLOCKER_NOUNS = ("blocker", "blockers")
 class DetailsSection(StrEnum):
     """The task detail sections, in fold order, named as the headers show them."""
 
-    REQUEST = "Request and criteria"
+    REQUEST = "Task description"
     RESULTS = "Results"
     DECISIONS = "Decisions"
     EVENTS = "Events"
     AGENT_ACTIVITY = "Agent activity"
     USAGE = "Usage and sessions"
+    BLOCKERS = "Dependencies"
     WORKSPACE = "Workspace"
-    BLOCKERS = "Blockers and related"
-    SETTINGS = "Task settings"
+    SETTINGS = "Settings"
 
 
 @dataclass(frozen=True)

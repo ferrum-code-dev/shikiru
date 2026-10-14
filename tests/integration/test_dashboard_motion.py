@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-import errno
 import json
-import os
 import re
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -22,7 +20,7 @@ from shikiru.agents.contracts import (
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import TimeoutsConfig
 from shikiru.dashboard.activity import RoleViewTail
-from shikiru.dashboard.app import FOCUS_COMMAND_HISTORY, FOCUS_USAGE_DETAILS, DashboardApp
+from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.briefing_view import header_text
 from shikiru.dashboard.contract import TaskBrowserFilter
 from shikiru.dashboard.detail import (
@@ -35,9 +33,6 @@ from shikiru.domain.escalation import Escalation, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
-    REPORT_FILENAME,
-    REPORT_KIND_FILENAME,
-    ReportKind,
 )
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step
@@ -128,11 +123,6 @@ _NATIVE_VISUAL_REVIEW_DIR_ENV = "SHIKIRU_NATIVE_VISUAL_REVIEW_DIR"
 _USAGE_REFRESH_COSTS = (0.87, 1.13, 1.41, 1.62)
 _USAGE_REFRESH_INPUT_TOKENS = 200
 _USAGE_REFRESH_OUTPUT_TOKENS = 40
-_INITIAL_TRIAGE_TURN = "01-triage-i0"
-_IN_FLIGHT_REPORT_TEXT = (
-    '{"title":"Loaded report","mode":"implement","complexity":"normal",'
-    '"acceptance_criteria":[],"references":[]}'
-)
 
 
 @dataclass(frozen=True)
@@ -234,6 +224,8 @@ def _task_dashboard(
     settings: Settings,
     clock: FakeClock,
     task: Task,
+    *,
+    home: bool = False,
 ) -> tuple[DashboardApp, list[tuple[object | None, Callable[[], Awaitable[None]]]]]:
     registered_callbacks: list[tuple[object | None, Callable[[], Awaitable[None]]]] = []
 
@@ -246,7 +238,7 @@ def _task_dashboard(
 
     views = _build_views(reader, project_dir, settings, clock, task)
     app = DashboardApp(
-        focus_task=task.id,
+        focus_task=None if home else task.id,
         views=views,
         on_change=watch,
         clock=clock,
@@ -263,35 +255,12 @@ def _task_dashboard(
     return app, registered_callbacks
 
 
-async def _wait_for_fifo_writer(path: Path) -> int:
-    descriptor: int | None = None
-
-    async def open_writer() -> bool:
-        nonlocal descriptor
-        try:
-            descriptor = os.open(path, os.O_WRONLY | os.O_NONBLOCK)
-        except OSError as error:
-            if error.errno != errno.ENXIO:
-                raise
-            return False
-        return True
-
-    await wait_until(open_writer, timeout=UI_WAIT_SECONDS)
-    assert descriptor is not None
-    return descriptor
-
-
 async def _assert_closed_history_callback_is_safe(
     app: DashboardApp,
     pilot: Pilot[None],
     registered_callbacks: list[tuple[object | None, Callable[[], Awaitable[None]]]],
 ) -> None:
-    await pilot.press("escape")
-    await wait_until(
-        lambda: not app.screen.query(UsagePanel),
-        timeout=UI_WAIT_SECONDS,
-    )
-    await choose_details_entry(pilot, FOCUS_COMMAND_HISTORY)
+    await choose_focus_view(pilot, "Command history · pending, applied and rejected")
     await wait_until(
         lambda: bool(app.screen.query("#command-history-page")),
         timeout=UI_WAIT_SECONDS,
@@ -1260,7 +1229,7 @@ async def test_task_detail_keeps_refreshing_facts_under_a_covering_screen(
         reader.close()
 
 
-async def test_usage_result_finishing_after_context_screen_teardown_is_discarded(
+async def test_command_history_callback_after_close_is_safe(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -1270,64 +1239,14 @@ async def test_usage_result_finishing_after_context_screen_teardown_is_discarded
     settings = _motion_settings(project_dir)
     task, _ = _seed_dashboard_state(connection, clock)
     reader = StateReader(database, clock)
-    app, registered_callbacks = _task_dashboard(reader, project_dir, settings, clock, task)
-    writer_descriptors: list[int] = []
+    app, registered_callbacks = _task_dashboard(
+        reader, project_dir, settings, clock, task, home=True
+    )
 
     try:
         async with app.run_test(size=(180, 40)) as pilot:
-            await wait_until(
-                lambda: (
-                    task.title
-                    in plain_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
-            await choose_details_entry(pilot, FOCUS_USAGE_DETAILS)
-            await wait_until(
-                lambda: bool(app.screen.query(UsagePanel)),
-                timeout=UI_WAIT_SECONDS,
-            )
-            usage = app.screen.query_one(UsagePanel)
-            await wait_until(
-                lambda: any(owner is usage for owner, _ in registered_callbacks),
-                timeout=UI_WAIT_SECONDS,
-            )
-            await wait_until(
-                lambda: f"${_INITIAL_USAGE_COST:.2f}" in plain_text(usage.content),
-                timeout=UI_WAIT_SECONDS,
-            )
-
-            report_path = turns_dir(project_dir, task.id) / _INITIAL_TRIAGE_TURN / REPORT_FILENAME
-            report_path.parent.mkdir(parents=True)
-            (report_path.parent / REPORT_KIND_FILENAME).write_text(ReportKind.TRIAGE.value)
-            os.mkfifo(report_path)
-            TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
-            refresh = next(callback for owner, callback in registered_callbacks if owner is usage)
-            pending_refresh = asyncio.ensure_future(refresh())
-            writer_descriptors.append(await _wait_for_fifo_writer(report_path))
-            previous_content = plain_text(usage.content)
-            report_path.unlink()
-            report_path.write_text(_IN_FLIGHT_REPORT_TEXT)
-            await pilot.press("escape")
-            await wait_until(
-                lambda: not app.screen.query(UsagePanel),
-                timeout=UI_WAIT_SECONDS,
-            )
-            writer_descriptor = writer_descriptors[0]
-            os.write(writer_descriptor, _IN_FLIGHT_REPORT_TEXT.encode())
-            os.close(writer_descriptor)
-            writer_descriptors.remove(writer_descriptor)
-            await wait_until(
-                pending_refresh.done,
-                timeout=UI_WAIT_SECONDS,
-            )
-            await pending_refresh
-            assert plain_text(usage.content) == previous_content
-            assert app.is_running
             await _assert_closed_history_callback_is_safe(app, pilot, registered_callbacks)
     finally:
-        for writer_descriptor in writer_descriptors:
-            os.close(writer_descriptor)
         reader.close()
 
 

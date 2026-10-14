@@ -163,7 +163,7 @@ ACTIVE_STAGE_LABELS = {
 }
 _ROLE_GLYPHS = {role.value: glyph for role, glyph in ROLE_GLYPHS.items()}
 _WORKING_PANEL_STATES = frozenset({PanelState.ACTIVE, PanelState.STALLED})
-_TERMINAL_STATUSES = frozenset({Status.DONE.value, Status.CANCELLED.value})
+TERMINAL_STATUSES = frozenset({Status.DONE.value, Status.CANCELLED.value})
 _RUN_STATUSES = frozenset({Status.RUNNING.value, Status.INTEGRATING.value})
 _STATUS_COLORS = {
     Status.DONE.value: SUCCESS_COLOR,
@@ -272,7 +272,7 @@ class Briefing:
 
     def _progress_rows(self, console: Console, value_width: int) -> list[Row]:
         view = self.view
-        if view.status in _TERMINAL_STATUSES:
+        if view.status in TERMINAL_STATUSES:
             return []
         rows = [*_step_rows(view, self.now), *_rework_rows(view)]
         if _working(view):
@@ -665,7 +665,7 @@ def _in_step_time(view: TaskDetailView, now: datetime) -> str | None:
 
 def _time_line(view: TaskDetailView, now: datetime) -> Text | None:
     parts: list[str] = []
-    if view.status in _TERMINAL_STATUSES:
+    if view.status in TERMINAL_STATUSES:
         if view.started_at is not None and view.stage_ended_at is not None:
             parts.append(f"{duration_text(view.stage_ended_at - view.started_at)} {TOTAL_WORD}")
     else:
@@ -683,7 +683,7 @@ def _state_line(view: TaskDetailView, now: datetime, *, compact: bool) -> Text:
     marker, label = _marker_and_label(view)
     line = Text()
     line.append(f"{marker} {label}", style=f"{STYLE_BOLD} {_state_color(view)}")
-    if view.status in _TERMINAL_STATUSES:
+    if view.status in TERMINAL_STATUSES:
         return line
     tail: list[str] = []
     if compact:
@@ -707,7 +707,7 @@ def _state_line(view: TaskDetailView, now: datetime, *, compact: bool) -> Text:
 
 def _marker_and_label(view: TaskDetailView) -> tuple[str, str]:
     terminal = TERMINAL_STATE_LABELS.get(view.status)
-    if view.status in _TERMINAL_STATUSES and terminal is not None:
+    if view.status in TERMINAL_STATUSES and terminal is not None:
         marker, label = terminal
         if view.status == Status.CANCELLED.value and view.actual_stage is not None:
             label = f"{label}{GROUP_SEPARATOR}{STOPPED_DURING} {view.actual_stage}"

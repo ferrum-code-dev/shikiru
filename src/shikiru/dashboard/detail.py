@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.console import Group, RenderableType
@@ -17,6 +18,7 @@ from textual.widgets import Button, Label, Rule, Static
 from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED
 from shikiru.dashboard.briefing_view import (
     ACTION_LABELS,
+    TERMINAL_STATUSES,
     Briefing,
     BriefingLayout,
     briefing_verbs,
@@ -33,10 +35,16 @@ from shikiru.dashboard.details_list_view import (
     DetailsSection,
     section_headline,
 )
-from shikiru.dashboard.fold_bodies import DecisionsBody, ResultsBody
+from shikiru.dashboard.fold_bodies import (
+    DecisionsBody,
+    DescriptionBody,
+    ResultsBody,
+    SettingsBody,
+    WorkspaceBody,
+)
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.dashboard.row_list import RowList
-from shikiru.dashboard.section_rows import RelatedRow, relation_rows
+from shikiru.dashboard.section_rows import RelatedRow, blocker_evidence, relation_rows
 from shikiru.dashboard.timeline_section import (
     HEADING_SEPARATOR,
     NO_VALUE,
@@ -108,7 +116,6 @@ TASK_DETAIL_POPUP_HEADER = "task-detail-popup-header"
 TASK_DETAIL_POPUP_TITLE = "task-detail-popup-title"
 TASK_DETAIL_POPUP_CLOSE = "task-detail-popup-close"
 TASK_DETAIL_REQUEST = "task-detail-request"
-TASK_DETAIL_CRITERIA = "task-detail-criteria"
 TASK_DETAIL_RESULTS = "task-detail-results"
 TASK_DETAIL_DECISIONS = "task-detail-decisions"
 TASK_DETAIL_WORKSPACE = "task-detail-workspace"
@@ -156,8 +163,8 @@ DETAILS_SECTION_VIEWS = {
     DetailsSection.EVENTS: TASK_VIEW_EVIDENCE,
     DetailsSection.AGENT_ACTIVITY: TASK_VIEW_AGENT,
     DetailsSection.USAGE: TASK_VIEW_USAGE,
-    DetailsSection.WORKSPACE: TASK_VIEW_WORKSPACE,
     DetailsSection.BLOCKERS: TASK_VIEW_RELATIONSHIPS,
+    DetailsSection.WORKSPACE: TASK_VIEW_WORKSPACE,
     DetailsSection.SETTINGS: TASK_VIEW_CONTEXT,
 }
 TIMELINE_SECTIONS = {
@@ -169,12 +176,11 @@ FOLD_STATICS = {
     TASK_VIEW_CONTEXT: (TASK_DETAIL_CONTEXT_INFO,),
     TASK_VIEW_RESULTS: (TASK_DETAIL_RESULTS,),
     TASK_VIEW_DECISIONS: (TASK_DETAIL_DECISIONS,),
-    TASK_VIEW_REQUEST: (TASK_DETAIL_REQUEST, TASK_DETAIL_CRITERIA),
+    TASK_VIEW_REQUEST: (TASK_DETAIL_REQUEST,),
     TASK_VIEW_RELATIONSHIPS: (TASK_DETAIL_BLOCKER, TASK_DETAIL_RELATIONSHIPS),
     TASK_VIEW_WORKSPACE: (TASK_DETAIL_WORKSPACE,),
 }
 NO_DECISION_TO_ANSWER = "No open decision to answer for this task."
-NO_CRITERIA = "No validated acceptance criteria are recorded."
 NO_RELATED_ROWS = "No related tasks are recorded."
 RELATIONSHIPS_UNAVAILABLE = "Relationship evidence is unavailable."
 NO_REPLACEMENT_TASKS = "No replacement task IDs are present in the recorded scope-change event."
@@ -227,7 +233,7 @@ class TaskDetailPanel(Vertical):
         width: 100%; height: auto; border-top: solid $neutral-border;
     }
     #task-detail-verbs { width: 1fr; height: 1; }
-    #task-detail-verbs Button, #task-detail-details {
+    #task-detail-verbs Button, #task-detail-details, #task-detail-workspace-tools Button {
         width: auto; min-width: 1; height: 1; margin: 0; padding: 0;
         border: none; background: $background; color: $steel-blue;
         content-align: left middle; text-align: left; text-style: none;
@@ -315,8 +321,6 @@ class TaskDetailPanel(Vertical):
                     )
                     self._folds[view_id] = fold
                     yield fold
-                for label, choice_id in self._widget_context.task_contextual_views:
-                    yield DetailFold(choice_id, label)
 
     def _section_widgets(self, view_id: str) -> list[Widget]:
         timeline = self._timelines.get(view_id)
@@ -422,7 +426,6 @@ class TaskDetailPanel(Vertical):
             TASK_DETAIL_BLOCKER,
             TASK_DETAIL_BRIEFING,
             TASK_DETAIL_REQUEST,
-            TASK_DETAIL_CRITERIA,
             TASK_DETAIL_RESULTS,
             TASK_DETAIL_DECISIONS,
             TASK_DETAIL_WORKSPACE,
@@ -770,20 +773,19 @@ class TaskDetailPanel(Vertical):
         restore_scroll = self._rendered_task_id == view.task_id
         self._rendered_task_id = view.task_id
         self._render_ownership(view)
-        self.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static).update(_task_context_text(view))
-        blocker_lines = list(view.blocker.lines) if view.blocker is not None else []
+        self.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static).update(SettingsBody(view))
+        evidence = blocker_evidence(view)
         blocker = self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
-        blocker.update("Blocker evidence\n" + "\n".join(blocker_lines) if blocker_lines else "")
+        blocker.update(evidence or "")
         self._render_relationships(view)
         self._render_activity(view)
-        self.query_one(f"#{TASK_DETAIL_REQUEST}", Static).update(f"Request\n{view.request}")
-        criteria = "\n".join(f"- {item}" for item in view.acceptance_criteria)
-        self.query_one(f"#{TASK_DETAIL_CRITERIA}", Static).update(
-            f"Acceptance criteria\n{criteria or NO_CRITERIA}"
-        )
+        self.query_one(f"#{TASK_DETAIL_REQUEST}", Static).update(DescriptionBody(view))
         self.query_one(f"#{TASK_DETAIL_RESULTS}", Static).update(ResultsBody(view.results))
         self.query_one(f"#{TASK_DETAIL_DECISIONS}", Static).update(DecisionsBody(view))
-        self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(_workspace_text(view))
+        self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(WorkspaceBody(view, Path.home()))
+        self.query_one(f"#{TASK_DETAIL_WORKSPACE_TOOLS}").display = (
+            view.status not in TERMINAL_STATUSES
+        )
         self.query_one(f"#{TASK_DETAIL_WINDOW_BUTTON}", Button).disabled = view.window_id is None
         recorded_panes = {pane.role: pane.recorded_target for pane in view.role_panes}
         self.query_one(f"#{TASK_DETAIL_LEADER_BUTTON}", Button).disabled = (
@@ -794,7 +796,7 @@ class TaskDetailPanel(Vertical):
         )
         if self._folds[TASK_VIEW_USAGE].is_open:
             self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(view))
-        blocker.display = bool(blocker_lines)
+        blocker.display = evidence is not None
         self._paint_headlines(view)
         if self._on_initial_content is not None and not self._initial_content_reported:
             self._initial_content_reported = True
@@ -832,15 +834,6 @@ class TaskDetailPanel(Vertical):
             )
         elif fold.view_id == TASK_VIEW_USAGE and self._view is not None:
             self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(self._view))
-
-    @on(DetailFold.Chosen)
-    def _fold_chosen(self, message: DetailFold.Chosen) -> None:
-        message.stop()
-        if self._widget_context.open_contextual_view is not None:
-            self.run_worker(
-                self._widget_context.open_contextual_view(message.fold.view_id),
-                group=TASK_DETAIL_WORKER_GROUP,
-            )
 
     def _restore_body_scroll(
         self,
@@ -906,21 +899,21 @@ class TaskDetailPanel(Vertical):
             if relationships is not None and relationships.has_more
             else None
         )
-        heading = Text(DetailsSection.BLOCKERS.value, style=BOLD_PRIMARY)
-        notes = [RELATIONSHIPS_HINT]
+        hint = key_hint(RELATIONSHIPS_HINT, SECONDARY_TEXT_COLOR)
+        notes: list[str] = []
         if relationships is None:
             notes.append(RELATIONSHIPS_UNAVAILABLE)
         else:
             if relationships.page_offset > 0 or relationships.has_more:
                 page = relationships.page_offset // relationships.page_size + 1
-                heading.append_text(grey(f"{HEADING_SEPARATOR}{PAGE_LABEL} {page}"))
+                hint.append_text(grey(f"{HEADING_SEPARATOR}{PAGE_LABEL} {page}"))
             if (
                 view.status_reason == StatusReason.SUPERSEDED.value
                 and relationships.replacement_count == 0
             ):
                 notes.append(NO_REPLACEMENT_TASKS)
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update(
-            Group(heading, key_hint("\n".join(notes), SECONDARY_TEXT_COLOR))
+            Group(hint, *(grey(note) for note in notes))
         )
 
     def _render_ownership(self, view: TaskDetailView) -> None:
@@ -1075,30 +1068,6 @@ class TaskDetailScreen(ModalScreen[None]):
 
 
 type CloseDetail = Callable[[], Awaitable[None]]
-
-
-def _task_context_text(view: TaskDetailView) -> str:
-    lines = ["Task settings"]
-    if view.mode is not None:
-        lines.append(f"Mode · {view.mode}")
-    lines.append(f"Submitted · {view.submitted_age}")
-    if view.requeued_age is not None:
-        lines.append(f"Recorded requeued · {view.requeued_age}")
-    if view.status_reason is not None:
-        lines.append(f"Status reason · {view.status_reason}")
-    if view.priority is not None:
-        lines.append(f"Dispatch priority · {view.priority}")
-    return "\n".join(lines)
-
-
-def _workspace_text(view: TaskDetailView) -> str:
-    return "\n".join(
-        (
-            "Workspace",
-            f"Branch · {view.branch or NO_VALUE}",
-            f"Worktree path · {view.worktree_path}",
-        )
-    )
 
 
 def _task_identity_text(identity: str) -> Text:

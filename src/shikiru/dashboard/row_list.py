@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, ClassVar
 
+from rich.cells import cell_len
 from rich.text import Text
 from textual import on
 from textual.binding import Binding
@@ -24,16 +25,18 @@ if TYPE_CHECKING:
     from textual.binding import BindingType
 
 _LEAD_GAP = "  "
+_TAIL_GAP = "  "
 _STEP_UP = -1
 _STEP_DOWN = 1
 
 
 @dataclass(frozen=True)
 class RowCells:
-    """One row: a grey lead (time and role, or relation and id) and the primary text."""
+    """One row: a grey lead, the primary text and an optional styled tail that is never cut."""
 
     lead: str
-    text: str
+    text: str | Text
+    tail: Text | None = None
 
 
 @dataclass(frozen=True)
@@ -45,7 +48,17 @@ class _RowLine:
         del console
         line = Text(ROW_LEAD)
         line.append_text(grey(f"{self.cells.lead}{_LEAD_GAP}" if self.cells.lead else ""))
-        line.append(self.cells.text, style=BOLD_PRIMARY if self.selected else PRIMARY_TEXT_COLOR)
+        tail = self.cells.tail or Text()
+        gap = _TAIL_GAP if tail else ""
+        body = Text(style=BOLD_PRIMARY if self.selected else PRIMARY_TEXT_COLOR)
+        body.append_text(
+            Text(self.cells.text) if isinstance(self.cells.text, str) else self.cells.text
+        )
+        room = max(options.max_width - line.cell_len - cell_len(gap) - tail.cell_len, 1)
+        body.truncate(room, overflow="ellipsis")
+        line.append_text(body)
+        line.append(gap)
+        line.append_text(tail)
         line.truncate(max(options.max_width, 1), overflow="ellipsis", pad=True)
         yield line
 
