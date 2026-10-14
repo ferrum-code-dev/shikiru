@@ -136,9 +136,6 @@ class DashboardMotion:
         (
             last_signal_at,
             last_signal,
-            last_signal_identity,
-            last_signal_role,
-            last_signal_turn,
             tool_running,
             turn_active,
             last_words,
@@ -153,9 +150,6 @@ class DashboardMotion:
             turn_started_at=turn_started_at,
             last_signal_at=last_signal_at,
             last_signal=last_signal,
-            last_signal_identity=last_signal_identity,
-            last_signal_role=last_signal_role,
-            last_signal_turn=last_signal_turn,
             last_words=last_words,
             tool_running=tool_running,
             turn_active=turn_active,
@@ -246,24 +240,16 @@ class DashboardMotion:
 
     def _current_activity(
         self, task: Task, turn_active: bool, turn_started_at: datetime | None
-    ) -> tuple[
-        datetime | None, str | None, str | None, str | None, str | None, bool, bool, str | None
-    ]:
+    ) -> tuple[datetime | None, str | None, bool, bool, str | None]:
         role = ACTING_ROLE.get(task.step) if task.step is not None else None
         last_signal_at = None
         last_signal = None
-        last_signal_identity = None
-        last_signal_role = None
-        last_signal_turn = None
         tool_running = False
         last_words = None
         if role is None:
             return (
                 last_signal_at,
                 last_signal,
-                last_signal_identity,
-                last_signal_role,
-                last_signal_turn,
                 tool_running,
                 False,
                 last_words,
@@ -273,9 +259,6 @@ class DashboardMotion:
             return (
                 last_signal_at,
                 last_signal,
-                last_signal_identity,
-                last_signal_role,
-                last_signal_turn,
                 tool_running,
                 turn_active,
                 last_words,
@@ -289,27 +272,18 @@ class DashboardMotion:
             return (
                 last_signal_at,
                 last_signal,
-                last_signal_identity,
-                last_signal_role,
-                last_signal_turn,
                 tool_running,
                 turn_active,
                 last_words,
             )
         last_signal_at = activity.last_signal_at
         last_signal = activity.last_signal
-        last_signal_identity = f"signal:{role.value}:{activity.identity_offset}"
-        last_signal_role = role.value
-        last_signal_turn = activity.turn
         tool_running = activity.tool_running
         last_words = activity.last_words
         turn_active = turn_active and not activity.ended
         return (
             last_signal_at,
             last_signal,
-            last_signal_identity,
-            last_signal_role,
-            last_signal_turn,
             tool_running,
             turn_active,
             last_words,

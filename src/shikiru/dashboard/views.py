@@ -29,7 +29,6 @@ from shikiru.dashboard.contract import (
     EngineFaultView,
     EngineStatusView,
     EscalationPanelView,
-    GlobalAttentionView,
     HeaderView,
     HeldTaskStateView,
     QueueRow,
@@ -43,14 +42,12 @@ from shikiru.dashboard.contract import (
     TaskBrowserRow,
     TaskBrowserView,
     TaskDetailView,
-    TaskEventView,
     TaskFamilyOutcomeView,
     TaskMilestoneView,
     TaskReferenceView,
     TaskRelationshipsView,
     TaskReportView,
     TaskRolePaneView,
-    TaskSignalView,
     TaskTestView,
     TaskTimelineCategory,
     TaskTimelineEntryView,
@@ -124,9 +121,6 @@ MINUTES_PER_HOUR = 60
 TIME_UNKNOWN = "\N{EN DASH}"
 TASK_TIMELINE_READ_ERROR_ID = "timeline-read-error"
 TASK_TIMELINE_READ_ERROR_SUMMARY = "Task evidence could not be read"
-TASK_TIMELINE_READ_ERROR_TIMESTAMP = (
-    "recorded timestamp is unavailable because the page could not be read"
-)
 ENGINE_LIFECYCLE_EVENT_LIMIT = 2
 TASK_MODEL_HISTORY_EVENT_LIMIT = 50
 TASK_MODEL_HISTORY_EVENTS = (
@@ -954,7 +948,7 @@ class StateDashboardViews:
             signal_page = _timeline_read_error(error, role=None, turn=None)
         if signal_page is None:
             return None
-        latest_signal, latest_signal_uncertain = _latest_signal_observation(signal_page)
+        latest_signal = _latest_signal_observation(signal_page)
         task = detail.task
         now = self._now()
         triage = next(
@@ -1036,21 +1030,8 @@ class StateDashboardViews:
             progress=self._strip_with_motion(task, task_frame, self._motion.current_cost(task)),
             latest_report=latest_report,
             latest_verdict=verdict,
-            events=tuple(
-                TaskEventView(
-                    timestamp=event.ts.isoformat(),
-                    kind=event.kind.value,
-                    message=event.message,
-                )
-                for event in detail.events
-            ),
-            signals=tuple(
-                TaskSignalView(role=role, lines=tuple(lines))
-                for role, lines in detail.signals.items()
-            ),
             recorded_facts=detail.recorded_facts,
             facts_turn=detail.facts_turn,
-            evidence_errors=tuple(detail.evidence_errors),
             branch=task.repo.branch if task.repo is not None else None,
             worktree_path=str(self._queries.task_worktree_path(task.id)),
             window_id=task.window_id,
@@ -1067,7 +1048,6 @@ class StateDashboardViews:
                 history_truncated=len(history_events) == TASK_MODEL_HISTORY_EVENT_LIMIT,
                 history_error=history_error,
             ),
-            attention=self.global_attention(),
             relationships=relationships,
             blocker=self._task_blocker(task, relationships, ownership, now),
             submitted_age=_age(now - task.created_at),
@@ -1082,22 +1062,11 @@ class StateDashboardViews:
             actual_stage_started_at=task_frame.actual_step_started_at,
             stage_ended_at=task.finished_at,
             milestones=_task_milestone_views(workflow),
-            workflow_history_complete=workflow.history_complete,
             latest_signal=(latest_signal.summary if latest_signal is not None else None),
-            latest_signal_identity=(latest_signal.identity if latest_signal is not None else None),
             latest_signal_at=(
                 _timeline_timestamp(latest_signal.timestamp)
                 if latest_signal is not None and latest_signal.timestamp is not None
                 else None
-            ),
-            latest_signal_role=(latest_signal.role if latest_signal is not None else None),
-            latest_signal_turn=(latest_signal.turn if latest_signal is not None else None),
-            latest_signal_uncertain=latest_signal_uncertain,
-            latest_signal_error=(
-                latest_signal.timestamp_error if latest_signal is not None else None
-            ),
-            latest_signal_incomplete=(
-                latest_signal.incomplete if latest_signal is not None else False
             ),
             max_iterations=self._settings.orchestration.max_iterations,
             started_at=task.started_at,
@@ -1141,15 +1110,12 @@ class StateDashboardViews:
                 TaskTimelineEntryView(
                     identity=item.identity,
                     timestamp=item.timestamp,
-                    timestamp_error=item.timestamp_error,
                     source=item.source,
                     category=item.category,
                     summary=item.summary,
                     detail=item.detail,
                     role=item.role,
                     turn=item.turn,
-                    event_id=item.event_id,
-                    incomplete=item.incomplete,
                 )
                 for item in timeline.entries
             ),
@@ -1484,13 +1450,6 @@ class StateDashboardViews:
             )
         return result
 
-    def global_attention(self) -> GlobalAttentionView:
-        """Count open decisions and fault streaks for the task window's global indicator."""
-        return GlobalAttentionView(
-            decisions=len(self._state.list_open_escalations()),
-            faults=len(self._queries.open_faults()),
-        )
-
     def command_history(
         self,
         *,
@@ -1599,9 +1558,6 @@ class StateDashboardViews:
             actual_step_started_at=motion.actual_step_started_at,
             last_signal_at=motion.last_signal_at,
             last_signal=motion.last_signal,
-            last_signal_identity=motion.last_signal_identity,
-            last_signal_role=motion.last_signal_role,
-            last_signal_turn=motion.last_signal_turn,
             last_words=motion.last_words,
         )
 
@@ -1681,9 +1637,7 @@ def _task_relationships_view(relationships: TaskRelationships) -> TaskRelationsh
     )
 
 
-def _latest_signal_observation(
-    page: TaskTimelinePageView,
-) -> tuple[TaskTimelineEntryView | None, bool]:
+def _latest_signal_observation(page: TaskTimelinePageView) -> TaskTimelineEntryView | None:
     agent_entries = [
         entry for entry in page.entries if entry.source == TaskTimelineSource.AGENT.value
     ]
@@ -1693,21 +1647,18 @@ def _latest_signal_observation(
         for entry in agent_entries
         if entry.identity.startswith(("unavailable:", TASK_TIMELINE_READ_ERROR_ID))
     ]
-    untimed = [entry for entry in signal_entries if _timeline_timestamp(entry.timestamp) is None]
-    if untimed:
-        return untimed[0], True
-    if signal_entries:
-        timed_signals = [
-            (timestamp, entry)
-            for entry in signal_entries
-            if (timestamp := _timeline_timestamp(entry.timestamp)) is not None
-        ]
-        latest_at, latest = max(timed_signals, key=lambda item: item[0])
-        tied = sum(timestamp == latest_at for timestamp, _ in timed_signals) > 1
-        return latest, bool(errors) or tied
-    if errors:
-        return errors[0], True
-    return None, False
+    timed = [
+        (timestamp, entry)
+        for entry in signal_entries
+        if (timestamp := _timeline_timestamp(entry.timestamp)) is not None
+    ]
+    if len(timed) < len(signal_entries):
+        return next(
+            entry for entry in signal_entries if _timeline_timestamp(entry.timestamp) is None
+        )
+    if timed:
+        return max(timed, key=lambda item: item[0])[1]
+    return errors[0] if errors else None
 
 
 def _timeline_timestamp(value: str | None) -> datetime | None:
@@ -1934,15 +1885,12 @@ def _timeline_read_error(
             TaskTimelineEntryView(
                 identity=TASK_TIMELINE_READ_ERROR_ID,
                 timestamp=None,
-                timestamp_error=TASK_TIMELINE_READ_ERROR_TIMESTAMP,
                 source=TaskTimelineSource.AGENT.value,
                 category=TIMELINE_EVIDENCE_CATEGORY,
                 summary=TASK_TIMELINE_READ_ERROR_SUMMARY,
                 detail=str(error),
                 role=role,
                 turn=turn,
-                event_id=None,
-                incomplete=False,
             ),
         ),
         older_cursor=None,

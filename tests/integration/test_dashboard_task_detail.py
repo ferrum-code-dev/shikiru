@@ -740,13 +740,11 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
     assert detail.latest_verdict.summary == "Latest engine verdict"
     _assert_briefing_data(detail, load_settings(project_root), facts)
     assert detail.facts_turn == "02-implement-i1"
-    assert detail.signals[0].role == Role.IMPLEMENTER.value
     assert detail.sessions[0].session_id == "session-current"
     assert detail.sessions[0].input_tokens == 12
     assert detail.sessions[0].billing_mode == BILLING_MODE_SUBSCRIPTION
     assert detail.sessions[0].billing_source == BILLING_SOURCE_OPERATOR_CONFIG
     assert detail.ownership == (Role.IMPLEMENTER.value,)
-    assert detail.evidence_errors
 
     await _assert_billing_details_are_visible(reader, project_root, task.id, clock)
 
@@ -1549,44 +1547,6 @@ async def test_detail_selects_the_latest_report_and_turn_scoped_verdict(
     assert detail.latest_verdict.turn == case.expected_verdict_turn
 
 
-@pytest.mark.parametrize("turns_path", ["missing", "not-a-directory"])
-async def test_detail_reads_and_refreshes_role_signals_when_turn_report_path_is_unavailable(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-    turns_path: str,
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Signals without reports", mode=Mode.IMPLEMENT)
-    RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
-    signal_path = run_dir(project_root, task.id) / Role.IMPLEMENTER.value / "view.jsonl"
-    signal_path.parent.mkdir(parents=True)
-    signal_path.write_text(json.dumps({"signal": "ToolFinished", "name": "pytest"}) + "\n")
-    turns_root = run_dir(project_root, task.id) / "turns"
-    if turns_path == "not-a-directory":
-        turns_root.write_text("invalid turns path")
-
-    views = state_views(reader, project_root, clock, StubServices())
-
-    detail = await views.task_detail(task.id)
-
-    assert detail is not None
-    assert detail.title == "Signals without reports"
-    assert detail.signals
-    assert detail.signals[0].role == Role.IMPLEMENTER.value
-    assert "pytest" in detail.signals[0].lines[0]
-    if turns_path == "not-a-directory":
-        assert any("not a directory" in error for error in detail.evidence_errors)
-
-    with signal_path.open("a") as stream:
-        stream.write(json.dumps({"signal": "ToolStarted", "name": "ruff"}) + "\n")
-    refreshed = await views.task_detail(task.id)
-
-    assert refreshed is not None
-    assert any("ruff" in line for line in refreshed.signals[0].lines)
-
-
 async def test_latest_signal_keeps_global_role_identity_past_filtered_evidence_and_task_state(
     connection: Connection,
     reader: StateReader,
@@ -1662,17 +1622,12 @@ async def test_latest_signal_keeps_global_role_identity_past_filtered_evidence_a
     assert detail.timeline.entries[0].turn == "02-implement-i1"
     assert detail.timeline.entries[0].summary == "SessionStarted"
     assert detail.latest_signal == "ToolStarted"
-    assert detail.latest_signal_identity == "signal:leader:0"
-    assert detail.latest_signal_role == Role.LEADER.value
-    assert detail.latest_signal_turn == "03-verify-i1"
     assert detail.latest_signal_at == START + timedelta(seconds=_LATEST_SIGNAL_SECONDS)
     assert detail.actual_stage_started_at == START + timedelta(seconds=_STAGE_START_SECONDS)
-    assert not detail.latest_signal_uncertain
 
     tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
     paused = await views.task_detail(task.id, include_timeline=False)
     assert paused is not None
-    assert paused.latest_signal_identity == detail.latest_signal_identity
     assert paused.latest_signal_at == detail.latest_signal_at
 
     current_task = tasks.require(task.id)
@@ -1684,7 +1639,6 @@ async def test_latest_signal_keeps_global_role_identity_past_filtered_evidence_a
     completed = await views.task_detail(task.id, include_timeline=False)
     assert completed is not None
     assert completed.actual_stage is None
-    assert completed.latest_signal_identity == detail.latest_signal_identity
     assert completed.latest_signal_at == detail.latest_signal_at
 
 
@@ -1714,7 +1668,6 @@ async def test_first_recorded_plan_or_implement_transition_marks_triage_bypassed
     detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
 
     assert detail is not None
-    assert detail.workflow_history_complete
     assert _milestone_state(detail, Step.TRIAGE) == "skipped"
     assert _milestone_state(detail, step) == "current"
 
@@ -1746,7 +1699,6 @@ async def test_plan_detail_keeps_current_stage_and_prior_gaps_without_retained_e
     detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
 
     assert detail is not None
-    assert not detail.workflow_history_complete
     assert _milestone_state(detail, step) == "current"
     for earlier in (Step.TRIAGE, Step.PLAN, Step.INTEGRATE):
         if earlier is not step:
@@ -1866,7 +1818,6 @@ async def test_rework_and_truncated_workflow_history_keep_stage_outcomes_honest(
     assert rework is not None
     assert _milestone_state(rework, Step.IMPLEMENT) == "current"
     assert _milestone_state(rework, Step.VERIFY) == "rework"
-    assert rework.workflow_history_complete
 
     truncated = seed_task(connection, clock, title="Truncated workflow", mode=Mode.IMPLEMENT)
     events.append(EventKind.TASK_QUEUED, task_id=truncated.id, message="queued")
@@ -1885,7 +1836,6 @@ async def test_rework_and_truncated_workflow_history_keep_stage_outcomes_honest(
     )
 
     assert incomplete is not None
-    assert not incomplete.workflow_history_complete
     assert _milestone_state(incomplete, Step.TRIAGE) == "unknown"
     assert _milestone_state(incomplete, Step.IMPLEMENT) == "unknown"
     assert _milestone_state(incomplete, Step.VERIFY) == "current"

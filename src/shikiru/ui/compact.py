@@ -95,7 +95,6 @@ RESOURCE_STALE = "stale"
 RESOURCE_EMPTY = "empty"
 RESOURCE_AVAILABLE = "available"
 RESOURCE_STATE_UNKNOWN = "sample state unknown"
-RESOURCE_GROUP_MIN_GAP = 3
 STATUS_ALIGNMENT_MIN_GAP = 1
 ROLE_LABELS = {
     Role.LEADER.value: "Leader",

@@ -94,10 +94,8 @@ if TYPE_CHECKING:
 
 PEEK_TAIL_LINES = 60
 TASK_DETAIL_EVENT_LIMIT = 40
-TASK_DETAIL_SIGNAL_LIMIT = 20
 ENGINE_REPORT_SOURCE = "engine"
 AGENT_REPORT_SOURCE = "agent"
-ENGINE_SIGNAL_ERROR = "could not read recorded agent signals for {role}: {error}"
 TASK_REPORT_ERROR = "could not read report evidence: {error}"
 TASK_FACTS_ERROR = "could not read recorded git facts: {error}"
 TASK_REPORT_TURN_MISSING = "No validated report or verdict is available for turn {turn}."
@@ -272,7 +270,6 @@ class TaskDetail(OperatorView):
     task: Task
     events: list[Event] = Field(default_factory=list)
     reports: list[ReportRow] = Field(default_factory=list)
-    signals: dict[str, list[str]] = Field(default_factory=dict)
     recorded_facts: str | None = None
     facts_turn: str | None = None
     evidence_errors: list[str] = Field(default_factory=list)
@@ -638,15 +635,13 @@ class OperatorQueries:
                 static_files,
             )
         reports, recorded_facts, facts_turn, evidence_errors = static_files
-        signals, signal_errors = await asyncio.to_thread(self._task_signals, task_id, roles)
         return TaskDetail(
             task=task,
             events=events,
             reports=reports,
-            signals=signals,
             recorded_facts=recorded_facts,
             facts_turn=facts_turn,
-            evidence_errors=[*evidence_errors, *signal_errors],
+            evidence_errors=evidence_errors,
             branches=[task.repo.branch] if task.repo is not None else [],
             sessions=runs,
         )
@@ -1138,24 +1133,6 @@ class OperatorQueries:
         }
         return sorted(reports.values(), key=lambda report: turn_order[report.turn]), errors
 
-    def _task_signals(
-        self,
-        task_id: str,
-        roles: tuple[str, ...],
-    ) -> tuple[dict[str, list[str]], list[str]]:
-        signals: dict[str, list[str]] = {}
-        errors: list[str] = []
-        for role in roles:
-            signal_path = view_log_path(run_dir(self._project_root, task_id), role)
-            try:
-                lines = _signal_tail(signal_path)
-            except (OSError, UnicodeError, ValueError, TypeError) as error:
-                errors.append(ENGINE_SIGNAL_ERROR.format(role=role, error=error))
-            else:
-                if lines:
-                    signals[role] = lines
-        return signals, errors
-
 
 def _task_turn_reports(turn_dir: Path) -> tuple[list[ReportRow], list[str]]:
     reports: list[ReportRow] = []
@@ -1212,21 +1189,6 @@ def _view_tail(path: Path) -> list[str]:
     except OSError as error:
         message = f"cannot read view log {path}: {error}"
         raise OperatorQueryError(message) from error
-
-
-def _signal_tail(path: Path) -> list[str]:
-    try:
-        lines = read_tail_lines(path, TASK_DETAIL_SIGNAL_LIMIT)
-    except FileNotFoundError:
-        return []
-    signals: list[str] = []
-    for line in lines:
-        row = json.loads(line)
-        if not isinstance(row, dict):
-            message = "recorded signal row is not an object"
-            raise TypeError(message)
-        signals.append(json.dumps(row, ensure_ascii=False, sort_keys=True))
-    return signals
 
 
 def _timeline_roles(runs: Sequence[Run], role: str | None) -> tuple[str, ...]:

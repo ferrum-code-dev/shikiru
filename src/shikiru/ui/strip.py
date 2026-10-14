@@ -162,9 +162,6 @@ class TaskStripData:
     actual_step_started_at: datetime | None = None
     last_signal_at: datetime | None = None
     last_signal: str | None = None
-    last_signal_identity: str | None = None
-    last_signal_role: str | None = None
-    last_signal_turn: str | None = None
     last_words: str | None = None
 
 

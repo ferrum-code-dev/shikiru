@@ -260,7 +260,9 @@ async def test_timeline_pages_keep_bounded_rows_and_stable_source_order(
     identities = [entry.identity for entry in entries]
     assert len(identities) == len(set(identities))
     assert len(entries) == TIMELINE_ROW_COUNT * 3
-    assert {entry.event_id for entry in entries if entry.event_id is not None} == set(event_ids)
+    assert {entry.identity for entry in entries if entry.source == "engine"} == {
+        f"engine:{event_id}" for event_id in event_ids
+    }
     for role, rows in with_paths.items():
         observed = [
             entry.turn for entry in entries if entry.source == "agent" and entry.role == role.value
@@ -336,7 +338,7 @@ async def test_timeline_filters_roles_turns_categories_and_missing_files(
     assert "failure" in tool_page.entries[0].summary
     assert f"exit {FAILED_COMMAND_EXIT_CODE}" in tool_page.entries[0].summary
     assert transition_page is not None
-    assert {entry.identity for entry in transition_page.entries if entry.event_id is not None} == {
+    assert {entry.identity for entry in transition_page.entries if entry.source == "engine"} == {
         f"engine:{event.id}"
     }
     assert any(
@@ -380,7 +382,7 @@ async def test_one_unreadable_signal_source_keeps_other_evidence_and_task_state(
     assert detail is not None
     assert detail.status == Status.QUEUED.value
     assert detail.timeline is not None
-    assert {entry.event_id for entry in detail.timeline.entries} >= {event.id}
+    assert f"engine:{event.id}" in {entry.identity for entry in detail.timeline.entries}
     assert any(
         entry.role == Role.IMPLEMENTER.value and entry.turn == TIMELINE_TURN
         for entry in detail.timeline.entries
@@ -491,9 +493,9 @@ async def test_duplicate_and_missing_timestamps_keep_deterministic_source_order(
     )
     assert first is not None
     assert first.has_older
-    assert [entry.event_id for entry in first.entries] == list(
-        reversed(event_ids[-TIMELINE_PAGE_LIMIT:])
-    )
+    assert [entry.identity for entry in first.entries] == [
+        f"engine:{event_id}" for event_id in reversed(event_ids[-TIMELINE_PAGE_LIMIT:])
+    ]
     second = await views.task_timeline(
         task.id,
         cursor=first.older_cursor,
@@ -503,16 +505,15 @@ async def test_duplicate_and_missing_timestamps_keep_deterministic_source_order(
     )
 
     assert second is not None
-    assert [entry.event_id for entry in second.entries[:2]] == list(
-        reversed(event_ids[:-TIMELINE_PAGE_LIMIT])
-    )
+    assert [entry.identity for entry in second.entries[:2]] == [
+        f"engine:{event_id}" for event_id in reversed(event_ids[:-TIMELINE_PAGE_LIMIT])
+    ]
     assert [entry.turn for entry in second.entries[2:]] == [
         "implementer-tied",
         "leader-new-unknown",
         "leader-old",
     ]
     assert second.entries[3].timestamp is None
-    assert second.entries[3].timestamp_error is not None
     assert not second.has_older
 
 
@@ -553,8 +554,6 @@ async def test_partial_live_row_keeps_identity_when_it_becomes_complete(
     assert partial is not None
     assert complete is not None
     assert partial.entries[0].identity == complete.entries[0].identity
-    assert partial.entries[0].incomplete
-    assert not complete.entries[0].incomplete
 
 
 async def test_long_filtered_signal_source_continues_from_a_bounded_scan(

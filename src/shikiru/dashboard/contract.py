@@ -378,15 +378,6 @@ class TaskReportView:
 
 
 @dataclass(frozen=True)
-class TaskEventView:
-    """One recent durable task event for the detail evidence panel."""
-
-    timestamp: str
-    kind: str
-    message: str
-
-
-@dataclass(frozen=True)
 class TaskSessionView:
     """One task session's recorded identity, status and usage."""
 
@@ -440,14 +431,6 @@ class TaskModelHistoryView:
 
 
 @dataclass(frozen=True)
-class TaskSignalView:
-    """A bounded set of recorded signal lines for one agent role."""
-
-    role: str
-    lines: tuple[str, ...]
-
-
-@dataclass(frozen=True)
 class TaskMilestoneView:
     """One workflow stage and the recorded outcome shown in the compact inspector."""
 
@@ -461,15 +444,12 @@ class TaskTimelineEntryView:
 
     identity: str
     timestamp: str | None
-    timestamp_error: str | None
     source: str
     category: str
     summary: str
     detail: str
     role: str | None
     turn: str | None
-    event_id: int | None
-    incomplete: bool
 
 
 @dataclass(frozen=True)
@@ -479,14 +459,6 @@ class TaskTimelinePageView:
     entries: tuple[TaskTimelineEntryView, ...]
     older_cursor: str | None
     has_older: bool
-
-
-@dataclass(frozen=True)
-class GlobalAttentionView:
-    """Compact project-wide counts displayed in task detail."""
-
-    decisions: int
-    faults: int
 
 
 @dataclass(frozen=True)
@@ -542,17 +514,13 @@ class TaskDetailView:
     progress: TaskStripData
     latest_report: TaskReportView | None
     latest_verdict: TaskReportView | None
-    events: tuple[TaskEventView, ...]
-    signals: tuple[TaskSignalView, ...]
     recorded_facts: str | None
     facts_turn: str | None
-    evidence_errors: tuple[str, ...]
     branch: str | None
     worktree_path: str
     window_id: str | None
     role_panes: tuple[TaskRolePaneView, ...]
     sessions: tuple[TaskSessionView, ...]
-    attention: GlobalAttentionView
     relationships: TaskRelationshipsView | None = None
     blocker: TaskBlockerView | None = None
     submitted_age: str = ""
@@ -567,15 +535,8 @@ class TaskDetailView:
     actual_stage_started_at: datetime | None = None
     stage_ended_at: datetime | None = None
     milestones: tuple[TaskMilestoneView, ...] = ()
-    workflow_history_complete: bool = False
     latest_signal: str | None = None
-    latest_signal_identity: str | None = None
     latest_signal_at: datetime | None = None
-    latest_signal_role: str | None = None
-    latest_signal_turn: str | None = None
-    latest_signal_uncertain: bool = False
-    latest_signal_error: str | None = None
-    latest_signal_incomplete: bool = False
     max_iterations: int = 0
     started_at: datetime | None = None
     escalation_remaining: int | None = None
@@ -916,10 +877,6 @@ class DashboardViews(Protocol):
 
     def usage(self, task_id: str | None = None) -> list[AgentUsageView]:
         """Return project usage or usage recorded for one task."""
-        ...
-
-    def global_attention(self) -> GlobalAttentionView:
-        """Return the compact global decision and engine-fault counts."""
         ...
 
     def command_history(

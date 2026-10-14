@@ -518,8 +518,6 @@ def test_role_view_tail_recovers_a_new_turn_consumed_under_the_old_turn_name(
 
     assert activity is not None
     assert activity.last_signal_at == next_turn_at
-    latest_row = _row(next_turn_at, "002-implement-i1", VIEW_TOOL_STARTED_SIGNAL)
-    assert activity.identity_offset == path.read_bytes().rfind(latest_row.encode())
     assert activity.tool_running
     assert not activity.ended
 
@@ -1460,8 +1458,6 @@ async def test_task_activity_claims_a_signal_only_for_a_running_current_turn(
     assert observed is not None
     assert observed.signal_observed
     assert observed.latest_signal_at == _START
-    assert observed.latest_signal_role == Role.IMPLEMENTER.value
-    assert observed.latest_signal_turn == _TURN_NAME
     assert observed.last_words == "Running the parser tests"
 
     static_settings = settings.model_copy(

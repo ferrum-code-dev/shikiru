@@ -111,10 +111,7 @@ TASK_DETAIL_WORKSPACE = "task-detail-workspace"
 TASK_DETAIL_SESSIONS = "task-detail-sessions"
 TASK_DETAIL_FEEDBACK = "task-detail-feedback"
 TASK_DETAIL_BODY = "task-detail-body"
-TASK_DETAIL_CONTEXT = "task-detail-context"
 TASK_DETAIL_CONTEXT_INFO = "task-detail-context-info"
-TASK_DETAIL_HINTS = "task-detail-hints"
-TASK_DETAIL_VIEWS_BUTTON = "task-detail-views"
 TASK_DETAIL_TINY_MAX_ROWS = 8
 _TASK_DETAIL_COMPACT_MAX_COLUMNS = 48
 _TASK_DETAIL_COMPACT_MAX_ROWS = 20
@@ -288,19 +285,12 @@ class TaskDetailPanel(Vertical):
     #task-detail-details { margin: 0; color: $secondary-text; }
     #task-detail-actions Button:focus { text-style: reverse; }
     #task-detail-actions Button:hover { color: $primary-text; }
-    #task-detail-body.compact-summary #task-detail-identity,
-    #task-detail-body.compact-summary #task-detail-ownership,
-    #task-detail-body.compact-summary #task-detail-sessions { padding: 0; }
-    #task-detail-body.compact-summary .task-detail-section { padding: 0; }
     #task-detail-timeline-filters, #task-detail-workspace-tools { width: 100%; height: auto; }
     #task-detail-timeline-title, #task-detail-timeline-status { height: auto; padding: 0; }
     #task-detail-timeline-category { width: 34; }
     #task-detail-timeline-role { width: 18; }
     #task-detail-timeline-turn { width: 14; }
-    #task-detail-relationships { padding: 0; }
-    .task-detail-section {
-        height: auto; padding: 1 0; color: $primary-text;
-    }
+    .task-detail-section { height: auto; padding: 0; color: $primary-text; }
     """
 
     def __init__(
@@ -414,7 +404,6 @@ class TaskDetailPanel(Vertical):
 
     async def on_mount(self) -> None:
         self.disabled = self._task_id is None
-        self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).add_class("compact-summary")
         self.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select).value = self._timeline_category
         self._apply_view_visibility(blocker_visible=False)
         identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
@@ -456,15 +445,6 @@ class TaskDetailPanel(Vertical):
                     animate=False,
                 )
                 return
-        parent = event.widget.parent
-        while parent is not None:
-            if parent.id == TASK_DETAIL_CONTEXT:
-                self.query_one(f"#{TASK_DETAIL_CONTEXT}", HorizontalScroll).scroll_to_widget(
-                    event.widget,
-                    animate=False,
-                )
-                return
-            parent = parent.parent
 
     def select_task(self, task_id: str | None) -> None:
         if task_id == self._task_id:
@@ -547,7 +527,6 @@ class TaskDetailPanel(Vertical):
             TASK_DETAIL_WINDOW_BUTTON: self._navigate_task_window,
             TASK_DETAIL_LEADER_BUTTON: lambda: self._navigate_role_pane(Role.LEADER),
             TASK_DETAIL_IMPLEMENTER_BUTTON: lambda: self._navigate_role_pane(Role.IMPLEMENTER),
-            TASK_DETAIL_VIEWS_BUTTON: self.open_contextual_views,
         }
         handler = handlers.get(button_id)
         if handler is not None:
@@ -639,18 +618,11 @@ class TaskDetailPanel(Vertical):
             strip.last_signal is not None
             and strip.last_signal_at is not None
             and view.latest_signal is None
-            and view.latest_signal_error is None
         )
         signal_values = (
             {
                 "latest_signal": strip.last_signal,
-                "latest_signal_identity": strip.last_signal_identity,
                 "latest_signal_at": strip.last_signal_at,
-                "latest_signal_role": strip.last_signal_role,
-                "latest_signal_turn": strip.last_signal_turn,
-                "latest_signal_uncertain": view.latest_signal_uncertain,
-                "latest_signal_error": view.latest_signal_error,
-                "latest_signal_incomplete": False,
             }
             if signal_is_newer or signal_has_no_recorded_predecessor
             else {}
@@ -890,12 +862,6 @@ class TaskDetailPanel(Vertical):
         ):
             return None
         return True
-
-    def open_usage_details(self) -> None:
-        self._show_task_view(TASK_VIEW_USAGE)
-
-    def open_evidence(self) -> None:
-        self._show_task_view(TASK_VIEW_EVIDENCE)
 
     def open_view(self, view_id: str) -> None:
         self._show_task_view(view_id)
@@ -1460,9 +1426,6 @@ class TaskDetailScreen(ModalScreen[None]):
 
     async def action_open_contextual_views(self) -> None:
         await self.query_one("#task-detail-panel", TaskDetailPanel).open_contextual_views()
-
-    def action_open_usage_details(self) -> None:
-        self.query_one("#task-detail-panel", TaskDetailPanel).open_usage_details()
 
     async def action_close(self) -> None:
         self.dismiss()
