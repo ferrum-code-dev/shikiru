@@ -60,7 +60,11 @@ _NEWLINE_KEYS = frozenset({"ctrl+enter", "ctrl+j"})
 _ACTION_MOVE = "move"
 _ACTION_ACTIVATE = "activate"
 _ACTION_TOGGLE_TRIED = "toggle_tried"
-_SELECTION_ACTIONS = frozenset({_ACTION_MOVE, _ACTION_ACTIVATE, _ACTION_TOGGLE_TRIED})
+_ACTION_ADD_DETAILS = "add_details"
+_SELECTION_ACTIONS = frozenset(
+    {_ACTION_MOVE, _ACTION_ACTIVATE, _ACTION_TOGGLE_TRIED, _ACTION_ADD_DETAILS}
+)
+_PREFILL_SEPARATOR = " \N{EM DASH} "
 _SUBMIT_KEY = "enter"
 _MOVE_STEPS = {"up": -1, "down": 1}
 
@@ -134,6 +138,7 @@ class ResolutionScreen(ModalScreen[bool]):
         Binding("down", f"{_ACTION_MOVE}(1)", "Next choice", show=False),
         Binding(_SUBMIT_KEY, _ACTION_ACTIVATE, "Send", show=False),
         Binding("t", _ACTION_TOGGLE_TRIED, "What was tried", show=False),
+        Binding("tab", _ACTION_ADD_DETAILS, "Add details", show=False),
     ]
     DEFAULT_CSS = (
         POPUP_CSS
@@ -235,7 +240,10 @@ class ResolutionScreen(ModalScreen[bool]):
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         del parameters
         if action in _SELECTION_ACTIONS:
-            return not isinstance(self.focused, TextArea)
+            if isinstance(self.focused, TextArea):
+                return False
+            if action == _ACTION_ADD_DETAILS:
+                return self._selected_alternative() is not None
         return True
 
     def action_close(self) -> None:
@@ -256,6 +264,12 @@ class ResolutionScreen(ModalScreen[bool]):
             self.action_toggle_tried()
         else:
             self._activate(self._selected)
+
+    def action_add_details(self) -> None:
+        """Open the answer box prefilled with the selected alternative's label."""
+        choice = self._selected_alternative()
+        if choice is not None and self._disabled_reason() is None:
+            self._open_answer(prefill=f"{choice.label}{_PREFILL_SEPARATOR}")
 
     def action_toggle_tried(self) -> None:
         """Expand or collapse `What was tried`."""
@@ -361,7 +375,8 @@ class ResolutionScreen(ModalScreen[bool]):
         choose = self.query_one("#resolution-choose", Static)
         choose.update(
             choose_renderable(
-                on_tried=self._selected == len(panel.choices), tried_expanded=self._tried_open
+                None if self._selected == len(panel.choices) else panel.choices[self._selected],
+                tried_expanded=self._tried_open,
             )
         )
         choose.display = layout is not ResolutionLayout.TINY
@@ -423,15 +438,31 @@ class ResolutionScreen(ModalScreen[bool]):
         self._select(index)
         choice = panel.choices[index]
         if choice.kind is ChoiceKind.OWN_ANSWER:
-            self._answer_open = True
-            self._paint()
-            self._relayout()
-            self.set_focus(self.query_one("#resolution-answer", _AnswerBox))
+            self._open_answer()
+        elif choice.needs_input:
+            self._open_answer(prefill=f"{choice.label}{_PREFILL_SEPARATOR}")
         elif choice.kind is ChoiceKind.CANCEL and not confirming:
             self._cancel_armed = True
             self._paint()
         else:
             self._send_choice(choice)
+
+    def _selected_alternative(self) -> PanelChoice | None:
+        panel = self._panel
+        if panel is None or self._selected >= len(panel.choices):
+            return None
+        choice = panel.choices[self._selected]
+        return choice if choice.kind is ChoiceKind.ANSWER_OPTION else None
+
+    def _open_answer(self, prefill: str = "") -> None:
+        self._answer_open = True
+        self._paint()
+        self._relayout()
+        box = self.query_one("#resolution-answer", _AnswerBox)
+        if prefill and not box.text.strip():
+            box.load_text(prefill)
+            box.move_cursor(box.document.end)
+        self.set_focus(box)
 
     def _send_choice(self, choice: PanelChoice) -> None:
         if choice.kind is ChoiceKind.ANSWER_OPTION:

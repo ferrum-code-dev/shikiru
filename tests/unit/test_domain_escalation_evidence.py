@@ -12,7 +12,7 @@ def test_shikiru_packet_keeps_agent_alternatives_separate_from_engine_resolution
         question="Which behavior should remain?",
         options=[
             Option(label="Keep behavior", consequences="Preserve callers.", recommended=True),
-            Option(label="Change behavior", consequences="Update callers."),
+            Option(label="Change behavior", consequences="Update callers.", needs_input=True),
         ],
     )
     packet = (
@@ -70,3 +70,15 @@ def test_packet_no_agent_proposal_sentinels_preserve_engine_resolutions(sentinel
         ResolutionKind.CANCEL,
     ]
     assert parsed.errors == ()
+
+
+def test_alternatives_written_before_the_needs_input_flag_still_parse() -> None:
+    legacy = (
+        '{"question": "Q?", "options": [{"label": "A", "consequences": "c", "recommended": true}]}'
+    )
+    packet = f"## Agent alternatives\n\n{legacy}\n\n## Options\n\n- `answer` ★: Guide.\n"
+
+    parsed = parse_escalation_packet(packet)
+
+    assert parsed.agent_request is not None
+    assert not parsed.agent_request.options[0].needs_input

@@ -48,6 +48,7 @@ class PanelChoice(DomainModel):
     consequence: str
     recommended: bool = False
     label: str | None = None
+    needs_input: bool = False
 
 
 class ResolutionPanel(DomainModel):
@@ -83,6 +84,7 @@ def build_resolution_panel(
                 consequence=option.consequences,
                 recommended=option.recommended,
                 label=option.label,
+                needs_input=option.needs_input,
             )
             for option in (request.options if request else ())
         ),

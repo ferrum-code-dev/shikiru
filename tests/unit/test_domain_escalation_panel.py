@@ -11,7 +11,7 @@ from shikiru.domain.tasks import EscalationReason
 _REQUEST = EscalationRequest(
     question="Which failures?",
     options=[
-        Option(label="Transient", consequences="Retry I/O."),
+        Option(label="Transient", consequences="Retry I/O.", needs_input=True),
         Option(label="Fail fast", consequences="Never retry.", recommended=True),
     ],
 )
@@ -70,3 +70,9 @@ def test_panel_orders_choices_preselects_and_carries_the_disabled_reason() -> No
     disabled = build_resolution_panel(_escalation(_DECISION), _FULL, "Title", "already resolved")
     assert disabled.disabled_reason == "already resolved"
     assert len(disabled.choices) == len(_ANSWER_KINDS)
+
+
+def test_panel_carries_the_needs_input_flag_of_each_alternative() -> None:
+    panel = build_resolution_panel(_escalation(_DECISION), _FULL, "Title", None)
+
+    assert [choice.needs_input for choice in panel.choices[:2]] == [True, False]

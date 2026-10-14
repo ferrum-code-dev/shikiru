@@ -89,6 +89,7 @@ def seed_escalation(
     reason: EscalationReason,
     *,
     write_packet: bool = True,
+    needs_input: bool = False,
 ) -> tuple[Escalation, str]:
     task = TaskStore(connection, clock).require(task_id)
     TaskStore(connection, clock).apply_transition(
@@ -106,6 +107,7 @@ def seed_escalation(
             AgentOption(
                 label="Change behavior",
                 consequences="Update callers and documentation.",
+                needs_input=needs_input,
             ),
         ],
     )
@@ -229,9 +231,11 @@ def resolution_factory(
     queries: OperatorQueries,
     clock: Clock,
     reader: StateReader,
+    *,
+    drafts: ResolutionDrafts | None = None,
 ) -> ResolutionScreenFactory:
     """Build resolution screens over the given services, sharing one set of answer drafts."""
-    drafts = ResolutionDrafts()
+    drafts = drafts or ResolutionDrafts()
 
     def build(escalation_id: str) -> ModalScreen[bool]:
         return ResolutionScreen(

@@ -11,7 +11,7 @@ from textual.widgets import Button, Select, Static, TextArea
 
 from shikiru.clock import SystemClock
 from shikiru.dashboard.palette import PaletteApp, PaletteScreen
-from shikiru.dashboard.resolution import ResolutionScreen
+from shikiru.dashboard.resolution import ResolutionDrafts, ResolutionScreen
 from shikiru.domain.commands import (
     AcceptResolution,
     AnswerResolution,
@@ -55,6 +55,8 @@ _OWN_ANSWER_ROW = 2
 _ACCEPT_ROW = 3
 _CANCEL_ROW_AFTER_RETRY = 1
 _ALTERNATIVE = "Change behavior"
+_PREFILL = " \N{EM DASH} "
+_DETAILS = "backend at 10.0.0.1"
 _OWN_TEXT = "Keep the current behavior."
 _ARMED_TEXT = "Press Enter again to cancel"
 _TRIED_CONTENT = "One implementation and review round."
@@ -99,6 +101,24 @@ async def _type(pilot: Pilot[None], text: str) -> None:
         ),
         pytest.param(
             EscalationReason.DECISION_REQUIRED,
+            "flagged-alternative",
+            AnswerResolution(text=f"{_ALTERNATIVE}{_PREFILL}{_DETAILS}"),
+            id="flagged-alternative-with-details",
+        ),
+        pytest.param(
+            EscalationReason.DECISION_REQUIRED,
+            "tab-details",
+            AnswerResolution(text=f"{_ALTERNATIVE}{_PREFILL}{_DETAILS}"),
+            id="tab-adds-details-to-alternative",
+        ),
+        pytest.param(
+            EscalationReason.DECISION_REQUIRED,
+            "tab-keeps-draft",
+            AnswerResolution(text=_OWN_TEXT),
+            id="tab-keeps-an-existing-draft",
+        ),
+        pytest.param(
+            EscalationReason.DECISION_REQUIRED,
             "own-answer",
             AnswerResolution(text=_OWN_TEXT),
             id="own-answer",
@@ -126,15 +146,34 @@ async def test_each_send_route_queues_one_resolution_the_engine_applies(
     reader = StateReader(database, clock)
     request.addfinalizer(reader.close)
     task = seed_task(connection, clock, title="Send route")
-    escalation, _ = seed_escalation(connection, clock, task.id, tmp_path, reason)
+    escalation, _ = seed_escalation(
+        connection, clock, task.id, tmp_path, reason, needs_input=act == "flagged-alternative"
+    )
     commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = ResolutionHost(resolution_factory(commands, queries, clock, reader), escalation.id)
+    drafts = ResolutionDrafts()
+    if act == "tab-keeps-draft":
+        drafts.remember(task.id, escalation.id, _OWN_TEXT)
+    app = ResolutionHost(
+        resolution_factory(commands, queries, clock, reader, drafts=drafts), escalation.id
+    )
 
     async with app.run_test(size=_SIZE) as pilot:
         screen = await _opened(app)
         assert queue.pending() == []
         if act == "alternative":
             await pilot.press("down", "enter")
+        elif act in {"flagged-alternative", "tab-details", "tab-keeps-draft"}:
+            move = "up" if act == "tab-keeps-draft" else "down"
+            await pilot.press(move, "enter" if act == "flagged-alternative" else "tab")
+            answer = screen.query_one("#resolution-answer", TextArea)
+            await wait_until(lambda: app.focused is answer, timeout=UI_WAIT_SECONDS)
+            assert queue.pending() == []
+            expected_box = _OWN_TEXT if act == "tab-keeps-draft" else f"{_ALTERNATIVE}{_PREFILL}"
+            assert answer.text == expected_box
+            if act != "tab-keeps-draft":
+                assert answer.cursor_location == answer.document.end
+                await _type(pilot, _DETAILS)
+            await pilot.press("enter")
         elif act == "own-answer":
             await pilot.click(_rows(screen)[_OWN_ANSWER_ROW])
             answer = screen.query_one("#resolution-answer", TextArea)

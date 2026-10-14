@@ -14,4 +14,6 @@ non-blocking residual risks go into `residual_risks` or `new_tasks`, not `issues
 This is the final round: choose `accept`, `supersede` (decompose into `new_tasks`) or
 `escalate`. `changes_requested` is not available this round.
 {% endif %}
+When you `escalate`, give the Operator options, exactly one `recommended`, and set `needs_input` on
+an option that asks the Operator to provide something (a file, a result, access, a value).
 {% endblock %}

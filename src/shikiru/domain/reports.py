@@ -109,6 +109,10 @@ class Option(DomainModel):
     label: str
     consequences: str
     recommended: bool = False
+    needs_input: bool = Field(
+        default=False,
+        description="True when choosing this option means the Operator must supply something.",
+    )
 
 
 class EscalationRequest(DomainModel):
