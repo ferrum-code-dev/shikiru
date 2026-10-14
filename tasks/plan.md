@@ -1784,3 +1784,57 @@ Refs: `detail.py` (old summary, Views screen, paging, dropdowns), `test_dashboar
 Refs: Tasks 180–184; design 06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference detail panels.
 - [x] Native before/after of every surface and state; plain and `TERM=dumb NO_COLOR=1` gates; HTML reference and design docs match the TUI (exact srcdoc round-trip, Chrome check with a throwaway profile); spec marked delivered; record `docs/release-readiness-2026-10-14-phase11-eleventh-review.md`; README links; plan and todo ticked.
   - Proof: native before/after dumps of the briefing, popup, window, actions, details list, event and activity lists and relationships over seeded tasks against `4fffb19` (a 40-column verb overflow found and fixed in `f0d3779`); the HTML reference round-trips exactly (SHA-256 `79944d9e...b0e3`) and matched in Chrome; both gates green (see the record for numbers and limits).
+
+## Keys, escalation answers and inline details (twelfth review)
+
+Scope: [twelfth review](../docs/tui-feedback-twelfth-review.md); the operator approved the options. Execute Tasks 186–196 sequentially after Task 185, one fresh agent per task, root review by the orchestrator.
+
+### Task 186: Up/Down select tasks from any bar
+Refs: `plugins/widgets/escalations.py` (`on_key`, `_handle_vertical_key`), `plugins/widgets/queue.py` (`_move_selection`), `dashboard/app.py` (`on_key`, `_TaskBrowserNavigation`, stale help line "Escalations: Up/Down select"), `test_dashboard_escalation_follow.py`.
+- [ ] Reproduce first: with focus on the escalation, usage, resources and footer stops, Up/Down must move the task selection; the bar keeps Left/Right; text inputs, text areas and expanded Selects keep their arrows; the task list does not move twice.
+- [ ] Rewrite the test that pins the inert bar; add one table over the focus stops; fix the stale help line.
+
+### Task 187: Remove the `u` and `e` task keys
+Refs: `dashboard/app.py` (`_dispatch_workspace_key`, `_EVIDENCE_KEY`, help), `detail.py` (`TASK_USAGE_KEY`); tests that press them (`_open_task_view`, `_assert_home_inline_secondary_routes`, `_assert_evidence_editor_shortcut_precedence` and the tests listed in the analysis).
+- [ ] The keys do nothing; usage and events stay reachable through the details list and `Ctrl+P`; the helpers use those routes; one test shows the keys are inert; no help or doc line mentions them.
+
+### Task 188: Resolution panel highlight and keyboard-reachable evidence
+Refs: `dashboard/resolution.py` (`_ChoiceList`, `_TriedSection`, `action_move`, `_activate`, `_paint`), `resolution_view.py` (`choice_renderable`, `_SELECTED_BAR`), `row_list.py` and `queue.py` selection styles.
+- [ ] The `▌` glyph is gone and the selected choice uses the Tasks-list background highlight, text columns unchanged, a `NO_COLOR` cue kept if the Tasks list has one.
+- [ ] `What was tried` is the last row of the arrow list: ↑↓ reach it, Enter toggles it and never sends, `t` and click keep working, Cancel arming resets as for other rows; hint text mentions it.
+
+### Task 189: What was tried digest
+Refs: `engine/escalation_filing.py` (`escalation_narrative`), `engine/escalations.py` (`render_packet`, `_restored_context`, `raise_escalation`), `domain/briefing.py` (`verdict_counts`, `reported_tests`, `parse_produced`, `one_line`), `domain/events.py`, `defaults.toml`.
+- [ ] A pure domain function turns events, reports, task and facts into the capped digest of the spec; the packet writer uses it for every escalation path including restored and lost ones; `escalation.tried_lines` in `defaults.toml`.
+- [ ] One unit table over event/report shapes (missing reports, failed turns, many rounds with `+N earlier`); an integration check that a raised escalation's panel shows the digest.
+
+### Task 190: Alternatives that need Operator input
+Refs: `domain/reports.py` (`Option`, `EscalationRequest`), `prompts/templates/consult.md.j2` and verify template, `domain/escalation_evidence.py`, `domain/escalation_panel.py` (`PanelChoice`), `dashboard/resolution.py` (`_activate`, `_AnswerBox`, drafts), `resolution_view.py`.
+- [ ] `Option.needs_input` (default false) flows through the report schema, the packet and `PanelChoice`; prompts explain the flag; old packets parse.
+- [ ] Enter on a flagged row opens the prefilled answer box (`<label> — `), Enter in the box sends it; Tab on any other alternative opens the same box; unflagged Enter still sends at once; the flagged row shows `✎` and `needs your input`; drafts stay per escalation without losing an earlier draft silently.
+
+### Task 191: Wrap the agent's current output in Now
+Refs: `domain/briefing.py` (`LAST_WORDS_LIMIT`, `one_line`), `dashboard/activity.py` (`RoleViewTail._words`), `dashboard/briefing_view.py` (`_quote`, `_wide_rows`, `_compact_activity`), `defaults.toml`, `test_dashboard_motion.py` role tail tests.
+- [ ] The last message is kept to `dashboard.last_words_chars`, wrapped to `dashboard.now_max_lines` (`now_compact_lines` compact) with `…` only past the cap; rows below move down; tiny layout does not overflow; tunables in `defaults.toml`.
+- [ ] Tests assert the wrap and cap outcome, not constants.
+
+### Task 192: Independent timelines for Events and Agent activity
+Refs: `dashboard/detail.py` timeline state (`_timeline_category`, `_timeline_cursors`, `_timeline_page`, `_watch_timeline`, filters), `row_list.py`, `views.task_detail`.
+- [ ] A timeline section class owns one category's rows, cursor, page, filters and follow state; the panel instantiates two. Behaviour is unchanged for the operator (same lists and filters); a 1 Hz refresh runs only for a section that is shown.
+
+### Task 193: Inline folds replace the details list popup
+Refs: spec "Task details"; `details_list.py`, `details_list_view.py` (`entry_renderable`, headlines, add the missing Events/Request/Facts/Agent activity headlines), `detail.py` (`TASK_VIEW_WIDGETS`, `_apply_view_visibility`, `_render_view`), `ui/section.py`.
+- [ ] A fold widget (header with live headline, body) hosts each section; several may be open; keys as in the spec; fold state survives refresh and task change in one panel; live timers only for open folds; Home wide, compact, tiny, popup and task window.
+- [ ] The nine section bodies keep today's content; project contextual views follow the headers.
+
+### Task 194: Route entry points to folds and retire the chooser
+Refs: `app.py` (`open_task_detail_view`, palette Views route, `action_open_task_usage`/`evidence`, `open_contextual_view`), `contract.py`, `TaskDetailScreen` (`initial_view`, `open_views_on_mount`), `tests/support/dashboard.py` (`choose_details_entry`).
+- [ ] `Enter details ▸`, `v`, the palette Views route and every widget that opened a section now open the panel with that fold open and focused; `TaskDetailsListScreen` and its tests are deleted or converted; shape and wording tests deleted; collected cases fall.
+
+### Task 195: Cyan key names everywhere
+Refs: `ui/section.py`, `ui/compact.py` (`_append_aligned_hint`), `ui/popup.py`, `app.py` help and footer, `escalations.py`, `resolution_view.py`, `detail.py`, `briefing_view.py`, `session_picker.py`, `palette.py`, `dialogue.py`, `queue.py`.
+- [ ] One `key_hint` helper in `ui` paints key names `STEEL_BLUE` (bold kept for `NO_COLOR`); every hint, footer, help line, `Esc ×` control, resolution panel row, fold hint and briefing hint uses it; native dumps show cyan keys on each panel.
+
+### Task 196: Verify the twelfth review, reconcile the reference and docs
+Refs: Tasks 186–195; design 05/06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference.
+- [ ] Native before/after of all nine items; plain and `TERM=dumb NO_COLOR=1` gates; HTML reference and design docs match the TUI (exact srcdoc round-trip, Chrome check with a throwaway profile); spec marked delivered; record `docs/release-readiness-2026-10-14-phase11-twelfth-review.md`; README links; plan and todo ticked.

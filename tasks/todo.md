@@ -288,3 +288,17 @@ Eleventh-review scope and evidence: [eleventh review, task details](../docs/tui-
 - [x] Task 183: Arrow lists for events, agent activity and relationships
 - [x] Task 184: Remove the old detail code and tests
 - [x] Task 185: Verify the eleventh review, reconcile the reference and docs
+
+Twelfth-review scope and evidence: [twelfth review, keys, escalation answers and inline details](../docs/tui-feedback-twelfth-review.md).
+
+- [ ] Task 186: Up/Down select tasks from any bar
+- [ ] Task 187: Remove the `u` and `e` task keys
+- [ ] Task 188: Resolution panel highlight and keyboard-reachable evidence
+- [ ] Task 189: What was tried digest
+- [ ] Task 190: Alternatives that need Operator input
+- [ ] Task 191: Wrap the agent's current output in Now
+- [ ] Task 192: Independent timelines for Events and Agent activity
+- [ ] Task 193: Inline folds replace the details list popup
+- [ ] Task 194: Route entry points to folds and retire the chooser
+- [ ] Task 195: Cyan key names everywhere
+- [ ] Task 196: Verify the twelfth review, reconcile the reference and docs
