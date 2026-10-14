@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from shikiru.domain.reports import DECISION_ACCEPT
 from shikiru.domain.tasks import Hold, Status
 
 if TYPE_CHECKING:
@@ -56,6 +57,11 @@ class VerdictCounts:
     blocker: int
     major: int
     minor: int
+
+    @property
+    def has_problems(self) -> bool:
+        """Whether the verdict is anything but a clean accept."""
+        return self.decision != DECISION_ACCEPT or bool(self.blocker or self.major or self.minor)
 
 
 @dataclass(frozen=True)

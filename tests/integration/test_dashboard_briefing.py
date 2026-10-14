@@ -35,7 +35,7 @@ from shikiru.domain.reports import (
 from shikiru.domain.reports import TestRun as AgentTestRun
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step
-from shikiru.domain.tasks import EscalationReason, Mode, Role, Status
+from shikiru.domain.tasks import EscalationReason, Mode, RepoState, Role, Status
 from shikiru.operator.queries import TASK_DETAIL_EVENT_LIMIT
 from shikiru.paths import run_dir, turns_dir
 from shikiru.plugins.widgets.queue import QueuePanel
@@ -75,19 +75,36 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 WIDE_SIZE = (100, 40)
 COMPACT_SIZE = (40, 40)
 BUTTON_LINE_PAD = 1
+BRANCH = "task/t-12"
 QUESTION = "Which failures should the parser retry?"
 LAST_WORDS = "Running the parser tests after the retry change."
 REPORT_SUMMARY = "Added bounded retries to the parser."
 RESCUED_ITERATION = 3
 ELAPSED_MINUTES = 31
-CHECKS = ("Needed from you", "Now", "Produced", "Verdict", "PR", "Cost")
+TITLES = ("Progress", "Result so far", "Result", "Problems")
+LABELS = (
+    "Step",
+    "Rework",
+    "Now",
+    "Summary",
+    "Branch",
+    "Merged",
+    "Commits",
+    "Tests",
+    "PR",
+    "Verdict",
+    "Needed",
+    "Risks",
+    "Cost",
+)
 NEVER_SHOWN = ("ToolStarted", "Last recorded signal", "Work is active", "Queued for execution")
 
 
 @dataclass(frozen=True)
 class _Case:
     seed: Callable[[Connection, FakeClock, Path], Task]
-    rows: frozenset[str]
+    titles: frozenset[str]
+    labels: frozenset[str]
     texts: tuple[str, ...]
     verbs: frozenset[BriefingAction]
     missing: tuple[str, ...] = ()
@@ -133,6 +150,7 @@ def _running(connection: Connection, clock: FakeClock, iteration: int) -> Task:
     tasks = TaskStore(connection, clock)
     task = seed_task(connection, clock, title="Add retry to parser", mode=Mode.IMPLEMENT)
     tasks.set_slot(task.id, task.seq)
+    tasks.set_repo(task.id, RepoState(base="main", base_ref="main", base_sha="0", branch=BRANCH))
     tasks.apply_transition(task.id, first_step(task))
     current = tasks.get(task.id)
     assert current is not None
@@ -308,36 +326,43 @@ def _seed_done_after_long_history(
 
 TERMINAL_NEVER = ("unknown", "Consulting", "in step", "waiting", "open", "Implementer")
 
+MINUS = "\N{MINUS SIGN}"
+TAKE_OVER_VERBS = frozenset(
+    {
+        BriefingAction.TAKE_OVER,
+        BriefingAction.MESSAGE,
+        BriefingAction.PAUSE,
+        BriefingAction.CANCEL,
+    }
+)
+
 CASES = {
     "running": _Case(
         _seed_running,
-        frozenset({"Now", "Produced", "Cost"}),
+        frozenset({"Progress", "Result so far"}),
+        frozenset({"Step", "Rework", "Now", "Branch", "Commits", "Tests", "Cost"}),
         (
             "rework 2 of 4",
             "31m total",
             "active 0s ago",
             LAST_WORDS,
-            "tests 1 passed · 1 failed (agent-reported)",
+            f"{BRANCH} \N{RIGHTWARDS ARROW} main",
+            "1 passed · 1 failed · agent-reported",
             "Leader $0.42 · Impl $1.10 billed",
         ),
-        frozenset(
-            {
-                BriefingAction.TAKE_OVER,
-                BriefingAction.MESSAGE,
-                BriefingAction.PAUSE,
-                BriefingAction.CANCEL,
-            }
-        ),
+        TAKE_OVER_VERBS,
     ),
     "waiting-on-dependency": _Case(
         _seed_waiting_on_dependency,
-        frozenset({"Needed from you"}),
+        frozenset({"Problems"}),
+        frozenset({"Needed"}),
         ("Waiting on dependency",),
         frozenset({BriefingAction.PAUSE, BriefingAction.CANCEL}),
     ),
     "waiting-on-decision": _Case(
         _seed_decision,
-        frozenset({"Needed from you", "Produced"}),
+        frozenset({"Progress", "Result so far", "Problems"}),
+        frozenset({"Step", "Branch", "Tests", "Needed"}),
         (QUESTION,),
         frozenset(
             {
@@ -351,35 +376,43 @@ CASES = {
     ),
     "rejected-with-verdict": _Case(
         _seed_rejected,
-        frozenset({"Now", "Produced", "Verdict", "PR"}),
-        ("3 commits · 5 files · +120 \N{MINUS SIGN}34", "Rejected · 2 major · 1 minor", "#41 open"),
-        frozenset(
-            {
-                BriefingAction.TAKE_OVER,
-                BriefingAction.MESSAGE,
-                BriefingAction.PAUSE,
-                BriefingAction.CANCEL,
-            }
+        frozenset({"Progress", "Result so far", "Problems"}),
+        frozenset({"Step", "Rework", "Now", "Branch", "Commits", "Tests", "PR", "Verdict"}),
+        (
+            f"3 commits · 5 files · +120 {MINUS}34",
+            "Rejected · 2 major · 1 minor",
+            "#41 open",
         ),
+        TAKE_OVER_VERBS,
     ),
     "done-with-report": _Case(
         _seed_done,
-        frozenset({"Produced"}),
-        (REPORT_SUMMARY, "3 commits"),
+        frozenset({"Result"}),
+        frozenset({"Summary", "Merged", "Commits", "Tests"}),
+        (REPORT_SUMMARY, f"{BRANCH} \N{RIGHTWARDS ARROW} main", "3 commits"),
         frozenset(),
-        ("rework",),
+        ("rework", "Progress", "Problems"),
     ),
-    "cancelled": _Case(_seed_cancelled, frozenset(), (), frozenset(), ("rework",)),
+    "cancelled": _Case(
+        _seed_cancelled,
+        frozenset({"Result"}),
+        frozenset({"Branch"}),
+        (f"{BRANCH} (kept, not merged)",),
+        frozenset(),
+        ("rework", "Progress", "Problems", "Summary"),
+    ),
     "cancelled-while-consulting": _Case(
         _seed_cancelled_while_consulting,
-        frozenset(),
+        frozenset({"Result"}),
+        frozenset({"Branch"}),
         ("Cancelled \N{MIDDLE DOT} stopped during consult",),
         frozenset(),
         TERMINAL_NEVER,
     ),
     "done-after-long-history": _Case(
         _seed_done_after_long_history,
-        frozenset({"PR"}),
+        frozenset({"Result"}),
+        frozenset({"Merged", "PR"}),
         ("Done", "#41 merged"),
         frozenset(),
         TERMINAL_NEVER,
@@ -442,12 +475,40 @@ async def test_briefing_shows_only_the_rows_the_task_has_data_for(
                 lambda case=case: _shown_verbs(app) == case.verbs, timeout=UI_WAIT_SECONDS
             )
             text = f"{plain_text(identity.content)} {plain_text(briefing.content)}"
-            for row in CHECKS:
-                assert (row in text) is (row in case.rows), (name, row)
+            lines = [
+                line.strip() for line in rendered_lines(briefing.content, width=briefing.size.width)
+            ]
+            for title in TITLES:
+                assert (title in lines) is (title in case.titles), (name, title)
+            for label in LABELS:
+                shown = any(line.startswith(f"{label} ") for line in lines)
+                assert shown is (label in case.labels), (name, label)
             for expected in case.texts:
                 assert expected in text, (name, expected)
             for never in (*NEVER_SHOWN, *case.missing):
                 assert never not in text, (name, never)
+
+
+@pytest.mark.parametrize("size", [(100, 40), (60, 40), (48, 40), (40, 40), (40, 8)])
+async def test_every_briefing_stays_inside_its_width(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    size: tuple[int, int],
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    tasks = {name: case.seed(connection, clock, project_root) for name, case in CASES.items()}
+    app = _app(reader, project_root, clock)
+    async with app.run_test(size=size):
+        briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
+        identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+        for name in CASES:
+            task = tasks[name]
+            app.query_one("#queue", QueuePanel).select_task(task.id)
+            await wait_until(lambda task=task: _is_loaded(identity, task), timeout=UI_WAIT_SECONDS)
+            lines = rendered_lines(briefing.content, width=briefing.size.width)
+            assert all(len(line) <= briefing.size.width for line in lines), name
 
 
 @pytest.mark.parametrize(

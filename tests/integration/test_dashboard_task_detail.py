@@ -762,10 +762,11 @@ def _record_briefing_evidence(
 
 def _assert_briefing_data(detail: TaskDetailView, settings: Settings, facts: str) -> None:
     assert detail.recorded_facts == facts
-    assert detail.produced == ProducedNumbers(commits=2, files=1, insertions=2, deletions=1)
+    assert detail.results is not None
+    assert detail.results.produced == ProducedNumbers(commits=2, files=1, insertions=2, deletions=1)
     assert detail.verdict_counts == VerdictCounts("changes_requested", 0, 2, 1)
-    assert detail.reported_tests == ReportedTests(passed=1, failed=0, skipped=0)
-    assert detail.pull_request == PullRequestLine(
+    assert detail.results.tests == ReportedTests(passed=1, failed=0, skipped=0)
+    assert detail.results.pull_request == PullRequestLine(
         "OPEN", "https://example.test/o/r/pull/41", 41, None, None
     )
     assert detail.max_iterations == settings.orchestration.max_iterations

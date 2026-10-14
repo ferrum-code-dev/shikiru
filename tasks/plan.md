@@ -1886,7 +1886,7 @@ Refs: `domain/briefing.py` (`parse_produced`), `domain/reports.py` (`Commit`, `I
 
 ### Task 203: Briefing as Progress, Result so far and Problems
 Refs: spec "Task details"; `dashboard/briefing_view.py`, `domain/briefing.py`, Task 202 model.
-- [ ] The approved groups render at wide, compact and tiny; Done shows Summary and what was merged; Cancelled shows where it stopped and the kept branch; native colour and `NO_COLOR` for running, waiting, rejected, escalated, Done and Cancelled.
+- [x] The approved groups render at wide, compact and tiny; Done shows Summary and what was merged; Cancelled shows where it stopped and the kept branch; native colour and `NO_COLOR` for running, waiting, rejected, escalated, Done and Cancelled. Proof: rendered the real briefing at 100, 60, 48, 40 and 40x8 for running, waiting, rejected, escalated, Done and Cancelled states, checked truecolor output (grey labels, sage passed, rose failed, cyan open PR, amber verdict) and `NO_COLOR` text, and a test asserts the rows per state and that no line exceeds the width. `poe check` green.
 
 ### Task 204: Results and Decisions folds
 Refs: `dashboard/detail.py`, `details_list_view.py` (`DetailsSection`, headlines), Task 202, `VERDICT`, `ESCALATION_RESOLVED`, `OPERATOR_MESSAGE` events.

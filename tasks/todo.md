@@ -317,7 +317,7 @@ Thirteenth-review scope and evidence: [thirteenth review](../docs/tui-feedback-t
   - Proof: Reproduced on the unchanged code: a Cancelled task with its step kept read `○ Consulting · Leader`, `? Triage unknown ? Implement unknown`, a blocker `Waiting on dependency` and a Home row `Consulting · waiting on dependency`. `project_workflow` now gives Done stages done or skipped and Cancelled stages done, `✕ stopped` and skipped; state line, PR (`merged`), Home row and strip show only the terminal status with `stopped during <step>`, and the store clears `wait_reason` on Done/Cancelled. Tables cover truncated and complete Done, Cancelled with kept and cleared step and the live task keeping `?`; native dumps checked. Gate `uv run poe check` green.
 - [x] Task 201: Briefing verbs
 - [x] Task 202: Results data
-- [ ] Task 203: Briefing as Progress, Result so far and Problems
+- [x] Task 203: Briefing as Progress, Result so far and Problems
 - [ ] Task 204: Results and Decisions folds
 - [ ] Task 205: Task description, Dependencies, Workspace, Settings; no project-wide folds
 - [ ] Task 206: Events and Agent activity

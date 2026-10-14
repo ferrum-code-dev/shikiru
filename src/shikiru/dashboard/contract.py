@@ -22,9 +22,6 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import BillingMode, BillingSource, CostBasis
     from shikiru.clock import Clock
     from shikiru.domain.briefing import (
-        ProducedNumbers,
-        PullRequestLine,
-        ReportedTests,
         VerdictCounts,
     )
     from shikiru.domain.levels import UsageLevel
@@ -542,9 +539,6 @@ class TaskDetailView:
     started_at: datetime | None = None
     escalation_remaining: int | None = None
     verdict_counts: VerdictCounts | None = None
-    produced: ProducedNumbers | None = None
-    reported_tests: ReportedTests | None = None
-    pull_request: PullRequestLine | None = None
     last_words: str | None = None
     results: TaskResults | None = None
 

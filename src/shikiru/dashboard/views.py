@@ -58,7 +58,6 @@ from shikiru.dashboard.session_history import project_task_sessions
 from shikiru.dashboard.tick import TickMemo, tick_now
 from shikiru.domain.briefing import (
     escalation_remaining,
-    parse_produced,
     pull_request_line,
     reported_tests,
     verdict_counts,
@@ -1067,9 +1066,6 @@ class StateDashboardViews:
                 can_escalate=move_up(task, Role.IMPLEMENTER, self._settings) is not None,
             ),
             verdict_counts=(verdict_counts(latest_verdict) if latest_verdict is not None else None),
-            produced=parse_produced(detail.recorded_facts),
-            reported_tests=reported,
-            pull_request=pull_request,
             last_words=task_frame.last_words,
             results=self._task_results(
                 task, detail, reported, pull_request, latest_verdict=latest_verdict

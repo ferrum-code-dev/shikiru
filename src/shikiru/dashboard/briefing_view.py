@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
 from rich.padding import Padding
-from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
@@ -19,7 +18,6 @@ from shikiru.agents.contracts import (
 from shikiru.domain.briefing import (
     LAST_WORDS_ELLIPSIS,
     BriefingAction,
-    ProducedNumbers,
     PullRequestLine,
     ReportedTests,
     VerdictCounts,
@@ -27,6 +25,7 @@ from shikiru.domain.briefing import (
     rework_progress,
     squashed,
 )
+from shikiru.domain.results import ResultOutcome
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.tasks import Hold, Role, Status
 from shikiru.ui.compact import ROLE_LABELS, StageActivity, duration_text, recorded_age
@@ -36,7 +35,6 @@ from shikiru.ui.section import (
     BOLD_PRIMARY,
     GROUP_SEPARATOR,
     LABEL_GAP,
-    STACKED_BELOW_WIDTH,
     Row,
     Section,
     grey,
@@ -49,10 +47,10 @@ from shikiru.ui.tokens import (
     ENGINE_COLOR,
     HOLD_COLOR,
     IDLE_COLOR,
-    NEUTRAL_BORDER_COLOR,
     ROLE_COLORS,
     SAGE,
     SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
     STOPPED_DURING,
     STYLE_BOLD,
     SUCCESS_COLOR,
@@ -65,32 +63,68 @@ if TYPE_CHECKING:
     from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 
     from shikiru.dashboard.contract import TaskDetailView, TaskSessionView
+    from shikiru.domain.results import TaskResults
 
-NEEDED_TITLE = "Needed from you"
+PROGRESS_TITLE = "Progress"
+RESULT_SO_FAR_TITLE = "Result so far"
+RESULT_TITLE = "Result"
+PROBLEMS_TITLE = "Problems"
 NEEDS_YOU_PREFIX = "Needs you: "
+STEP_LABEL = "Step"
+REWORK_LABEL = "Rework"
 NOW_LABEL = "Now"
-PRODUCED_LABEL = "Produced"
-VERDICT_LABEL = "Verdict"
+SUMMARY_LABEL = "Summary"
+BRANCH_LABEL = "Branch"
+MERGED_LABEL = "Merged"
+COMMITS_LABEL = "Commits"
+TESTS_LABEL = "Tests"
 PR_LABEL = "PR"
+VERDICT_LABEL = "Verdict"
+NEEDED_LABEL = "Needed"
+RISKS_LABEL = "Risks"
 COST_LABEL = "Cost"
-LABEL_WIDTH = len(PRODUCED_LABEL)
+LABEL_WIDTH = max(
+    len(label)
+    for label in (
+        STEP_LABEL,
+        REWORK_LABEL,
+        NOW_LABEL,
+        SUMMARY_LABEL,
+        BRANCH_LABEL,
+        MERGED_LABEL,
+        COMMITS_LABEL,
+        TESTS_LABEL,
+        PR_LABEL,
+        VERDICT_LABEL,
+        NEEDED_LABEL,
+        RISKS_LABEL,
+        COST_LABEL,
+    )
+)
+GROUP_INDENT = 2
+BRANCH_ARROW = "\N{RIGHTWARDS ARROW}"
+KEPT_NOT_MERGED = "(kept, not merged)"
 ACTIVE_WORD = "active"
 STALLED_WORD = "stalled"
 IN_STEP_WORD = "in step"
 TOTAL_WORD = "total"
 REWORK_WORD = "rework"
-NEEDED_INDENT = 2
 QUOTE = '"'
 MINUS = "\N{MINUS SIGN}"
 PASSED_MARK = "\N{CHECK MARK}"
 FAILED_MARK = "\N{BALLOT X}"
-TESTS_WORD = "tests"
-AGENT_REPORTED = "(agent-reported)"
+AGENT_REPORTED = "agent-reported"
 WAITING_ON = "Waiting on"
 NO_QUESTION = "Escalation open; no validated decision question is recorded."
 ESCALATION_NEAR = "escalates after {count} more {noun}"
 REJECTION_NOUNS = ("rejection", "rejections")
 ROLE_SHORT_LABELS = {Role.IMPLEMENTER.value: "Impl"}
+DECISION_COLORS = {
+    "accept": SUCCESS_COLOR,
+    "changes_requested": AMBER,
+    "escalate": ALERT_COLOR,
+}
+PR_STATE_COLORS = {"open": STEEL_BLUE, "merged": SUCCESS_COLOR, "closed": ALERT_COLOR}
 VERDICT_LABELS = {
     "accept": "Accepted",
     "changes_requested": "Rejected",
@@ -137,6 +171,7 @@ _STATUS_COLORS = {
     Status.QUEUED.value: IDLE_COLOR,
 }
 _BOLD_AMBER = f"{STYLE_BOLD} {AMBER}"
+_DONE = Status.DONE.value
 
 
 @dataclass(frozen=True)
@@ -202,100 +237,228 @@ def header_text(view: TaskDetailView, now: datetime, *, compact: bool) -> Text:
 
 @dataclass(frozen=True)
 class Briefing:
-    """Render a task's summary rows for the width they are drawn at."""
+    """Render a task's Progress, Result and Problems groups for the width they are drawn at."""
 
     view: TaskDetailView
     now: datetime
     layout: BriefingLayout
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        """Yield the milestones and the needed, working and produced blocks."""
+        """Yield the milestones and the groups, laid out wide or compact."""
         width = options.max_width
-        compact = self.layout.compact
-        milestones = self._milestones()
-        needed = self._needed(width)
-        facts = self._facts(console, width)
-        blocks = [needed, facts, milestones] if self.layout.tiny else [milestones, needed, facts]
-        shown = [block for block in blocks if block]
-        for index, block in enumerate(shown):
-            if index and not compact:
-                yield Rule(style=NEUTRAL_BORDER_COLOR)
-            yield from block
+        blocks = (
+            self._compact_blocks(console, width)
+            if self.layout.compact
+            else self._wide_blocks(console, width)
+        )
+        yield from blocks
 
     def _milestones(self) -> list[RenderableType]:
         if not self.view.milestones:
             return []
         return [StageActivity(self.view).render(glyphs_only=self.layout.compact)]
 
-    def _needed(self, width: int) -> list[RenderableType]:
-        text = needed_from_you(self.view)
-        if text is None:
-            return []
-        if self.layout.compact:
-            return [_hanging(NEEDS_YOU_PREFIX, text, width)]
-        body = Padding(Text(text), (0, 0, 0, NEEDED_INDENT))
-        return [Section(NEEDED_TITLE, body, ruled=False, title_style=_BOLD_AMBER)]
-
-    def _facts(self, console: Console, width: int) -> list[RenderableType]:
-        if self.layout.compact:
-            return self._compact_facts(console, width)
-        value_width = width if width < STACKED_BELOW_WIDTH else width - LABEL_WIDTH - LABEL_GAP
-        rows = self._wide_rows(console, value_width)
-        return [labelled_rows(rows, width, LABEL_WIDTH)] if rows else []
-
-    def _wide_rows(self, console: Console, value_width: int) -> list[Row]:
+    def _wide_blocks(self, console: Console, width: int) -> list[RenderableType]:
         view = self.view
-        rows: list[Row] = []
+        value_width = width - GROUP_INDENT - LABEL_WIDTH - LABEL_GAP
+        return [
+            *self._milestones(),
+            *_group(PROGRESS_TITLE, self._progress_rows(console, value_width), width),
+            *_labelled(self._summary_rows(console, width - LABEL_WIDTH - LABEL_GAP), width),
+            *_group(_result_title(view), _result_rows(view), width),
+            *_group(PROBLEMS_TITLE, _problem_rows(view), width),
+            *_labelled(_cost_rows(view), width),
+        ]
+
+    def _progress_rows(self, console: Console, value_width: int) -> list[Row]:
+        view = self.view
+        if view.status in _TERMINAL_STATUSES:
+            return []
+        rows = [*_step_rows(view, self.now), *_rework_rows(view)]
         if _working(view):
-            rows.append((grey(NOW_LABEL), (_activity_text(view, self.now, compact=False),)))
+            rows.append((grey(NOW_LABEL), _now_groups(view, self.now)))
             if view.last_words is not None:
-                rows.extend(
-                    (Text(), (line,))
-                    for line in _wrapped(
-                        console,
-                        grey(_quote(view.last_words)),
-                        Text(),
-                        value_width,
-                        self.layout.now_lines,
-                    )
+                lines = _wrapped(
+                    console,
+                    grey(_quote(view.last_words)),
+                    Text(),
+                    value_width,
+                    self.layout.now_lines,
                 )
-            rows.extend(_escalation_row(view))
-        rows.extend(_produced_rows(view, value_width))
-        verdict = _verdict_groups(view.verdict_counts)
-        if verdict:
-            rows.append((grey(VERDICT_LABEL), verdict))
-        pull_request = _pull_request_groups(view.pull_request)
-        if pull_request:
-            rows.append((grey(PR_LABEL), pull_request))
-        cost = _cost_groups(view.sessions, compact=False)
-        if cost:
-            rows.append((grey(COST_LABEL), cost))
+                rows.extend((Text(), (line,)) for line in lines)
         return rows
 
-    def _compact_facts(self, console: Console, width: int) -> list[RenderableType]:
+    def _summary_rows(self, console: Console, value_width: int) -> list[Row]:
+        summary = _done_summary(self.view)
+        if summary is None:
+            return []
+        lines = _wrapped(console, grey(summary), Text(), value_width, self.layout.now_lines)
+        return [
+            (grey(SUMMARY_LABEL) if index == 0 else Text(), (line,))
+            for index, line in enumerate(lines)
+        ]
+
+    def _compact_blocks(self, console: Console, width: int) -> list[RenderableType]:
         view = self.view
-        lines: list[RenderableType] = []
-        if _working(view):
-            lines.extend(_compact_activity(console, view, self.now, width, self.layout.now_lines))
-            lines.extend(row[1][0] for row in _escalation_row(view))
-        summary = _terminal_summary(view, width)
-        produced = _compact_produced(view)
-        if produced is not None:
-            lines.append(produced)
-        if summary is not None:
-            lines.append(summary)
-        verdict = _verdict_groups(view.verdict_counts)
-        if verdict:
-            lines.append(_joined(verdict))
-        pull_request = _pull_request_groups(view.pull_request)
-        if pull_request:
-            lines.append(
-                Text.assemble((f"{PR_LABEL} ", SECONDARY_TEXT_COLOR), _joined(pull_request))
-            )
-        cost = _cost_groups(view.sessions, compact=True)
-        if cost:
-            lines.append(_joined(cost))
+        needed = _compact_needed(view, width)
+        body = [
+            *self._compact_progress(console, width),
+            *_compact_summary(view, width),
+            *_compact_result(view),
+            *_compact_verdict(view),
+            *_compact_cost(view),
+        ]
+        milestones = self._milestones()
+        return [*needed, *body, *milestones] if self.layout.tiny else [*milestones, *needed, *body]
+
+    def _compact_progress(self, console: Console, width: int) -> list[RenderableType]:
+        view = self.view
+        if not _working(view):
+            return []
+        lines: list[RenderableType] = list(
+            _compact_activity(console, view, self.now, width, self.layout.now_lines)
+        )
+        escalation = _escalation_text(view)
+        if escalation is not None:
+            lines.append(escalation)
         return lines
+
+
+def _group(title: str, rows: list[Row], width: int) -> list[RenderableType]:
+    if not rows:
+        return []
+    body = Padding(labelled_rows(rows, width - GROUP_INDENT, LABEL_WIDTH), (0, 0, 0, GROUP_INDENT))
+    return [Section(title, body, ruled=False)]
+
+
+def _labelled(rows: list[Row], width: int) -> list[RenderableType]:
+    return [labelled_rows(rows, width, LABEL_WIDTH)] if rows else []
+
+
+def _step_rows(view: TaskDetailView, now: datetime) -> list[Row]:
+    if view.actual_stage is None:
+        return []
+    groups = [Text(view.actual_stage)]
+    in_step = _in_step_time(view, now)
+    if in_step is not None:
+        groups.append(Text(in_step))
+    return [(grey(STEP_LABEL), tuple(groups))]
+
+
+def _rework_rows(view: TaskDetailView) -> list[Row]:
+    groups: list[Text] = []
+    rework = rework_progress(view.iteration, view.max_iterations)
+    if rework is not None:
+        groups.append(Text(f"{rework[0]} of {rework[1]}"))
+    escalation = _escalation_text(view)
+    if escalation is not None:
+        groups.append(escalation)
+    return [(grey(REWORK_LABEL), tuple(groups))] if groups else []
+
+
+def _now_groups(view: TaskDetailView, now: datetime) -> tuple[Text, ...]:
+    role = ROLE_LABELS.get(view.acting_role, view.acting_role.title())
+    return (Text(role), _activity_text(view, now, compact=False))
+
+
+def _result_title(view: TaskDetailView) -> str:
+    results = view.results
+    return (
+        RESULT_SO_FAR_TITLE
+        if results is None or results.outcome is ResultOutcome.SO_FAR
+        else RESULT_TITLE
+    )
+
+
+def _result_rows(view: TaskDetailView) -> list[Row]:
+    results = view.results
+    if results is None:
+        return []
+    rows = [
+        *_branch_row(results),
+        _row(COMMITS_LABEL, _commit_groups(results, compact=False)),
+        _row(TESTS_LABEL, _tests_groups(results.tests)),
+        _row(PR_LABEL, _pull_request_groups(results.pull_request)),
+    ]
+    return [row for row in rows if row is not None]
+
+
+def _row(label: str, groups: tuple[Text, ...]) -> Row | None:
+    return (grey(label), groups) if groups else None
+
+
+def _branch_row(results: TaskResults) -> list[Row]:
+    if results.branch is None:
+        return []
+    if results.outcome is ResultOutcome.NOT_MERGED:
+        return [(grey(BRANCH_LABEL), (Text(f"{results.branch} {KEPT_NOT_MERGED}"),))]
+    target = (
+        results.branch
+        if results.base is None
+        else f"{results.branch} {BRANCH_ARROW} {results.base}"
+    )
+    label = MERGED_LABEL if results.outcome is ResultOutcome.MERGED else BRANCH_LABEL
+    return [(grey(label), (Text(target),))]
+
+
+def _problem_rows(view: TaskDetailView) -> list[Row]:
+    rows: list[Row | None] = []
+    counts = view.verdict_counts
+    if counts is not None and counts.has_problems:
+        rows.append(_row(VERDICT_LABEL, _verdict_groups(counts)))
+    needed = needed_from_you(view)
+    if needed is not None:
+        rows.append((Text(NEEDED_LABEL, style=_BOLD_AMBER), (Text(needed),)))
+    risks = view.results.residual_risks if view.results is not None else ()
+    rows.append(_row(RISKS_LABEL, tuple(Text(risk, style=AMBER) for risk in risks)))
+    return [row for row in rows if row is not None]
+
+
+def _cost_rows(view: TaskDetailView) -> list[Row]:
+    row = _row(COST_LABEL, _cost_groups(view.sessions, compact=False))
+    return [row] if row is not None else []
+
+
+def _compact_needed(view: TaskDetailView, width: int) -> list[RenderableType]:
+    text = needed_from_you(view)
+    return [] if text is None else [_hanging(NEEDS_YOU_PREFIX, text, width)]
+
+
+def _compact_summary(view: TaskDetailView, width: int) -> list[RenderableType]:
+    summary = _done_summary(view)
+    return [] if summary is None else [grey(_ellipsized(summary, width))]
+
+
+def _compact_result(view: TaskDetailView) -> list[RenderableType]:
+    results = view.results
+    if results is None:
+        return []
+    lines: list[RenderableType] = []
+    if results.outcome is not ResultOutcome.SO_FAR:
+        lines.extend(Text.assemble(row[0], " ", row[1][0]) for row in _branch_row(results))
+    produced = _joined((*_commit_groups(results, compact=True), *_compact_tests(results.tests)))
+    if produced.plain:
+        lines.append(produced)
+    pull_request = _pull_request_groups(results.pull_request)
+    if pull_request:
+        lines.append(Text.assemble(grey(f"{PR_LABEL} "), _joined(pull_request)))
+    return lines
+
+
+def _compact_verdict(view: TaskDetailView) -> list[RenderableType]:
+    counts = view.verdict_counts
+    lines: list[RenderableType] = []
+    if counts is not None and counts.has_problems:
+        lines.append(_joined(_verdict_groups(counts)))
+    risks = view.results.residual_risks if view.results is not None else ()
+    if risks:
+        lines.append(Text.assemble(grey(f"{RISKS_LABEL} "), (GROUP_SEPARATOR.join(risks), AMBER)))
+    return lines
+
+
+def _compact_cost(view: TaskDetailView) -> list[RenderableType]:
+    cost = _cost_groups(view.sessions, compact=True)
+    return [_joined(cost)] if cost else []
 
 
 def _sentence(value: str) -> str:
@@ -386,99 +549,66 @@ def _compact_activity(
     return _wrapped(console, grey(_quote(view.last_words)), suffix, width, max_lines)
 
 
-def _escalation_row(view: TaskDetailView) -> list[Row]:
+def _escalation_text(view: TaskDetailView) -> Text | None:
     remaining = view.escalation_remaining
     if remaining is None:
-        return []
+        return None
     noun = REJECTION_NOUNS[0] if remaining == 1 else REJECTION_NOUNS[1]
-    return [(Text(), (grey(ESCALATION_NEAR.format(count=remaining, noun=noun)),))]
+    return grey(ESCALATION_NEAR.format(count=remaining, noun=noun))
 
 
 def _counted(count: int, noun: str) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'}"
 
 
-def _lines(produced: ProducedNumbers) -> str:
-    return f"+{produced.insertions} {MINUS}{produced.deletions}"
-
-
-def _produced_groups(produced: ProducedNumbers | None) -> tuple[Text, ...]:
+def _commit_groups(results: TaskResults, *, compact: bool) -> tuple[Text, ...]:
+    produced = results.produced
     if produced is None:
-        return ()
-    return (
-        Text(_counted(produced.commits, "commit")),
-        Text(_counted(produced.files, "file")),
-        Text(_lines(produced)),
-    )
+        count = len(results.commits) + results.more_commits
+        return (Text(_counted(count, "commit")),) if count else ()
+    lines = Text(f"+{produced.insertions} {MINUS}{produced.deletions}")
+    files = () if compact else (Text(_counted(produced.files, "file")),)
+    return (Text(_counted(produced.commits, "commit")), *files, lines)
 
 
-def _produced_rows(view: TaskDetailView, limit: int) -> list[Row]:
-    values: list[tuple[Text, ...]] = []
-    produced = _produced_groups(view.produced)
-    if produced:
-        values.append(produced)
-    tests = _tests_text(view.reported_tests)
-    if tests is not None:
-        values.append((tests,))
-    summary = _terminal_summary(view, limit)
-    if summary is not None:
-        values.append((summary,))
-    return [
-        (grey(PRODUCED_LABEL) if index == 0 else Text(), groups)
-        for index, groups in enumerate(values)
-    ]
-
-
-def _tests_text(tests: ReportedTests | None) -> Text | None:
+def _tests_groups(tests: ReportedTests | None) -> tuple[Text, ...]:
     if tests is None:
-        return None
-    counts = ((tests.passed, "passed"), (tests.failed, "failed"), (tests.skipped, "skipped"))
-    parts = [f"{count} {word}" for count, word in counts if count]
-    if not parts:
-        return None
-    return grey(f"{TESTS_WORD} {GROUP_SEPARATOR.join(parts)} {AGENT_REPORTED}")
-
-
-def _compact_tests(tests: ReportedTests | None) -> str | None:
-    if tests is None or not (tests.passed or tests.failed):
-        return None
-    marks = ((tests.passed, PASSED_MARK), (tests.failed, FAILED_MARK))
-    return " ".join(f"{count}{mark}" for count, mark in marks if count)
-
-
-def _compact_produced(view: TaskDetailView) -> Text | None:
-    produced = view.produced
-    tests = _compact_tests(view.reported_tests)
-    if produced is None and tests is None:
-        return None
-    line = Text()
-    if produced is not None:
-        line.append(f"{_counted(produced.commits, 'commit')} {_lines(produced)}")
-    if tests is not None:
-        if produced is not None:
-            line.append(GROUP_SEPARATOR, style=SECONDARY_TEXT_COLOR)
-        line.append(tests, style=SECONDARY_TEXT_COLOR)
-    return line
-
-
-def _terminal_summary(view: TaskDetailView, limit: int) -> Text | None:
-    if view.status not in _TERMINAL_STATUSES or view.latest_report is None:
-        return None
-    summary = squashed(view.latest_report.summary)
-    return grey(_ellipsized(summary, limit)) if summary is not None else None
-
-
-def _verdict_groups(counts: VerdictCounts | None) -> tuple[Text, ...]:
-    if counts is None:
         return ()
+    counts = (
+        (tests.passed, "passed", SUCCESS_COLOR),
+        (tests.failed, "failed", ALERT_COLOR),
+        (tests.skipped, "skipped", SECONDARY_TEXT_COLOR),
+    )
+    groups = tuple(Text(f"{count} {word}", style=color) for count, word, color in counts if count)
+    return (*groups, grey(AGENT_REPORTED)) if groups else ()
+
+
+def _compact_tests(tests: ReportedTests | None) -> tuple[Text, ...]:
+    if tests is None or not (tests.passed or tests.failed):
+        return ()
+    marks = ((tests.passed, PASSED_MARK), (tests.failed, FAILED_MARK))
+    return (grey(" ".join(f"{count}{mark}" for count, mark in marks if count)),)
+
+
+def _done_summary(view: TaskDetailView) -> str | None:
+    if view.status != _DONE or view.latest_report is None:
+        return None
+    return squashed(view.latest_report.summary)
+
+
+def _verdict_groups(counts: VerdictCounts) -> tuple[Text, ...]:
     severities = (
-        (counts.blocker, "blocker"),
-        (counts.major, "major"),
-        (counts.minor, "minor"),
+        (counts.blocker, "blocker", ALERT_COLOR),
+        (counts.major, "major", AMBER),
+        (counts.minor, "minor", SECONDARY_TEXT_COLOR),
+    )
+    decision = Text(
+        VERDICT_LABELS.get(counts.decision, counts.decision),
+        style=DECISION_COLORS.get(counts.decision, SECONDARY_TEXT_COLOR),
     )
     return (
-        Text(VERDICT_LABELS.get(counts.decision, counts.decision)),
-        *(Text(f"{count} {word}") for count, word in severities if count),
+        decision,
+        *(Text(f"{count} {word}", style=color) for count, word, color in severities if count),
     )
 
 
@@ -487,7 +617,7 @@ def _pull_request_groups(pull_request: PullRequestLine | None) -> tuple[Text, ..
         return ()
     state = pull_request.state.lower()
     number = f"#{pull_request.number} " if pull_request.number is not None else ""
-    groups = [Text(f"{number}{state}")]
+    groups = [Text(f"{number}{state}", style=PR_STATE_COLORS.get(state, ""))]
     if pull_request.checks_pending:
         groups.append(Text("checks pending"))
     if pull_request.checks_failing:
@@ -525,15 +655,21 @@ def _cost_qualifier(bases: set[str]) -> tuple[str, str]:
     return MIXED_COST_BASIS, SECONDARY_TEXT_COLOR
 
 
+def _in_step_time(view: TaskDetailView, now: datetime) -> str | None:
+    if view.actual_stage is None or view.actual_stage_started_at is None:
+        return None
+    return duration_text((view.stage_ended_at or now) - view.actual_stage_started_at)
+
+
 def _time_line(view: TaskDetailView, now: datetime) -> Text | None:
     parts: list[str] = []
     if view.status in _TERMINAL_STATUSES:
         if view.started_at is not None and view.stage_ended_at is not None:
             parts.append(f"{duration_text(view.stage_ended_at - view.started_at)} {TOTAL_WORD}")
     else:
-        if view.actual_stage is not None and view.actual_stage_started_at is not None:
-            end = view.stage_ended_at or now
-            parts.append(f"{duration_text(end - view.actual_stage_started_at)} {IN_STEP_WORD}")
+        in_step = _in_step_time(view, now)
+        if in_step is not None:
+            parts.append(f"{in_step} {IN_STEP_WORD}")
         if view.started_at is not None:
             parts.append(f"{duration_text(now - view.started_at)} {TOTAL_WORD}")
     if not parts:
@@ -552,9 +688,9 @@ def _state_line(view: TaskDetailView, now: datetime, *, compact: bool) -> Text:
         rework = rework_progress(view.iteration, view.max_iterations)
         if rework is not None:
             tail.append(f"{REWORK_WORD} {rework[0]}/{rework[1]}")
-        if view.actual_stage is not None and view.actual_stage_started_at is not None:
-            end = view.stage_ended_at or now
-            tail.append(duration_text(end - view.actual_stage_started_at))
+        in_step = _in_step_time(view, now)
+        if in_step is not None:
+            tail.append(in_step)
     else:
         if view.actual_stage is not None:
             tail.append(ROLE_LABELS.get(view.acting_role, view.acting_role.title()))

@@ -96,6 +96,18 @@ def test_pull_request_line_reads_state_number_and_only_recorded_checks() -> None
         assert pull_request_line(data) == expected
 
 
+def test_only_a_clean_accept_is_not_a_problem() -> None:
+    cases = (
+        (VerdictCounts("accept", 0, 0, 0), False),
+        (VerdictCounts("accept", 0, 0, 1), True),
+        (VerdictCounts("changes_requested", 0, 0, 0), True),
+        (VerdictCounts("escalate", 1, 0, 0), True),
+    )
+
+    for counts, expected in cases:
+        assert counts.has_problems is expected
+
+
 def test_a_done_task_has_its_pull_request_merged() -> None:
     line = pull_request_line({"url": "https://h/o/r/pull/41"}, task_done=True)
 
