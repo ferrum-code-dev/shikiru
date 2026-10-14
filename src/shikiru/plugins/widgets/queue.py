@@ -30,6 +30,7 @@ from shikiru.ui.tokens import (
     SAGE,
     SECONDARY_TEXT_COLOR,
     STEEL_BLUE,
+    STOPPED_DURING,
     STYLE_BOLD,
 )
 
@@ -228,6 +229,8 @@ def _row_text(row: TaskBrowserRow) -> str:
     if row.priority != 0:
         identity.append(f"priority {row.priority}")
     identity.append(row.title)
+    if row.status in TASK_TERMINAL_STATUSES:
+        return f"{' · '.join(identity)}\n{_terminal_state(row)}"
     state_details = [state]
     if row.step:
         state_details.append(row.step)
@@ -268,7 +271,11 @@ def _focus_row_text(row: TaskBrowserRow, *, status_bright: bool = False) -> Text
 def _focus_row_marker(row: TaskBrowserRow) -> tuple[str, str]:
     marker = TASK_MARKER_CURRENT
     style = STEEL_BLUE
-    if row.open_decision:
+    if row.status == TASK_STATUS_DONE:
+        marker, style = TASK_MARKER_DONE, SAGE
+    elif row.status == TASK_STATUS_CANCELLED:
+        marker, style = TASK_MARKER_CANCELLED, SECONDARY_TEXT_COLOR
+    elif row.open_decision:
         marker, style = TASK_MARKER_DECISION, AMBER
     elif row.diagnosed_stall:
         marker, style = TASK_MARKER_STALL, ALERT_COLOR
@@ -276,16 +283,21 @@ def _focus_row_marker(row: TaskBrowserRow) -> tuple[str, str]:
         marker = TASK_MARKER_OPERATOR
     elif TASK_HOLD_PAUSED in row.holds:
         marker, style = TASK_MARKER_PAUSED, AMBER
-    elif row.status == TASK_STATUS_DONE:
-        marker, style = TASK_MARKER_DONE, SAGE
-    elif row.status == TASK_STATUS_CANCELLED:
-        marker, style = TASK_MARKER_CANCELLED, SECONDARY_TEXT_COLOR
     elif row.status == TASK_STATUS_QUEUED:
         marker, style = TASK_MARKER_QUEUED, SECONDARY_TEXT_COLOR
     return marker, style
 
 
+def _terminal_state(row: TaskBrowserRow) -> str:
+    if row.status == TASK_STATUS_DONE:
+        return "Done"
+    stopped = f" · {STOPPED_DURING} {row.step}" if row.step else ""
+    return f"Cancelled{stopped}"
+
+
 def _focus_row_state(row: TaskBrowserRow, stage: str | None) -> str:
+    if row.status in TASK_TERMINAL_STATUSES:
+        return _terminal_state(row)
     if row.wait_reason:
         wait_reason = WAIT_REASON_LABELS.get(row.wait_reason, row.wait_reason)
         if row.wait_reason == WAIT_REASON_DEPENDENCY and row.dependencies:
@@ -296,10 +308,6 @@ def _focus_row_state(row: TaskBrowserRow, stage: str | None) -> str:
     state = stage or row.status.replace("_", " ")
     if row.status == TASK_STATUS_QUEUED:
         state = "queued"
-    elif row.status == TASK_STATUS_DONE:
-        state = "Done"
-    elif row.status == TASK_STATUS_CANCELLED:
-        state = "Cancelled"
     elif row.status == TASK_STATUS_ESCALATED:
         state = TASK_STATE_DECISION_NEEDED if row.open_decision else "escalated"
     elif row.status == TASK_STATUS_RUNNING:
@@ -324,6 +332,8 @@ def _focus_row_details(
         else STEEL_BLUE
     )
     details: list[tuple[str, str]] = [(state, state_style)]
+    if row.status in TASK_TERMINAL_STATUSES:
+        return details
     if row.acting_role and not stage:
         details.append((row.acting_role.title(), SECONDARY_TEXT_COLOR))
     if (

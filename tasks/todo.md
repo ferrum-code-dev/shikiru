@@ -313,7 +313,8 @@ Thirteenth-review scope and evidence: [thirteenth review](../docs/tui-feedback-t
 - [x] Task 198: Edit area under the option, new keys
 - [x] Task 199: Details section of the resolution panel
   - Proof: Details is its own Tab stop (Enter/Space/`t` toggle, Up returns) with the virtual arrow row removed, and its rule is a separate widget so the focus background no longer covers it. The digest is produced as typed rows, persisted as `Label: text` lines and rebuilt by `parse_attempt_lines` (old packets parse to one Reason row). Checked natively at 100x40 and 48 columns with colour cells asserted in the integration test; `poe check` green.
-- [ ] Task 200: Terminal-state correctness
+- [x] Task 200: Terminal-state correctness
+  - Proof: Reproduced on the unchanged code: a Cancelled task with its step kept read `○ Consulting · Leader`, `? Triage unknown ? Implement unknown`, a blocker `Waiting on dependency` and a Home row `Consulting · waiting on dependency`. `project_workflow` now gives Done stages done or skipped and Cancelled stages done, `✕ stopped` and skipped; state line, PR (`merged`), Home row and strip show only the terminal status with `stopped during <step>`, and the store clears `wait_reason` on Done/Cancelled. Tables cover truncated and complete Done, Cancelled with kept and cleared step and the live task keeping `?`; native dumps checked. Gate `uv run poe check` green.
 - [ ] Task 201: Briefing verbs
 - [ ] Task 202: Results data
 - [ ] Task 203: Briefing as Progress, Result so far and Problems

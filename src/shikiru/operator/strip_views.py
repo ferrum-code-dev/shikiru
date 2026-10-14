@@ -12,6 +12,7 @@ from shikiru.ui.glyphs import (
     GLYPH_ENGINE,
     GLYPH_ESCALATED,
     GLYPH_PENDING,
+    GLYPH_STOPPED,
     ROLE_GLYPHS,
     SPINNER_FRAMES,
     STAGE_TRIAGE,
@@ -24,6 +25,7 @@ from shikiru.ui.strip import (
     TaskStripData,
     panel_specs_for_mode,
 )
+from shikiru.ui.tokens import STOPPED_DURING
 
 if TYPE_CHECKING:
     from shikiru.config.settings import Settings
@@ -40,10 +42,12 @@ _PANEL_INDEX: dict[Step, int] = {
 
 def task_strip_data(task: Task, settings: Settings) -> TaskStripData:
     """Build the render data for one task using the configured role ladder."""
+    if task.status is Status.CANCELLED:
+        return _unstarted_strip_data(task)
     if task.step is None:
         if task.status is Status.RUNNING:
             return _starting_strip_data(task)
-        if task.status not in (Status.QUEUED, Status.DONE, Status.CANCELLED, Status.ESCALATED):
+        if task.status not in (Status.QUEUED, Status.DONE, Status.ESCALATED):
             message = f"task {task.id} is active but has no step recorded"
             raise ValueError(message)
         return _unstarted_strip_data(task)
@@ -82,12 +86,21 @@ def _unstarted_strip_data(task: Task) -> TaskStripData:
         state, glyph = PanelState.PENDING, GLYPH_PENDING
     elif task.status is Status.DONE:
         state, glyph = PanelState.DONE, GLYPH_DONE
-    elif task.status in (Status.CANCELLED, Status.ESCALATED):
+    elif task.status is Status.CANCELLED:
+        state, glyph = PanelState.PENDING, GLYPH_STOPPED
+    elif task.status is Status.ESCALATED:
         state, glyph = PanelState.ESCALATED, GLYPH_ESCALATED
     else:
         message = f"task {task.id} has no step for status {task.status.value!r}"
         raise ValueError(message)
-    panel = PanelView(label=task.status.value.title(), stage_glyph=glyph, state=state)
+    stopped = (
+        f"{STOPPED_DURING} {task.step.value}"
+        if task.status is Status.CANCELLED and task.step is not None
+        else ""
+    )
+    panel = PanelView(
+        label=task.status.value.title(), stage_glyph=glyph, state=state, detail=stopped
+    )
     return TaskStripData(
         task_id=task.id,
         title=task.title,
@@ -113,7 +126,7 @@ def _starting_strip_data(task: Task) -> TaskStripData:
 
 
 def _active_panel_state(task: Task) -> PanelState:
-    if task.status in (Status.ESCALATED, Status.CANCELLED):
+    if task.status is Status.ESCALATED:
         return PanelState.ESCALATED
     if task.status is Status.DONE:
         return PanelState.DONE

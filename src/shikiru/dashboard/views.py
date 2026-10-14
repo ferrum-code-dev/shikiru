@@ -1059,7 +1059,7 @@ class StateDashboardViews:
             reported_tests=(
                 reported_tests(implementation.tests) if implementation is not None else None
             ),
-            pull_request=self._pull_request_line(task.id),
+            pull_request=self._pull_request_line(task.id, task_done=task.status is Status.DONE),
             last_words=task_frame.last_words,
         )
 
@@ -1325,13 +1325,13 @@ class StateDashboardViews:
                 )
         return lines
 
-    def _pull_request_line(self, task_id: str) -> PullRequestLine | None:
+    def _pull_request_line(self, task_id: str, *, task_done: bool) -> PullRequestLine | None:
         events = self._state.latest_events(
             1,
             kinds=(EventKind.PR_OPENED, EventKind.PR_WITHDRAWN),
             task_id=task_id,
         )
-        return pull_request_line(events[0].data) if events else None
+        return pull_request_line(events[0].data, task_done=task_done) if events else None
 
     def _pull_request_evidence(self, task_id: str) -> list[str]:
         events = self._state.latest_events(

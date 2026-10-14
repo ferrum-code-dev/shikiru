@@ -354,6 +354,41 @@ async def test_home_rows_preserve_stage_and_recorded_wait_state(
         assert "ready" not in rendered_rows[queued.id]
 
 
+async def test_terminal_rows_show_only_the_terminal_status_whatever_the_task_was_doing(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    tasks = TaskStore(connection, clock)
+    cancelled = seed_task(connection, clock, title="Retire the parser", mode=Mode.IMPLEMENT)
+    tasks.apply_transition(
+        cancelled.id, Transition.stay(cancelled, step=Step.CONSULT, status=Status.RUNNING)
+    )
+    tasks.set_wait_reason(cancelled.id, WaitReason.DEPENDENCY)
+    tasks.apply_transition(
+        cancelled.id,
+        Transition.stay(tasks.require(cancelled.id), step=Step.CONSULT, status=Status.CANCELLED),
+    )
+    tasks.set_wait_reason(cancelled.id, WaitReason.DEPENDENCY)
+    widget = cast(
+        "QueuePanel",
+        QueueWidget().create(
+            replace(
+                widget_context(reader, project_dir, clock, services=StubServices()),
+                placement=WidgetPlacement.TASK_LIST,
+            )
+        ),
+    )
+
+    async with WidgetHostApp(widget).run_test(size=(100, 35)):
+        await wait_until(lambda: bool(widget.query(f"#task-row-{cancelled.id}")), timeout=5.0)
+        row = _static_text(widget.query_one(f"#task-row-{cancelled.id} > Static", Static))
+
+    assert "Cancelled · stopped during consult" in row
+    assert "waiting" not in row
+    assert "Consulting" not in row
+
+
 async def test_focus_recent_shows_bounded_terminal_history_without_dependency_rows(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:

@@ -1873,7 +1873,7 @@ Refs: `domain/attempts.py`, `engine/escalations.py`, `domain/escalation_panel.py
 
 ### Task 200: Terminal-state correctness
 Refs: `domain/workflow.py` (`project_workflow`, `milestone_state`), `ui/compact.py` (`StageActivity`, `_milestone_marker`), `dashboard/briefing_view.py` (`_marker_and_label`, `_time_line`), `plugins/widgets/queue.py` (`_focus_row_state`, `_row_text`), `operator/strip_views.py`, `domain/briefing.py` (`PullRequestLine`), store `finish`.
-- [ ] Done and Cancelled tasks never show `? unknown`; Cancelled marks the stop stage `✕`; state line, list rows and strip show only the terminal status (and `stopped during …`); `wait_reason` cleared on finish; Done PR reads merged; unit tables and one Home check with a cancelled task whose step was kept.
+- [x] Done and Cancelled tasks never show `? unknown`; Cancelled marks the stop stage `✕`; state line, list rows and strip show only the terminal status (and `stopped during …`); `wait_reason` cleared on finish; Done PR reads merged; unit tables and one Home check with a cancelled task whose step was kept.
 
 ### Task 201: Briefing verbs
 Refs: `domain/briefing.py` (`briefing_actions`, `MAX_BRIEFING_ACTIONS`), `operator/queries.py` action availability, `detail.py` buttons, `briefing_view.py` `ACTION_LABELS`.

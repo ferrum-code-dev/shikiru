@@ -32,8 +32,10 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.reports import TestRun as AgentTestRun
+from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status
+from shikiru.operator.queries import TASK_DETAIL_EVENT_LIMIT
 from shikiru.paths import run_dir, turns_dir
 from shikiru.plugins.widgets.queue import QueuePanel
 from shikiru.store.escalations import EscalationStore
@@ -251,6 +253,50 @@ def _seed_cancelled(connection: Connection, clock: FakeClock, project_root: Path
     return task
 
 
+def _seed_cancelled_while_consulting(
+    connection: Connection, clock: FakeClock, project_root: Path
+) -> Task:
+    del project_root
+    task = _running(connection, clock, iteration=1)
+    tasks = TaskStore(connection, clock)
+    tasks.apply_transition(task.id, Transition.stay(task, step=Step.CONSULT, status=Status.RUNNING))
+    tasks.set_wait_reason(task.id, WaitReason.DEPENDENCY)
+    tasks.finish(
+        task.id,
+        Transition.stay(tasks.require(task.id), step=Step.CONSULT, status=Status.CANCELLED),
+        EventKind.TASK_CANCELLED,
+        message="cancelled",
+        data={},
+    )
+    return tasks.require(task.id)
+
+
+def _seed_done_after_long_history(
+    connection: Connection, clock: FakeClock, project_root: Path
+) -> Task:
+    del project_root
+    task = _running(connection, clock, iteration=1)
+    log = EventLog(connection, clock)
+    for _ in range(TASK_DETAIL_EVENT_LIMIT + 1):
+        log.append(EventKind.NUDGE, task_id=task.id, message="nudged", data={})
+    log.append(
+        EventKind.PR_OPENED,
+        task_id=task.id,
+        message="PR opened",
+        data={"url": "https://example.test/o/r/pull/41", "branch": "b", "commits": []},
+    )
+    TaskStore(connection, clock).finish(
+        task.id,
+        Transition.stay(task, step=None, status=Status.DONE),
+        EventKind.TASK_DONE,
+        message="done",
+        data={"summary": "done"},
+    )
+    return task
+
+
+TERMINAL_NEVER = ("unknown", "Consulting", "in step", "waiting", "open", "Implementer")
+
 CASES = {
     "running": _Case(
         _seed_running,
@@ -286,6 +332,20 @@ CASES = {
         ("rework",),
     ),
     "cancelled": _Case(_seed_cancelled, frozenset(), (), frozenset(), ("rework",)),
+    "cancelled-while-consulting": _Case(
+        _seed_cancelled_while_consulting,
+        frozenset(),
+        ("Cancelled \N{MIDDLE DOT} stopped during consult",),
+        frozenset(),
+        TERMINAL_NEVER,
+    ),
+    "done-after-long-history": _Case(
+        _seed_done_after_long_history,
+        frozenset({"PR"}),
+        ("Done", "#41 merged"),
+        frozenset(),
+        TERMINAL_NEVER,
+    ),
 }
 
 

@@ -53,6 +53,7 @@ from shikiru.ui.tokens import (
     ROLE_COLORS,
     SAGE,
     SECONDARY_TEXT_COLOR,
+    STOPPED_DURING,
     STYLE_BOLD,
     SUCCESS_COLOR,
 )
@@ -520,11 +521,15 @@ def _cost_qualifier(bases: set[str]) -> tuple[str, str]:
 
 def _time_line(view: TaskDetailView, now: datetime) -> Text | None:
     parts: list[str] = []
-    if view.actual_stage is not None and view.actual_stage_started_at is not None:
-        end = view.stage_ended_at or now
-        parts.append(f"{duration_text(end - view.actual_stage_started_at)} {IN_STEP_WORD}")
-    if view.started_at is not None and view.status not in _TERMINAL_STATUSES:
-        parts.append(f"{duration_text(now - view.started_at)} {TOTAL_WORD}")
+    if view.status in _TERMINAL_STATUSES:
+        if view.started_at is not None and view.stage_ended_at is not None:
+            parts.append(f"{duration_text(view.stage_ended_at - view.started_at)} {TOTAL_WORD}")
+    else:
+        if view.actual_stage is not None and view.actual_stage_started_at is not None:
+            end = view.stage_ended_at or now
+            parts.append(f"{duration_text(end - view.actual_stage_started_at)} {IN_STEP_WORD}")
+        if view.started_at is not None:
+            parts.append(f"{duration_text(now - view.started_at)} {TOTAL_WORD}")
     if not parts:
         return None
     return grey(f"   {GROUP_SEPARATOR.join(parts)}")
@@ -534,6 +539,8 @@ def _state_line(view: TaskDetailView, now: datetime, *, compact: bool) -> Text:
     marker, label = _marker_and_label(view)
     line = Text()
     line.append(f"{marker} {label}", style=f"{STYLE_BOLD} {_state_color(view)}")
+    if view.status in _TERMINAL_STATUSES:
+        return line
     tail: list[str] = []
     if compact:
         rework = rework_progress(view.iteration, view.max_iterations)
@@ -556,6 +563,11 @@ def _state_line(view: TaskDetailView, now: datetime, *, compact: bool) -> Text:
 
 def _marker_and_label(view: TaskDetailView) -> tuple[str, str]:
     terminal = TERMINAL_STATE_LABELS.get(view.status)
+    if view.status in _TERMINAL_STATUSES and terminal is not None:
+        marker, label = terminal
+        if view.status == Status.CANCELLED.value and view.actual_stage is not None:
+            label = f"{label}{GROUP_SEPARATOR}{STOPPED_DURING} {view.actual_stage}"
+        return marker, label
     if view.actual_stage is not None:
         state = ACTIVE_STAGE_LABELS.get(view.actual_stage, view.actual_stage.title())
     elif terminal is not None:
