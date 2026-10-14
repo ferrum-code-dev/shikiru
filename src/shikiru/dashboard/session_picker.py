@@ -10,6 +10,7 @@ from textual.widgets import Label, ListItem, ListView, Static
 
 from shikiru.errors import UsageError
 from shikiru.operator.sessions import SessionRow
+from shikiru.ui.keys import key_hint
 
 if TYPE_CHECKING:
     from textual.binding import BindingType
@@ -41,7 +42,7 @@ class SessionPicker(App[SessionRow | None]):
         """Render the prompt and sessions as an inline keyboard-selectable list."""
         with Vertical(id="session-picker"):
             yield Label(PICKER_TITLE)
-            yield Static(PICKER_HINT)
+            yield Static(key_hint(PICKER_HINT))
             yield ListView(
                 *(
                     ListItem(

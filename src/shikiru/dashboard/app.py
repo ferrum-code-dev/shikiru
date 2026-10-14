@@ -59,7 +59,8 @@ from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.tick import pinned_tick
 from shikiru.domain.commands import command_rejection_cause
 from shikiru.errors import ConfigError
-from shikiru.ui.compact import FocusAttentionStatus
+from shikiru.ui.compact import ACTION_HINT, FocusAttentionStatus
+from shikiru.ui.keys import key_hint
 from shikiru.ui.popup import (
     POPUP_BODY_CLASS,
     POPUP_CLOSE_CLASS,
@@ -71,6 +72,7 @@ from shikiru.ui.popup import (
     POPUP_SECONDARY_CLASS,
     POPUP_TITLE_CLASS,
     PopupFrame,
+    popup_close_label,
     prepare_popup,
 )
 from shikiru.ui.screen import (
@@ -78,7 +80,7 @@ from shikiru.ui.screen import (
     widget_is_attached,
     widget_is_current,
 )
-from shikiru.ui.section import GROUP_SEPARATOR, grey, row_name
+from shikiru.ui.section import BOLD_STEEL, GROUP_SEPARATOR, grey, row_name
 from shikiru.ui.theme import install_theme
 from shikiru.ui.tokens import (
     AMBER,
@@ -86,7 +88,6 @@ from shikiru.ui.tokens import (
     PRIMARY_TEXT_COLOR,
     SAGE,
     SECONDARY_TEXT_COLOR,
-    STEEL_BLUE,
 )
 
 if TYPE_CHECKING:
@@ -171,7 +172,6 @@ _CONTEXT_WIDGET_CLOSE = "context-widget-close"
 _CONTEXT_WIDGET_COMPACT_MAX_ROWS = 20
 _CONTEXT_WIDGET_COMPACT_MAX_COLUMNS = 48
 _CONTEXT_WIDGET_FRAME_VERTICAL_MARGIN_ROWS = 2
-_POPUP_CLOSE_LABEL = "Esc \u00d7"
 _DASHBOARD_PALETTE_EVENT_KEY = "f12"
 _SUMMARY_ATTENTION = "attention"
 _SUMMARY_RUNNING = "running"
@@ -333,7 +333,9 @@ class _ContextViewsScreen(ModalScreen[str]):
         with PopupFrame(widget_id="context-views-frame", classes=POPUP_FRAME_CLASS):
             with Horizontal(id=_CONTEXT_VIEWS_HEADER, classes=POPUP_HEADER_CLASS):
                 yield Label("Views", id="context-views-title", classes=POPUP_TITLE_CLASS)
-                yield Button(_POPUP_CLOSE_LABEL, id=_CONTEXT_VIEWS_CLOSE, classes=POPUP_CLOSE_CLASS)
+                yield Button(
+                    popup_close_label(), id=_CONTEXT_VIEWS_CLOSE, classes=POPUP_CLOSE_CLASS
+                )
             yield Rule(classes=POPUP_RULE_CLASS)
             items = [
                 ListItem(Label(choice.label), id=choice_id)
@@ -341,7 +343,7 @@ class _ContextViewsScreen(ModalScreen[str]):
             ]
             yield ListView(*items, id=FOCUS_VIEWS_LIST, classes=POPUP_BODY_CLASS)
             yield Static(
-                "↑↓ select · Enter open · Esc back",
+                key_hint("↑↓ select · Enter open · Esc back", SECONDARY_TEXT_COLOR),
                 id="context-views-hint",
                 classes=POPUP_SECONDARY_CLASS,
             )
@@ -399,7 +401,7 @@ class _ContextWidgetScreen(ModalScreen[None]):
             with Horizontal(id=_CONTEXT_WIDGET_HEADER, classes=POPUP_HEADER_CLASS):
                 yield Label(self._label, id="context-widget-title", classes=POPUP_TITLE_CLASS)
                 yield Button(
-                    _POPUP_CLOSE_LABEL, id=_CONTEXT_WIDGET_CLOSE, classes=POPUP_CLOSE_CLASS
+                    popup_close_label(), id=_CONTEXT_WIDGET_CLOSE, classes=POPUP_CLOSE_CLASS
                 )
             yield Rule(classes=POPUP_RULE_CLASS)
             with VerticalScroll(id="context-widget-content", classes=POPUP_BODY_CLASS):
@@ -453,8 +455,8 @@ def _command_history_text(history: CommandHistoryView) -> Text:
 
 def _command_history_page_label(arrow: str, word: str, *, compact: bool = False) -> Text:
     if compact:
-        return Text(arrow, style=STEEL_BLUE)
-    return Text.assemble((arrow, STEEL_BLUE), f" {word}")
+        return Text(arrow, style=BOLD_STEEL)
+    return key_hint(f"{arrow} {word}")
 
 
 def _command_queue_time(timestamp: str | None) -> str | None:
@@ -614,13 +616,13 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
         if _WIDGET_ESCALATIONS in self._widget_names:
             lines.append(
                 "Escalations: Up/Down select, Left/Right choose a decision, "
-                "o opens evidence, r opens resolution"
+                "o: opens evidence, r: opens resolution"
             )
         if _WIDGET_DIALOGUE in self._widget_names:
             lines.append("Dialogue: Enter opens full text")
         if _WIDGET_QUEUE in self._widget_names and self._task_id is None:
             lines.append(
-                "Task browser: / search, Up/Down select, v opens filters, "
+                "Task browser: /: search, Up/Down select, v: opens filters, "
                 "Escape clears search first"
             )
         lines.extend(
@@ -649,10 +651,10 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
         with PopupFrame(widget_id="workspace-help-frame", classes=POPUP_FRAME_CLASS):
             with Horizontal(id="workspace-help-header", classes=POPUP_HEADER_CLASS):
                 yield Label(f"Help · {view}", id=_HELP_CONTEXT, classes=POPUP_TITLE_CLASS)
-                yield Button(_POPUP_CLOSE_LABEL, id=_HELP_CLOSE_BUTTON, classes=POPUP_CLOSE_CLASS)
+                yield Button(popup_close_label(), id=_HELP_CLOSE_BUTTON, classes=POPUP_CLOSE_CLASS)
             yield Rule(classes=POPUP_RULE_CLASS)
             with VerticalScroll(id="workspace-help-scroll", classes=POPUP_BODY_CLASS):
-                yield Static("\n".join(lines), id="workspace-help-copy", markup=False)
+                yield Static(key_hint("\n".join(lines)), id="workspace-help-copy", markup=False)
 
     def on_mount(self) -> None:
         self._apply_compact_layout(self.size.width, self.size.height)
@@ -725,7 +727,7 @@ class _CommandHistoryScreen(ModalScreen[None]):
                     classes=POPUP_TITLE_CLASS,
                 )
                 yield Button(
-                    _POPUP_CLOSE_LABEL, id=_COMMAND_HISTORY_CLOSE, classes=POPUP_CLOSE_CLASS
+                    popup_close_label(), id=_COMMAND_HISTORY_CLOSE, classes=POPUP_CLOSE_CLASS
                 )
             yield Rule(classes=POPUP_RULE_CLASS)
             yield Select(
@@ -1019,7 +1021,7 @@ class _HomeAttentionStatus(Static):
             FocusAttentionStatus(
                 attention,
                 summary,
-                action_hint="Ctrl+P actions",
+                action_hint=ACTION_HINT,
             )
         )
 
@@ -1038,21 +1040,21 @@ class _HomeFooter(Grid):
 
     def compose(self) -> ComposeResult:
         yield Static(
-            Text.assemble(("↑↓", STEEL_BLUE), (" select", SECONDARY_TEXT_COLOR)),
+            key_hint("↑↓ select", SECONDARY_TEXT_COLOR),
             markup=False,
         )
         yield Button(
-            Text.assemble(("Esc", STEEL_BLUE), (" clear", SECONDARY_TEXT_COLOR)),
+            key_hint("Esc clear", SECONDARY_TEXT_COLOR),
             id=_HOME_FOOTER_CLEAR,
         )
         yield Button(
-            Text.assemble(("Ctrl+P", STEEL_BLUE), (" actions", SECONDARY_TEXT_COLOR)),
+            key_hint("Ctrl+P actions", SECONDARY_TEXT_COLOR),
             id=_HOME_FOOTER_ACTIONS,
         )
         detach_hint = (
             Text.assemble(
-                (self._tmux_detach_hint, STEEL_BLUE),
-                (" d", STEEL_BLUE),
+                (self._tmux_detach_hint, BOLD_STEEL),
+                (" d", BOLD_STEEL),
                 (" detach", SECONDARY_TEXT_COLOR),
             )
             if self._tmux_detach_hint is not None
@@ -1064,7 +1066,7 @@ class _HomeFooter(Grid):
             disabled=self._tmux_detach_hint is None,
         )
         yield Button(
-            Text.assemble(("?", STEEL_BLUE), (" help", SECONDARY_TEXT_COLOR)),
+            Text.assemble(("?", BOLD_STEEL), (" help", SECONDARY_TEXT_COLOR)),
             id=_HOME_FOOTER_HELP,
         )
         yield _CommandStatusLine(self._views, self._on_change)

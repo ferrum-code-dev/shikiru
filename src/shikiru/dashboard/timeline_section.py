@@ -15,8 +15,10 @@ from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.section_rows import timeline_cells
 from shikiru.domain.tasks import Role
 from shikiru.errors import ShikiruError
+from shikiru.ui.keys import key_hint
 from shikiru.ui.screen import widget_is_current
 from shikiru.ui.section import BOLD_PRIMARY, grey
+from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
 if TYPE_CHECKING:
     import asyncio
@@ -339,7 +341,9 @@ class TimelineSection(Vertical):
             grey(HEADING_SEPARATOR + (FOLLOWING_LABEL if self._following else PAUSED_LABEL))
         )
         self.query_one(f"#{self.ids.title}", Static).update(heading)
-        self.query_one(f"#{self.ids.status}", Static).update(grey(EVENTS_HINT))
+        self.query_one(f"#{self.ids.status}", Static).update(
+            key_hint(EVENTS_HINT, SECONDARY_TEXT_COLOR)
+        )
 
     def _paint_selection(self) -> None:
         page = self._page

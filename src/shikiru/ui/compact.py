@@ -22,6 +22,7 @@ from shikiru.domain.levels import UsageLevel
 from shikiru.domain.tasks import EscalationReason, Role
 from shikiru.ui.gauge import Gauge
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_ESCALATED
+from shikiru.ui.keys import append_key_hint
 from shikiru.ui.section import Row, grey, labelled_rows, observed_text, wrap_groups
 from shikiru.ui.size import format_size
 from shikiru.ui.tokens import (
@@ -63,6 +64,7 @@ MINUTES_PER_HOUR = 60
 SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR
 HOURS_PER_DAY = 24
 FOCUS_ATTENTION_MAX_HEIGHT = 2
+ACTION_HINT = "Ctrl+P actions"
 USAGE_TOTALS_LABEL = "Totals"
 USAGE_TOKENS_LABEL = "Tokens"
 USAGE_COVERAGE_LABEL = "Coverage"
@@ -825,17 +827,16 @@ def _attention_group_status(
             None,
         )
         if fault is not None:
-            status = Text.assemble(
-                ("! ", ALERT_COLOR),
-                (f"{group.task_id or 'Project'} · {fault} · Ctrl+P actions", ALERT_COLOR),
+            status = Text.assemble(("! ", ALERT_COLOR))
+            append_key_hint(
+                status, f"{group.task_id or 'Project'} · {fault} · {ACTION_HINT}", ALERT_COLOR
             )
         else:
-            status = Text.assemble(
-                ("! ", AMBER),
-                (
-                    f"{group.task_id or 'Project'} · {' · '.join(group.reasons)} · {action_hint}",
-                    AMBER,
-                ),
+            status = Text.assemble(("! ", AMBER))
+            append_key_hint(
+                status,
+                f"{group.task_id or 'Project'} · {' · '.join(group.reasons)} · {action_hint}",
+                AMBER,
             )
     return status
 
@@ -862,7 +863,7 @@ def _append_aligned_hint(status: Text, action_hint: str, width: int | None) -> N
         STATUS_ALIGNMENT_MIN_GAP,
     )
     status.append(" " * gap)
-    status.append(action_hint, style=SECONDARY_TEXT_COLOR)
+    append_key_hint(status, action_hint, SECONDARY_TEXT_COLOR)
 
 
 def _aligned_line(left: RenderableType, right: RenderableType) -> Table:

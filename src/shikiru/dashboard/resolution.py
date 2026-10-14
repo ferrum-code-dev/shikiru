@@ -37,6 +37,7 @@ from shikiru.ui.popup import (
     POPUP_RULE_CLASS,
     POPUP_TITLE_CLASS,
     PopupFrame,
+    popup_close_label,
     prepare_popup,
 )
 from shikiru.ui.tokens import AMBER, DUSTY_ROSE
@@ -53,7 +54,6 @@ if TYPE_CHECKING:
     from shikiru.operator.queries import OperatorQueries
 
 RESOLUTION_CLOSE_BUTTON = "resolution-close"
-_CLOSE_LABEL = "Esc \N{MULTIPLICATION SIGN}"
 _REFRESH_GROUP = "resolution-refresh"
 _SEND_GROUP = "resolution-send"
 _NEWLINE_KEYS = frozenset({"ctrl+enter", "ctrl+j"})
@@ -198,7 +198,9 @@ class ResolutionScreen(ModalScreen[bool]):
                     id="resolution-title",
                     classes=POPUP_TITLE_CLASS,
                 )
-                yield Button(_CLOSE_LABEL, id=RESOLUTION_CLOSE_BUTTON, classes=POPUP_CLOSE_CLASS)
+                yield Button(
+                    popup_close_label(), id=RESOLUTION_CLOSE_BUTTON, classes=POPUP_CLOSE_CLASS
+                )
             yield Rule(classes=POPUP_RULE_CLASS)
             with VerticalScroll(id="resolution-body", classes=POPUP_BODY_CLASS):
                 yield Static("", id="resolution-notice", markup=False)

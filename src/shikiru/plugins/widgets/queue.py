@@ -20,6 +20,7 @@ from shikiru.dashboard.contract import (
     WidgetPlacement,
 )
 from shikiru.ui.gated_static import GatedStatic
+from shikiru.ui.keys import key_hint
 from shikiru.ui.recent_window import RecentWindow, step_selection
 from shikiru.ui.screen import widget_is_current
 from shikiru.ui.tokens import (
@@ -352,13 +353,13 @@ class _RecentPager(Static):
         compact_label: str,
         page: Callable[[], Awaitable[None]],
     ) -> None:
-        super().__init__(full_label, id=widget_id, markup=False)
+        super().__init__(key_hint(full_label), id=widget_id, markup=False)
         self._full_label = full_label
         self._compact_label = compact_label
         self._page = page
 
     def show(self, *, enabled: bool, compact: bool) -> None:
-        self.update(self._compact_label if compact else self._full_label)
+        self.update(key_hint(self._compact_label if compact else self._full_label))
         self.set_class(not enabled, RECENT_INACTIVE_CLASS)
 
     async def on_click(self, event: events.Click) -> None:

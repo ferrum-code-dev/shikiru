@@ -19,6 +19,7 @@ from shikiru.ui.popup import (
     POPUP_RULE_CLASS,
     POPUP_TITLE_CLASS,
     PopupFrame,
+    popup_close_label,
     prepare_popup,
 )
 from shikiru.ui.screen import widget_is_attached
@@ -30,7 +31,6 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import DialogueBubbleView, WidgetContext
 
 _DIALOGUE_TEXT_CLOSE_BUTTON = "dialogue-text-close"
-_DIALOGUE_TEXT_CLOSE_LABEL = "Esc \u00d7"
 
 
 class DialogueTextScreen(ModalScreen[None]):
@@ -60,7 +60,7 @@ class DialogueTextScreen(ModalScreen[None]):
             with Horizontal(id="dialogue-text-header", classes=POPUP_HEADER_CLASS):
                 yield Label("Dialogue", id="dialogue-text-title", classes=POPUP_TITLE_CLASS)
                 yield Button(
-                    _DIALOGUE_TEXT_CLOSE_LABEL,
+                    popup_close_label(),
                     id=_DIALOGUE_TEXT_CLOSE_BUTTON,
                     classes=POPUP_CLOSE_CLASS,
                 )

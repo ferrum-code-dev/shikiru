@@ -11,6 +11,7 @@ from rich.table import Table
 from rich.text import Text
 
 from shikiru.domain.escalation_panel import ChoiceKind
+from shikiru.ui.keys import key_hint
 from shikiru.ui.section import (
     BOLD_STEEL,
     GROUP_SEPARATOR,
@@ -164,7 +165,9 @@ def choose_renderable(selected: PanelChoice | None, *, tried_expanded: bool) -> 
     hint = GROUP_SEPARATOR.join(
         (_SELECT_HINT, *_enter_hints(selected, tried_expanded=tried_expanded))
     )
-    return Section(_CHOOSE_TITLE, Group(), grey(hint), title_style=BOLD_STEEL)
+    return Section(
+        _CHOOSE_TITLE, Group(), key_hint(hint, SECONDARY_TEXT_COLOR), title_style=BOLD_STEEL
+    )
 
 
 def tried_renderable(content: str, *, expanded: bool) -> RenderableType:
@@ -190,7 +193,7 @@ def choice_renderable(
     """Return one choice row: star beside the label, its consequence beneath in grey."""
     style = SECONDARY_TEXT_COLOR if disabled else _LABEL_STYLES[choice.kind]
     if armed:
-        label = Text(_CANCEL_CONFIRM_LABEL, style=f"{STYLE_BOLD} {DUSTY_ROSE}")
+        label = key_hint(_CANCEL_CONFIRM_LABEL, f"{STYLE_BOLD} {DUSTY_ROSE}")
     else:
         label = Text(choice.label or _FIXED_LABELS[choice.kind], style=style)
         if choice.needs_input:

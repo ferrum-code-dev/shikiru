@@ -114,6 +114,8 @@ from shikiru.telemetry.resources import ResourceProcessRoots, ResourceSampler
 from shikiru.tmux.client import Tmux, exact_target, tmux_key_label
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.ui.compact import format_cpu_pct
+from shikiru.ui.tokens import STEEL_BLUE
+from tests.support.cells import foregrounds
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
@@ -1892,6 +1894,8 @@ async def test_focus_attention_opens_durable_decision_evidence(
             visible_status = " ".join(_rendered_widget_lines(row))
             assert escalation.id in visible_status
             assert "Enter answer" in visible_status
+            assert set(foregrounds(row, "Enter")) == {STEEL_BLUE}
+            assert STEEL_BLUE not in foregrounds(row, "answer")
             assert "Engine stopped" in visible_status
             status_lines = _rendered_widget_lines(row)
             assert "paused" not in status_lines[0]

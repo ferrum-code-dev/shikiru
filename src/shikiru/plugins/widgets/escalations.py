@@ -21,11 +21,13 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.ui import SplashPanel
 from shikiru.ui.compact import (
+    ACTION_HINT,
     FOCUS_ATTENTION_MAX_HEIGHT,
     FocusAttentionStatus,
     display_escalation_headline,
 )
 from shikiru.ui.gated_static import GatedStatic
+from shikiru.ui.keys import key_hint
 from shikiru.ui.popup import (
     POPUP_BODY_CLASS,
     POPUP_CLOSE_CLASS,
@@ -35,6 +37,7 @@ from shikiru.ui.popup import (
     POPUP_RULE_CLASS,
     POPUP_TITLE_CLASS,
     PopupFrame,
+    popup_close_label,
     prepare_popup,
 )
 from shikiru.ui.screen import widget_is_attached, widget_is_current
@@ -59,7 +62,6 @@ MAX_ESCALATION_PANEL_HEIGHT = 12
 MINIMUM_GROUPED_DECISIONS = 2
 ARMED_CLASS = "armed"
 PACKET_CLOSE_BUTTON = "escalation-packet-close"
-_PACKET_CLOSE_LABEL = "Esc \u00d7"
 
 
 class PacketScreen(ModalScreen[None]):
@@ -93,7 +95,7 @@ class PacketScreen(ModalScreen[None]):
                     classes=POPUP_TITLE_CLASS,
                 )
                 yield Button(
-                    _PACKET_CLOSE_LABEL,
+                    popup_close_label(),
                     id=PACKET_CLOSE_BUTTON,
                     classes=POPUP_CLOSE_CLASS,
                 )
@@ -485,7 +487,7 @@ class EscalationsPanel(Static):
         if self._summary is None:
             return Text("○ Engine status unavailable", style=SECONDARY_TEXT_COLOR)
         decision = self._selected_decision()
-        action_hint = "Ctrl+P actions"
+        action_hint = ACTION_HINT
         if self._focus_row and decision is not None:
             action_hint = "Enter answer ↵" if decision.answer_available else "Enter resolve ↵"
         return FocusAttentionStatus(
@@ -539,9 +541,9 @@ class EscalationsPanel(Static):
             if item.evidence_error is not None:
                 content.append(f"  Evidence error: {item.evidence_error}")
         if group.task_id is not None:
-            content.append("  Enter: task detail")
+            content.append(key_hint("  Enter: task detail"))
         if group.escalations:
-            content.append("  o: evidence   r: resolve")
+            content.append(key_hint("  o: evidence   r: resolve"))
         return Group(*content)
 
 

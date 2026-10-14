@@ -56,6 +56,7 @@ from shikiru.ui.compact import (
     ProjectUsageTotals,
 )
 from shikiru.ui.gated_static import GatedStatic
+from shikiru.ui.keys import key_hint
 from shikiru.ui.popup import (
     POPUP_CLOSE_CLASS,
     POPUP_CSS,
@@ -64,10 +65,12 @@ from shikiru.ui.popup import (
     POPUP_RULE_CLASS,
     POPUP_TITLE_CLASS,
     PopupFrame,
+    popup_close_label,
     prepare_popup,
 )
 from shikiru.ui.screen import widget_is_attached
 from shikiru.ui.section import BOLD_PRIMARY, grey
+from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
 if TYPE_CHECKING:
     from textual import events
@@ -105,7 +108,6 @@ TASK_DETAIL_POPUP_FRAME = "task-detail-popup-frame"
 TASK_DETAIL_POPUP_HEADER = "task-detail-popup-header"
 TASK_DETAIL_POPUP_TITLE = "task-detail-popup-title"
 TASK_DETAIL_POPUP_CLOSE = "task-detail-popup-close"
-TASK_DETAIL_POPUP_CLOSE_LABEL = "Esc \u00d7"
 TASK_DETAIL_REQUEST = "task-detail-request"
 TASK_DETAIL_CRITERIA = "task-detail-criteria"
 TASK_DETAIL_REPORT = "task-detail-report"
@@ -935,7 +937,7 @@ class TaskDetailPanel(Vertical):
             ):
                 notes.append(NO_REPLACEMENT_TASKS)
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update(
-            Group(heading, grey("\n".join(notes)))
+            Group(heading, key_hint("\n".join(notes), SECONDARY_TEXT_COLOR))
         )
 
     def _render_ownership(self, view: TaskDetailView) -> None:
@@ -1025,7 +1027,7 @@ class TaskDetailScreen(ModalScreen[None]):
                     classes=POPUP_TITLE_CLASS,
                 )
                 yield Button(
-                    TASK_DETAIL_POPUP_CLOSE_LABEL,
+                    popup_close_label(),
                     id=TASK_DETAIL_POPUP_CLOSE,
                     classes=POPUP_CLOSE_CLASS,
                 )

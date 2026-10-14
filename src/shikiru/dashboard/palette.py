@@ -50,6 +50,7 @@ from shikiru.ui.popup import (
     POPUP_RULE_CLASS,
     POPUP_TITLE_CLASS,
     PopupFrame,
+    popup_close_label,
     prepare_popup,
 )
 from shikiru.ui.screen import widget_is_attached, widget_is_on_screen
@@ -94,7 +95,6 @@ _FIELD_EXPORT_DESTINATION = "export-destination"
 _FIELD_EXPORT_FORMAT = "export-format"
 _FIELD_EXPORT_OVERWRITE = "export-overwrite"
 _FIELD_EXPORT_SIGNALS = "export-signals"
-_POPUP_CLOSE_LABEL = "Esc \u00d7"
 _EXPORT_REFUSE = "refuse"
 _EXPORT_OVERWRITE = "overwrite"
 _EXPORT_SIGNALS_EXCLUDE = "exclude"
@@ -462,7 +462,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             with Horizontal(id="palette-heading", classes=POPUP_HEADER_CLASS):
                 yield Label("Actions", id="palette-title", classes=POPUP_TITLE_CLASS)
                 yield Button(
-                    _POPUP_CLOSE_LABEL,
+                    popup_close_label(),
                     id=_PALETTE_CLOSE,
                     classes=POPUP_CLOSE_CLASS,
                 )

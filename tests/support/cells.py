@@ -69,3 +69,13 @@ def rendered_lines(widget: Widget) -> list[list[Cell]]:
             cells.pop()
         rendered.append(cells)
     return rendered
+
+
+def foregrounds(widget: Widget, needle: str) -> list[str | None]:
+    """Return the foreground of each painted cell of the first occurrence of `needle`."""
+    for cells in rendered_lines(widget):
+        text = "".join(char for char, _ in cells)
+        start = text.find(needle)
+        if start >= 0:
+            return [style[1] for _, style in cells[start : start + len(needle)]]
+    raise AssertionError(needle)

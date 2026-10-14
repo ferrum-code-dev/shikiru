@@ -6,9 +6,11 @@ from textual.containers import Vertical
 from textual.css.scalar import Unit
 from textual.geometry import Size
 
+from shikiru.ui.keys import key_hint
 from shikiru.ui.screen import widget_is_attached
 
 if TYPE_CHECKING:
+    from rich.text import Text
     from textual import events
     from textual.widget import Widget
 
@@ -19,6 +21,12 @@ POPUP_CLOSE_CLASS = "popup-close-control"
 POPUP_RULE_CLASS = "popup-rule"
 POPUP_BODY_CLASS = "popup-body"
 POPUP_SECONDARY_CLASS = "popup-secondary"
+POPUP_CLOSE_LABEL = "Esc \N{MULTIPLICATION SIGN}"
+
+
+def popup_close_label() -> Text:
+    """Return the Esc close label with its key in the key style."""
+    return key_hint(POPUP_CLOSE_LABEL)
 
 
 class PopupFrame(Vertical):

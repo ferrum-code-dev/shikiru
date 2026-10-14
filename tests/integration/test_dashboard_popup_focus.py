@@ -24,6 +24,8 @@ from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.popup import POPUP_CLOSE_CLASS
 from shikiru.ui.theme import SCROLLBAR_WIDTH
+from shikiru.ui.tokens import STEEL_BLUE
+from tests.support.cells import foregrounds
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, choose_focus_view, state_views
@@ -229,6 +231,33 @@ async def test_popup_starts_on_its_useful_control_and_closes_with_escape_or_its_
         assert popup_app.focused is close
         await pilot.press("enter")
         await wait_until(lambda: popup_app.screen is origin, timeout=UI_WAIT_SECONDS)
+
+
+@pytest.mark.parametrize(
+    ("open_popup", "selector", "key", "label"),
+    [
+        pytest.param(_open_help, f".{POPUP_CLOSE_CLASS}", "Esc", "\u00d7", id="help-close"),
+        pytest.param(
+            _open_help, "#workspace-help-copy", "Up/Down", "select a task", id="help-copy"
+        ),
+        pytest.param(_open_views, "#context-views-hint", "Enter", "open", id="views-hint"),
+        pytest.param(_open_command_history, f".{POPUP_CLOSE_CLASS}", "Esc", "\u00d7", id="history"),
+        pytest.param(_open_decision_packet, f".{POPUP_CLOSE_CLASS}", "Esc", "\u00d7", id="packet"),
+    ],
+)
+async def test_popup_key_names_are_steel_blue_and_their_labels_are_not(
+    popup_app: DashboardApp,
+    open_popup: Callable[[DashboardApp, Pilot[None]], Awaitable[Screen[Any]]],
+    selector: str,
+    key: str,
+    label: str,
+) -> None:
+    async with popup_app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        await open_popup(popup_app, pilot)
+        widget = popup_app.screen.query_one(selector)
+        assert set(foregrounds(widget, key)) == {STEEL_BLUE}
+        assert STEEL_BLUE not in foregrounds(widget, label)
 
 
 def _scrollbar_width(widget: Widget) -> object:

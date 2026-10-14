@@ -23,6 +23,8 @@ from shikiru.domain.tasks import EscalationReason
 from shikiru.operator.commands import COMMAND_POLL_SECONDS
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
+from shikiru.ui.tokens import STEEL_BLUE
+from tests.support.cells import foregrounds
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import dashboard_app
@@ -262,6 +264,9 @@ async def test_what_was_tried_is_the_last_arrow_row_and_enter_only_toggles_it(
         tried = screen.query_one("#resolution-tried")
         first_text = _text_of(rows[0])
         assert rows[0].has_class(_SELECTED_CLASS)
+        choose = screen.query_one("#resolution-choose")
+        assert set(foregrounds(choose, "Enter")) == {STEEL_BLUE}
+        assert STEEL_BLUE not in foregrounds(choose, "select")
         await pilot.press(*["down"] * len(rows))
         await wait_until(lambda: tried.has_class(_SELECTED_CLASS), timeout=UI_WAIT_SECONDS)
         assert not any(row.has_class(_SELECTED_CLASS) for row in rows)
