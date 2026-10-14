@@ -17,8 +17,8 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_TIMELINE_TURN,
     TASK_VIEW_AGENT,
     TASK_VIEW_EVIDENCE,
-    TASK_VIEW_REPORTS,
     TASK_VIEW_REQUEST,
+    TASK_VIEW_RESULTS,
     TASK_VIEW_USAGE,
     TaskDetailPanel,
 )
@@ -54,6 +54,7 @@ pytestmark = pytest.mark.asyncio
 START = datetime(2026, 1, 1, tzinfo=UTC)
 AGENT_LIST = "task-detail-agent-list"
 EVENTS_FOLD = TASK_VIEW_EVIDENCE
+FIRST_FOLD = TASK_VIEW_REQUEST
 LEFT_HALF_BLOCK = "\N{LEFT HALF BLOCK}"
 
 
@@ -65,19 +66,21 @@ class _KeyCase:
 
 
 KEY_CASES = [
-    _KeyCase(("down",), TASK_VIEW_REQUEST, frozenset()),
-    _KeyCase(("down", "up"), TASK_VIEW_REPORTS, frozenset()),
-    _KeyCase(("up",), TASK_VIEW_REPORTS, frozenset()),
-    _KeyCase(("down", "enter"), TASK_VIEW_REQUEST, frozenset({TASK_VIEW_REQUEST})),
-    _KeyCase(("down", "space"), TASK_VIEW_REQUEST, frozenset({TASK_VIEW_REQUEST})),
-    _KeyCase(("down", "right"), TASK_VIEW_REQUEST, frozenset({TASK_VIEW_REQUEST})),
-    _KeyCase(("down", "right", "left"), TASK_VIEW_REQUEST, frozenset()),
+    _KeyCase(("down",), TASK_VIEW_RESULTS, frozenset()),
+    _KeyCase(("down", "up"), FIRST_FOLD, frozenset()),
+    _KeyCase(("up",), FIRST_FOLD, frozenset()),
+    _KeyCase(("down", "enter"), TASK_VIEW_RESULTS, frozenset({TASK_VIEW_RESULTS})),
+    _KeyCase(("down", "space"), TASK_VIEW_RESULTS, frozenset({TASK_VIEW_RESULTS})),
+    _KeyCase(("down", "right"), TASK_VIEW_RESULTS, frozenset({TASK_VIEW_RESULTS})),
+    _KeyCase(("down", "right", "left"), TASK_VIEW_RESULTS, frozenset()),
     _KeyCase(
         ("right", "down", "right"),
-        TASK_VIEW_REQUEST,
-        frozenset({TASK_VIEW_REPORTS, TASK_VIEW_REQUEST}),
+        TASK_VIEW_RESULTS,
+        frozenset({TASK_VIEW_REQUEST, TASK_VIEW_RESULTS}),
     ),
-    _KeyCase(("down", "down", "enter"), TASK_DETAIL_TIMELINE_LIST, frozenset({EVENTS_FOLD})),
+    _KeyCase(
+        ("down", "down", "down", "enter"), TASK_DETAIL_TIMELINE_LIST, frozenset({EVENTS_FOLD})
+    ),
 ]
 
 
@@ -164,9 +167,7 @@ async def test_header_keys_move_between_folds_and_open_or_close_them(
                 timeout=UI_WAIT_SECONDS,
             )
             panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).press()
-            await wait_until(
-                lambda: _focused_stop(pilot) == TASK_VIEW_REPORTS, timeout=UI_WAIT_SECONDS
-            )
+            await wait_until(lambda: _focused_stop(pilot) == FIRST_FOLD, timeout=UI_WAIT_SECONDS)
             await pilot.press(*case.keys)
             await wait_until(lambda: _focused_stop(pilot) == case.focused, timeout=UI_WAIT_SECONDS)
             await wait_until(lambda: panel.open_views == case.open_views, timeout=UI_WAIT_SECONDS)
@@ -322,10 +323,8 @@ async def test_the_details_hint_and_a_paused_timeline_paint_their_key_names_stee
             assert set(foregrounds(hint, "\N{DOWNWARDS ARROW}")) == {STEEL_BLUE}
             assert STEEL_BLUE not in foregrounds(hint, "details")
             hint.press()
-            await wait_until(
-                lambda: _focused_stop(pilot) == TASK_VIEW_REPORTS, timeout=UI_WAIT_SECONDS
-            )
-            await pilot.press("down", "down", "enter")
+            await wait_until(lambda: _focused_stop(pilot) == FIRST_FOLD, timeout=UI_WAIT_SECONDS)
+            await pilot.press("down", "down", "down", "enter")
             await wait_until(
                 lambda: _focused_stop(pilot) == TASK_DETAIL_TIMELINE_LIST, timeout=UI_WAIT_SECONDS
             )
@@ -369,14 +368,12 @@ async def test_selection_is_the_selected_background_with_no_bar_glyph(
                 timeout=UI_WAIT_SECONDS,
             )
             panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).press()
-            await wait_until(
-                lambda: _focused_stop(pilot) == TASK_VIEW_REPORTS, timeout=UI_WAIT_SECONDS
-            )
-            focused_header = _fold_header(panel, TASK_VIEW_REPORTS)
+            await wait_until(lambda: _focused_stop(pilot) == FIRST_FOLD, timeout=UI_WAIT_SECONDS)
+            focused_header = _fold_header(panel, FIRST_FOLD)
             assert LEFT_HALF_BLOCK not in _painted_text(focused_header)
             assert painted_backgrounds(focused_header) == {SELECTED_SURFACE_COLOR}
 
-            await pilot.press("down", "down", "enter")
+            await pilot.press("down", "down", "down", "enter")
             await wait_until(
                 lambda: _focused_stop(pilot) == TASK_DETAIL_TIMELINE_LIST, timeout=UI_WAIT_SECONDS
             )

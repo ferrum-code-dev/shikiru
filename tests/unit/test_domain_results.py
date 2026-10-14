@@ -86,18 +86,15 @@ def test_commits_come_from_the_first_source_that_has_some() -> None:
         assert results.commits[0] == ResultCommit(sha, subject)
 
 
-def test_an_unfinished_task_shows_what_exists_so_far() -> None:
-    results = _derive(Status.RUNNING, facts=FACTS, verdict_risks=["flaky test"])
-    assert results.outcome is ResultOutcome.SO_FAR
-    assert results.produced == ProducedNumbers(2, 2, 10, 4)
-    assert results.more_commits == 0
-    assert results.residual_risks == ("flaky test",)
-
-
-def test_a_cancelled_task_keeps_its_branch_and_is_not_merged() -> None:
-    results = _derive(Status.CANCELLED, facts=FACTS)
-    assert results.outcome is ResultOutcome.NOT_MERGED
-    assert (results.branch, results.base) == ("task/t-12", "main")
+def test_unfinished_and_cancelled_tasks_show_what_exists_without_claiming_a_merge() -> None:
+    so_far = _derive(Status.RUNNING, facts=FACTS, verdict_risks=["flaky test"])
+    assert so_far.outcome is ResultOutcome.SO_FAR
+    assert so_far.produced == ProducedNumbers(2, 2, 10, 4)
+    assert so_far.more_commits == 0
+    assert so_far.residual_risks == ("flaky test",)
+    cancelled = _derive(Status.CANCELLED, facts=FACTS)
+    assert cancelled.outcome is ResultOutcome.NOT_MERGED
+    assert (cancelled.branch, cancelled.base) == ("task/t-12", "main")
 
 
 def test_nothing_recorded_gives_empty_fields_not_guesses() -> None:

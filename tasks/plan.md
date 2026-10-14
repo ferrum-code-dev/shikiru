@@ -1890,7 +1890,7 @@ Refs: spec "Task details"; `dashboard/briefing_view.py`, `domain/briefing.py`, T
 
 ### Task 204: Results and Decisions folds
 Refs: `dashboard/detail.py`, `details_list_view.py` (`DetailsSection`, headlines), Task 202, `VERDICT`, `ESCALATION_RESOLVED`, `OPERATOR_MESSAGE` events.
-- [ ] Results and Decisions folds replace Reports and decisions and Engine facts (ids, `FOLD_STATICS`, reset list, headlines `N commits · PR #n`, `N rounds · last …`); dead widgets and tests removed.
+- [x] Results and Decisions folds replace Reports and decisions and Engine facts (ids, `FOLD_STATICS`, reset list, headlines `N commits · PR #n`, `N rounds · last …`); dead widgets and tests removed. Proof: rendered the real task panel with both folds open for a Done, an in-progress and a Cancelled task at 100, 60, 48 and 40 columns (rows wrap under the label column, headlines drop when they do not fit); rows are glyph and word led so `NO_COLOR` keeps their meaning. Unit table for `derive_decisions` and a rendered-body integration check; collected cases 1663 before and after. `poe check` green.
 
 ### Task 205: Task description, Dependencies, Workspace, Settings; no project-wide folds
 Refs: `detail.py` (`_task_context_text`, `_workspace_text`, `_render_relationships`, `task_contextual_views`, `_fold_chosen`, `DetailFold.Chosen`), `app.py` (`_task_context_choices`), `section_rows.py` (`relation_rows`), `details_list_view.py`.

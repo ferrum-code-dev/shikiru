@@ -61,18 +61,17 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_CRITERIA,
+    TASK_DETAIL_DECISIONS,
     TASK_DETAIL_DETAILS_BUTTON,
-    TASK_DETAIL_FACTS,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
     TASK_DETAIL_RELATED_LIST,
     TASK_DETAIL_RELATIONSHIPS,
-    TASK_DETAIL_REPORT,
     TASK_DETAIL_REQUEST,
+    TASK_DETAIL_RESULTS,
     TASK_DETAIL_SESSIONS,
     TASK_DETAIL_TIMELINE_LIST,
     TASK_DETAIL_TIMELINE_TITLE,
-    TASK_DETAIL_VERDICT,
     TASK_DETAIL_WORKSPACE,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_RELATIONSHIPS,
@@ -269,9 +268,8 @@ _TASK_DETAIL_SECTION_IDS = (
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_REQUEST,
     TASK_DETAIL_CRITERIA,
-    TASK_DETAIL_REPORT,
-    TASK_DETAIL_VERDICT,
-    TASK_DETAIL_FACTS,
+    TASK_DETAIL_RESULTS,
+    TASK_DETAIL_DECISIONS,
     TASK_DETAIL_WORKSPACE,
     TASK_DETAIL_SESSIONS,
 )
@@ -5016,10 +5014,7 @@ async def test_home_selection_clears_rendered_task_sections_while_next_report_lo
                 lambda: first.title in _rendered_text(identity), timeout=UI_WAIT_SECONDS
             )
             await wait_until(
-                lambda: (
-                    "First task report evidence"
-                    in _rendered_text(app.query_one(f"#{TASK_DETAIL_REPORT}", Static))
-                ),
+                lambda: first_request in "\n".join(_rendered_task_detail_sections(app)),
                 timeout=UI_WAIT_SECONDS,
             )
             assert first_request in "\n".join(_rendered_task_detail_sections(app))
@@ -5044,7 +5039,6 @@ async def test_home_selection_clears_rendered_task_sections_while_next_report_lo
             )
             task_sections = "\n".join(_rendered_task_detail_sections(app))
             assert first_request not in task_sections
-            assert "First task report evidence" not in task_sections
             assert Hold.PAUSED.value not in task_sections
 
             _finish_report_read(report_paths[second.id], writer_descriptors, second_report)
@@ -5053,7 +5047,6 @@ async def test_home_selection_clears_rendered_task_sections_while_next_report_lo
             )
             task_sections = "\n".join(_rendered_task_detail_sections(app))
             assert second_request in task_sections
-            assert "Second task report evidence" in task_sections
 
             app.query_one("#task-detail-panel", TaskDetailPanel).select_task(None)
             await wait_until(

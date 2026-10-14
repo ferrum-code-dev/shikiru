@@ -44,11 +44,11 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_TIMELINE_TURN,
     TASK_VIEW_AGENT,
     TASK_VIEW_CONTEXT,
+    TASK_VIEW_DECISIONS,
     TASK_VIEW_EVIDENCE,
-    TASK_VIEW_FACTS,
     TASK_VIEW_RELATIONSHIPS,
-    TASK_VIEW_REPORTS,
     TASK_VIEW_REQUEST,
+    TASK_VIEW_RESULTS,
     TASK_VIEW_USAGE,
     TASK_VIEW_WORKSPACE,
     TIMELINE_SECTIONS,
@@ -705,7 +705,7 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
             ],
         ).model_dump_json()
     )
-    facts = _record_briefing_evidence(connection, clock, task.id, implementation_dir)
+    _record_briefing_evidence(connection, clock, task.id, implementation_dir)
     (invalid_dir / REPORT_KIND_FILENAME).write_text("invalid report kind")
     signal_path = run_dir(project_root, task.id) / "implementer" / "view.jsonl"
     signal_path.parent.mkdir(parents=True)
@@ -730,8 +730,7 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
     assert detail.latest_verdict.role == Role.LEADER.value
     assert detail.latest_verdict.provenance == "engine"
     assert detail.latest_verdict.summary == "Latest engine verdict"
-    _assert_briefing_data(detail, load_settings(project_root), facts)
-    assert detail.facts_turn == "02-implement-i1"
+    _assert_briefing_data(detail, load_settings(project_root))
     assert detail.sessions[0].session_id == "session-current"
     assert detail.sessions[0].input_tokens == 12
     assert detail.sessions[0].billing_mode == BILLING_MODE_SUBSCRIPTION
@@ -743,7 +742,7 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
 
 def _record_briefing_evidence(
     connection: Connection, clock: Clock, task_id: str, turn_dir: Path
-) -> str:
+) -> None:
     facts = render_facts(
         WorkspaceFacts(
             commits=("abc1234 first", "def5678 second"),
@@ -757,11 +756,9 @@ def _record_briefing_evidence(
         message="PR opened",
         data={"url": "https://example.test/o/r/pull/41", "branch": "b", "commits": []},
     )
-    return facts
 
 
-def _assert_briefing_data(detail: TaskDetailView, settings: Settings, facts: str) -> None:
-    assert detail.recorded_facts == facts
+def _assert_briefing_data(detail: TaskDetailView, settings: Settings) -> None:
     assert detail.results is not None
     assert detail.results.produced == ProducedNumbers(commits=2, files=1, insertions=2, deletions=1)
     assert detail.verdict_counts == VerdictCounts("changes_requested", 0, 2, 1)
@@ -2656,12 +2653,12 @@ class _SectionCase:
 
 
 _SECTION_CASES = [
-    _SectionCase(DetailsSection.REPORTS, TASK_VIEW_REPORTS, None, False),
     _SectionCase(DetailsSection.REQUEST, TASK_VIEW_REQUEST, None, True),
+    _SectionCase(DetailsSection.RESULTS, TASK_VIEW_RESULTS, None, False),
+    _SectionCase(DetailsSection.DECISIONS, TASK_VIEW_DECISIONS, None, True),
     _SectionCase(DetailsSection.EVENTS, TASK_VIEW_EVIDENCE, TaskTimelineCategory.ACTIVITY, False),
     _SectionCase(DetailsSection.AGENT_ACTIVITY, TASK_VIEW_AGENT, TaskTimelineCategory.SIGNAL, True),
     _SectionCase(DetailsSection.USAGE, TASK_VIEW_USAGE, None, False),
-    _SectionCase(DetailsSection.FACTS, TASK_VIEW_FACTS, None, True),
     _SectionCase(DetailsSection.WORKSPACE, TASK_VIEW_WORKSPACE, None, False),
     _SectionCase(DetailsSection.BLOCKERS, TASK_VIEW_RELATIONSHIPS, None, True),
     _SectionCase(DetailsSection.SETTINGS, TASK_VIEW_CONTEXT, None, False),

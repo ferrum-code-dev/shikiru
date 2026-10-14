@@ -111,9 +111,13 @@ def escalation_remaining(
 
 def verdict_counts(verdict: Verdict) -> VerdictCounts:
     """Count `verdict`'s issues by severity beside its decision."""
-    severities = [issue.severity for issue in verdict.issues]
+    return severity_counts(verdict.decision, [issue.severity for issue in verdict.issues])
+
+
+def severity_counts(decision: str, severities: Sequence[str]) -> VerdictCounts:
+    """Count `severities` by level beside `decision`."""
     return VerdictCounts(
-        verdict.decision,
+        decision,
         severities.count("blocker"),
         severities.count("major"),
         severities.count("minor"),

@@ -304,8 +304,8 @@ The project usage summary reads persisted run/session rows across current and fi
 - `nudge`, `helper_action`, `rung_changed`, `compacted`
 - `quota_blocked`, `quota_cleared`
 - `verdict` (turn, role and iteration when known), `scope_change`
-- `hold_set`, `hold_cleared`, `taken_over`, `handed_back`, `takeover_lost` (`role`; the taken-over pane was lost with the tmux server or killed, so the role is handed back; notified), `operator_message`
-- `escalation`, `escalation_resolved`
+- `hold_set`, `hold_cleared`, `taken_over`, `handed_back`, `takeover_lost` (`role`; the taken-over pane was lost with the tmux server or killed, so the role is handed back; notified), `operator_message` (`role`, `path`, `text`)
+- `escalation`, `escalation_resolved` (`resolution`, and `text` for an answer)
 - `integration_started`, `integration_waiting` (`paths`: the dirty checkout paths a local merge waits on; notified), `pr_opened` (url, branch, commits), `pr_withdrawn` (url, state: the PR of a cancelled task was closed or found not open)
 - `task_retried`, `task_done`, `task_cancelled`
 - `pane_restored`, `engine_started` and `engine_stopped` (`engine_pid`, `engine_process_started_at`; `reason` is also recorded when the engine stopped on a fault), `engine_fault` (`scope`, error, recoverable, repeat), `engine_recovered` (`scope`; the fault streak of that scope and task ended)

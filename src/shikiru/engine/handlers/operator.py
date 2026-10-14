@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from shikiru.domain.commands import COMMAND_ID_KEY, HandBack, Say, TakeOver
+from shikiru.domain.commands import COMMAND_ID_KEY, EVENT_TEXT_KEY, HandBack, Say, TakeOver
 from shikiru.domain.events import EventKind
 from shikiru.engine.handlers.base import (
     HandlerContext,
@@ -43,6 +43,7 @@ class SayHandler:
                 data={
                     "role": command.role.value,
                     "path": str(path),
+                    EVENT_TEXT_KEY: command.text,
                     COMMAND_ID_KEY: command_id,
                 },
             )

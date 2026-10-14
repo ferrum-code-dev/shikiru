@@ -10,7 +10,9 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from shikiru.dashboard.briefing_view import VERDICT_LABELS, total_cost_text
-from shikiru.ui.section import BOLD_PRIMARY, grey
+from shikiru.domain.results import ResultOutcome
+from shikiru.domain.tasks import Status
+from shikiru.ui.section import BOLD_PRIMARY, GROUP_SEPARATOR, grey
 from shikiru.ui.tokens import PRIMARY_TEXT_COLOR
 
 if TYPE_CHECKING:
@@ -25,8 +27,11 @@ EVENTS_HINT = f"{_ARROWS} select · PgUp/PgDn page · End follow"
 RELATIONSHIPS_HINT = f"{_ARROWS} select · Enter open · PgUp/PgDn page"
 ROW_LEAD = "  "
 _HEADLINE_GAP = "  "
-_VERDICT_WORD = "verdict"
-_REPORT_WORD = "report"
+DECISION_OPEN = "decision open"
+_PR_WORD = "PR"
+_LAST_WORD = "last"
+_ROUND_NOUNS = "rounds"
+_COMMIT_NOUNS = {True: "commit", False: "commits"}
 _BRANCH_WORD = "branch"
 _PRIORITY_WORD = "priority"
 _BLOCKER_NOUNS = ("blocker", "blockers")
@@ -35,12 +40,12 @@ _BLOCKER_NOUNS = ("blocker", "blockers")
 class DetailsSection(StrEnum):
     """The task detail sections, in fold order, named as the headers show them."""
 
-    REPORTS = "Reports and decisions"
     REQUEST = "Request and criteria"
+    RESULTS = "Results"
+    DECISIONS = "Decisions"
     EVENTS = "Events"
     AGENT_ACTIVITY = "Agent activity"
     USAGE = "Usage and sessions"
-    FACTS = "Engine facts"
     WORKSPACE = "Workspace"
     BLOCKERS = "Blockers and related"
     SETTINGS = "Task settings"
@@ -98,13 +103,33 @@ def _settings_headline(view: TaskDetailView) -> str | None:
     return f"{_PRIORITY_WORD} {view.priority}" if view.priority is not None else None
 
 
-def _reports_headline(view: TaskDetailView) -> str | None:
-    if view.latest_verdict is not None and view.latest_verdict.decision is not None:
-        decision = view.latest_verdict.decision
-        return f"{_VERDICT_WORD} {VERDICT_LABELS.get(decision, decision).lower()}"
-    if view.latest_report is not None:
-        return f"{_REPORT_WORD} {view.latest_report.kind}"
-    return None
+def _results_headline(view: TaskDetailView) -> str | None:
+    results = view.results
+    if results is None:
+        return None
+    if results.outcome is ResultOutcome.SO_FAR:
+        return ResultOutcome.SO_FAR.value
+    commits = len(results.commits) + results.more_commits
+    pull_request = results.pull_request
+    parts = [
+        f"{commits} {_COMMIT_NOUNS[commits == 1]}" if commits else "",
+        f"{_PR_WORD} #{pull_request.number}"
+        if pull_request is not None and pull_request.number is not None
+        else "",
+    ]
+    return GROUP_SEPARATOR.join(part for part in parts if part) or None
+
+
+def _decisions_headline(view: TaskDetailView) -> str | None:
+    if view.status == Status.ESCALATED.value:
+        return DECISION_OPEN
+    rounds = view.decisions.rounds if view.decisions is not None else ()
+    if not rounds:
+        return None
+    last = VERDICT_LABELS.get(rounds[-1].decision, rounds[-1].decision).lower()
+    if len(rounds) == 1:
+        return last
+    return f"{len(rounds)} {_ROUND_NOUNS}{GROUP_SEPARATOR}{_LAST_WORD} {last}"
 
 
 def _blockers_headline(view: TaskDetailView) -> str | None:
@@ -117,7 +142,8 @@ def _blockers_headline(view: TaskDetailView) -> str | None:
 
 
 _HEADLINES: dict[DetailsSection, Callable[[TaskDetailView], str | None]] = {
-    DetailsSection.REPORTS: _reports_headline,
+    DetailsSection.RESULTS: _results_headline,
+    DetailsSection.DECISIONS: _decisions_headline,
     DetailsSection.USAGE: _usage_headline,
     DetailsSection.WORKSPACE: _workspace_headline,
     DetailsSection.BLOCKERS: _blockers_headline,

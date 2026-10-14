@@ -63,6 +63,7 @@ from shikiru.domain.briefing import (
     verdict_counts,
 )
 from shikiru.domain.commands import CommandStatus, ResolutionKind
+from shikiru.domain.decisions import derive_decisions
 from shikiru.domain.engine_uptime import project_engine_uptime
 from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
@@ -103,6 +104,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.dashboard.motion import DashboardMotion
     from shikiru.domain.briefing import PullRequestLine, ReportedTests
+    from shikiru.domain.decisions import TaskDecisions
     from shikiru.domain.events import Event
     from shikiru.domain.faults import FaultStreak
     from shikiru.domain.motion import MotionFrame, TaskMotionFrame
@@ -131,6 +133,7 @@ TASK_TIMELINE_READ_ERROR_SUMMARY = "Task evidence could not be read"
 ENGINE_LIFECYCLE_EVENT_LIMIT = 2
 TASK_MODEL_HISTORY_EVENT_LIMIT = 50
 RESULTS_PLAN_CHANGE_LIMIT = 20
+DECISION_EVENT_LIMIT = 20
 TASK_MODEL_HISTORY_EVENTS = (
     EventKind.TURN_STARTED,
     EventKind.TURN_COMPLETED,
@@ -1021,8 +1024,6 @@ class StateDashboardViews:
             progress=self._strip_with_motion(task, task_frame, self._motion.current_cost(task)),
             latest_report=latest_report,
             latest_verdict=verdict,
-            recorded_facts=detail.recorded_facts,
-            facts_turn=detail.facts_turn,
             branch=task.repo.branch if task.repo is not None else None,
             worktree_path=str(self._queries.task_worktree_path(task.id)),
             window_id=task.window_id,
@@ -1070,6 +1071,7 @@ class StateDashboardViews:
             results=self._task_results(
                 task, detail, reported, pull_request, latest_verdict=latest_verdict
             ),
+            decisions=self._task_decisions(task.id),
         )
 
     async def task_timeline(
@@ -1359,6 +1361,15 @@ class StateDashboardViews:
             scope_events=[event.data for event in scope],
             verdict_risks=latest_verdict.residual_risks if latest_verdict is not None else (),
             commit_cap=self._settings.dashboard.results_commits,
+        )
+
+    def _task_decisions(self, task_id: str) -> TaskDecisions:
+        def recorded(kind: EventKind) -> list[Event]:
+            return self._state.latest_events(DECISION_EVENT_LIMIT, kinds=(kind,), task_id=task_id)
+
+        return derive_decisions(
+            recorded(EventKind.VERDICT),
+            [*recorded(EventKind.ESCALATION_RESOLVED), *recorded(EventKind.OPERATOR_MESSAGE)],
         )
 
     def _pull_request_line(self, task_id: str, *, task_done: bool) -> PullRequestLine | None:

@@ -33,6 +33,7 @@ from shikiru.dashboard.details_list_view import (
     DetailsSection,
     section_headline,
 )
+from shikiru.dashboard.fold_bodies import DecisionsBody, ResultsBody
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.section_rows import RelatedRow, relation_rows
@@ -83,7 +84,6 @@ if TYPE_CHECKING:
         AgentUsageView,
         TaskDetailView,
         TaskModelHistoryView,
-        TaskReportView,
         TaskSessionView,
         WidgetContext,
     )
@@ -109,9 +109,8 @@ TASK_DETAIL_POPUP_TITLE = "task-detail-popup-title"
 TASK_DETAIL_POPUP_CLOSE = "task-detail-popup-close"
 TASK_DETAIL_REQUEST = "task-detail-request"
 TASK_DETAIL_CRITERIA = "task-detail-criteria"
-TASK_DETAIL_REPORT = "task-detail-report"
-TASK_DETAIL_VERDICT = "task-detail-verdict"
-TASK_DETAIL_FACTS = "task-detail-facts"
+TASK_DETAIL_RESULTS = "task-detail-results"
+TASK_DETAIL_DECISIONS = "task-detail-decisions"
 TASK_DETAIL_WORKSPACE = "task-detail-workspace"
 TASK_DETAIL_SESSIONS = "task-detail-sessions"
 TASK_DETAIL_FEEDBACK = "task-detail-feedback"
@@ -143,20 +142,20 @@ TASK_DETAIL_TIMELINE_SELECTED = EVENTS_TIMELINE_IDS.selected
 TASK_VIEW_SUMMARY = "task-summary"
 TASK_VIEW_CONTEXT = "task-context"
 TASK_VIEW_USAGE = "task-usage"
-TASK_VIEW_REPORTS = "task-reports"
+TASK_VIEW_RESULTS = "task-results"
+TASK_VIEW_DECISIONS = "task-decisions"
 TASK_VIEW_REQUEST = "task-request"
 TASK_VIEW_EVIDENCE = "task-evidence"
 TASK_VIEW_RELATIONSHIPS = "task-relationships"
-TASK_VIEW_FACTS = "task-facts"
 TASK_VIEW_WORKSPACE = "task-workspace"
 TASK_VIEW_AGENT = "task-agent"
 DETAILS_SECTION_VIEWS = {
-    DetailsSection.REPORTS: TASK_VIEW_REPORTS,
     DetailsSection.REQUEST: TASK_VIEW_REQUEST,
+    DetailsSection.RESULTS: TASK_VIEW_RESULTS,
+    DetailsSection.DECISIONS: TASK_VIEW_DECISIONS,
     DetailsSection.EVENTS: TASK_VIEW_EVIDENCE,
     DetailsSection.AGENT_ACTIVITY: TASK_VIEW_AGENT,
     DetailsSection.USAGE: TASK_VIEW_USAGE,
-    DetailsSection.FACTS: TASK_VIEW_FACTS,
     DetailsSection.WORKSPACE: TASK_VIEW_WORKSPACE,
     DetailsSection.BLOCKERS: TASK_VIEW_RELATIONSHIPS,
     DetailsSection.SETTINGS: TASK_VIEW_CONTEXT,
@@ -168,21 +167,18 @@ TIMELINE_SECTIONS = {
 FOLD_STATICS = {
     TASK_VIEW_USAGE: (TASK_DETAIL_SESSIONS,),
     TASK_VIEW_CONTEXT: (TASK_DETAIL_CONTEXT_INFO,),
-    TASK_VIEW_REPORTS: (TASK_DETAIL_REPORT, TASK_DETAIL_VERDICT),
+    TASK_VIEW_RESULTS: (TASK_DETAIL_RESULTS,),
+    TASK_VIEW_DECISIONS: (TASK_DETAIL_DECISIONS,),
     TASK_VIEW_REQUEST: (TASK_DETAIL_REQUEST, TASK_DETAIL_CRITERIA),
     TASK_VIEW_RELATIONSHIPS: (TASK_DETAIL_BLOCKER, TASK_DETAIL_RELATIONSHIPS),
-    TASK_VIEW_FACTS: (TASK_DETAIL_FACTS,),
     TASK_VIEW_WORKSPACE: (TASK_DETAIL_WORKSPACE,),
 }
 NO_DECISION_TO_ANSWER = "No open decision to answer for this task."
-NO_REPORT = "No validated report is recorded."
-NO_VERDICT = "No validated verdict is recorded."
 NO_CRITERIA = "No validated acceptance criteria are recorded."
 NO_RELATED_ROWS = "No related tasks are recorded."
 RELATIONSHIPS_UNAVAILABLE = "Relationship evidence is unavailable."
 NO_REPLACEMENT_TASKS = "No replacement task IDs are present in the recorded scope-change event."
 PAGE_LABEL = "page"
-NO_FACTS = "No engine-computed git facts are recorded."
 CLOSED_RUN_STATUS = "closed"
 COST_VALUE_FORMAT = ".2f"
 AGE_NOW = "now"
@@ -427,9 +423,8 @@ class TaskDetailPanel(Vertical):
             TASK_DETAIL_BRIEFING,
             TASK_DETAIL_REQUEST,
             TASK_DETAIL_CRITERIA,
-            TASK_DETAIL_REPORT,
-            TASK_DETAIL_VERDICT,
-            TASK_DETAIL_FACTS,
+            TASK_DETAIL_RESULTS,
+            TASK_DETAIL_DECISIONS,
             TASK_DETAIL_WORKSPACE,
             TASK_DETAIL_SESSIONS,
         ):
@@ -786,18 +781,8 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_CRITERIA}", Static).update(
             f"Acceptance criteria\n{criteria or NO_CRITERIA}"
         )
-        self.query_one(f"#{TASK_DETAIL_REPORT}", Static).update(
-            _report_text("Latest validated report", view.latest_report, NO_REPORT)
-        )
-        self.query_one(f"#{TASK_DETAIL_VERDICT}", Static).update(
-            _report_text("Latest validated verdict", view.latest_verdict, NO_VERDICT)
-        )
-        facts = (
-            f"Engine-computed git facts · {view.facts_turn}\n{view.recorded_facts}"
-            if view.recorded_facts is not None
-            else NO_FACTS
-        )
-        self.query_one(f"#{TASK_DETAIL_FACTS}", Static).update(facts)
+        self.query_one(f"#{TASK_DETAIL_RESULTS}", Static).update(ResultsBody(view.results))
+        self.query_one(f"#{TASK_DETAIL_DECISIONS}", Static).update(DecisionsBody(view))
         self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(_workspace_text(view))
         self.query_one(f"#{TASK_DETAIL_WINDOW_BUTTON}", Button).disabled = view.window_id is None
         recorded_panes = {pane.role: pane.recorded_target for pane in view.role_panes}
@@ -1090,33 +1075,6 @@ class TaskDetailScreen(ModalScreen[None]):
 
 
 type CloseDetail = Callable[[], Awaitable[None]]
-
-
-def _report_text(label: str, report: TaskReportView | None, missing: str) -> str:
-    if report is None:
-        return missing
-    lines = [
-        f"{label} · {report.kind} · {report.role} · {report.provenance} · {report.turn}",
-        report.summary,
-    ]
-    if report.decision is not None:
-        lines.append(f"Decision · {report.decision}")
-    if report.question:
-        lines.append(f"Question · {report.question}")
-    if report.issues:
-        lines.append("Issues\n" + "\n".join(f"- {item}" for item in report.issues))
-    if report.risks:
-        lines.append("Risks\n" + "\n".join(f"- {item}" for item in report.risks))
-    if report.tests:
-        lines.append(
-            "Agent-reported tests\n"
-            + "\n".join(
-                f"- {item.name} · {item.result} · {item.provenance}"
-                + (f" · {item.details}" if item.details else "")
-                for item in report.tests
-            )
-        )
-    return "\n".join(lines)
 
 
 def _task_context_text(view: TaskDetailView) -> str:

@@ -318,7 +318,7 @@ Thirteenth-review scope and evidence: [thirteenth review](../docs/tui-feedback-t
 - [x] Task 201: Briefing verbs
 - [x] Task 202: Results data
 - [x] Task 203: Briefing as Progress, Result so far and Problems
-- [ ] Task 204: Results and Decisions folds
+- [x] Task 204: Results and Decisions folds
 - [ ] Task 205: Task description, Dependencies, Workspace, Settings; no project-wide folds
 - [ ] Task 206: Events and Agent activity
 - [ ] Task 207: Usage

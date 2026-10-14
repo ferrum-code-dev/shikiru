@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from shikiru.domain.commands import (
     COMMAND_ID_KEY,
+    EVENT_TEXT_KEY,
     AcceptResolution,
     AnswerResolution,
     CancelResolution,
@@ -83,6 +84,7 @@ class ResolveHandler:
                 data={
                     "escalation_id": escalation.id,
                     "resolution": command.resolution.kind.value,
+                    **self._answer_text(command),
                     COMMAND_ID_KEY: require_command_id(command),
                 },
             )
@@ -153,6 +155,11 @@ class ResolveHandler:
             if dependency is not None and dependency.status is not Status.CANCELLED:
                 keep.append(dependency_id)
         self._context.tasks.set_depends_on(task_id, keep)
+
+    @staticmethod
+    def _answer_text(command: Resolve) -> dict[str, str]:
+        resolution = command.resolution
+        return {EVENT_TEXT_KEY: resolution.text} if isinstance(resolution, AnswerResolution) else {}
 
     @staticmethod
     def _resolution_text(command: Resolve) -> str:

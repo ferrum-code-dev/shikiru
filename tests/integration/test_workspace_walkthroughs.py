@@ -61,6 +61,7 @@ from tests.support.engine import (
 from tests.support.escalations import resolution_factory
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
+from tests.support.render import plain_text
 from tests.support.store import reopen_command
 from tests.support.waiting import wait_until_advancing
 
@@ -474,8 +475,8 @@ async def test_fake_agent_workspace_finds_verdict_and_applies_contextual_message
             await runtime.wait_for(lambda: isinstance(app.screen, TaskDetailScreen))
             await runtime.wait_for(
                 lambda: (
-                    "changes_requested"
-                    in _plain(app.screen.query_one("#task-detail-verdict", Static))
+                    "changes requested"
+                    in plain_text(app.screen.query_one("#task-detail-decisions", Static).content)
                 )
             )
             await pilot.press("ctrl+p")

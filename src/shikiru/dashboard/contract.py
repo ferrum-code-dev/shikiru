@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from shikiru.domain.briefing import (
         VerdictCounts,
     )
+    from shikiru.domain.decisions import TaskDecisions
     from shikiru.domain.levels import UsageLevel
     from shikiru.domain.results import TaskResults
     from shikiru.domain.tasks import EscalationReason, Role
@@ -513,8 +514,6 @@ class TaskDetailView:
     progress: TaskStripData
     latest_report: TaskReportView | None
     latest_verdict: TaskReportView | None
-    recorded_facts: str | None
-    facts_turn: str | None
     branch: str | None
     worktree_path: str
     window_id: str | None
@@ -541,6 +540,7 @@ class TaskDetailView:
     verdict_counts: VerdictCounts | None = None
     last_words: str | None = None
     results: TaskResults | None = None
+    decisions: TaskDecisions | None = None
 
 
 @dataclass(frozen=True)

@@ -12,6 +12,7 @@ from shikiru.config.settings import ComplexityName
 from shikiru.domain.tasks import DomainModel, Mode, Role
 
 COMMAND_ID_KEY = "command_id"
+EVENT_TEXT_KEY = "text"
 COMMAND_POLL_SECONDS = 0.25
 COMMAND_RESULT_ERROR_KEY = "error"
 COMMAND_REJECTED_FALLBACK = "engine rejected the command"

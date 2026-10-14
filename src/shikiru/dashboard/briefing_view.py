@@ -375,19 +375,27 @@ def _result_rows(view: TaskDetailView) -> list[Row]:
     if results is None:
         return []
     rows = [
-        *_branch_row(results),
+        *branch_row(results),
         _row(COMMITS_LABEL, _commit_groups(results, compact=False)),
-        _row(TESTS_LABEL, _tests_groups(results.tests)),
-        _row(PR_LABEL, _pull_request_groups(results.pull_request)),
+        _row(TESTS_LABEL, tests_groups(results.tests)),
+        _row(PR_LABEL, pull_request_groups(results.pull_request)),
     ]
     return [row for row in rows if row is not None]
+
+
+def _verdict_groups(counts: VerdictCounts) -> tuple[Text, ...]:
+    decision = Text(
+        VERDICT_LABELS.get(counts.decision, counts.decision),
+        style=DECISION_COLORS.get(counts.decision, SECONDARY_TEXT_COLOR),
+    )
+    return (decision, *severity_groups(counts))
 
 
 def _row(label: str, groups: tuple[Text, ...]) -> Row | None:
     return (grey(label), groups) if groups else None
 
 
-def _branch_row(results: TaskResults) -> list[Row]:
+def branch_row(results: TaskResults) -> list[Row]:
     if results.branch is None:
         return []
     if results.outcome is ResultOutcome.NOT_MERGED:
@@ -435,11 +443,11 @@ def _compact_result(view: TaskDetailView) -> list[RenderableType]:
         return []
     lines: list[RenderableType] = []
     if results.outcome is not ResultOutcome.SO_FAR:
-        lines.extend(Text.assemble(row[0], " ", row[1][0]) for row in _branch_row(results))
+        lines.extend(Text.assemble(row[0], " ", row[1][0]) for row in branch_row(results))
     produced = _joined((*_commit_groups(results, compact=True), *_compact_tests(results.tests)))
     if produced.plain:
         lines.append(produced)
-    pull_request = _pull_request_groups(results.pull_request)
+    pull_request = pull_request_groups(results.pull_request)
     if pull_request:
         lines.append(Text.assemble(grey(f"{PR_LABEL} "), _joined(pull_request)))
     return lines
@@ -571,7 +579,7 @@ def _commit_groups(results: TaskResults, *, compact: bool) -> tuple[Text, ...]:
     return (Text(_counted(produced.commits, "commit")), *files, lines)
 
 
-def _tests_groups(tests: ReportedTests | None) -> tuple[Text, ...]:
+def tests_groups(tests: ReportedTests | None) -> tuple[Text, ...]:
     if tests is None:
         return ()
     counts = (
@@ -596,23 +604,17 @@ def _done_summary(view: TaskDetailView) -> str | None:
     return squashed(view.latest_report.summary)
 
 
-def _verdict_groups(counts: VerdictCounts) -> tuple[Text, ...]:
+def severity_groups(counts: VerdictCounts) -> tuple[Text, ...]:
+    """Return the non-zero issue counts of a verdict, each in its severity colour."""
     severities = (
         (counts.blocker, "blocker", ALERT_COLOR),
         (counts.major, "major", AMBER),
         (counts.minor, "minor", SECONDARY_TEXT_COLOR),
     )
-    decision = Text(
-        VERDICT_LABELS.get(counts.decision, counts.decision),
-        style=DECISION_COLORS.get(counts.decision, SECONDARY_TEXT_COLOR),
-    )
-    return (
-        decision,
-        *(Text(f"{count} {word}", style=color) for count, word, color in severities if count),
-    )
+    return tuple(Text(f"{count} {word}", style=color) for count, word, color in severities if count)
 
 
-def _pull_request_groups(pull_request: PullRequestLine | None) -> tuple[Text, ...]:
+def pull_request_groups(pull_request: PullRequestLine | None) -> tuple[Text, ...]:
     if pull_request is None:
         return ()
     state = pull_request.state.lower()

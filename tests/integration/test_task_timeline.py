@@ -37,6 +37,7 @@ from shikiru.domain.reports import (
 )
 from shikiru.domain.steps import Step, Transition
 from shikiru.domain.tasks import Mode, Role, Status, StatusReason, Task
+from shikiru.engine.events import emit_verdict
 from shikiru.paths import run_dir, task_root
 from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
@@ -570,7 +571,7 @@ async def test_long_filtered_signal_source_continues_from_a_bounded_scan(
     assert not second.has_older
 
 
-async def test_terminal_detail_keeps_reports_and_facts_after_workspace_cleanup(
+async def test_terminal_detail_keeps_results_and_decisions_after_workspace_cleanup(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -586,6 +587,7 @@ async def test_terminal_detail_keeps_reports_and_facts_after_workspace_cleanup(
     (turn_dir / REPORT_KIND_FILENAME).write_text("verdict")
     (turn_dir / REPORT_FILENAME).write_text(verdict.model_dump_json())
     (turn_dir / FACTS_FILENAME).write_text("branch shikiru/T-1\nworking tree clean\n")
+    emit_verdict(EventLog(connection, clock), task, verdict, verdict.summary, turn=turn)
     EventLog(connection, clock).append(
         EventKind.TURN_FAILED,
         task_id=task.id,
@@ -598,7 +600,7 @@ async def test_terminal_detail_keeps_reports_and_facts_after_workspace_cleanup(
         terminal,
         EventKind.TASK_DONE,
         message="task integrated successfully",
-        data={"summary": "integrated summary", "turn": turn},
+        data={"summary": "integrated summary", "turn": turn, "commits": ["abc1234 first change"]},
     )
     workspace = task_root(project_root, task.id)
     workspace.mkdir(parents=True)
@@ -613,8 +615,10 @@ async def test_terminal_detail_keeps_reports_and_facts_after_workspace_cleanup(
     assert detail.status_reason is None
     assert detail.latest_verdict is not None
     assert detail.latest_verdict.summary == "Validated completion"
-    assert detail.recorded_facts == "branch shikiru/T-1\nworking tree clean\n"
-    assert detail.facts_turn == turn
+    assert detail.results is not None
+    assert [commit.subject for commit in detail.results.commits] == ["first change"]
+    assert detail.decisions is not None
+    assert [round_.decision for round_ in detail.decisions.rounds] == ["accept"]
     timeline = await views.task_timeline(
         task.id,
         cursor=None,
