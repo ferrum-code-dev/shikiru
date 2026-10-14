@@ -1,7 +1,10 @@
+from types import SimpleNamespace
 from typing import Any
 
+from rich.console import Console
+
 from shikiru.dashboard.contract import TaskSessionView
-from shikiru.dashboard.usage_body import Column, usage_rows
+from shikiru.dashboard.usage_body import Column, UsageBody, usage_rows
 from shikiru.domain.levels import UsageLevel
 
 DASH = "\N{EM DASH}"
@@ -83,3 +86,14 @@ def test_usage_table_orders_current_first_humanises_values_and_drops_columns_by_
     for width, columns in WIDTH_COLUMNS:
         assert usage_rows(SESSIONS, width).columns == columns
     assert usage_rows(SESSIONS, 60).widths[Column.MODEL] < len(SESSIONS[0].model)
+
+
+def test_usage_body_starts_with_the_totals_not_its_fold_title() -> None:
+    view: Any = SimpleNamespace(usage=object(), sessions=SESSIONS, quota_observations=())
+    console = Console(width=100, record=True, color_system=None)
+
+    console.print(UsageBody(view, quota_warn_pct=80, quota_alert_pct=95))
+
+    first = console.export_text().splitlines()[0]
+    assert first.startswith("$")
+    assert first.endswith("tokens")

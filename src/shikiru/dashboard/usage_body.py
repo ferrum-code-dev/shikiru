@@ -1,4 +1,4 @@
-"""Body of the Usage fold: a heading, one aligned line per session, quota windows, one note."""
+"""Body of the Usage fold: a totals line, one aligned line per session, quota windows, one note."""
 
 from __future__ import annotations
 
@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import AgentUsageView, TaskDetailView, TaskSessionView
 
 NO_VALUE = "\N{EM DASH}"
-USAGE_TITLE = "Usage"
 QUOTA_TITLE = "Quota"
 NO_USAGE = "No usage is recorded yet."
 COVERAGE_UNAVAILABLE = "Task usage coverage unavailable"
@@ -168,15 +167,15 @@ def _row_text(table: UsageTable, row: UsageRow) -> Text:
     return line
 
 
-def _heading(sessions: Sequence[TaskSessionView]) -> Text:
-    parts = [Text(USAGE_TITLE, style=BOLD_PRIMARY)]
+def _heading(sessions: Sequence[TaskSessionView]) -> Text | None:
+    parts: list[Text] = []
     cost = total_cost_text(sessions)
     if cost is not None:
         parts.append(Text(cost))
     known = [_session_tokens(session) for session in sessions if _tokens_known(session)]
     if known:
         parts.append(Text(f"{compact_count(sum(known))} tokens"))
-    return Text(GROUP_SEPARATOR).join(parts)
+    return Text(GROUP_SEPARATOR).join(parts) if parts else None
 
 
 def _quota_lines(
@@ -239,8 +238,9 @@ class UsageBody:
                 yield grey(NO_USAGE)
             return
         table = usage_rows(view.sessions, options.max_width)
+        heading = _heading(view.sessions)
         blocks: list[RenderableType] = [
-            _heading(view.sessions),
+            *([heading] if heading is not None else []),
             _line(table, {column: column.value for column in Column}, SECONDARY_TEXT_COLOR),
             *(_row_text(table, row) for row in table.rows),
         ]
