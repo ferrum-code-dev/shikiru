@@ -1808,8 +1808,9 @@ Refs: `dashboard/resolution.py` (`_ChoiceList`, `_TriedSection`, `action_move`, 
 
 ### Task 189: What was tried digest
 Refs: `engine/escalation_filing.py` (`escalation_narrative`), `engine/escalations.py` (`render_packet`, `_restored_context`, `raise_escalation`), `domain/briefing.py` (`verdict_counts`, `reported_tests`, `parse_produced`, `one_line`), `domain/events.py`, `defaults.toml`.
-- [ ] A pure domain function turns events, reports, task and facts into the capped digest of the spec; the packet writer uses it for every escalation path including restored and lost ones; `escalation.tried_lines` in `defaults.toml`.
-- [ ] One unit table over event/report shapes (missing reports, failed turns, many rounds with `+N earlier`); an integration check that a raised escalation's panel shows the digest.
+- [x] A pure domain function turns events, reports, task and facts into the capped digest of the spec; the packet writer uses it for every escalation path including restored and lost ones; `escalation.tried_lines` in `defaults.toml`.
+- [x] One unit table over event/report shapes (missing reports, failed turns, many rounds with `+N earlier`); an integration check that a raised escalation's panel shows the digest.
+  - Proof: The panel showed only the canned reason sentence (read from `escalation_narrative`); now `summarise_attempts` (new `domain/attempts.py`, cap `escalation.tried_lines`) is applied inside `EscalationRaiser` for raised, restored and lost escalations. A real resolution screen built from a raised escalation showed reason, rounds, last turns with outcome, recovery and produced numbers at 100x40 and 48 columns expanded, and a unit table plus the extended raise-escalation integration test cover missing reports, failed turns, `+N earlier` and the cap. Gate `uv run poe check` green: 1580 passed, 14 skipped, 91.24% coverage; collected cases 1597 to 1601.
 
 ### Task 190: Alternatives that need Operator input
 Refs: `domain/reports.py` (`Option`, `EscalationRequest`), `prompts/templates/consult.md.j2` and verify template, `domain/escalation_evidence.py`, `domain/escalation_panel.py` (`PanelChoice`), `dashboard/resolution.py` (`_activate`, `_AnswerBox`, drafts), `resolution_view.py`.

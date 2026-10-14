@@ -88,6 +88,17 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
     task = seed_task(connection, clock, title="Add retries")
     run = runs.start(task.id, Role.LEADER, Rung(agent="claude", model="opus"))
     runs.set_session(run.id, "sess-123", "claude --resume sess-123")
+    for step in (Step.IMPLEMENT, Step.VERIFY):
+        events.append(
+            EventKind.STEP_STARTED, task_id=task.id, message="", data={"step": step.value}
+        )
+    events.append(
+        EventKind.TURN_COMPLETED,
+        task_id=task.id,
+        message="Reviewed",
+        data={"step": "verify", "role": "leader", "turn": "01-verify-i1"},
+    )
+    verdict = make_verdict("changes_requested")
 
     escalation = await raiser.raise_escalation(
         task,
@@ -95,7 +106,7 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
         reason=EscalationReason.ITERATIONS_EXHAUSTED,
         question="Should I accept this as-is?",
         attempted="Implement and verify cycled to the iteration limit.",
-        reports=[{"label": "01-verify-i1", "json": '{"decision": "changes_requested"}'}],
+        reports=[{"label": "01-verify-i1", "json": verdict.model_dump_json()}],
         facts="### .\n\n#### Commits\n\nabc123 do the thing",
         view_tail='{"signal":"TurnEnded","last_message":"turn ended"}',
         apply_state=lambda: task,
@@ -115,6 +126,11 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
     )
     assert "Should I accept this as-is?" in packet_text
     assert "changes_requested" in packet_text
+    tried = dict(parsed_packet.evidence_sections)["What was tried"].splitlines()
+    assert tried[0] == "Implement and verify cycled to the iteration limit."
+    assert len(tried) > 1
+    assert any("implement" in line and "verify" in line for line in tried)
+    assert any(line.startswith("Leader verdict") for line in tried)
     assert "abc123 do the thing" in packet_text
     assert "turn ended" in packet_text
     assert "sess-123" in packet_text

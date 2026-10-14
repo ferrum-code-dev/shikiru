@@ -257,6 +257,7 @@ async def scheduler_env(
         atomically=lambda: transaction(connection),
         titles=titles,
         evidence=build_evidence(tmp_path),
+        settings=settings,
     )
     writer = build_writer(connection, clock, tmux=tmux)
     dependency_callback = DependencyEscalator(writer, raiser)

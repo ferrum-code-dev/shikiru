@@ -106,6 +106,12 @@ class OrchestrationConfig(ConfigModel):
     network: NetworkConfig
 
 
+class EscalationConfig(ConfigModel):
+    """`[escalation]`: how much of the work done before an escalation its packet digests."""
+
+    tried_lines: int = Field(gt=0)
+
+
 class AgentConfig(ConfigModel):
     """`[agents.<name>]`. `options` is validated by that plugin's factory, not here."""
 
@@ -290,6 +296,7 @@ class Settings(ConfigModel):
     repo: RepoConfig = Field(default_factory=RepoConfig)
     sessions: SessionSettings
     orchestration: OrchestrationConfig
+    escalation: EscalationConfig
     agents: dict[str, AgentConfig] = Field(default_factory=dict)
     roles: RolesConfig
     dashboard: DashboardConfig

@@ -133,6 +133,7 @@ def build_raiser(
         atomically=lambda: transaction(connection),
         titles=TaskTitles(decorator, runs, fake_engine_settings()),
         evidence=build_evidence(project_root),
+        settings=fake_engine_settings(),
     )
 
 

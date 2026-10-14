@@ -41,6 +41,9 @@ poll_attempts = 8
 pr_poll_seconds = 300
 pr_close_attempts = 5
 
+[escalation]
+tried_lines = 8
+
 [roles.implementer]
 escalate_after = 2
 

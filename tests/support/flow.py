@@ -175,6 +175,7 @@ def build_flow(
         atomically=lambda: transaction(env.connection),
         titles=system.titles,
         evidence=evidence,
+        settings=settings,
     )
     coordinator = _NoOpIntegrationCoordinator()
     if local_integration or strategy is not None:

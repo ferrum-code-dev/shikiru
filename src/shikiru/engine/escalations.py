@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import TypeAdapter
+from pydantic import TypeAdapter, ValidationError
 
+from shikiru.domain.attempts import summarise_attempts
 from shikiru.domain.escalation import (
     ESCALATION_CAUSES,
     RESOLUTION_CONSEQUENCES,
@@ -28,6 +29,7 @@ from shikiru.domain.reports import (
     REPORT_JSON_INDENT,
     ConsultAnswer,
     EscalationRequest,
+    Report,
     Verdict,
 )
 from shikiru.domain.steps import Transition
@@ -39,6 +41,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
     from contextlib import AbstractContextManager
 
+    from shikiru.config.settings import Settings
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.tasks import Step, Task
     from shikiru.engine.evidence import EvidenceCollector
@@ -60,6 +63,7 @@ LOST_ESCALATION_ATTEMPTED = (
 RESTORED_PACKET_ATTEMPTED = "The packet file was missing and was rewritten from recorded state."
 _LOGGER = logging.getLogger(__name__)
 _REPORT_DATA = TypeAdapter(dict[str, object])
+_REPORT: TypeAdapter[Report] = TypeAdapter(Report)
 _REPORT_DECISION_KEY = "decision"
 _VERDICT_SUMMARY_KEY = "summary"
 _CONSULT_ANSWER_KEY = "answer"
@@ -153,6 +157,7 @@ class EscalationRaiser:
         atomically: Callable[[], AbstractContextManager[object]],
         titles: TaskTitles,
         evidence: EvidenceCollector,
+        settings: Settings,
     ) -> None:
         """Persist through `escalations`/`events` in `atomically`, refresh titles via `titles`.
 
@@ -165,6 +170,7 @@ class EscalationRaiser:
         self._atomically = atomically
         self._titles = titles
         self._evidence = evidence
+        self._settings = settings
         self._unwritable: set[Path] = set()
 
     async def raise_escalation(
@@ -195,7 +201,7 @@ class EscalationRaiser:
             step=step,
             reason=reason,
             timeline=self._timeline(task.id),
-            attempted=attempted,
+            attempted=self._attempts(task, attempted, reports, facts),
             reports=self._reports_evidence(reports),
             facts=facts,
             view_tail=view_tail,
@@ -269,7 +275,9 @@ class EscalationRaiser:
             step=escalation.step,
             reason=escalation.reason,
             timeline=self._timeline(task.id),
-            attempted=RESTORED_PACKET_ATTEMPTED,
+            attempted=self._attempts(
+                task, RESTORED_PACKET_ATTEMPTED, evidence.reports, evidence.facts
+            ),
             reports=self._reports_evidence(evidence.reports),
             facts=evidence.facts,
             view_tail=evidence.view_tail,
@@ -334,6 +342,28 @@ class EscalationRaiser:
     def _timeline(self, task_id: str) -> list[str]:
         events = self._events.since(0, task_id=task_id)
         return [f"{event.ts.isoformat()} {event.kind.value}: {event.message}" for event in events]
+
+    def _attempts(
+        self, task: Task, reason: str, reports: Sequence[dict[str, str]], facts: str
+    ) -> str:
+        lines = summarise_attempts(
+            reason,
+            self._events.since(0, task_id=task.id),
+            self._readable_reports(reports),
+            task,
+            facts,
+            max_iterations=self._settings.orchestration.max_iterations,
+            limit=self._settings.escalation.tried_lines,
+        )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _readable_reports(reports: Sequence[dict[str, str]]) -> dict[str, Report]:
+        readable: dict[str, Report] = {}
+        for report in reports:
+            with suppress(ValidationError):
+                readable[report["label"]] = _REPORT.validate_json(report["json"])
+        return readable
 
     @staticmethod
     def _reports_evidence(reports: Sequence[dict[str, str]]) -> str:

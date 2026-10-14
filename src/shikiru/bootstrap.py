@@ -762,6 +762,7 @@ def build_engine(
         atomically=lambda: transaction(connection),
         titles=titles,
         evidence=evidence,
+        settings=resolved_settings,
     )
     integrator = _build_integrator(
         project_root=project_root,
