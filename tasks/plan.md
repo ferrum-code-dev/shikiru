@@ -1777,7 +1777,8 @@ Refs: spec "Details list" paragraph; the timeline code in `detail.py`, `ui` list
 
 ### Task 184: Remove the old detail code and tests
 Refs: `detail.py` (old summary, Views screen, paging, dropdowns), `test_dashboard_task_detail.py`, `test_task_timeline.py`, `test_task_family_and_blockers.py`, `test_dashboard_app.py` detail tests.
-- [ ] Delete dead code and the shape, wording and widget-id tests; keep the behaviour listed in the spec; report lines and cases before and after (cases must fall).
+- [x] Delete dead code and the shape, wording and widget-id tests; keep the behaviour listed in the spec; report lines and cases before and after (cases must fall).
+  Proof: unread detail fields, timeline entry flags, operator signal tail, motion signal identity chain and dead CSS/handlers removed (refactor 8837bc5); collected cases 1601 to 1588 and the behaviours in the spec stay covered. `uv run poe check` green (1567 passed, 91 % coverage); the load flake test_task_evidence_filter_and_reading_position_survive_resize_and_refresh also fails 2 of 6 runs at ef06dd3.
 
 ### Task 185: Verify the eleventh review, reconcile the reference and docs
 Refs: Tasks 180–184; design 06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference detail panels.
