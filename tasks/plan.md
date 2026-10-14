@@ -1782,4 +1782,5 @@ Refs: `detail.py` (old summary, Views screen, paging, dropdowns), `test_dashboar
 
 ### Task 185: Verify the eleventh review, reconcile the reference and docs
 Refs: Tasks 180–184; design 06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference detail panels.
-- [ ] Native before/after of every surface and state; plain and `TERM=dumb NO_COLOR=1` gates; HTML reference and design docs match the TUI (exact srcdoc round-trip, Chrome check with a throwaway profile); spec marked delivered; record `docs/release-readiness-2026-10-13-phase11-eleventh-review.md`; README links; plan and todo ticked.
+- [x] Native before/after of every surface and state; plain and `TERM=dumb NO_COLOR=1` gates; HTML reference and design docs match the TUI (exact srcdoc round-trip, Chrome check with a throwaway profile); spec marked delivered; record `docs/release-readiness-2026-10-14-phase11-eleventh-review.md`; README links; plan and todo ticked.
+  - Proof: native before/after dumps of the briefing, popup, window, actions, details list, event and activity lists and relationships over seeded tasks against `4fffb19` (a 40-column verb overflow found and fixed in `f0d3779`); the HTML reference round-trips exactly (SHA-256 `79944d9e...b0e3`) and matched in Chrome; both gates green (see the record for numbers and limits).
