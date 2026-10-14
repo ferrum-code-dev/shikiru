@@ -60,6 +60,7 @@ from shikiru.domain.timeline import (
     TIMELINE_TRANSITION_CATEGORY,
     event_category,
 )
+from shikiru.domain.timeline_phrases import event_phrase
 from shikiru.errors import ShikiruError
 from shikiru.operator.timeline import (
     TIMELINE_READ_ERROR_PREFIX,
@@ -200,6 +201,9 @@ class TaskTimelineEntry(OperatorView):
     source: str
     category: str
     summary: str
+    phrase: str
+    glyph: str
+    tone: str
     detail: str
     role: str | None
     turn: str | None
@@ -1279,6 +1283,7 @@ def _event_timeline_item(event: Event) -> TimelineItem:
         source=TIMELINE_SOURCE_ENGINE,
         category=event_category(event.kind.value),
         summary=event.message,
+        phrase=event_phrase(event),
         detail=json.dumps(
             event.data, ensure_ascii=False, sort_keys=True, indent=TIMELINE_JSON_INDENT
         ),
@@ -1328,6 +1333,9 @@ def _timeline_entry(item: TimelineItem) -> TaskTimelineEntry:
         source=item.source,
         category=item.category,
         summary=item.summary,
+        phrase=item.phrase.text,
+        glyph=item.phrase.glyph,
+        tone=item.phrase.tone.value,
         detail=item.detail,
         role=item.role,
         turn=item.turn,

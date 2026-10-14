@@ -83,6 +83,7 @@ from shikiru.domain.scheduling import WaitReason, dispatch_sort_key, occupied_sl
 from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
 from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Role, Status, Task
 from shikiru.domain.timeline import TIMELINE_EVIDENCE_CATEGORY
+from shikiru.domain.timeline_phrases import GLYPH_ATTENTION, Tone
 from shikiru.domain.workflow import WorkflowProgress, WorkflowReport, project_workflow
 from shikiru.errors import ShikiruError
 from shikiru.operator.queries import (
@@ -1103,6 +1104,9 @@ class StateDashboardViews:
                     source=item.source,
                     category=item.category,
                     summary=item.summary,
+                    phrase=item.phrase,
+                    glyph=item.glyph,
+                    tone=item.tone,
                     detail=item.detail,
                     role=item.role,
                     turn=item.turn,
@@ -1927,6 +1931,9 @@ def _timeline_read_error(
                 source=TaskTimelineSource.AGENT.value,
                 category=TIMELINE_EVIDENCE_CATEGORY,
                 summary=TASK_TIMELINE_READ_ERROR_SUMMARY,
+                phrase=TASK_TIMELINE_READ_ERROR_SUMMARY,
+                glyph=GLYPH_ATTENTION,
+                tone=Tone.WARNING.value,
                 detail=str(error),
                 role=role,
                 turn=turn,

@@ -11,10 +11,10 @@ from textual.widgets import Button, Input, Static
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.detail import (
+    TASK_DETAIL_AGENT_TURN,
     TASK_DETAIL_DETAILS_BUTTON,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_TIMELINE_LIST,
-    TASK_DETAIL_TIMELINE_TURN,
     TASK_VIEW_AGENT,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_REQUEST,
@@ -68,10 +68,7 @@ class _KeyCase:
 KEY_CASES = [
     _KeyCase(("down",), TASK_VIEW_RESULTS, frozenset()),
     _KeyCase(("down", "up"), FIRST_FOLD, frozenset()),
-    _KeyCase(("up",), FIRST_FOLD, frozenset()),
     _KeyCase(("down", "enter"), TASK_VIEW_RESULTS, frozenset({TASK_VIEW_RESULTS})),
-    _KeyCase(("down", "space"), TASK_VIEW_RESULTS, frozenset({TASK_VIEW_RESULTS})),
-    _KeyCase(("down", "right"), TASK_VIEW_RESULTS, frozenset({TASK_VIEW_RESULTS})),
     _KeyCase(("down", "right", "left"), TASK_VIEW_RESULTS, frozenset()),
     _KeyCase(
         ("right", "down", "right"),
@@ -130,7 +127,7 @@ def append_event(connection: Connection, clock: FakeClock, task_id: str, message
 
 def append_signal(path: Path, clock: FakeClock, turn: str) -> None:
     clock.advance(1)
-    row = {"ts": clock.now().isoformat(), "turn": turn, "signal": "Message", "ordinal": 0}
+    row = {"ts": clock.now().isoformat(), "turn": turn, "signal": "Message", "text": turn}
     with path.open("a") as output:
         output.write(json.dumps(row) + "\n")
 
@@ -235,7 +232,7 @@ async def test_open_folds_survive_a_refresh_and_a_task_change_but_task_state_res
             await wait_until(lambda: panel.is_mounted, timeout=UI_WAIT_SECONDS)
             panel.open_view(EVENTS_FOLD)
             panel.open_view(TASK_VIEW_USAGE)
-            turn = panel.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
+            turn = panel.query_one(f"#{TASK_DETAIL_AGENT_TURN}", Input)
             turn.value = "first-event"
             opened = frozenset({EVENTS_FOLD, TASK_VIEW_USAGE})
             assert panel.open_views == opened

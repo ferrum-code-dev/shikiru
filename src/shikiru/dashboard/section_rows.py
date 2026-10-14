@@ -8,9 +8,19 @@ from typing import TYPE_CHECKING
 
 from rich.text import Text
 
+from shikiru.dashboard.contract import TaskTimelineSource
 from shikiru.dashboard.row_list import RowCells
-from shikiru.domain.tasks import Status
-from shikiru.ui.tokens import ALERT_COLOR, AMBER, SECONDARY_TEXT_COLOR, STEEL_BLUE, SUCCESS_COLOR
+from shikiru.domain.tasks import Role, Status
+from shikiru.domain.timeline_phrases import Tone
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    AMBER,
+    ROLE_COLORS,
+    SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
+    STYLE_BOLD,
+    SUCCESS_COLOR,
+)
 
 if TYPE_CHECKING:
     from shikiru.dashboard.contract import (
@@ -21,8 +31,24 @@ if TYPE_CHECKING:
 
 NO_TIME = "--:--:--"
 _CLOCK_FORMAT = "%H:%M:%S"
-_LEAD_SEPARATOR = "  "
-_FIRST_LINE = 0
+_NO_GLYPH_SLOT = " "
+_GLYPH_GAP = " "
+_META_SEPARATOR = " · "
+_TURN_WORD = "turn"
+_TURN_SEPARATOR = "-"
+_ROLE_LABEL_WIDTH = 4
+_ROLE_LABELS = {
+    Role.LEADER.value: "lead",
+    Role.IMPLEMENTER.value: "impl",
+    Role.HELPER.value: "help",
+}
+_TONE_COLORS = {
+    Tone.PLAIN.value: "",
+    Tone.SUCCESS.value: SUCCESS_COLOR,
+    Tone.FAILURE.value: ALERT_COLOR,
+    Tone.WARNING.value: AMBER,
+    Tone.CRITICAL.value: f"{STYLE_BOLD} {ALERT_COLOR}",
+}
 _RELATION_BLOCKER = "Blocked by"
 _RELATION_PARENT = "Parent"
 _RELATION_ROOT = "Root"
@@ -58,16 +84,40 @@ class RelatedRow:
     cells: RowCells
 
 
-def timeline_cells(entry: TaskTimelineEntryView) -> RowCells:
-    """Return an entry's row: clock time and role in grey, then its first summary line."""
-    clock = (
+def _clock(entry: TaskTimelineEntryView) -> str:
+    return (
         datetime.fromisoformat(entry.timestamp).strftime(_CLOCK_FORMAT)
         if entry.timestamp
         else NO_TIME
     )
-    lead = _LEAD_SEPARATOR.join((clock, entry.role or entry.source))
-    summary = entry.summary.splitlines()
-    return RowCells(lead, summary[_FIRST_LINE] if summary else "")
+
+
+def timeline_meta(entry: TaskTimelineEntryView) -> str:
+    """Return the selected entry's grey line: clock time, role and turn number when recorded."""
+    parts = [_clock(entry)]
+    if entry.role:
+        parts.append(entry.role)
+    if entry.turn:
+        number, _, _ = entry.turn.partition(_TURN_SEPARATOR)
+        parts.append(f"{_TURN_WORD} {int(number) if number.isdigit() else entry.turn}")
+    return _META_SEPARATOR.join(parts)
+
+
+def timeline_cells(entry: TaskTimelineEntryView) -> RowCells:
+    """Return an entry's row: grey clock time, then who (agents) or its glyph and the phrase."""
+    text = Text()
+    if entry.source == TaskTimelineSource.AGENT.value and entry.role in _ROLE_LABELS:
+        text.append(
+            _ROLE_LABELS[entry.role].ljust(_ROLE_LABEL_WIDTH), style=_role_color(entry.role)
+        )
+        text.append(_COLUMN_GAP)
+    text.append(f"{entry.glyph or _NO_GLYPH_SLOT}{_GLYPH_GAP}", style=_TONE_COLORS[entry.tone])
+    text.append(entry.phrase, style=_TONE_COLORS[entry.tone])
+    return RowCells(_clock(entry), text)
+
+
+def _role_color(role: str) -> str:
+    return ROLE_COLORS[Role(role)]
 
 
 def relation_rows(view: TaskDetailView) -> tuple[RelatedRow, ...]:

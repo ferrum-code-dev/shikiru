@@ -7,10 +7,13 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 
+from shikiru.domain.timeline_phrases import GLYPH_ATTENTION, Phrase, Tone, signal_phrase
+
 TIMELINE_ACTIVITY_CATEGORY = "activity"
 TIMELINE_ALL_CATEGORY = "all"
 TIMELINE_ENGINE_CATEGORY = "engine"
 TIMELINE_SIGNAL_CATEGORY = "signal"
+TIMELINE_AGENT_CATEGORY = "agent"
 TIMELINE_DECISION_CATEGORY = "decision"
 TIMELINE_TRANSITION_CATEGORY = "transition"
 TIMELINE_TOOL_CATEGORY = "tool"
@@ -24,6 +27,7 @@ TIMELINE_CATEGORIES = frozenset(
         TIMELINE_ALL_CATEGORY,
         TIMELINE_ENGINE_CATEGORY,
         TIMELINE_SIGNAL_CATEGORY,
+        TIMELINE_AGENT_CATEGORY,
         TIMELINE_DECISION_CATEGORY,
         TIMELINE_TRANSITION_CATEGORY,
         TIMELINE_TOOL_CATEGORY,
@@ -74,6 +78,8 @@ class ParsedSignal:
     timestamp: datetime | None
     timestamp_error: str | None
     summary: str
+    phrase: Phrase
+    listed: bool
     detail: str
     start_offset: int
     end_offset: int
@@ -93,6 +99,7 @@ def parse_signal_row(
     try:
         raw_data: object = json.loads(text)
     except json.JSONDecodeError:
+        summary = INCOMPLETE_SIGNAL_SUMMARY if incomplete else MALFORMED_SIGNAL_SUMMARY
         return ParsedSignal(
             role=role,
             turn=None,
@@ -100,7 +107,9 @@ def parse_signal_row(
             category=TIMELINE_EVIDENCE_CATEGORY,
             timestamp=None,
             timestamp_error=MISSING_TIMESTAMP,
-            summary=INCOMPLETE_SIGNAL_SUMMARY if incomplete else MALFORMED_SIGNAL_SUMMARY,
+            summary=summary,
+            phrase=_problem_phrase(summary),
+            listed=True,
             detail=text,
             start_offset=start_offset,
             end_offset=end_offset,
@@ -115,6 +124,8 @@ def parse_signal_row(
             timestamp=None,
             timestamp_error=MISSING_TIMESTAMP,
             summary=MALFORMED_SIGNAL_SUMMARY,
+            phrase=_problem_phrase(MALFORMED_SIGNAL_SUMMARY),
+            listed=True,
             detail=text,
             start_offset=start_offset,
             end_offset=end_offset,
@@ -128,6 +139,7 @@ def parse_signal_row(
     summary = signal_name or MISSING_SIGNAL_SUMMARY
     if signal_name == _TOOL_FINISHED_SIGNAL:
         summary = _tool_finished_summary(data)
+    phrase = signal_phrase(signal_name, data) if signal_name else _problem_phrase(summary)
     return ParsedSignal(
         role=role,
         turn=turn if isinstance(turn, str) else None,
@@ -136,11 +148,17 @@ def parse_signal_row(
         timestamp=timestamp,
         timestamp_error=timestamp_error,
         summary=summary,
+        phrase=phrase or Phrase(summary),
+        listed=phrase is not None,
         detail=json.dumps(data, ensure_ascii=False, sort_keys=True, indent=TIMELINE_JSON_INDENT),
         start_offset=start_offset,
         end_offset=end_offset,
         incomplete=incomplete,
     )
+
+
+def _problem_phrase(summary: str) -> Phrase:
+    return Phrase(summary, GLYPH_ATTENTION, Tone.WARNING)
 
 
 def _tool_finished_summary(data: dict[str, object]) -> str:

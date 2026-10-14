@@ -11,6 +11,7 @@ from shikiru.domain.tasks import Role
 from shikiru.domain.timeline import (
     MISSING_SIGNAL_SUMMARY,
     TIMELINE_ACTIVITY_CATEGORY,
+    TIMELINE_AGENT_CATEGORY,
     TIMELINE_ALL_CATEGORY,
     TIMELINE_DECISION_CATEGORY,
     TIMELINE_ENGINE_CATEGORY,
@@ -24,6 +25,7 @@ from shikiru.domain.timeline import (
     ParsedSignal,
     parse_signal_row,
 )
+from shikiru.domain.timeline_phrases import GLYPH_ATTENTION, Phrase, Tone
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -65,6 +67,7 @@ class TimelineItem:
     source: str
     category: str
     summary: str
+    phrase: Phrase
     detail: str
     role: str | None
     turn: str | None
@@ -73,6 +76,7 @@ class TimelineItem:
     signal_end_offset: int | None = None
     incomplete: bool = False
     timestamp_error: str | None = None
+    listed: bool = True
 
 
 @dataclass(frozen=True)
@@ -281,6 +285,7 @@ def signal_category_is_requested(category: str) -> bool:
     """Whether an evidence category can contain normalized agent signal rows."""
     return category in {
         TIMELINE_ALL_CATEGORY,
+        TIMELINE_AGENT_CATEGORY,
         TIMELINE_SIGNAL_CATEGORY,
         TIMELINE_TOOL_CATEGORY,
         TIMELINE_MESSAGE_CATEGORY,
@@ -345,6 +350,7 @@ def _timeline_item(signal: ParsedSignal) -> TimelineItem:
         source=TIMELINE_SOURCE_AGENT,
         category=signal.category,
         summary=signal.summary,
+        phrase=signal.phrase,
         detail=signal.detail,
         role=signal.role,
         turn=signal.turn,
@@ -352,6 +358,7 @@ def _timeline_item(signal: ParsedSignal) -> TimelineItem:
         signal_end_offset=signal.end_offset,
         incomplete=signal.incomplete,
         timestamp_error=timestamp_error,
+        listed=signal.listed,
     )
 
 
@@ -362,12 +369,14 @@ def _missing_signal(role: str) -> TimelineItem:
         source=TIMELINE_SOURCE_AGENT,
         category=TIMELINE_EVIDENCE_CATEGORY,
         summary=MISSING_SIGNAL_SUMMARY,
+        phrase=Phrase(MISSING_SIGNAL_SUMMARY),
         detail=TIMELINE_MISSING_DETAIL,
         role=role,
         turn=None,
         signal_offset=0,
         signal_end_offset=None,
         timestamp_error="recorded timestamp is missing",
+        listed=False,
     )
 
 
@@ -378,6 +387,7 @@ def _unavailable_signal(role: str, error: OSError | ValueError) -> TimelineItem:
         source=TIMELINE_SOURCE_AGENT,
         category=TIMELINE_EVIDENCE_CATEGORY,
         summary=TIMELINE_READ_ERROR_SUMMARY,
+        phrase=Phrase(TIMELINE_READ_ERROR_SUMMARY, GLYPH_ATTENTION, Tone.WARNING),
         detail=str(error),
         role=role,
         turn=None,
@@ -393,17 +403,14 @@ def _matches_signal(item: TimelineItem, filters: TimelineFilters) -> bool:
     if item.identity.startswith(TIMELINE_READ_ERROR_PREFIX):
         return filters.category in {
             TIMELINE_ALL_CATEGORY,
+            TIMELINE_AGENT_CATEGORY,
             TIMELINE_SIGNAL_CATEGORY,
             TIMELINE_EVIDENCE_CATEGORY,
         }
     if filters.turn is not None and filters.turn != item.turn:
         return False
+    if filters.category == TIMELINE_AGENT_CATEGORY:
+        return item.listed
     if filters.category in {TIMELINE_ALL_CATEGORY, TIMELINE_SIGNAL_CATEGORY}:
         return True
-    if filters.category in {
-        TIMELINE_ACTIVITY_CATEGORY,
-        TIMELINE_ENGINE_CATEGORY,
-        TIMELINE_DECISION_CATEGORY,
-    }:
-        return False
     return filters.category == item.category

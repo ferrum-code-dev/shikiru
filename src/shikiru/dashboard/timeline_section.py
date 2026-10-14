@@ -3,31 +3,33 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.text import Text
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Select, Static
 
-from shikiru.dashboard.contract import TaskTimelineCategory
 from shikiru.dashboard.details_list_view import EVENTS_HINT, DetailsSection
 from shikiru.dashboard.row_list import RowList
-from shikiru.dashboard.section_rows import timeline_cells
+from shikiru.dashboard.section_rows import timeline_cells, timeline_meta
 from shikiru.domain.tasks import Role
 from shikiru.errors import ShikiruError
 from shikiru.ui.keys import key_hint
 from shikiru.ui.screen import widget_is_current
-from shikiru.ui.section import BOLD_PRIMARY
+from shikiru.ui.section import BOLD_PRIMARY, BOLD_STEEL, grey
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
 if TYPE_CHECKING:
     import asyncio
     from collections.abc import Callable
 
+    from rich.console import Console, ConsoleOptions, RenderResult
     from textual.app import App, ComposeResult
+    from textual.binding import BindingType
     from textual.widget import Widget
 
-    from shikiru.dashboard.contract import TaskTimelinePageView, WidgetContext
+    from shikiru.dashboard.contract import TaskTimelineCategory, TaskTimelinePageView, WidgetContext
 
 NO_VALUE = "\N{EN DASH}"
 HEADING_SEPARATOR = " · "
@@ -35,17 +37,14 @@ NO_TIMELINE_ROWS = "No recorded entries match."
 FOLLOWING_LABEL = "following"
 PAUSED_LABEL = "paused · End to follow"
 REFRESH_FAILED = "Evidence timeline refresh failed"
-TIMELINE_FILTER_OPTIONS = (
-    ("Decisions and transitions", TaskTimelineCategory.ACTIVITY),
-    ("All engine events", TaskTimelineCategory.ENGINE),
-    ("Decisions", TaskTimelineCategory.DECISION),
-    ("Transitions", TaskTimelineCategory.TRANSITION),
-    ("Agent signals", TaskTimelineCategory.SIGNAL),
-    ("Tools", TaskTimelineCategory.TOOL),
-    ("Messages", TaskTimelineCategory.MESSAGE),
-    ("Usage", TaskTimelineCategory.USAGE),
-    ("All evidence", TaskTimelineCategory.ALL),
-)
+FILTER_KEY = "f"
+TOGGLE_FILTERS_ACTION = "toggle_filters"
+FILTER_LABEL = " filter"
+SELECTED_MAX_LINES = 4
+ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
+FILTER_NOTE_SEPARATOR = ", "
+ROLE_NOTE = "role {}"
+TURN_NOTE = "turn {}"
 
 
 @dataclass(frozen=True)
@@ -54,9 +53,8 @@ class TimelineIds:
 
     root: str
     title: str
-    status: str
+    hint: str
     filters: str
-    category: str
     role: str
     turn: str
     list: str
@@ -92,9 +90,29 @@ def screen_is_active(widget: Widget) -> bool:
     return widget_is_current(widget) and cast("App[None]", widget.app).is_running
 
 
-class TimelineSection(Vertical):
-    """Own one category's timeline rows, paging, filters and follow state; `shown` while open."""
+@dataclass(frozen=True)
+class _SelectedEntry:
+    text: Text
+    meta: Text
 
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        lines = self.text.wrap(console, options.max_width)
+        shown = lines[:SELECTED_MAX_LINES]
+        if len(lines) > SELECTED_MAX_LINES:
+            last = shown[-1]
+            last.rstrip()
+            last.truncate(max(options.max_width - 1, 1))
+            last.append(ELLIPSIS)
+        yield from shown
+        yield self.meta
+
+
+class TimelineSection(Vertical):
+    """Own one timeline's rows, paging, filters and follow state; `shown` while open."""
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding(FILTER_KEY, TOGGLE_FILTERS_ACTION, "Filter", show=False)
+    ]
     DEFAULT_CSS = """
     TimelineSection { height: auto; }
     TimelineSection .timeline-heading { height: auto; padding: 0; }
@@ -102,9 +120,8 @@ class TimelineSection(Vertical):
     TimelineSection .timeline-filters Select, TimelineSection .timeline-filters Input {
         height: 3;
     }
-    TimelineSection .timeline-category { width: 40%; min-width: 10; }
-    TimelineSection .timeline-role { width: 30%; min-width: 10; }
-    TimelineSection .timeline-turn { width: 30%; min-width: 8; }
+    TimelineSection .timeline-role { width: 50%; min-width: 10; }
+    TimelineSection .timeline-turn { width: 50%; min-width: 8; }
     """
 
     def __init__(
@@ -115,13 +132,15 @@ class TimelineSection(Vertical):
         ids: TimelineIds,
         section: DetailsSection,
         category: TaskTimelineCategory,
+        filterable: bool,
     ) -> None:
         super().__init__(id=ids.root)
         self.ids = ids
         self._widget_context = context
         self._host = host
         self._section = section
-        self._default_category = category.value
+        self._category = category.value
+        self._filterable = filterable
         self._page: TaskTimelinePageView | None = None
         self._generation = 0
         self.shown = False
@@ -129,30 +148,38 @@ class TimelineSection(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("", id=self.ids.title, classes="timeline-heading", markup=False)
-        yield Static("", id=self.ids.status, classes="timeline-heading", markup=False)
-        with Horizontal(id=self.ids.filters, classes="timeline-filters"):
-            yield Select(
-                TIMELINE_FILTER_OPTIONS,
-                value=self._category,
-                id=self.ids.category,
-                classes="timeline-category",
-            )
-            yield Select(
-                (
-                    ("Any role", ""),
-                    ("Leader", Role.LEADER.value),
-                    ("Implementer", Role.IMPLEMENTER.value),
-                    ("Helper", Role.HELPER.value),
-                ),
-                prompt="Any role",
-                allow_blank=True,
-                value=Select.BLANK,
-                id=self.ids.role,
-                classes="timeline-role",
-            )
-            yield Input(placeholder="Any turn", id=self.ids.turn, classes="timeline-turn")
+        yield Static("", id=self.ids.hint, classes="timeline-heading", markup=False)
+        if self._filterable:
+            with Horizontal(id=self.ids.filters, classes="timeline-filters") as filters:
+                filters.display = False
+                yield Select(
+                    (
+                        ("Any role", ""),
+                        ("Leader", Role.LEADER.value),
+                        ("Implementer", Role.IMPLEMENTER.value),
+                        ("Helper", Role.HELPER.value),
+                    ),
+                    prompt="Any role",
+                    allow_blank=True,
+                    value=Select.BLANK,
+                    id=self.ids.role,
+                    classes="timeline-role",
+                )
+                yield Input(placeholder="Any turn", id=self.ids.turn, classes="timeline-turn")
         yield RowList(widget_id=self.ids.list)
         yield Static("", id=self.ids.selected, classes="task-detail-section", markup=False)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        del parameters
+        return self._filterable if action == TOGGLE_FILTERS_ACTION else True
+
+    def action_toggle_filters(self) -> None:
+        filters = self.query_one(f"#{self.ids.filters}", Horizontal)
+        filters.display = not filters.display
+        if filters.display:
+            self.query_one(f"#{self.ids.role}", Select).focus()
+        elif filters.has_focus_within:
+            self.query_one(f"#{self.ids.list}", RowList).focus()
 
     @property
     def request(self) -> TimelineRequest:
@@ -186,11 +213,12 @@ class TimelineSection(Vertical):
         self._generation += 1
         if not self.is_mounted:
             return
-        for static_id in (self.ids.title, self.ids.status, self.ids.selected):
+        for static_id in (self.ids.title, self.ids.hint, self.ids.selected):
             self.query_one(f"#{static_id}", Static).update("")
-        self.query_one(f"#{self.ids.role}", Select).value = Select.BLANK
-        self.query_one(f"#{self.ids.turn}", Input).value = ""
-        self.query_one(f"#{self.ids.category}", Select).value = self._category
+        if self._filterable:
+            self.query_one(f"#{self.ids.filters}", Horizontal).display = False
+            self.query_one(f"#{self.ids.role}", Select).value = Select.BLANK
+            self.query_one(f"#{self.ids.turn}", Input).value = ""
         self.query_one(f"#{self.ids.list}", RowList).set_rows(
             (), selected=0, empty=NO_TIMELINE_ROWS
         )
@@ -261,7 +289,7 @@ class TimelineSection(Vertical):
                 self.show_page(page)
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id in {self.ids.category, self.ids.role}:
+        if event.select.id == self.ids.role:
             self._apply_filters()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -300,7 +328,6 @@ class TimelineSection(Vertical):
         self._following = True
         self._role: str | None = None
         self._turn: str | None = None
-        self._category = self._default_category
         self._selected_identity: str | None = None
 
     def _invalidate(self) -> None:
@@ -310,14 +337,12 @@ class TimelineSection(Vertical):
 
     def _apply_filters(self) -> None:
         role_value = cast("Select[str]", self.query_one(f"#{self.ids.role}", Select)).value
-        category_value = cast("Select[str]", self.query_one(f"#{self.ids.category}", Select)).value
         turn_value = self.query_one(f"#{self.ids.turn}", Input).value.strip()
         role = role_value or None if isinstance(role_value, str) else None
-        category = category_value if isinstance(category_value, str) else self._default_category
         turn = turn_value or None
-        if (role, category, turn) == (self._role, self._category, self._turn):
+        if (role, turn) == (self._role, self._turn):
             return
-        self._role, self._category, self._turn = role, category, turn
+        self._role, self._turn = role, turn
         self.restart()
 
     def _older_page(self) -> None:
@@ -343,10 +368,20 @@ class TimelineSection(Vertical):
                 SECONDARY_TEXT_COLOR,
             )
         )
+        notes = [
+            note.format(value)
+            for note, value in ((ROLE_NOTE, self._role), (TURN_NOTE, self._turn))
+            if value
+        ]
+        if notes:
+            heading.append_text(grey(HEADING_SEPARATOR + FILTER_NOTE_SEPARATOR.join(notes)))
         self.query_one(f"#{self.ids.title}", Static).update(heading)
-        self.query_one(f"#{self.ids.status}", Static).update(
-            key_hint(EVENTS_HINT, SECONDARY_TEXT_COLOR)
-        )
+        hint = key_hint(EVENTS_HINT, SECONDARY_TEXT_COLOR)
+        if self._filterable:
+            hint.append(HEADING_SEPARATOR, style=SECONDARY_TEXT_COLOR)
+            hint.append(FILTER_KEY, style=BOLD_STEEL)
+            hint.append(FILTER_LABEL, style=SECONDARY_TEXT_COLOR)
+        self.query_one(f"#{self.ids.hint}", Static).update(hint)
 
     def _paint_selection(self) -> None:
         page = self._page
@@ -355,15 +390,5 @@ class TimelineSection(Vertical):
         target = self.query_one(f"#{self.ids.selected}", Static)
         selected = entries[chosen] if chosen < len(entries) else None
         target.display = selected is not None
-        if selected is None:
-            return
-        lines = [
-            f"{selected.source} · {selected.category}",
-            f"Timestamp · {selected.timestamp or NO_VALUE}",
-        ]
-        if selected.role is not None:
-            lines.append(f"Role · {selected.role}")
-        if selected.turn is not None:
-            lines.append(f"Turn · {selected.turn}")
-        lines.extend((selected.summary, selected.detail))
-        target.update("\n".join(lines))
+        if selected is not None:
+            target.update(_SelectedEntry(Text(selected.phrase), grey(timeline_meta(selected))))

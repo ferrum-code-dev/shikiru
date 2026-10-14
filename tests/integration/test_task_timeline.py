@@ -13,12 +13,13 @@ from textual.widgets import Input, Select, Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.detail import (
-    EVENTS_TIMELINE_IDS,
+    AGENT_TIMELINE_IDS,
+    TASK_DETAIL_AGENT_ROLE,
     TASK_DETAIL_BODY,
     TASK_DETAIL_TIMELINE_LIST,
-    TASK_DETAIL_TIMELINE_ROLE,
     TASK_DETAIL_TIMELINE_SELECTED,
     TASK_DETAIL_TIMELINE_TITLE,
+    TASK_VIEW_AGENT,
     TASK_VIEW_EVIDENCE,
     TIMELINE_SECTIONS,
     TaskDetailBody,
@@ -54,7 +55,7 @@ from tests.support.dashboard import (
     widget_context,
 )
 from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG
-from tests.support.render import plain_text
+from tests.support.render import plain_text, rendered_lines
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
@@ -78,6 +79,11 @@ TIMELINE_START = datetime(2026, 1, 1, tzinfo=UTC)
 TIMELINE_PAGE_LIMIT = 20
 TIMELINE_ROW_COUNT = 24
 LONG_FILTERED_SIGNAL_ROW_COUNT = 300
+LONG_MESSAGE_WORDS = 80
+SELECTED_WIDTH = 60
+SELECTED_MAX_LINES = 4
+EVENT_ROW_COUNT = 4
+AGENT_ROW_COUNT = 3
 TIMELINE_TIED_EVENT_COUNT = 22
 TIMELINE_ROLE = Role.IMPLEMENTER.value
 TIMELINE_TURN = "turn-0"
@@ -88,15 +94,12 @@ TIMELINE_CATEGORY_TRANSITION = "transition"
 FAILED_COMMAND_EXIT_CODE = 2
 
 
-async def _open_timeline_view(panel: TaskDetailPanel, pilot: Pilot[None]) -> None:
+async def _open_timeline_view(
+    panel: TaskDetailPanel, pilot: Pilot[None], view: str = TASK_VIEW_EVIDENCE
+) -> None:
     panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).focus()
-    await choose_details_entry(pilot, TASK_VIEW_EVIDENCE)
-    await wait_until(lambda: TASK_VIEW_EVIDENCE in panel.open_views, timeout=UI_WAIT_SECONDS)
-
-
-async def _prepare_timeline_filter(panel: TaskDetailPanel, pilot: Pilot[None]) -> None:
-    await _open_timeline_view(panel, pilot)
-    await wait_until(lambda: bool(_rows(panel)), timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS)
+    await choose_details_entry(pilot, view)
+    await wait_until(lambda: view in panel.open_views, timeout=UI_WAIT_SECONDS)
 
 
 TIMELINE_MISSING_SUMMARY = "Normalized signal evidence is unavailable"
@@ -731,13 +734,13 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
     task = seed_task(connection, clock, title="Concurrent timeline filter")
     runs = RunStore(connection, clock)
     _start_role_runs(runs, task.id)
-    events = EventLog(connection, clock)
-    _append_timeline_events(
-        events,
+    _append_signal_messages(
+        project_root,
         task.id,
+        clock,
         (
-            ("timeline baseline leader", Role.LEADER.value, "leader-baseline"),
-            ("timeline baseline implementer", Role.IMPLEMENTER.value, "implementer-baseline"),
+            ("timeline baseline leader", Role.LEADER.value),
+            ("timeline baseline implementer", Role.IMPLEMENTER.value),
         ),
     )
     reader = StateReader(database, clock)
@@ -756,17 +759,17 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
 
     try:
         async with app.run_test(size=(100, 40)) as pilot:
-            await _prepare_timeline_filter(panel, pilot)
-            _append_timeline_events(
-                events,
+            await _open_timeline_view(panel, pilot, TASK_VIEW_AGENT)
+            await wait_until(
+                lambda: bool(_agent_rows(panel)), timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS
+            )
+            _append_signal_messages(
+                project_root,
                 task.id,
+                clock,
                 (
-                    (TIMELINE_CONCURRENT_LEADER_MESSAGE, Role.LEADER.value, "leader-new"),
-                    (
-                        TIMELINE_CONCURRENT_IMPLEMENTER_MESSAGE,
-                        Role.IMPLEMENTER.value,
-                        "implementer-new",
-                    ),
+                    (TIMELINE_CONCURRENT_LEADER_MESSAGE, Role.LEADER.value),
+                    (TIMELINE_CONCURRENT_IMPLEMENTER_MESSAGE, Role.IMPLEMENTER.value),
                 ),
             )
             timeline_gate = gated_views.gate_next_timeline()
@@ -777,8 +780,8 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
             )
 
             filtered_gate = gated_views.gate_next_timeline()
-            panel.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select).value = Role.IMPLEMENTER.value
-            section = panel.query_one(f"#{EVENTS_TIMELINE_IDS.root}", TimelineSection)
+            panel.query_one(f"#{TASK_DETAIL_AGENT_ROLE}", Select).value = Role.IMPLEMENTER.value
+            section = panel.query_one(f"#{AGENT_TIMELINE_IDS.root}", TimelineSection)
             await wait_until(
                 lambda: section.request.role == Role.IMPLEMENTER.value,
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
@@ -791,10 +794,10 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
             assert gated_views.timeline_requests[-1][0] == Role.IMPLEMENTER.value
             filtered_gate[1].set()
             await wait_until(
-                lambda: _has_row(panel, TIMELINE_CONCURRENT_IMPLEMENTER_MESSAGE),
+                lambda: _has_agent_row(panel, TIMELINE_CONCURRENT_IMPLEMENTER_MESSAGE),
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
-            assert not _has_row(panel, TIMELINE_CONCURRENT_LEADER_MESSAGE)
+            assert not _has_agent_row(panel, TIMELINE_CONCURRENT_LEADER_MESSAGE)
     finally:
         if timeline_gate is not None:
             timeline_gate[1].set()
@@ -817,7 +820,7 @@ async def test_shown_timelines_keep_their_own_paging_filters_and_refresh(
     events = EventLog(connection, clock)
 
     def append_signal(turn: str) -> None:
-        row = {"ts": clock.now().isoformat(), "turn": turn, "signal": "Message", "ordinal": 0}
+        row = {"ts": clock.now().isoformat(), "turn": turn, "signal": "Message", "text": turn}
         with signal_path.open("a") as output:
             output.write(json.dumps(row) + "\n")
 
@@ -834,8 +837,10 @@ async def test_shown_timelines_keep_their_own_paging_filters_and_refresh(
     context = widget_context(reader, project_root, clock)
     host = TimelineHost(task_id=lambda: task.id, lock=asyncio.Lock(), report=_raise_report)
     sections = {
-        section: TimelineSection(context, host, ids=ids, section=section, category=category)
-        for section, (ids, category) in TIMELINE_SECTIONS.items()
+        section: TimelineSection(
+            context, host, ids=ids, section=section, category=category, filterable=filterable
+        )
+        for section, (ids, category, filterable) in TIMELINE_SECTIONS.items()
     }
     for section in sections.values():
         section.shown = True
@@ -880,7 +885,67 @@ async def test_shown_timelines_keep_their_own_paging_filters_and_refresh(
         await wait_until(lambda: set(_turns(signals)) == {"signal-turn-3"}, timeout=UI_WAIT_SECONDS)
         assert _identities(activity) == older_events
         assert activity.request.turn is None
-        assert app.query_one(f"#{activity.ids.turn}", Input).value == ""
+
+
+async def test_rows_are_one_line_human_phrases_and_the_selected_row_wraps_to_four_lines(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(TIMELINE_START)
+    task = seed_task(connection, clock, title="Readable evidence")
+    RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
+    events = EventLog(connection, clock)
+    for kind, message, data in (
+        (EventKind.STEP_STARTED, "started", {"step": "implement", "iteration": 2}),
+        (EventKind.NUDGE, "nudge", {"role": "implementer"}),
+        (EventKind.VERDICT, "needs work", {"decision": "changes_requested"}),
+        (EventKind.ESCALATION, "decision required", {"reason": "decision_required"}),
+    ):
+        clock.advance(1)
+        events.append(kind, task_id=task.id, message=message, data=data)
+    long_text = " ".join(f"word{index}" for index in range(LONG_MESSAGE_WORDS))
+    signals = (
+        {"signal": "SessionStarted", "session_id": "s-1"},
+        {"signal": "ToolStarted", "name": "Bash", "detail": '{"command":"pytest -q"}'},
+        {"signal": "ToolFinished", "name": "Bash", "outcome": "success", "exit_code": 0},
+        {"signal": "UsageReported", "usage": {"input_tokens": 1, "output_tokens": 2}},
+        {"signal": "Message", "text": long_text},
+    )
+    log = run_dir(project_root, task.id) / Role.IMPLEMENTER.value / "view.jsonl"
+    log.parent.mkdir(parents=True)
+    with log.open("w") as output:
+        for signal in signals:
+            clock.advance(1)
+            row = {"ts": clock.now().isoformat(), "turn": "03-implement-i1", **signal}
+            output.write(json.dumps(row) + "\n")
+    reader = StateReader(database, clock)
+    panel = TaskDetailPanel(widget_context(reader, project_root, clock), task.id, fixed=True)
+
+    try:
+        async with WidgetHostApp(panel).run_test(size=(100, 60)):
+            panel.open_view(TASK_VIEW_EVIDENCE)
+            panel.open_view(TASK_VIEW_AGENT)
+            await wait_until(
+                lambda: (
+                    len(_rows(panel)) == EVENT_ROW_COUNT
+                    and len(_agent_rows(panel)) == AGENT_ROW_COUNT
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
+            shown = "\n".join([*_rows(panel), *_agent_rows(panel)])
+            for noise in ("ToolStarted", "SessionStarted", "UsageReported", "{", "2026-01-01"):
+                assert noise not in shown
+            assert any("ran pytest -q" in row for row in _agent_rows(panel))
+            assert any("verdict · changes requested" in row for row in _rows(panel))
+            selected = panel.query_one(f"#{AGENT_TIMELINE_IDS.selected}", Static)
+            lines = rendered_lines(selected.content, width=SELECTED_WIDTH)
+            assert 1 < len(lines) <= SELECTED_MAX_LINES + 1
+            assert lines[-2].endswith("\N{HORIZONTAL ELLIPSIS}")
+            assert lines[-1].endswith("implementer · turn 3")
+    finally:
+        reader.close()
 
 
 def _raise_report(message: str) -> None:
@@ -899,6 +964,30 @@ def _rows(panel: TaskDetailPanel) -> list[str]:
     return list_rows(panel, TASK_DETAIL_TIMELINE_LIST)
 
 
+def _agent_rows(panel: TaskDetailPanel) -> list[str]:
+    return list_rows(panel, AGENT_TIMELINE_IDS.list)
+
+
+def _has_agent_row(panel: TaskDetailPanel, content: str) -> bool:
+    return any(content in row for row in _agent_rows(panel))
+
+
+def _append_signal_messages(
+    project_root: Path, task_id: str, clock: FakeClock, rows: tuple[tuple[str, str], ...]
+) -> None:
+    for text, role in rows:
+        path = run_dir(project_root, task_id) / role / "view.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        row = {
+            "ts": clock.now().isoformat(),
+            "turn": f"turn-{text}",
+            "signal": "Message",
+            "text": text,
+        }
+        with path.open("a") as output:
+            output.write(json.dumps(row) + "\n")
+
+
 def _has_row(panel: TaskDetailPanel, content: str) -> bool:
     return any(content in row for row in _rows(panel))
 
@@ -914,18 +1003,6 @@ def _selected_text(panel: TaskDetailPanel) -> str:
 def _start_role_runs(runs: RunStore, task_id: str) -> None:
     runs.start(task_id, Role.LEADER, LEADER_RUNG)
     runs.start(task_id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
-
-
-def _append_timeline_events(
-    events: EventLog, task_id: str, rows: tuple[tuple[str, str, str], ...]
-) -> None:
-    for message, role, turn in rows:
-        events.append(
-            EventKind.TURN_FAILED,
-            task_id=task_id,
-            message=message,
-            data={"role": role, "turn": turn},
-        )
 
 
 async def _append_and_wake(case: _TimelineUITest, message: str, turn: str) -> None:

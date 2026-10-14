@@ -140,9 +140,10 @@ TASK_DETAIL_RELATIONSHIPS = "task-detail-relationships"
 TASK_DETAIL_RELATED_LIST = "task-detail-related-list"
 EVENTS_TIMELINE_IDS = TimelineIds.with_prefix("task-detail-timeline")
 AGENT_TIMELINE_IDS = TimelineIds.with_prefix("task-detail-agent")
-TASK_DETAIL_TIMELINE_ROLE = EVENTS_TIMELINE_IDS.role
-TASK_DETAIL_TIMELINE_TURN = EVENTS_TIMELINE_IDS.turn
-TASK_DETAIL_TIMELINE_CATEGORY = EVENTS_TIMELINE_IDS.category
+TASK_DETAIL_AGENT_ROLE = AGENT_TIMELINE_IDS.role
+TASK_DETAIL_AGENT_TURN = AGENT_TIMELINE_IDS.turn
+TASK_DETAIL_AGENT_LIST = AGENT_TIMELINE_IDS.list
+TASK_DETAIL_AGENT_SELECTED = AGENT_TIMELINE_IDS.selected
 TASK_DETAIL_TIMELINE_TITLE = EVENTS_TIMELINE_IDS.title
 TASK_DETAIL_TIMELINE_LIST = EVENTS_TIMELINE_IDS.list
 TASK_DETAIL_TIMELINE_SELECTED = EVENTS_TIMELINE_IDS.selected
@@ -168,8 +169,8 @@ DETAILS_SECTION_VIEWS = {
     DetailsSection.SETTINGS: TASK_VIEW_CONTEXT,
 }
 TIMELINE_SECTIONS = {
-    DetailsSection.EVENTS: (EVENTS_TIMELINE_IDS, TaskTimelineCategory.ACTIVITY),
-    DetailsSection.AGENT_ACTIVITY: (AGENT_TIMELINE_IDS, TaskTimelineCategory.SIGNAL),
+    DetailsSection.EVENTS: (EVENTS_TIMELINE_IDS, TaskTimelineCategory.ACTIVITY, False),
+    DetailsSection.AGENT_ACTIVITY: (AGENT_TIMELINE_IDS, TaskTimelineCategory.AGENT, True),
 }
 FOLD_STATICS = {
     TASK_VIEW_USAGE: (TASK_DETAIL_SESSIONS,),
@@ -241,12 +242,7 @@ class TaskDetailPanel(Vertical):
     #task-detail-details { margin: 0; color: $secondary-text; }
     #task-detail-actions Button:focus { text-style: reverse; }
     #task-detail-actions Button:hover { color: $primary-text; }
-    #task-detail-timeline-filters, #task-detail-workspace-tools { width: 100%; height: auto; }
-    #task-detail-timeline-title, #task-detail-timeline-status { height: auto; padding: 0; }
-    #task-detail-timeline-filters Select, #task-detail-timeline-filters Input { height: 3; }
-    #task-detail-timeline-category { width: 40%; min-width: 10; }
-    #task-detail-timeline-role { width: 30%; min-width: 10; }
-    #task-detail-timeline-turn { width: 30%; min-width: 8; }
+    #task-detail-workspace-tools { width: 100%; height: auto; }
     .task-detail-section { height: auto; padding: 0; color: $primary-text; }
     TaskDetailPanel RowList { max-height: 10; overflow-y: auto; scrollbar-size-vertical: 1; }
     TaskDetailPanel.folds-compact RowList { max-height: 6; }
@@ -283,9 +279,9 @@ class TaskDetailPanel(Vertical):
         )
         self._timelines = {
             DETAILS_SECTION_VIEWS[section]: TimelineSection(
-                context, host, ids=ids, section=section, category=category
+                context, host, ids=ids, section=section, category=category, filterable=filterable
             )
-            for section, (ids, category) in TIMELINE_SECTIONS.items()
+            for section, (ids, category, filterable) in TIMELINE_SECTIONS.items()
         }
         self._folds: dict[str, DetailFold] = {}
         self._initial_view = initial_view

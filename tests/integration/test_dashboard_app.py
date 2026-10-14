@@ -55,9 +55,10 @@ from shikiru.dashboard.contract import (
     PaletteRequest,
     ResourceView,
     TaskPaletteRoute,
-    TaskTimelineCategory,
 )
 from shikiru.dashboard.detail import (
+    TASK_DETAIL_AGENT_LIST,
+    TASK_DETAIL_AGENT_ROLE,
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_DECISIONS,
@@ -72,6 +73,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_TIMELINE_LIST,
     TASK_DETAIL_TIMELINE_TITLE,
     TASK_DETAIL_WORKSPACE,
+    TASK_VIEW_AGENT,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_RELATIONSHIPS,
     TASK_VIEW_USAGE,
@@ -2995,9 +2997,6 @@ async def _assert_list_paging(
 
 
 async def _assert_task_timeline_page_keys(app: DashboardApp, pilot: Pilot[None]) -> None:
-    app.screen.query_one(
-        "#task-detail-timeline-category", Select
-    ).value = TaskTimelineCategory.ALL.value
     title = app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_TITLE}", Static)
     await _assert_list_paging(
         app,
@@ -3038,7 +3037,7 @@ async def test_task_detail_lists_page_with_page_keys_and_stop_at_boundaries(
     events = EventLog(connection, clock)
     for index in range(TASK_PAGE_TEST_EVENT_COUNT):
         events.append(
-            EventKind.NUDGE,
+            EventKind.TURN_FAILED,
             task_id=task.id,
             message=f"Recorded page route evidence {index}",
         )
@@ -4642,21 +4641,19 @@ async def _assert_evidence_editor_shortcut_precedence(
     task_id: str,
     palette_requests: list[PaletteRequest],
 ) -> None:
-    await choose_inspector_details_entry(pilot, TASK_VIEW_EVIDENCE)
+    await choose_inspector_details_entry(pilot, TASK_VIEW_AGENT)
     evidence_screen = app.screen
+    evidence_screen.query_one(f"#{TASK_DETAIL_AGENT_LIST}").focus()
+    await pilot.press("f")
     role_select = cast(
-        "Select[str]", evidence_screen.query_one("#task-detail-timeline-role", Select)
+        "Select[str]", evidence_screen.query_one(f"#{TASK_DETAIL_AGENT_ROLE}", Select)
     )
-    role_select.focus()
+    await wait_until(lambda: app.focused is role_select, timeout=UI_WAIT_SECONDS)
     await pilot.press("enter")
     await wait_until(lambda: role_select.expanded, timeout=UI_WAIT_SECONDS)
     await pilot.press("escape")
     await wait_until(lambda: not role_select.expanded, timeout=UI_WAIT_SECONDS)
-    native_select = cast(
-        "Select[str]", evidence_screen.query_one("#task-detail-timeline-category", Select)
-    )
-    await wait_until(lambda: native_select.display, timeout=UI_WAIT_SECONDS)
-    native_select.focus()
+    native_select = role_select
     await pilot.press("ctrl+p")
     assert palette_requests == []
     assert app.screen is evidence_screen

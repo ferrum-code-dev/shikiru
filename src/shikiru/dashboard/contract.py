@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 from shikiru.domain.timeline import (
     TIMELINE_ACTIVITY_CATEGORY,
+    TIMELINE_AGENT_CATEGORY,
     TIMELINE_ALL_CATEGORY,
     TIMELINE_DECISION_CATEGORY,
     TIMELINE_ENGINE_CATEGORY,
@@ -55,6 +56,7 @@ class TaskTimelineCategory(StrEnum):
     """A timeline category exposed by the dashboard contract."""
 
     ACTIVITY = TIMELINE_ACTIVITY_CATEGORY
+    AGENT = TIMELINE_AGENT_CATEGORY
     ALL = TIMELINE_ALL_CATEGORY
     DECISION = TIMELINE_DECISION_CATEGORY
     ENGINE = TIMELINE_ENGINE_CATEGORY
@@ -447,6 +449,9 @@ class TaskTimelineEntryView:
     source: str
     category: str
     summary: str
+    phrase: str
+    glyph: str
+    tone: str
     detail: str
     role: str | None
     turn: str | None

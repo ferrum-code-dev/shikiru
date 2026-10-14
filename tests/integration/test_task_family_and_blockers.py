@@ -10,15 +10,14 @@ from textual.widgets import Button, Input, ListView, Select, Static
 from shikiru.agents.contracts import QuotaWindow, Rung
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, TaskDetailScreen, TaskPaletteRoute
-from shikiru.dashboard.contract import ResourceView, TaskBrowserFilter, TaskTimelineCategory
+from shikiru.dashboard.contract import ResourceView, TaskBrowserFilter
 from shikiru.dashboard.detail import (
+    TASK_DETAIL_AGENT_ROLE,
+    TASK_DETAIL_AGENT_TURN,
     TASK_DETAIL_FEEDBACK,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_RELATED_LIST,
     TASK_DETAIL_RELATIONSHIPS,
-    TASK_DETAIL_TIMELINE_CATEGORY,
-    TASK_DETAIL_TIMELINE_ROLE,
-    TASK_DETAIL_TIMELINE_TURN,
     TASK_DETAIL_WINDOW_BUTTON,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_RELATIONSHIPS,
@@ -392,11 +391,8 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
             lambda: any(dependency.id in row for row in _related_rows(panel)),
             timeout=UI_WAIT_SECONDS,
         )
-        panel.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select).value = Role.LEADER.value
-        panel.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input).value = "older turn"
-        panel.query_one(
-            f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select
-        ).value = TaskTimelineCategory.ENGINE.value
+        panel.query_one(f"#{TASK_DETAIL_AGENT_ROLE}", Select).value = Role.LEADER.value
+        panel.query_one(f"#{TASK_DETAIL_AGENT_TURN}", Input).value = "older turn"
         panel = await _open_detail_view(panel, pilot, TASK_VIEW_EVIDENCE)
         window_button = panel.query_one(f"#{TASK_DETAIL_WINDOW_BUTTON}", Button)
         panel = await _open_detail_view(panel, pilot, TASK_VIEW_WORKSPACE)
@@ -424,15 +420,9 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
 
         panel = home_panel
         assert not any(dependency.title in row for row in _related_rows(panel))
-        timeline_role = cast(
-            "Select[str]", panel.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select)
-        )
-        timeline_category = cast(
-            "Select[str]", panel.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
-        )
+        timeline_role = cast("Select[str]", panel.query_one(f"#{TASK_DETAIL_AGENT_ROLE}", Select))
         assert timeline_role.value is Select.BLANK
-        assert panel.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input).value == ""
-        assert timeline_category.value == TaskTimelineCategory.ACTIVITY.value
+        assert panel.query_one(f"#{TASK_DETAIL_AGENT_TURN}", Input).value == ""
         assert _static_text(feedback) == ""
 
 

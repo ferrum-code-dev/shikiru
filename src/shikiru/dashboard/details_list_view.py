@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import TaskDetailView
 
 _ARROWS = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW}"
-EVENTS_HINT = f"{_ARROWS} select · PgUp/PgDn page · End follow"
+EVENTS_HINT = f"{_ARROWS} select · End follow"
 RELATIONSHIPS_HINT = f"{_ARROWS} select · Enter open"
 ROW_LEAD = "  "
 _HEADLINE_GAP = "  "

@@ -1898,7 +1898,7 @@ Refs: `detail.py` (`_task_context_text`, `_workspace_text`, `_render_relationshi
 
 ### Task 206: Events and Agent activity
 Refs: `dashboard/timeline_section.py`, `section_rows.py`, `domain/timeline.py` (`parse_signal_row`, summaries), `ui/stream.py`, `contract.py` `TaskTimelineEntryView`.
-- [ ] Fixed meanings, human one-line rows with glyph, time and who; no category dropdown; role and turn filter behind `f` on Agent activity; selected row text wrapped (4 lines) without JSON, ids or ISO times; paging hint removed.
+- [x] Fixed meanings, human one-line rows with glyph, time and who; no category dropdown; role and turn filter behind `f` on Agent activity; selected row text wrapped (4 lines) without JSON, ids or ISO times; paging hint removed. Proof: rendered the real panel with ~30 events and ~40 signals (messages, tools, failed turn, nudge, verdict, escalation) at 100, 60, 48 and 40 columns and with `NO_COLOR`: rows read `12:03:30  ✓ turn completed · implementer` and `12:06:40  impl  ✗ quota: five hour limit reached`, `f` reveals the role and turn filters, and the selected pane shows the wrapped phrase (ellipsis after four lines) plus `12:06:15 · implementer · turn 3`. Agent activity uses a new internal `agent` category (bookkeeping signals dropped) so `latest_signal` keeps reading the full signal stream; collected cases 1667 before and 1677 after (phrase tables and one behaviour test added, three duplicate key cases removed). `poe check` green (1656 passed).
 
 ### Task 207: Usage
 Refs: `detail.py` (`_sessions_text`, `_refresh_usage_observations`), `ui/compact.py` shared usage classes (do not change them for Home), `contract.py` `TaskSessionView`.

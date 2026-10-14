@@ -35,6 +35,8 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.dashboard.detail import (
     TASK_DETAIL_ACTION_PREFIX,
+    TASK_DETAIL_AGENT_LIST,
+    TASK_DETAIL_AGENT_TURN,
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BODY,
     TASK_DETAIL_BRIEFING,
@@ -42,7 +44,6 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
     TASK_DETAIL_SESSIONS,
-    TASK_DETAIL_TIMELINE_TURN,
     TASK_VIEW_AGENT,
     TASK_VIEW_CONTEXT,
     TASK_VIEW_DECISIONS,
@@ -52,7 +53,6 @@ from shikiru.dashboard.detail import (
     TASK_VIEW_RESULTS,
     TASK_VIEW_USAGE,
     TASK_VIEW_WORKSPACE,
-    TIMELINE_SECTIONS,
     TaskDetailPanel,
 )
 from shikiru.dashboard.detail_fold import DetailFolds, FoldHeader
@@ -2091,9 +2091,11 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
                 lambda: task.title in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
                 timeout=UI_WAIT_SECONDS,
             )
-            await _open_task_view(app, pilot, TASK_VIEW_EVIDENCE)
+            await _open_task_view(app, pilot, TASK_VIEW_AGENT)
             detail_screen = app.screen
-            timeline_turn = detail_screen.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
+            detail_screen.query_one(f"#{TASK_DETAIL_AGENT_LIST}").focus()
+            await pilot.press("f")
+            timeline_turn = detail_screen.query_one(f"#{TASK_DETAIL_AGENT_TURN}", Input)
             detail_body = detail_screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
 
             def filter_visible() -> bool:
@@ -2555,20 +2557,19 @@ async def test_role_navigation_rejects_a_recorded_pane_moved_to_another_window(
 class _SectionCase:
     section: DetailsSection
     view: str
-    category: TaskTimelineCategory | None
     by_click: bool
 
 
 _SECTION_CASES = [
-    _SectionCase(DetailsSection.REQUEST, TASK_VIEW_REQUEST, None, True),
-    _SectionCase(DetailsSection.RESULTS, TASK_VIEW_RESULTS, None, False),
-    _SectionCase(DetailsSection.DECISIONS, TASK_VIEW_DECISIONS, None, True),
-    _SectionCase(DetailsSection.EVENTS, TASK_VIEW_EVIDENCE, TaskTimelineCategory.ACTIVITY, False),
-    _SectionCase(DetailsSection.AGENT_ACTIVITY, TASK_VIEW_AGENT, TaskTimelineCategory.SIGNAL, True),
-    _SectionCase(DetailsSection.USAGE, TASK_VIEW_USAGE, None, False),
-    _SectionCase(DetailsSection.BLOCKERS, TASK_VIEW_RELATIONSHIPS, None, True),
-    _SectionCase(DetailsSection.WORKSPACE, TASK_VIEW_WORKSPACE, None, False),
-    _SectionCase(DetailsSection.SETTINGS, TASK_VIEW_CONTEXT, None, False),
+    _SectionCase(DetailsSection.REQUEST, TASK_VIEW_REQUEST, True),
+    _SectionCase(DetailsSection.RESULTS, TASK_VIEW_RESULTS, False),
+    _SectionCase(DetailsSection.DECISIONS, TASK_VIEW_DECISIONS, True),
+    _SectionCase(DetailsSection.EVENTS, TASK_VIEW_EVIDENCE, False),
+    _SectionCase(DetailsSection.AGENT_ACTIVITY, TASK_VIEW_AGENT, True),
+    _SectionCase(DetailsSection.USAGE, TASK_VIEW_USAGE, False),
+    _SectionCase(DetailsSection.BLOCKERS, TASK_VIEW_RELATIONSHIPS, True),
+    _SectionCase(DetailsSection.WORKSPACE, TASK_VIEW_WORKSPACE, False),
+    _SectionCase(DetailsSection.SETTINGS, TASK_VIEW_CONTEXT, False),
 ]
 
 
@@ -2623,12 +2624,6 @@ async def _open_fold(
     else:
         await choose_details_entry(pilot, case.view)
     await wait_until(lambda: case.view in panel.open_views, timeout=UI_WAIT_SECONDS)
-    if case.category is not None:
-        selected = cast(
-            "Select[str]",
-            app.query_one(f"#{TIMELINE_SECTIONS[case.section][0].category}", Select),
-        )
-        assert selected.value == case.category.value
 
 
 async def test_escape_steps_from_home_inspector_fold_list_to_header_to_cleared_selection(
