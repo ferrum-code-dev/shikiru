@@ -47,6 +47,7 @@ from shikiru.dashboard.contract import (
     TaskRelationshipsView,
     TaskReportView,
     TaskRolePaneView,
+    TaskSessionView,
     TaskTestView,
     TaskTimelineCategory,
     TaskTimelineEntryView,
@@ -68,7 +69,7 @@ from shikiru.domain.engine_uptime import project_engine_uptime
 from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import move_up, pick_rung
-from shikiru.domain.levels import free_space_level
+from shikiru.domain.levels import free_space_level, usage_level
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.reports import (
     ConsultAnswer,
@@ -1035,11 +1036,13 @@ class StateDashboardViews:
                 )
                 for role in TASK_ROLES
             ),
-            sessions=project_task_sessions(
-                detail.sessions,
-                history_events,
-                history_truncated=len(history_events) == TASK_MODEL_HISTORY_EVENT_LIMIT,
-                history_error=history_error,
+            sessions=self._with_context_levels(
+                project_task_sessions(
+                    detail.sessions,
+                    history_events,
+                    history_truncated=len(history_events) == TASK_MODEL_HISTORY_EVENT_LIMIT,
+                    history_error=history_error,
+                )
             ),
             relationships=relationships,
             blocker=self._task_blocker(task, relationships, ownership, now),
@@ -1115,6 +1118,24 @@ class StateDashboardViews:
             ),
             older_cursor=timeline.older_cursor,
             has_older=timeline.has_older,
+        )
+
+    def _with_context_levels(
+        self, sessions: tuple[TaskSessionView, ...]
+    ) -> tuple[TaskSessionView, ...]:
+        titles = self._settings.dashboard.titles
+        return tuple(
+            replace(
+                session,
+                context_level=usage_level(
+                    session.context_used_pct,
+                    warn_pct=titles.context_warn_pct,
+                    alert_pct=titles.context_alert_pct,
+                ),
+            )
+            if session.context_used_pct is not None
+            else session
+            for session in sessions
         )
 
     def _task_blocker(

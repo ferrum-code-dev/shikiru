@@ -45,7 +45,7 @@ class DetailsSection(StrEnum):
     DECISIONS = "Decisions"
     EVENTS = "Events"
     AGENT_ACTIVITY = "Agent activity"
-    USAGE = "Usage and sessions"
+    USAGE = "Usage"
     BLOCKERS = "Dependencies"
     WORKSPACE = "Workspace"
     SETTINGS = "Settings"

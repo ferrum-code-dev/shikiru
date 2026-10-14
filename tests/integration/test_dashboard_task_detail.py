@@ -113,7 +113,7 @@ from tests.support.dashboard import (
 from tests.support.entry_points import FakeDistribution
 from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG
 from tests.support.git_repo import commit_all, init_repo
-from tests.support.render import plain_text
+from tests.support.render import plain_text, rendered_lines
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 from tests.support.workspace import task_root_builder
@@ -763,27 +763,15 @@ async def _assert_billing_details_are_visible(
         await _open_task_view(app, pilot, TASK_VIEW_USAGE)
         sessions_widget = app.screen.query_one("#task-detail-sessions", Static)
         await wait_until(
-            lambda: _has_billing_evidence(sessions_widget),
+            lambda: "Implementer" in plain_text(sessions_widget.content),
             timeout=UI_WAIT_SECONDS,
         )
-        sessions_text = plain_text(sessions_widget.content)
-        assert BILLING_MODE_SUBSCRIPTION in sessions_text
-        assert BILLING_SOURCE_OPERATOR_CONFIG in sessions_text
-        assert "$0.25" in sessions_text
-        assert _COST_BASIS_BILLED in sessions_text
-
-
-def _has_billing_evidence(widget: Static) -> bool:
-    text = plain_text(widget.content)
-    return all(
-        value in text
-        for value in (
-            BILLING_MODE_SUBSCRIPTION,
-            BILLING_SOURCE_OPERATOR_CONFIG,
-            "$0.25",
-            _COST_BASIS_BILLED,
+        row = next(
+            line
+            for line in rendered_lines(sessions_widget.content, width=90)
+            if "Implementer" in line
         )
-    )
+        assert row.split()[-3:] == ["19", "\N{EM DASH}", "20%"]
 
 
 async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
@@ -826,19 +814,19 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             await _open_task_view(app, pilot, TASK_VIEW_USAGE)
             sessions = app.screen.query_one("#task-detail-sessions", Static)
             await wait_until(
-                lambda: "Billing declaration" in plain_text(sessions.content),
+                lambda: "Role" in plain_text(sessions.content),
                 timeout=UI_WAIT_SECONDS,
             )
-            sessions_text = plain_text(sessions.content)
+            lines = rendered_lines(sessions.content, width=90)
 
-            assert "1 legacy" in sessions_text
-            assert "2 without tokens" in sessions_text
-            assert "$1.25" in sessions_text
-            assert "Billing declaration · unknown · source unknown" in sessions_text
-            assert "Current" not in sessions_text
-            assert "input 500" in sessions_text
-            assert "legacy recorded" in sessions_text
-            assert "no reliable context provenance" in sessions_text
+            legacy = next(line for line in lines if "Implementer" in line)
+            assert "550" in legacy
+            assert "$1.25" in legacy
+            assert "10%" in legacy
+            silent = [line for line in lines if "Leader" in line]
+            assert len(silent) == 2
+            assert all(line.split()[-1] == "\N{EM DASH}" for line in silent)
+            assert any(line.startswith("!") and "billing unknown" in line for line in lines)
     finally:
         reader.close()
 
@@ -959,20 +947,17 @@ async def _assert_task_history_rendering(
     )
     await _open_task_view(app, pilot, TASK_VIEW_USAGE)
     sessions = app.screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
-    await wait_until(
-        lambda: (
-            "Recorded model turn observations · not model totals" in plain_text(sessions.content)
-        ),
-        timeout=UI_WAIT_SECONDS,
-    )
-    usage_details = plain_text(sessions.content)
-    assert usage_details.count("session-wide 13 tok") == 1
-    assert "Session-wide cumulative totals · across models" in usage_details
-    assert "codex/gpt-5" in usage_details
-    assert "claude/sonnet" in usage_details
-    assert "claude/opus" in usage_details
-    assert "per-turn observation · input 4" in usage_details
-    assert "per-turn observation · input 7" in usage_details
+    await wait_until(lambda: "gpt-5" in plain_text(sessions.content), timeout=UI_WAIT_SECONDS)
+    lines = rendered_lines(sessions.content, width=90)
+    rows = {
+        model: next(line for line in lines if model in line)
+        for model in ("gpt-5", "opus", "gpt-6-sol")
+    }
+    assert rows["gpt-5"].endswith("old")
+    assert not rows["opus"].endswith("old")
+    assert rows["opus"].split()[-3:] == ["13", "\N{EM DASH}", "\N{EM DASH}"]
+    assert not rows["gpt-6-sol"].endswith("old")
+    assert not any("sonnet" in line for line in lines)
 
 
 def _without_effort_has_gaps(session: TaskSessionView, history: TaskModelHistoryView) -> None:
@@ -1939,7 +1924,7 @@ async def _assert_responsive_task_sections(
     detail_body = detail_panel.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
     detailed_sessions = detail_panel.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
     await wait_until(
-        lambda: detailed_sessions.display and run.agent in plain_text(detailed_sessions.content),
+        lambda: detailed_sessions.display and run.model in plain_text(detailed_sessions.content),
         timeout=UI_WAIT_SECONDS,
     )
     detail_body.scroll_to_widget(detailed_sessions, animate=False)

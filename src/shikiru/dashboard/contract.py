@@ -405,6 +405,7 @@ class TaskSessionView:
     current_lineage: bool = True
     model_history: tuple[TaskModelHistoryView, ...] = ()
     history_gaps: tuple[TaskHistoryGap, ...] = ()
+    context_level: UsageLevel | None = None
 
 
 @dataclass(frozen=True)

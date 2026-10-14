@@ -1250,7 +1250,7 @@ async def test_command_history_callback_after_close_is_safe(
         reader.close()
 
 
-async def test_task_usage_details_tick_quota_age_and_reset_without_motion_evidence_reads(
+async def test_task_usage_quota_reset_ticks_without_motion_evidence_reads(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -1300,19 +1300,13 @@ async def test_task_usage_details_tick_quota_age_and_reset_without_motion_eviden
             await choose_details_entry(pilot, TASK_VIEW_USAGE)
             sessions = app.screen.query_one("#task-detail-sessions", Static)
             await wait_until(
-                lambda: (
-                    "reset 10s" in plain_text(sessions.content)
-                    and "observed now" in plain_text(sessions.content)
-                ),
+                lambda: "codex weekly 50% used resets 10s" in plain_text(sessions.content),
                 timeout=UI_WAIT_SECONDS,
             )
             await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             clock.advance(2)
             await wait_until(
-                lambda: (
-                    "reset 8s" in plain_text(sessions.content)
-                    and "observed 1m ago" in plain_text(sessions.content)
-                ),
+                lambda: "resets 8s" in plain_text(sessions.content),
                 timeout=UI_WAIT_SECONDS,
             )
     finally:

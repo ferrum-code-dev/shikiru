@@ -8,14 +8,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
 
-from rich.console import Group, RenderableType
+from rich.console import Group
 from rich.text import Text
 from textual import on
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Rule, Static
 
-from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED
 from shikiru.dashboard.briefing_view import (
     ACTION_LABELS,
     TERMINAL_STATUSES,
@@ -47,22 +46,15 @@ from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.section_rows import RelatedRow, blocker_evidence, relation_rows
 from shikiru.dashboard.timeline_section import (
     HEADING_SEPARATOR,
-    NO_VALUE,
     TimelineHost,
     TimelineIds,
     TimelineSection,
     screen_is_active,
 )
+from shikiru.dashboard.usage_body import UsageBody
 from shikiru.domain.briefing import BriefingAction
-from shikiru.domain.runs import RunStatus
 from shikiru.domain.tasks import Role, Status, StatusReason
 from shikiru.errors import ShikiruError
-from shikiru.ui.compact import (
-    AgentUsageDetails,
-    AgentUsageRow,
-    AgentUsageRows,
-    ProjectUsageTotals,
-)
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.keys import key_hint
 from shikiru.ui.popup import (
@@ -89,10 +81,7 @@ if TYPE_CHECKING:
 
     from shikiru.dashboard.app import DashboardApp
     from shikiru.dashboard.contract import (
-        AgentUsageView,
         TaskDetailView,
-        TaskModelHistoryView,
-        TaskSessionView,
         WidgetContext,
     )
     from shikiru.ui.strip import TaskStripData
@@ -745,7 +734,11 @@ class TaskDetailPanel(Vertical):
             return
         refreshed = replace(view, quota_observations=quota_observations)
         self._view = refreshed
-        self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(refreshed))
+        self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(self._usage_body(refreshed))
+
+    def _usage_body(self, view: TaskDetailView) -> UsageBody:
+        context = self._widget_context
+        return UsageBody(view, context.quota_warn_pct, context.quota_alert_pct)
 
     def _queue_refresh(self) -> None:
         if self._task_id is None:
@@ -791,7 +784,7 @@ class TaskDetailPanel(Vertical):
             recorded_panes.get(Role.IMPLEMENTER.value) is None
         )
         if self._folds[TASK_VIEW_USAGE].is_open:
-            self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(view))
+            self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(self._usage_body(view))
         blocker.display = evidence is not None
         self._paint_headlines(view)
         if self._on_initial_content is not None and not self._initial_content_reported:
@@ -829,7 +822,7 @@ class TaskDetailPanel(Vertical):
                 timeline.refresh_page(), group=TASK_DETAIL_WORKER_GROUP, exclusive=False
             )
         elif fold.view_id == TASK_VIEW_USAGE and self._view is not None:
-            self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(self._view))
+            self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(self._usage_body(self._view))
 
     def _restore_body_scroll(
         self,
@@ -1068,134 +1061,3 @@ type CloseDetail = Callable[[], Awaitable[None]]
 
 def _task_identity_text(identity: str) -> Text:
     return Text(identity, style=BOLD_PRIMARY)
-
-
-def _session_role_state(view: TaskDetailView, session: TaskSessionView) -> str:
-    if session.run_id is None:
-        return SESSION_STATE_USED
-    active_task = view.status in {Status.RUNNING.value, Status.INTEGRATING.value}
-    if (
-        active_task
-        and view.actual_stage is not None
-        and session.status == RunStatus.TAKEN_OVER.value
-        and session.role in view.ownership
-    ):
-        return SESSION_STATE_CURRENT
-    if (
-        session.status == RunStatus.LIVE.value
-        and session.role == view.acting_role
-        and active_task
-        and view.actual_stage is not None
-        and not view.holds
-        and view.wait_reason is None
-    ):
-        return SESSION_STATE_CURRENT
-    return SESSION_STATE_USED
-
-
-def _sessions_text(view: TaskDetailView) -> Group:
-    lines: list[RenderableType] = [Text(f"Task {view.task_id} · recorded usage", style="bold")]
-    if view.usage is None:
-        lines.append(Text("Task usage coverage unavailable", style="bold"))
-    else:
-        lines.append(ProjectUsageTotals(view.usage))
-    if not view.sessions:
-        lines.append(Text("No agent sessions are recorded."))
-    for session in view.sessions:
-        lines.append(AgentUsageRow(session, _session_role_state(view, session)).render())
-        lines.extend(_session_details(session))
-    if view.agent_usage:
-        lines.append(
-            Text("Agent totals · across recorded sessions, not model totals", style="bold")
-        )
-        lines.append(AgentUsageRows(view.agent_usage))
-    lines.extend(_quota_details(view.quota_observations, view.sessions))
-    return Group(*lines)
-
-
-def _session_details(session: TaskSessionView) -> list[RenderableType]:
-    context = _session_context_text(
-        session.context_used_pct,
-        session.status,
-        usage_reported=session.usage_reported,
-    )
-    lines: list[RenderableType] = [
-        Text("Session-wide cumulative totals · across models", style="bold"),
-        AgentUsageDetails(session).render(),
-        Text(f"Billing declaration · {session.billing_mode} · source {session.billing_source}"),
-        Text(f"Session ID · {session.session_id or NO_VALUE}"),
-        Text(context),
-    ]
-    if session.model_history:
-        lines.append(Text("Recorded model turn observations · not model totals", style="bold"))
-        lines.extend(_model_history_text(item) for item in session.model_history)
-    if session.history_gaps:
-        gaps = ", ".join(gap.value for gap in session.history_gaps)
-        lines.append(Text(f"Model history gaps · {gaps}", style="amber"))
-    return lines
-
-
-def _model_history_text(history: TaskModelHistoryView) -> Text:
-    turn = history.turn or NO_VALUE
-    effort = f" · effort {history.effort}" if history.effort else ""
-    identity = f"Turn {turn} · {history.agent}/{history.model}{effort} · {history.status}"
-    if not history.identity_complete:
-        identity += " · identity incomplete"
-    delta = history.usage_delta
-    if delta is None:
-        return Text(f"{identity} · no per-turn usage recorded")
-    usage = (
-        f"per-turn observation · input {delta.input_tokens:,} · output {delta.output_tokens:,} · "
-        f"cache read {delta.cache_read_tokens:,} · cache write {delta.cache_write_tokens:,}"
-    )
-    if delta.cost_usd is None:
-        cost = " · no per-turn monetary amount recorded"
-    elif delta.cost_basis == COST_BASIS_BILLED:
-        cost = f" · reported billed ${delta.cost_usd:{COST_VALUE_FORMAT}}"
-    elif delta.cost_basis == COST_BASIS_API_EQUIVALENT:
-        cost = f" · API-equivalent estimate ${delta.cost_usd:{COST_VALUE_FORMAT}}"
-    else:
-        cost = f" · amount ${delta.cost_usd:{COST_VALUE_FORMAT}} · cost basis unknown"
-    return Text(f"{identity} · {usage}{cost}")
-
-
-def _quota_details(
-    observations: tuple[AgentUsageView, ...],
-    sessions: tuple[TaskSessionView, ...],
-) -> list[RenderableType]:
-    quota_lines = [
-        Text(
-            f"Provider-reported quota · {item.agent} · {window.name} · "
-            f"{window.used_pct:g}% used · reset {window.resets_in} · "
-            f"observed {window.observed_ago}"
-            f"{' ago' if window.observed_ago != AGE_NOW else ''}"
-        )
-        for item in observations
-        for window in item.quotas
-    ]
-    if quota_lines:
-        return [
-            Text("Quota scope is agent-reported and may include other projects."),
-            *quota_lines,
-        ]
-    if sessions:
-        return [
-            Text("No provider quota/reset observations are recorded for these agent identities.")
-        ]
-    return []
-
-
-def _session_context_text(
-    context_used_pct: float | None,
-    status: str,
-    *,
-    usage_reported: bool | None,
-) -> str:
-    if usage_reported is False or context_used_pct is None:
-        return f"Context {NO_VALUE} · no reliable context provenance"
-    age_label = "last reported context"
-    if usage_reported is None:
-        age_label = "legacy last reported context"
-    if status == CLOSED_RUN_STATUS:
-        age_label = f"{age_label} for closed session"
-    return f"{age_label} · {context_used_pct:.0f}%"

@@ -233,6 +233,7 @@ forbidden_modules = [
   "shikiru.dashboard.session_history",
   "shikiru.dashboard.tick",
   "shikiru.dashboard.timeline_section",
+  "shikiru.dashboard.usage_body",
   "shikiru.dashboard.views",
   "shikiru.dashboard.wizard",
   "shikiru.domain",

@@ -445,7 +445,7 @@ def _cost_text(amount: float) -> str:
 def _home_token_text(usage: _RecordedUsage) -> Text:
     if not _known_token_sessions(usage):
         return Text("tokens unknown", style=SECONDARY_TEXT_COLOR)
-    total = _compact_count(usage.input_tokens + usage.output_tokens)
+    total = compact_count(usage.input_tokens + usage.output_tokens)
     return Text.assemble((total, _BOLD_STEEL), (" tokens", SECONDARY_TEXT_COLOR))
 
 
@@ -515,7 +515,7 @@ def _token_detail_groups(usage: _RecordedUsage) -> list[Text]:
 
 
 def _token_amount(label: str, count: int) -> Text:
-    return Text.assemble((f"{label} ", SECONDARY_TEXT_COLOR), (_compact_count(count), _BOLD_STEEL))
+    return Text.assemble((f"{label} ", SECONDARY_TEXT_COLOR), (compact_count(count), _BOLD_STEEL))
 
 
 def _coverage_groups(usage: _RecordedUsage) -> list[Text]:
@@ -561,7 +561,7 @@ def _counted(count: int, label: str) -> Text:
     return Text.assemble((str(count), _BOLD_PRIMARY), (f" {label}", SECONDARY_TEXT_COLOR))
 
 
-def _compact_count(count: int) -> str:
+def compact_count(count: int) -> str:
     if count >= COUNT_SHORT_MILLION:
         return f"{count / COUNT_SHORT_MILLION:.{COUNT_SHORT_PRECISION}f}M"
     if count >= COUNT_SHORT_SCALE:
@@ -980,7 +980,7 @@ class AgentUsageRow:
 def _session_token_summary(session: _TaskSession) -> str:
     if session.usage_reported is False:
         return "session tokens unknown"
-    total = _compact_count(session.input_tokens + session.output_tokens)
+    total = compact_count(session.input_tokens + session.output_tokens)
     if session.usage_reported is True:
         return f"session-wide {total} tok"
     if session.legacy_token_totals:
@@ -1063,7 +1063,7 @@ def _agent_token_groups(usage: _AgentUsageSummary) -> list[Text]:
         return [grey(USAGE_TOKENS_UNKNOWN)]
     groups = [
         Text.assemble(
-            (_compact_count(usage.input_tokens + usage.output_tokens), _BOLD_STEEL),
+            (compact_count(usage.input_tokens + usage.output_tokens), _BOLD_STEEL),
             (f" {USAGE_TOKENS_WORD}", SECONDARY_TEXT_COLOR),
         )
     ]

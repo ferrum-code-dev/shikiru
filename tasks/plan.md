@@ -1902,7 +1902,7 @@ Refs: `dashboard/timeline_section.py`, `section_rows.py`, `domain/timeline.py` (
 
 ### Task 207: Usage
 Refs: `detail.py` (`_sessions_text`, `_refresh_usage_observations`), `ui/compact.py` shared usage classes (do not change them for Home), `contract.py` `TaskSessionView`.
-- [ ] A task-local renderer draws the heading, the one-line-per-session aligned table, quota windows and the amber note; dropped items gone; Home usage widgets unchanged.
+- [x] A task-local renderer draws the heading, the one-line-per-session aligned table, quota windows and the amber note; dropped items gone; Home usage widgets unchanged. Proof: rendered the real `UsageBody` for a leader, two implementers (one old), a subscription helper that reported nothing and two quota windows at 100, 60, 48 and 40 columns in colour and `NO_COLOR`: one `Role Model Tokens Cost Ctx` line per session with a grey `old`, Model cut then dropped from 48 to 40, rose context past the threshold, quota lines ticking via the 1 Hz refresh and one amber `!` note. Old wording tests were converted to row assertions, collected cases 1677 before and 1678 after (one unit table for `usage_rows`). `poe check` green (1657 passed).
 
 ### Task 208: Verify the thirteenth review, reconcile the reference and docs
 Refs: Tasks 197–207; design 05/06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference.

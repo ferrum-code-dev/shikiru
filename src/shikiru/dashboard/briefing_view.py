@@ -565,7 +565,7 @@ def _escalation_text(view: TaskDetailView) -> Text | None:
     return grey(ESCALATION_NEAR.format(count=remaining, noun=noun))
 
 
-def _counted(count: int, noun: str) -> str:
+def counted(count: int, noun: str) -> str:
     return f"{count} {noun}{'' if count == 1 else 's'}"
 
 
@@ -573,10 +573,10 @@ def _commit_groups(results: TaskResults, *, compact: bool) -> tuple[Text, ...]:
     produced = results.produced
     if produced is None:
         count = len(results.commits) + results.more_commits
-        return (Text(_counted(count, "commit")),) if count else ()
+        return (Text(counted(count, "commit")),) if count else ()
     lines = Text(f"+{produced.insertions} {MINUS}{produced.deletions}")
-    files = () if compact else (Text(_counted(produced.files, "file")),)
-    return (Text(_counted(produced.commits, "commit")), *files, lines)
+    files = () if compact else (Text(counted(produced.files, "file")),)
+    return (Text(counted(produced.commits, "commit")), *files, lines)
 
 
 def tests_groups(tests: ReportedTests | None) -> tuple[Text, ...]:

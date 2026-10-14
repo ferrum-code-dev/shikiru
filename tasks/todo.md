@@ -321,5 +321,5 @@ Thirteenth-review scope and evidence: [thirteenth review](../docs/tui-feedback-t
 - [x] Task 204: Results and Decisions folds
 - [x] Task 205: Task description, Dependencies, Workspace, Settings; no project-wide folds
 - [x] Task 206: Events and Agent activity
-- [ ] Task 207: Usage
+- [x] Task 207: Usage
 - [ ] Task 208: Verify the thirteenth review, reconcile the reference and docs

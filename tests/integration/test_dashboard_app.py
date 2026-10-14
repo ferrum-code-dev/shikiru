@@ -4713,7 +4713,7 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
             await wait_until(
                 lambda: (
                     TASK_VIEW_USAGE in usage_panel.open_views
-                    and "recorded usage" in plain_text(sessions.content)
+                    and plain_text(sessions.content).strip() != ""
                 ),
                 timeout=UI_WAIT_SECONDS,
             )
