@@ -276,18 +276,16 @@ def test_submit_rung_overrides_for_leader_and_implementer_reach_the_db(
     assert task.overrides == {Role.LEADER: leader_rung, Role.IMPLEMENTER: implementer_rung}
 
 
-@pytest.mark.parametrize("status", [Status.DONE, Status.CANCELLED])
-def test_reaching_a_terminal_status_clears_the_wait_reason(
-    connection: Connection, status: Status
-) -> None:
+def test_reaching_a_terminal_status_clears_the_wait_reason(connection: Connection) -> None:
     clock = FakeClock(START)
     store = TaskStore(connection, clock)
-    task = _submit(connection, clock, "t")
-    store.set_wait_reason(task.id, WaitReason.DEPENDENCY)
+    for status in (Status.DONE, Status.CANCELLED):
+        task = _submit(connection, clock, status.value)
+        store.set_wait_reason(task.id, WaitReason.DEPENDENCY)
 
-    store.apply_transition(task.id, Transition.stay(task, step=None, status=status))
+        store.apply_transition(task.id, Transition.stay(task, step=None, status=status))
 
-    assert store.require(task.id).wait_reason is None
+        assert store.require(task.id).wait_reason is None, status
 
 
 def test_scheduling_fields_round_trip(connection: Connection) -> None:

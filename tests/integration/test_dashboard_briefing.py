@@ -74,6 +74,8 @@ NOW_WORD = re.compile(r"\bw\d{3}\b")
 START = datetime(2026, 1, 1, tzinfo=UTC)
 WIDE_SIZE = (100, 40)
 COMPACT_SIZE = (40, 40)
+TINY_SIZE = (40, 8)
+BRIEFING_SIZES = (WIDE_SIZE, (60, 40), (48, 40), COMPACT_SIZE, TINY_SIZE)
 BUTTON_LINE_PAD = 1
 BRANCH = "task/t-12"
 QUESTION = "Which failures should the parser retry?"
@@ -489,26 +491,28 @@ async def test_briefing_shows_only_the_rows_the_task_has_data_for(
                 assert never not in text, (name, never)
 
 
-@pytest.mark.parametrize("size", [(100, 40), (60, 40), (48, 40), (40, 40), (40, 8)])
 async def test_every_briefing_stays_inside_its_width(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
-    size: tuple[int, int],
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     tasks = {name: case.seed(connection, clock, project_root) for name, case in CASES.items()}
-    app = _app(reader, project_root, clock)
-    async with app.run_test(size=size):
-        briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
-        identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-        for name in CASES:
-            task = tasks[name]
-            app.query_one("#queue", QueuePanel).select_task(task.id)
-            await wait_until(lambda task=task: _is_loaded(identity, task), timeout=UI_WAIT_SECONDS)
-            lines = rendered_lines(briefing.content, width=briefing.size.width)
-            assert all(len(line) <= briefing.size.width for line in lines), name
+    for size in BRIEFING_SIZES:
+        app = _app(reader, project_root, clock)
+        async with app.run_test(size=size):
+            briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
+            identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            for name in CASES:
+                task = tasks[name]
+                app.query_one("#queue", QueuePanel).select_task(task.id)
+                await wait_until(
+                    lambda task=task, identity=identity: _is_loaded(identity, task),
+                    timeout=UI_WAIT_SECONDS,
+                )
+                lines = rendered_lines(briefing.content, width=briefing.size.width)
+                assert all(len(line) <= briefing.size.width for line in lines), (size, name)
 
 
 @pytest.mark.parametrize(
@@ -542,24 +546,24 @@ async def test_a_long_last_message_wraps_within_the_width_up_to_the_configured_l
         assert briefing.region.bottom <= app.screen.size.height
 
 
-@pytest.mark.parametrize("size", [COMPACT_SIZE, (40, 40), (40, 8)])
 async def test_every_offered_verb_stays_inside_the_actions_row_at_compact_width(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
-    size: tuple[int, int],
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = _seed_running(connection, clock, project_root)
-    app = _app(reader, project_root, clock, focus_task=task.id)
-    async with app.run_test(size=size):
-        await wait_until(
-            lambda: _shown_verbs(app) == CASES["running"].verbs, timeout=UI_WAIT_SECONDS
-        )
-        row = app.query_one(f"#{TASK_DETAIL_ACTIONS}").region
-        details = app.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}").region
-        for button in app.query(f"#{TASK_DETAIL_VERBS} Button"):
-            if button.display:
-                assert row.contains_region(button.region), button.id
-                assert button.region.right - BUTTON_LINE_PAD <= details.x, button.id
+    for size in (COMPACT_SIZE, TINY_SIZE):
+        app = _app(reader, project_root, clock, focus_task=task.id)
+        async with app.run_test(size=size):
+            await wait_until(
+                lambda app=app: _shown_verbs(app) == CASES["running"].verbs,
+                timeout=UI_WAIT_SECONDS,
+            )
+            row = app.query_one(f"#{TASK_DETAIL_ACTIONS}").region
+            details = app.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}").region
+            for button in app.query(f"#{TASK_DETAIL_VERBS} Button"):
+                if button.display:
+                    assert row.contains_region(button.region), (size, button.id)
+                    assert button.region.right - BUTTON_LINE_PAD <= details.x, (size, button.id)

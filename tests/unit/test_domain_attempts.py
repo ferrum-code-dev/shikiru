@@ -3,8 +3,6 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-import pytest
-
 from shikiru.domain.attempts import (
     AttemptItem,
     AttemptKind,
@@ -167,26 +165,26 @@ def test_the_packet_lines_rebuild_the_same_rows() -> None:
     assert parse_attempt_lines(attempt_lines(items)) == items
 
 
-@pytest.mark.parametrize(
-    ("packet", "kinds"),
-    [
-        pytest.param("One implementation round.", [AttemptKind.REASON], id="canned-sentence"),
-        pytest.param(
+PACKET_ROWS: list[tuple[str, str, list[AttemptKind]]] = [
+    ("canned-sentence", "One implementation round.", [AttemptKind.REASON]),
+    (
+        "digest-with-hyphen-minus",
+        (
             "Stuck: it looped.\nRounds: implement \N{MULTIPLICATION SIGN}2\n"
-            "Leader verdict: accept\nProduced: 1 commit, 1 file, +3 -1\n+2 earlier",
-            [
-                AttemptKind.REASON,
-                AttemptKind.ROUNDS,
-                AttemptKind.VERDICT,
-                AttemptKind.PRODUCED,
-                AttemptKind.EARLIER,
-            ],
-            id="digest-with-hyphen-minus",
+            "Leader verdict: accept\nProduced: 1 commit, 1 file, +3 -1\n+2 earlier"
         ),
-        pytest.param(" \n", [], id="blank"),
-    ],
-)
-def test_parsing_a_packet_text_yields_rows_of_each_kind(
-    packet: str, kinds: list[AttemptKind]
-) -> None:
-    assert [item.kind for item in parse_attempt_lines(packet)] == kinds
+        [
+            AttemptKind.REASON,
+            AttemptKind.ROUNDS,
+            AttemptKind.VERDICT,
+            AttemptKind.PRODUCED,
+            AttemptKind.EARLIER,
+        ],
+    ),
+    ("blank", " \n", []),
+]
+
+
+def test_parsing_a_packet_text_yields_rows_of_each_kind() -> None:
+    for name, packet, kinds in PACKET_ROWS:
+        assert [item.kind for item in parse_attempt_lines(packet)] == kinds, name

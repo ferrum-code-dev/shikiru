@@ -145,29 +145,40 @@ def _focused_stop(pilot: Pilot[None]) -> str | None:
     return parent.view_id if isinstance(parent, DetailFold) else None
 
 
-@pytest.mark.parametrize("case", KEY_CASES, ids=lambda case: "+".join(case.keys))
 async def test_header_keys_move_between_folds_and_open_or_close_them(
-    connection: Connection, database: Database, tmp_path: Path, case: _KeyCase
+    connection: Connection, database: Database, tmp_path: Path
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task_id, _ = _seed(connection, project_root, clock, "Fold keys")
     reader = StateReader(database, SystemClock())
-    panel = TaskDetailPanel(widget_context(reader, project_root, clock), task_id, fixed=True)
     try:
-        async with WidgetHostApp(panel).run_test(size=(100, 40)) as pilot:
-            await wait_until(
-                lambda: (
-                    task_id
-                    in plain_text(panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
-                ),
-                timeout=UI_WAIT_SECONDS,
+        for case in KEY_CASES:
+            panel = TaskDetailPanel(
+                widget_context(reader, project_root, clock), task_id, fixed=True
             )
-            panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).press()
-            await wait_until(lambda: _focused_stop(pilot) == FIRST_FOLD, timeout=UI_WAIT_SECONDS)
-            await pilot.press(*case.keys)
-            await wait_until(lambda: _focused_stop(pilot) == case.focused, timeout=UI_WAIT_SECONDS)
-            await wait_until(lambda: panel.open_views == case.open_views, timeout=UI_WAIT_SECONDS)
+            async with WidgetHostApp(panel).run_test(size=(100, 40)) as pilot:
+                await wait_until(
+                    lambda panel=panel: (
+                        task_id
+                        in plain_text(panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
+                    ),
+                    timeout=UI_WAIT_SECONDS,
+                )
+                panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).press()
+                await wait_until(
+                    lambda pilot=pilot: _focused_stop(pilot) == FIRST_FOLD,
+                    timeout=UI_WAIT_SECONDS,
+                )
+                await pilot.press(*case.keys)
+                await wait_until(
+                    lambda pilot=pilot, case=case: _focused_stop(pilot) == case.focused,
+                    timeout=UI_WAIT_SECONDS,
+                )
+                await wait_until(
+                    lambda panel=panel, case=case: panel.open_views == case.open_views,
+                    timeout=UI_WAIT_SECONDS,
+                )
     finally:
         reader.close()
 

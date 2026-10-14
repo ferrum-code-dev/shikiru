@@ -161,49 +161,43 @@ async def test_dependencies_align_colour_a_cancelled_blocker_and_open_on_enter(
         reader.close()
 
 
-@pytest.mark.parametrize(
-    ("status", "tools_shown"),
-    [(Status.RUNNING, True), (Status.DONE, False)],
-)
 async def test_workspace_tools_show_only_for_live_tasks_and_tables_repeat_no_title(
     connection: Connection,
     database: Database,
     tmp_path: Path,
-    status: Status,
-    tools_shown: bool,
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Workspace target", priority=3)
-    TaskStore(connection, clock).apply_transition(
-        task.id, Transition.stay(task, step=None, status=status)
-    )
     reader = StateReader(database, SystemClock())
-    panel = TaskDetailPanel(
-        widget_context(reader, project_root, clock),
-        task.id,
-        fixed=True,
-        initial_view=TASK_VIEW_WORKSPACE,
-    )
     try:
-        async with WidgetHostApp(panel).run_test(size=(PANEL_WIDTH, 40)):
-            await _loaded(panel, task.id)
-            tools = panel.query_one(f"#{TASK_DETAIL_WORKSPACE_TOOLS}")
-            await wait_until(
-                lambda: (
-                    tools.display is tools_shown
-                    and bool(_body_lines(panel, "task-detail-workspace"))
-                ),
-                timeout=UI_WAIT_SECONDS,
+        for status, tools_shown in ((Status.RUNNING, True), (Status.DONE, False)):
+            task = seed_task(connection, clock, title="Workspace target", priority=3)
+            TaskStore(connection, clock).apply_transition(
+                task.id, Transition.stay(task, step=None, status=status)
             )
-            await wait_until(
-                lambda: bool(_body_lines(panel, "task-detail-context-info")),
-                timeout=UI_WAIT_SECONDS,
+            panel = TaskDetailPanel(
+                widget_context(reader, project_root, clock),
+                task.id,
+                fixed=True,
+                initial_view=TASK_VIEW_WORKSPACE,
             )
-            workspace = _body_lines(panel, "task-detail-workspace")
-            settings = _body_lines(panel, "task-detail-context-info")
-            assert workspace[0].startswith("Path")
-            assert settings[0].startswith("Submitted")
-            assert any(line.startswith("Priority") and line.endswith("3") for line in settings)
+            async with WidgetHostApp(panel).run_test(size=(PANEL_WIDTH, 40)):
+                await _loaded(panel, task.id)
+                tools = panel.query_one(f"#{TASK_DETAIL_WORKSPACE_TOOLS}")
+                await wait_until(
+                    lambda tools=tools, shown=tools_shown, panel=panel: (
+                        tools.display is shown and bool(_body_lines(panel, "task-detail-workspace"))
+                    ),
+                    timeout=UI_WAIT_SECONDS,
+                )
+                await wait_until(
+                    lambda panel=panel: bool(_body_lines(panel, "task-detail-context-info")),
+                    timeout=UI_WAIT_SECONDS,
+                )
+                workspace = _body_lines(panel, "task-detail-workspace")
+                settings = _body_lines(panel, "task-detail-context-info")
+                assert workspace[0].startswith("Path"), status
+                assert settings[0].startswith("Submitted"), status
+                assert any(line.startswith("Priority") and line.endswith("3") for line in settings)
     finally:
         reader.close()
