@@ -14,11 +14,7 @@ from shikiru.dashboard.contract import ResourceView, TaskBrowserFilter, TaskTime
 from shikiru.dashboard.detail import (
     TASK_DETAIL_FEEDBACK,
     TASK_DETAIL_IDENTITY,
-    TASK_DETAIL_MORE_RELATIONSHIPS,
-    TASK_DETAIL_OPEN_RELATED,
-    TASK_DETAIL_PREVIOUS_RELATIONSHIPS,
-    TASK_DETAIL_RELATED_TASK,
-    TASK_DETAIL_RELATIONSHIP_PAGE,
+    TASK_DETAIL_RELATED_LIST,
     TASK_DETAIL_RELATIONSHIPS,
     TASK_DETAIL_TIMELINE_CATEGORY,
     TASK_DETAIL_TIMELINE_ROLE,
@@ -29,6 +25,7 @@ from shikiru.dashboard.detail import (
     TASK_VIEW_WORKSPACE,
     TaskDetailPanel,
 )
+from shikiru.dashboard.row_list import RowList
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import NewTask, Verdict
 from shikiru.domain.scheduling import WaitReason
@@ -47,9 +44,11 @@ from tests.support.dashboard import (
     WidgetHostApp,
     choose_details_entry,
     ignore_palette_action,
+    list_rows,
     state_views,
     widget_context,
 )
+from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
@@ -324,6 +323,23 @@ async def _open_relationships(panel: TaskDetailPanel, pilot: Pilot[None]) -> Tas
     return await _open_detail_view(panel, pilot, TASK_VIEW_RELATIONSHIPS)
 
 
+def _related_rows(panel: TaskDetailPanel) -> list[str]:
+    return list_rows(panel, TASK_DETAIL_RELATED_LIST)
+
+
+async def _select_related_row(panel: TaskDetailPanel, pilot: Pilot[None], task_id: str) -> None:
+    related = panel.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList)
+    related.focus()
+    await wait_until(
+        lambda: any(task_id in row for row in _related_rows(panel)), timeout=UI_WAIT_SECONDS
+    )
+    for _ in range(len(_related_rows(panel))):
+        if task_id in _related_rows(panel)[related.selected]:
+            return
+        await pilot.press("down")
+    assert task_id in _related_rows(panel)[related.selected]
+
+
 async def _open_related_task(
     app: DashboardApp,
     pilot: Pilot[None],
@@ -332,12 +348,8 @@ async def _open_related_task(
     panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
     if panel.active_view != TASK_VIEW_RELATIONSHIPS:
         panel = await _open_relationships(panel, pilot)
-    related_select = cast(
-        "Select[str]",
-        panel.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select),
-    )
-    related_select.value = task_id
-    await pilot.click(f"#{TASK_DETAIL_OPEN_RELATED}")
+    await _select_related_row(panel, pilot, task_id)
+    await pilot.press("enter")
     await wait_until(
         lambda: task_id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
         timeout=5.0,
@@ -376,11 +388,10 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
         await pilot.press("enter", "down")
         await wait_until(lambda: first.id in _static_text(identity), timeout=5.0)
         panel = await _open_relationships(panel, pilot)
-        related = cast(
-            "Select[str]",
-            panel.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select),
+        await wait_until(
+            lambda: any(dependency.id in row for row in _related_rows(panel)),
+            timeout=UI_WAIT_SECONDS,
         )
-        related.value = dependency.id
         panel.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select).value = Role.LEADER.value
         panel.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input).value = "older turn"
         panel.query_one(
@@ -412,11 +423,7 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
         )
 
         panel = home_panel
-        related = cast("Select[str]", panel.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select))
-        assert related.value is Select.BLANK
-        assert dependency.title not in _static_text(
-            panel.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static)
-        )
+        assert not any(dependency.title in row for row in _related_rows(panel))
         timeline_role = cast(
             "Select[str]", panel.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select)
         )
@@ -442,42 +449,18 @@ async def _exercise_paged_relationship_navigation(
         panel = await _open_relationships(
             app.screen.query_one("#task-detail-panel", TaskDetailPanel), pilot
         )
-        more_button = app.screen.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button)
-        assert not more_button.disabled
-        more_button.focus()
-        await pilot.wait_for_scheduled_animations()
+        await _select_related_row(panel, pilot, tasks.dependencies[0].id)
+        await pilot.press("pagedown")
         await wait_until(
-            lambda: (
-                more_button.region.width > 0
-                and more_button.region.height > 0
-                and more_button.region.x >= 0
-                and more_button.region.right <= app.size.width
-                and more_button.region.y >= 0
-                and more_button.region.bottom <= app.size.height
-            ),
+            lambda: any(tasks.replacements[-1].id in row for row in _related_rows(panel)),
             timeout=UI_WAIT_SECONDS,
         )
-        await pilot.pause()
-        await pilot.click(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}")
-        await wait_until(
-            lambda: (
-                "Page 2"
-                in _static_text(app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static))
-            ),
-            timeout=UI_WAIT_SECONDS,
-        )
-        panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
-        previous = panel.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button)
-        await wait_until(lambda: app.focused is previous, timeout=UI_WAIT_SECONDS)
         assert tasks.superseded.id in _static_text(
             panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         )
-        assert tasks.replacements[-1].id in _static_text(
-            app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static)
+        assert "page 2" in plain_text(
+            panel.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).content
         )
-        more = panel.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button)
-        assert not previous.disabled
-        assert more.disabled
         await _open_related_task(app, pilot, tasks.replacements[-1].id)
         await pilot.press("escape")
         await wait_until(
@@ -488,29 +471,14 @@ async def _exercise_paged_relationship_navigation(
             timeout=5.0,
         )
         panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
-        related_select = cast(
-            "Select[str]",
-            panel.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select),
-        )
-        assert related_select.value == tasks.replacements[-1].id
-        await pilot.click(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}")
+        related = panel.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList)
+        assert tasks.replacements[-1].id in _related_rows(panel)[related.selected]
+        await pilot.press("pageup")
         await wait_until(
-            lambda: (
-                "Page 1"
-                in _static_text(panel.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static))
-            ),
+            lambda: any(tasks.dependencies[0].id in row for row in _related_rows(panel)),
             timeout=5.0,
         )
-        page_text = _static_text(panel.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static))
-        assert tasks.dependencies[0].id in page_text
-        assert tasks.dependencies[-1].id not in page_text
-        assert related_select.value == tasks.replacements[-1].id
-        assert panel.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button).disabled
-        assert not panel.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button).disabled
-        await wait_until(
-            lambda: app.focused is panel.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button),
-            timeout=UI_WAIT_SECONDS,
-        )
+        assert not any(tasks.replacements[-1].id in row for row in _related_rows(panel))
         detail_screen = app.screen
         await pilot.press("escape")
         await wait_until(lambda: app.screen is not detail_screen, timeout=5.0)
@@ -578,15 +546,17 @@ async def test_child_search_shows_parent_context_and_expands_the_family_group(
             ),
             timeout=5.0,
         )
-        relationships = detail_panel.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static)
-        assert not relationships.display
+        related_list = detail_panel.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList)
+        assert not related_list.display
         await _open_relationships(detail_panel, pilot)
-        await wait_until(lambda: relationships.display, timeout=5.0)
-        assert relationships.display
-        assert parent.id in _static_text(relationships)
-        assert nested.id in _static_text(relationships)
-        assert children[0].id in _static_text(relationships)
-        assert children[1].id in _static_text(relationships)
+        await wait_until(lambda: related_list.display, timeout=5.0)
+        await wait_until(
+            lambda: all(
+                any(task.id in row for row in _related_rows(detail_panel))
+                for task in (parent, children[0], children[1])
+            ),
+            timeout=UI_WAIT_SECONDS,
+        )
 
 
 async def test_nested_family_navigation_returns_through_each_detail_to_the_selected_root(
@@ -615,8 +585,8 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
 
         root_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
         root_panel = await _open_relationships(root_panel, pilot)
-        root_panel.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select).value = nested.id
-        await pilot.click(f"#{TASK_DETAIL_OPEN_RELATED}")
+        await _select_related_row(root_panel, pilot, nested.id)
+        await pilot.press("enter")
         await wait_until(
             lambda: (
                 nested.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
@@ -626,8 +596,8 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
 
         nested_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
         nested_panel = await _open_relationships(nested_panel, pilot)
-        nested_panel.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select).value = children[0].id
-        await pilot.click(f"#{TASK_DETAIL_OPEN_RELATED}")
+        await _select_related_row(nested_panel, pilot, children[0].id)
+        await pilot.press("enter")
         await wait_until(
             lambda: (
                 children[0].id
@@ -773,12 +743,8 @@ async def test_blocked_dependency_navigation_returns_to_the_original_browser_sel
             dependent_detail.query_one("#task-detail-panel", TaskDetailPanel),
             pilot,
         )
-        related = cast(
-            "Select[str]",
-            dependent_panel.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select),
-        )
-        related.value = dependency.id
-        await pilot.click(f"#{TASK_DETAIL_OPEN_RELATED}")
+        await _select_related_row(dependent_panel, pilot, dependency.id)
+        await pilot.press("enter")
         await wait_until(
             lambda: (
                 dependency.id

@@ -20,9 +20,12 @@ if TYPE_CHECKING:
 
     from shikiru.dashboard.contract import TaskDetailView
 
-DETAILS_HINT = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW} select · Enter open"
-_SELECTED_BAR = "\N{LEFT HALF BLOCK} "
-_BAR_BLANK = "  "
+_ARROWS = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW}"
+DETAILS_HINT = f"{_ARROWS} select · Enter open"
+EVENTS_HINT = f"{_ARROWS} select · PgUp/PgDn page · End follow"
+RELATIONSHIPS_HINT = f"{_ARROWS} select · Enter open · PgUp/PgDn page"
+SELECTED_BAR = "\N{LEFT HALF BLOCK} "
+BAR_BLANK = "  "
 _HEADLINE_GAP = "  "
 _VERDICT_WORD = "verdict"
 _REPORT_WORD = "report"
@@ -68,13 +71,13 @@ class _EntryLine:
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         del console
         entry = self.entry
-        room = max(options.max_width - len(_BAR_BLANK), 1)
+        room = max(options.max_width - len(BAR_BLANK), 1)
         headline = f"{_HEADLINE_GAP}{entry.headline}" if entry.headline else ""
         if cell_len(entry.name) + cell_len(headline) > room:
             headline = ""
         name = Text(entry.name, style=BOLD_PRIMARY if self.selected else PRIMARY_TEXT_COLOR)
         name.truncate(room - cell_len(headline), overflow="ellipsis", pad=True)
-        line = Text(_SELECTED_BAR if self.selected else _BAR_BLANK, style=STEEL_BLUE)
+        line = Text(SELECTED_BAR if self.selected else BAR_BLANK, style=STEEL_BLUE)
         line.append_text(name)
         line.append_text(grey(headline))
         yield line

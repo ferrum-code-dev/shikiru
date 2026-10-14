@@ -1772,7 +1772,8 @@ Refs: spec "Details list"; `TaskDetailViewsScreen`, the view switch in `detail.p
 
 ### Task 183: Arrow lists for events, agent activity and relationships
 Refs: spec "Details list" paragraph; the timeline code in `detail.py`, `ui` list helpers, the command-history popup as the interaction precedent.
-- [ ] Events and Agent activity are lists with ↑↓, PgUp/PgDn, End = follow (scroll-up pauses following) and the existing category/role/turn filters; relationships open the related task on Enter; `p`/`n`, the entry dropdown, the Related-task Select and the Follow button are removed.
+- [x] Events and Agent activity are lists with ↑↓, PgUp/PgDn, End = follow (scroll-up pauses following) and the existing category/role/turn filters; relationships open the related task on Enter; `p`/`n`, the entry dropdown, the Related-task Select and the Follow button are removed.
+  - Proof: `dashboard/row_list.py` (one focusable `RowList`) and `section_rows.py` (pure row data) back Events, Agent activity and Relationships; filters apply on change and the old paging, in-flight and follow rules are kept, with the buttons, entry Select, `p`/`n` and the raw signal dump removed. Native text and style dumps at 100x40, 48, 40 and a 30x10 pane show the selection bar, hint, `following`/`paused` heading, paging, End following a new entry, a role filter and Enter opening a related task, in colour and with `NO_COLOR`. Existing timeline, relationship and paging tests were converted to the keys (collected cases 1,601, level); `uv run poe check` is green.
 
 ### Task 184: Remove the old detail code and tests
 Refs: `detail.py` (old summary, Views screen, paging, dropdowns), `test_dashboard_task_detail.py`, `test_task_timeline.py`, `test_task_family_and_blockers.py`, `test_dashboard_app.py` detail tests.

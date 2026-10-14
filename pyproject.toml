@@ -224,6 +224,8 @@ forbidden_modules = [
   "shikiru.dashboard.palette",
   "shikiru.dashboard.resolution",
   "shikiru.dashboard.resolution_view",
+  "shikiru.dashboard.row_list",
+  "shikiru.dashboard.section_rows",
   "shikiru.dashboard.services",
   "shikiru.dashboard.session_picker",
   "shikiru.dashboard.session_history",

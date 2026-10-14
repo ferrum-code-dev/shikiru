@@ -585,7 +585,7 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
                 "v: choose reports, request, evidence, relationships, workspace or plugins",
                 "u: open task usage details",
                 "Ctrl+P: open applicable operator actions for this task",
-                "Evidence and relationships: p previous · n next",
+                "Events and relationships: Up/Down select · PgUp/PgDn page · End follows",
                 "Mouse: Views offers task sections, Actions and Help",
                 "Navigation to task and role windows is under Workspace and existing role targets",
                 "Command applied means queued/applied by the engine;",

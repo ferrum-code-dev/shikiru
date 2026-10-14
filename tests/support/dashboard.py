@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from textual.app import App, ComposeResult
-from textual.widgets import Label, ListItem, ListView
+from textual.widgets import Label, ListItem, ListView, Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.activity import RoleViewTail
@@ -29,6 +29,7 @@ from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from textual.dom import DOMNode
     from textual.pilot import Pilot
     from textual.widget import Widget
 
@@ -146,6 +147,13 @@ async def pick_details_entry(pilot: Pilot[None], entry_id: str) -> None:
     assert menu.selected_id == entry_id
     await pilot.press("enter")
     await wait_until(lambda: pilot.app.screen is not menu, timeout=UI_WAIT_SECONDS)
+
+
+def list_rows(root: DOMNode, list_id: str) -> list[str]:
+    """Return the plain text of every row shown in the row list `list_id` under `root`."""
+    return [
+        plain_text(row.content) for row in root.query(f"#{list_id} .row-list-row").results(Static)
+    ]
 
 
 def state_views(

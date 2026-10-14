@@ -62,26 +62,21 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_CRITERIA,
     TASK_DETAIL_DETAILS_BUTTON,
-    TASK_DETAIL_EVIDENCE,
     TASK_DETAIL_FACTS,
     TASK_DETAIL_IDENTITY,
-    TASK_DETAIL_MORE_RELATIONSHIPS,
-    TASK_DETAIL_NEXT_PAGE_KEY,
     TASK_DETAIL_OWNERSHIP,
-    TASK_DETAIL_PREVIOUS_PAGE_KEY,
-    TASK_DETAIL_PREVIOUS_RELATIONSHIPS,
-    TASK_DETAIL_RELATIONSHIP_PAGE,
+    TASK_DETAIL_RELATED_LIST,
+    TASK_DETAIL_RELATIONSHIPS,
     TASK_DETAIL_REPORT,
     TASK_DETAIL_REQUEST,
     TASK_DETAIL_SESSIONS,
-    TASK_DETAIL_TIMELINE_NEWER,
-    TASK_DETAIL_TIMELINE_OLDER,
+    TASK_DETAIL_TIMELINE_LIST,
+    TASK_DETAIL_TIMELINE_TITLE,
     TASK_DETAIL_VERDICT,
     TASK_DETAIL_WORKSPACE,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_RELATIONSHIPS,
     TASK_VIEW_USAGE,
-    TaskDetailBody,
     TaskDetailPanel,
     TaskDetailScreen,
 )
@@ -125,6 +120,7 @@ from tests.support.dashboard import (
     StubServices,
     choose_details_entry,
     ignore_palette_action,
+    list_rows,
     pick_details_entry,
     state_views,
 )
@@ -276,7 +272,6 @@ _TASK_DETAIL_SECTION_IDS = (
     TASK_DETAIL_CRITERIA,
     TASK_DETAIL_REPORT,
     TASK_DETAIL_VERDICT,
-    TASK_DETAIL_EVIDENCE,
     TASK_DETAIL_FACTS,
     TASK_DETAIL_WORKSPACE,
     TASK_DETAIL_SESSIONS,
@@ -2974,95 +2969,63 @@ async def _assert_initial_history_live_restoration(
     _assert_command_history_title_visible(screen, frame)
 
 
-async def _assert_task_timeline_page_shortcuts(app: DashboardApp, pilot: Pilot[None]) -> None:
-    timeline_category = cast(
-        "Select[str]", app.screen.query_one("#task-detail-timeline-category", Select)
-    )
-    timeline_category.value = TaskTimelineCategory.ALL.value
-    timeline_status = app.screen.query_one("#task-detail-timeline-status", Static)
-    timeline_body = app.screen.query_one("#task-detail-body", TaskDetailBody)
-    previous = app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_NEWER}", Button)
-    next_page = app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_OLDER}", Button)
-    await wait_until(lambda: not next_page.disabled, timeout=UI_WAIT_SECONDS)
-    assert previous.disabled
-    assert "Recorded page route evidence 1" in _rendered_text(
-        app.screen.query_one("#task-detail-timeline-selected", Static)
-    )
-    timeline_body.focus()
-    await pilot.press("p")
-    assert "Following latest" in _rendered_text(timeline_status)
-    await pilot.press("n")
+async def _assert_list_paging(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    list_id: str,
+    heading: Callable[[], str],
+    *,
+    first: str,
+    paused: str,
+    resumed: str,
+) -> None:
+    list_widget = app.screen.query_one(f"#{list_id}")
+    list_widget.focus()
     await wait_until(
-        lambda: "Follow paused while viewing older evidence" in _rendered_text(timeline_status),
-        timeout=UI_WAIT_SECONDS,
+        lambda: first in " ".join(list_rows(app.screen, list_id)), timeout=UI_WAIT_SECONDS
     )
-    assert next_page.disabled
-    assert not previous.disabled
-    await pilot.press("n")
-    assert "Follow paused while viewing older evidence" in _rendered_text(timeline_status)
-    await pilot.press("p")
-    await wait_until(
-        lambda: "Following latest" in _rendered_text(timeline_status), timeout=UI_WAIT_SECONDS
-    )
-    assert previous.disabled
-    await pilot.click(next_page)
-    await wait_until(
-        lambda: "Follow paused while viewing older evidence" in _rendered_text(timeline_status),
-        timeout=UI_WAIT_SECONDS,
-    )
-    await pilot.click(previous)
-    await wait_until(
-        lambda: "Following latest" in _rendered_text(timeline_status), timeout=UI_WAIT_SECONDS
-    )
-    timeline_turn = app.screen.query_one("#task-detail-timeline-turn", Input)
-    status_before_editing = _rendered_text(timeline_status)
-    previous_disabled_before_editing = previous.disabled
-    next_disabled_before_editing = next_page.disabled
-    timeline_turn.value = "3"
-    timeline_turn.focus()
-    await pilot.press("right", TASK_DETAIL_PREVIOUS_PAGE_KEY, TASK_DETAIL_NEXT_PAGE_KEY)
-    await wait_until(lambda: timeline_turn.value == "3pn", timeout=UI_WAIT_SECONDS)
-    await pilot.wait_for_scheduled_animations()
-    assert _rendered_text(timeline_status) == status_before_editing
-    assert previous.disabled is previous_disabled_before_editing
-    assert next_page.disabled is next_disabled_before_editing
-    timeline_body.focus()
+    await pilot.press("pageup")
+    assert resumed in heading()
+    await pilot.press("pagedown")
+    await wait_until(lambda: paused in heading(), timeout=UI_WAIT_SECONDS)
+    assert first not in " ".join(list_rows(app.screen, list_id))
+    await pilot.press("pagedown")
+    assert paused in heading()
+    await pilot.press("pageup")
+    await wait_until(lambda: resumed in heading(), timeout=UI_WAIT_SECONDS)
+    assert first in " ".join(list_rows(app.screen, list_id))
 
 
-async def _assert_task_relationship_page_shortcuts(app: DashboardApp, pilot: Pilot[None]) -> None:
-    page = app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static)
-    body = app.screen.query_one("#task-detail-body", TaskDetailBody)
-    previous = app.screen.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button)
-    next_page = app.screen.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button)
-    await wait_until(
-        lambda: "Page 1" in _rendered_text(page) and not next_page.disabled,
-        timeout=UI_WAIT_SECONDS,
+async def _assert_task_timeline_page_keys(app: DashboardApp, pilot: Pilot[None]) -> None:
+    app.screen.query_one(
+        "#task-detail-timeline-category", Select
+    ).value = TaskTimelineCategory.ALL.value
+    title = app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_TITLE}", Static)
+    await _assert_list_paging(
+        app,
+        pilot,
+        TASK_DETAIL_TIMELINE_LIST,
+        lambda: plain_text(title.content),
+        first="Recorded page route evidence 1",
+        paused="paused",
+        resumed="following",
     )
-    assert previous.disabled
-    body.focus()
-    await pilot.press("p")
-    assert "Page 1" in _rendered_text(page)
-    await pilot.press("n")
-    await wait_until(lambda: "Page 2" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
-    assert next_page.disabled
-    assert not previous.disabled
-    await pilot.press("n")
-    assert "Page 2" in _rendered_text(page)
-    await pilot.press("p")
-    await wait_until(lambda: "Page 1" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
-    body.scroll_to_widget(next_page, animate=False)
-    await wait_until(lambda: body.can_view_entire(next_page), timeout=UI_WAIT_SECONDS)
-    await pilot.pause()
-    await pilot.click(next_page)
-    await wait_until(lambda: "Page 2" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
-    body.scroll_to_widget(previous, animate=False)
-    await wait_until(lambda: body.can_view_entire(previous), timeout=UI_WAIT_SECONDS)
-    await pilot.pause()
-    await pilot.click(previous)
-    await wait_until(lambda: "Page 1" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
 
 
-async def test_task_detail_page_shortcuts_match_page_buttons_and_stop_at_boundaries(
+async def _assert_task_relationship_page_keys(app: DashboardApp, pilot: Pilot[None]) -> None:
+    heading = app.screen.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static)
+    await _assert_list_paging(
+        app,
+        pilot,
+        TASK_DETAIL_RELATED_LIST,
+        lambda: plain_text(heading.content),
+        first="Page route dependent 0",
+        paused="page 2",
+        resumed="page 1",
+    )
+
+
+async def test_task_detail_lists_page_with_page_keys_and_stop_at_boundaries(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -3105,12 +3068,12 @@ async def test_task_detail_page_shortcuts_match_page_buttons_and_stop_at_boundar
             await wait_until(
                 lambda: panel.active_view == TASK_VIEW_EVIDENCE, timeout=UI_WAIT_SECONDS
             )
-            await _assert_task_timeline_page_shortcuts(app, pilot)
+            await _assert_task_timeline_page_keys(app, pilot)
             await choose_details_entry(pilot, TASK_VIEW_RELATIONSHIPS)
             await wait_until(
                 lambda: panel.active_view == TASK_VIEW_RELATIONSHIPS, timeout=UI_WAIT_SECONDS
             )
-            await _assert_task_relationship_page_shortcuts(app, pilot)
+            await _assert_task_relationship_page_keys(app, pilot)
     finally:
         reader.close()
 
@@ -4710,11 +4673,6 @@ async def _assert_evidence_editor_shortcut_precedence(
     role_select.focus()
     await pilot.press("enter")
     await wait_until(lambda: role_select.expanded, timeout=UI_WAIT_SECONDS)
-    await pilot.press("p")
-    assert role_select.expanded
-    assert role_select.value == Select.BLANK
-    await pilot.press("n")
-    assert role_select.expanded
     await pilot.press("escape")
     await wait_until(lambda: not role_select.expanded, timeout=UI_WAIT_SECONDS)
     native_select = cast(

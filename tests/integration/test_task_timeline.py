@@ -9,18 +9,16 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 import pytest
 from textual.events import MouseScrollUp
-from textual.widgets import Button, OptionList, Select, Static
+from textual.widgets import Select, Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.contract import TaskTimelineCategory
 from shikiru.dashboard.detail import (
     TASK_DETAIL_BODY,
-    TASK_DETAIL_TIMELINE_ENTRY,
-    TASK_DETAIL_TIMELINE_FILTER,
-    TASK_DETAIL_TIMELINE_FOLLOW,
-    TASK_DETAIL_TIMELINE_OLDER,
+    TASK_DETAIL_TIMELINE_LIST,
+    TASK_DETAIL_TIMELINE_ROLE,
     TASK_DETAIL_TIMELINE_SELECTED,
-    TASK_DETAIL_TIMELINE_STATUS,
+    TASK_DETAIL_TIMELINE_TITLE,
     TASK_VIEW_EVIDENCE,
     TaskDetailBody,
     TaskDetailPanel,
@@ -46,17 +44,18 @@ from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
     choose_details_entry,
+    list_rows,
     state_views,
     widget_context,
 )
 from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG
+from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from rich.text import Text
     from textual.pilot import Pilot
 
     from shikiru.config.settings import Settings
@@ -91,19 +90,9 @@ async def _open_timeline_view(panel: TaskDetailPanel, pilot: Pilot[None]) -> Non
     await wait_until(lambda: panel.active_view == TASK_VIEW_EVIDENCE, timeout=UI_WAIT_SECONDS)
 
 
-async def _prepare_timeline_filter(
-    panel: TaskDetailPanel,
-    pilot: Pilot[None],
-) -> Select[str]:
+async def _prepare_timeline_filter(panel: TaskDetailPanel, pilot: Pilot[None]) -> None:
     await _open_timeline_view(panel, pilot)
-    entry_select = cast("Select[str]", panel.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select))
-    await wait_until(
-        lambda: entry_select.value is not Select.BLANK,
-        timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
-    )
-    panel.query_one("#task-detail-timeline-filter").scroll_visible(animate=False, force=True)
-    await pilot.pause()
-    return entry_select
+    await wait_until(lambda: bool(_rows(panel)), timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS)
 
 
 TIMELINE_MISSING_SUMMARY = "Normalized signal evidence is unavailable"
@@ -121,8 +110,6 @@ class _TimelineUITest:
     settings: Settings
     panel: TaskDetailPanel
     pilot: Pilot[None]
-    entry_select: Select[str]
-    selected_identity: str
 
 
 class _RecordedSignalRow(TypedDict):
@@ -716,7 +703,7 @@ async def test_cancelled_task_keeps_its_supersede_reason_after_cleanup(
     assert detail.latest_verdict.summary == "Replace this task"
 
 
-async def test_detail_preserves_selection_while_following_and_pauses_on_older_page(
+async def test_following_tracks_the_latest_entry_and_pauses_when_the_reader_moves_away(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -724,99 +711,44 @@ async def test_detail_preserves_selection_while_following_and_pauses_on_older_pa
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(TIMELINE_START)
     task = seed_task(connection, clock, title="Following timeline")
-    events: list[int] = []
     for index in range(TIMELINE_ROW_COUNT):
         clock.advance(1)
-        event = EventLog(connection, clock).append(
+        EventLog(connection, clock).append(
             EventKind.TURN_FAILED,
             task_id=task.id,
             message=f"timeline-entry-{index}",
             data={"role": Role.LEADER.value, "turn": f"turn-{index}"},
         )
-        events.append(event.id)
     reader = StateReader(database, clock)
     context = widget_context(reader, project_root, clock)
     panel = TaskDetailPanel(context, task.id, fixed=False)
     app = WidgetHostApp(panel)
     settings = load_settings(project_root)
-    selected_identity = f"engine:{events[-2]}"
 
     try:
         async with app.run_test(size=(100, 40)) as pilot:
             await _open_timeline_view(panel, pilot)
-            entry_select = cast(
-                "Select[str]", panel.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select)
+            case = _TimelineUITest(connection, clock, task, context, settings, panel, pilot)
+            latest = f"timeline-entry-{TIMELINE_ROW_COUNT - 1}"
+            await wait_until(
+                lambda: bool(_rows(panel)) and latest in _rows(panel)[0],
+                timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
-            case = _TimelineUITest(
-                connection,
-                clock,
-                task,
-                context,
-                settings,
-                panel,
-                pilot,
-                entry_select,
-                selected_identity,
+            assert "following" in _heading(panel)
+
+            await _append_and_wake(case, "timeline-followed-new-entry", "new-turn")
+            await wait_until(
+                lambda: "timeline-followed-new-entry" in _rows(panel)[0],
+                timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
 
-            await wait_until(
-                lambda: entry_select.value == f"engine:{events[-1]}",
-                timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
-            )
-            entry_select.value = selected_identity
-            await wait_until(
-                lambda: (
-                    f"timeline-entry-{TIMELINE_ROW_COUNT - 2}"
-                    in _static_text(panel, TASK_DETAIL_TIMELINE_SELECTED)
-                ),
-                timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
-            )
-            body = panel.query_one("#task-detail-body", TaskDetailBody)
-            body.scroll_end(animate=False, force=True)
-            await pilot.pause()
-            await wait_until(
-                lambda: body.max_scroll_y > 0 and body.scroll_y == body.max_scroll_y,
-                timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
-            )
-            await pilot.pause()
-            bottom_position = body.scroll_y
-            filter_button = panel.query_one(f"#{TASK_DETAIL_TIMELINE_FILTER}", Button)
-            filter_button.focus()
-            await pilot.pause()
-            await wait_until(
-                lambda: (
-                    app.focused is filter_button
-                    and body.scroll_y < bottom_position
-                    and body.scrollable_content_region.contains_region(filter_button.region)
-                ),
-                timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
-            )
-            assert "Following latest" in _static_text(panel, TASK_DETAIL_TIMELINE_STATUS)
-            await _wake_clock(clock, settings.dashboard.timeline_refresh_seconds)
-            await _wake_clock(clock, settings.dashboard.timeline_refresh_seconds)
-
-            EventLog(connection, clock).append(
-                EventKind.TURN_FAILED,
-                task_id=task.id,
-                message="timeline-followed-new-entry",
-                data={"role": Role.LEADER.value, "turn": "new-turn"},
-            )
-            await _wake_clock(clock, settings.dashboard.timeline_refresh_seconds)
-            await wait_until(
-                lambda: _has_option(
-                    entry_select.query_one(OptionList), "timeline-followed-new-entry"
-                ),
-                timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
-            )
-            assert entry_select.value == selected_identity
-
+            await _assert_move_pauses_until_end(case, "timeline-after-move", "move-turn")
             await _assert_scroll_pauses_following(
                 case, "timeline-after-keyboard-scroll", "keyboard-turn", mouse=False
             )
             await _assert_scroll_pauses_following(
                 case, "timeline-after-mouse-scroll", "mouse-turn", mouse=True
             )
-
             await _assert_older_page_stays_paused(case)
     finally:
         reader.close()
@@ -857,7 +789,7 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
 
     try:
         async with app.run_test(size=(100, 40)) as pilot:
-            entry_select = await _prepare_timeline_filter(panel, pilot)
+            await _prepare_timeline_filter(panel, pilot)
             _append_timeline_events(
                 events,
                 task.id,
@@ -877,19 +809,9 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
 
-            role_select = cast("Select[str]", panel.query_one("#task-detail-timeline-role", Select))
-            role_select.value = Role.IMPLEMENTER.value
             detail_gate = gated_views.gate_next_detail()
-            filter_button = cast("Button", panel.query_one("#task-detail-timeline-filter"))
-            filter_button.post_message(Button.Pressed(filter_button))
+            panel.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select).value = Role.IMPLEMENTER.value
             await pilot.pause()
-            await wait_until(
-                lambda: (
-                    "timeline baseline implementer"
-                    not in _static_text(panel, TASK_DETAIL_TIMELINE_SELECTED)
-                ),
-                timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
-            )
             timeline_gate[1].set()
             await wait_until(
                 detail_gate[0].is_set,
@@ -906,15 +828,10 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
             )
             detail_gate[1].set()
             await wait_until(
-                lambda: _has_option(
-                    entry_select.query_one(OptionList),
-                    TIMELINE_CONCURRENT_IMPLEMENTER_MESSAGE,
-                ),
+                lambda: _has_row(panel, TIMELINE_CONCURRENT_IMPLEMENTER_MESSAGE),
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
-            assert not _has_option(
-                entry_select.query_one(OptionList), TIMELINE_CONCURRENT_LEADER_MESSAGE
-            )
+            assert not _has_row(panel, TIMELINE_CONCURRENT_LEADER_MESSAGE)
     finally:
         if timeline_gate is not None:
             timeline_gate[1].set()
@@ -923,16 +840,20 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
         reader.close()
 
 
-def _static_text(panel: TaskDetailPanel, element_id: str) -> str:
-    return cast("Text", panel.query_one(f"#{element_id}", Static).render()).plain
+def _rows(panel: TaskDetailPanel) -> list[str]:
+    return list_rows(panel, TASK_DETAIL_TIMELINE_LIST)
 
 
-def _option_prompts(options: OptionList) -> tuple[str, ...]:
-    return tuple(str(option.prompt) for option in options.options)
+def _has_row(panel: TaskDetailPanel, content: str) -> bool:
+    return any(content in row for row in _rows(panel))
 
 
-def _has_option(options: OptionList, content: str) -> bool:
-    return any(content in prompt for prompt in _option_prompts(options))
+def _heading(panel: TaskDetailPanel) -> str:
+    return plain_text(panel.query_one(f"#{TASK_DETAIL_TIMELINE_TITLE}", Static).content)
+
+
+def _selected_text(panel: TaskDetailPanel) -> str:
+    return plain_text(panel.query_one(f"#{TASK_DETAIL_TIMELINE_SELECTED}", Static).content)
 
 
 def _start_role_runs(runs: RunStore, task_id: str) -> None:
@@ -959,6 +880,44 @@ def _assert_role_filtered_entries(
     assert all(entry.role == role for entry in entries)
 
 
+async def _append_and_wake(case: _TimelineUITest, message: str, turn: str) -> None:
+    EventLog(case.connection, case.clock).append(
+        EventKind.TURN_FAILED,
+        task_id=case.task.id,
+        message=message,
+        data={"role": Role.LEADER.value, "turn": turn},
+    )
+    await _wake_clock(case.clock, case.settings.dashboard.timeline_refresh_seconds)
+
+
+async def _focus_list(case: _TimelineUITest) -> None:
+    case.panel.query_one(f"#{TASK_DETAIL_TIMELINE_LIST}").focus()
+    await case.pilot.pause()
+
+
+async def _assert_paused_then_end_follows(case: _TimelineUITest, message: str, turn: str) -> None:
+    await wait_until(
+        lambda: "paused" in _heading(case.panel), timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS
+    )
+    selected = _selected_text(case.panel)
+    await _append_and_wake(case, message, turn)
+    assert not _has_row(case.panel, message)
+    assert _selected_text(case.panel) == selected
+    await _focus_list(case)
+    await case.pilot.press("end")
+    await wait_until(
+        lambda: _has_row(case.panel, message) and "following" in _heading(case.panel),
+        timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
+    )
+    assert message in _rows(case.panel)[0]
+
+
+async def _assert_move_pauses_until_end(case: _TimelineUITest, message: str, turn: str) -> None:
+    await _focus_list(case)
+    await case.pilot.press("down")
+    await _assert_paused_then_end_follows(case, message, turn)
+
+
 async def _assert_scroll_pauses_following(
     case: _TimelineUITest, message: str, turn: str, *, mouse: bool
 ) -> None:
@@ -981,75 +940,26 @@ async def _assert_scroll_pauses_following(
         body.focus()
         await case.pilot.pause()
         await case.pilot.press("up")
-    await wait_until(
-        lambda: (
-            "Follow paused while viewing older evidence"
-            in _static_text(case.panel, TASK_DETAIL_TIMELINE_STATUS)
-        ),
-        timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
-    )
-    EventLog(case.connection, case.clock).append(
-        EventKind.TURN_FAILED,
-        task_id=case.task.id,
-        message=message,
-        data={"role": Role.LEADER.value, "turn": turn},
-    )
-    await _wake_clock(case.clock, case.settings.dashboard.timeline_refresh_seconds)
-    assert not _has_option(case.entry_select.query_one(OptionList), message)
-    assert case.entry_select.value == case.selected_identity
-    follow_button = case.panel.query_one(f"#{TASK_DETAIL_TIMELINE_FOLLOW}", Button)
-    follow_button.post_message(Button.Pressed(follow_button))
-    await case.pilot.pause()
-    await wait_until(
-        lambda: _has_option(case.entry_select.query_one(OptionList), message),
-        timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
-    )
-    assert case.entry_select.value == case.selected_identity
+    await _assert_paused_then_end_follows(case, message, turn)
 
 
 async def _assert_older_page_stays_paused(case: _TimelineUITest) -> None:
-    older_button = case.panel.query_one(f"#{TASK_DETAIL_TIMELINE_OLDER}", Button)
-    older_button.post_message(Button.Pressed(older_button))
-    await case.pilot.pause()
+    await _focus_list(case)
+    await case.pilot.press("pagedown")
+    await wait_until(
+        lambda: "paused" in _heading(case.panel) and not _has_row(case.panel, "timeline-followed"),
+        timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
+    )
+    await _append_and_wake(case, "timeline-after-scroll-away", "newer-turn")
+    assert not _has_row(case.panel, "timeline-after-scroll-away")
+    await case.pilot.press("pageup")
     await wait_until(
         lambda: (
-            "Follow paused while viewing older evidence"
-            in _static_text(case.panel, TASK_DETAIL_TIMELINE_STATUS)
+            "following" in _heading(case.panel)
+            and _has_row(case.panel, "timeline-after-scroll-away")
         ),
         timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
     )
-    older_options = _option_prompts(case.entry_select.query_one(OptionList))
-    assert not any("timeline-followed-new-entry" in option for option in older_options)
-    assert case.entry_select.value == case.selected_identity
-    EventLog(case.connection, case.clock).append(
-        EventKind.TURN_FAILED,
-        task_id=case.task.id,
-        message="timeline-after-scroll-away",
-        data={"role": Role.LEADER.value, "turn": "newer-turn"},
-    )
-    latest = await case.context.views.task_timeline(
-        case.task.id,
-        cursor=None,
-        role=None,
-        turn=None,
-        category=TIMELINE_CATEGORY_ALL,
-    )
-    assert latest is not None
-    assert any(entry.summary == "timeline-after-scroll-away" for entry in latest.entries)
-    await _wake_clock(case.clock, case.settings.dashboard.timeline_refresh_seconds)
-    assert not _has_option(case.entry_select.query_one(OptionList), "timeline-after-scroll-away")
-    assert case.entry_select.value == case.selected_identity
-    follow_button = case.panel.query_one(f"#{TASK_DETAIL_TIMELINE_FOLLOW}", Button)
-    follow_button.post_message(Button.Pressed(follow_button))
-    await case.pilot.pause()
-    await wait_until(
-        lambda: (
-            "Following latest" in _static_text(case.panel, TASK_DETAIL_TIMELINE_STATUS)
-            and _has_option(case.entry_select.query_one(OptionList), "timeline-after-scroll-away")
-        ),
-        timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
-    )
-    assert case.entry_select.value == case.selected_identity
 
 
 async def _wake_clock(clock: FakeClock, seconds: float) -> None:

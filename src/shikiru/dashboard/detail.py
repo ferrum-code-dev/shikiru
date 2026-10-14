@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.console import Group, RenderableType
 from rich.text import Text
+from textual import on
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Rule, Select, Static
@@ -26,14 +27,21 @@ from shikiru.dashboard.briefing_view import (
 from shikiru.dashboard.contract import (
     PaletteRequest,
     TaskTimelineCategory,
-    TaskTimelineSource,
 )
 from shikiru.dashboard.details_list import TaskDetailsListScreen
-from shikiru.dashboard.details_list_view import DetailsEntry, DetailsSection, section_headline
+from shikiru.dashboard.details_list_view import (
+    EVENTS_HINT,
+    RELATIONSHIPS_HINT,
+    DetailsEntry,
+    DetailsSection,
+    section_headline,
+)
 from shikiru.dashboard.interaction import native_editor_has_focus
+from shikiru.dashboard.row_list import RowList
+from shikiru.dashboard.section_rows import RelatedRow, relation_rows, timeline_cells
 from shikiru.domain.briefing import BriefingAction
 from shikiru.domain.runs import RunStatus
-from shikiru.domain.tasks import Mode, Role, Status, StatusReason
+from shikiru.domain.tasks import Role, Status, StatusReason
 from shikiru.errors import ShikiruError
 from shikiru.ui.compact import (
     AgentUsageDetails,
@@ -53,7 +61,7 @@ from shikiru.ui.popup import (
     prepare_popup,
 )
 from shikiru.ui.screen import widget_is_attached, widget_is_current
-from shikiru.ui.section import BOLD_PRIMARY
+from shikiru.ui.section import BOLD_PRIMARY, grey
 
 if TYPE_CHECKING:
     from textual import events
@@ -68,11 +76,8 @@ if TYPE_CHECKING:
         AgentUsageView,
         TaskDetailView,
         TaskModelHistoryView,
-        TaskReferenceView,
-        TaskRelationshipsView,
         TaskReportView,
         TaskSessionView,
-        TaskTimelineEntryView,
         TaskTimelinePageView,
         WidgetContext,
     )
@@ -101,7 +106,6 @@ TASK_DETAIL_REQUEST = "task-detail-request"
 TASK_DETAIL_CRITERIA = "task-detail-criteria"
 TASK_DETAIL_REPORT = "task-detail-report"
 TASK_DETAIL_VERDICT = "task-detail-verdict"
-TASK_DETAIL_EVIDENCE = "task-detail-evidence"
 TASK_DETAIL_FACTS = "task-detail-facts"
 TASK_DETAIL_WORKSPACE = "task-detail-workspace"
 TASK_DETAIL_SESSIONS = "task-detail-sessions"
@@ -118,33 +122,19 @@ TASK_DETAIL_VIEWS_KEY = "v"
 TASK_DETAIL_VIEWS_ACTION = "open_contextual_views"
 TASK_DETAIL_ENTER_KEY = "enter"
 TASK_DETAIL_ENTER_ACTION = "open_details"
-TASK_DETAIL_PREVIOUS_PAGE_KEY = "p"
-TASK_DETAIL_NEXT_PAGE_KEY = "n"
-TASK_DETAIL_PREVIOUS_PAGE_ACTION = "previous_page"
-TASK_DETAIL_NEXT_PAGE_ACTION = "next_page"
 TASK_USAGE_KEY = "u"
 TASK_DETAIL_HELP_KEY = "question_mark"
 TASK_DETAIL_WORKSPACE_TOOLS = "task-detail-workspace-tools"
 TASK_DETAIL_BLOCKER = "task-detail-blocker"
 TASK_DETAIL_RELATIONSHIPS = "task-detail-relationships"
-TASK_DETAIL_RELATED_TOOLS = "task-detail-related-tools"
-TASK_DETAIL_RELATED_TASK = "task-detail-related-task"
-TASK_DETAIL_OPEN_RELATED = "task-detail-open-related"
-TASK_DETAIL_PREVIOUS_RELATIONSHIPS = "task-detail-previous-relationships"
-TASK_DETAIL_MORE_RELATIONSHIPS = "task-detail-more-relationships"
-TASK_DETAIL_RELATIONSHIP_PAGE = "task-detail-relationship-page"
+TASK_DETAIL_RELATED_LIST = "task-detail-related-list"
 TASK_DETAIL_TIMELINE_ROLE = "task-detail-timeline-role"
 TASK_DETAIL_TIMELINE_TURN = "task-detail-timeline-turn"
 TASK_DETAIL_TIMELINE_CATEGORY = "task-detail-timeline-category"
-TASK_DETAIL_TIMELINE_FILTER = "task-detail-timeline-filter"
 TASK_DETAIL_TIMELINE_FILTERS = "task-detail-timeline-filters"
-TASK_DETAIL_TIMELINE_NAVIGATION = "task-detail-timeline-navigation"
-TASK_DETAIL_TIMELINE_NEWER = "task-detail-timeline-newer"
-TASK_DETAIL_TIMELINE_OLDER = "task-detail-timeline-older"
-TASK_DETAIL_TIMELINE_FOLLOW = "task-detail-timeline-follow"
 TASK_DETAIL_TIMELINE_STATUS = "task-detail-timeline-status"
 TASK_DETAIL_TIMELINE_TITLE = "task-detail-timeline-title"
-TASK_DETAIL_TIMELINE_ENTRY = "task-detail-timeline-entry"
+TASK_DETAIL_TIMELINE_LIST = "task-detail-timeline-list"
 TASK_DETAIL_TIMELINE_SELECTED = "task-detail-timeline-selected"
 TASK_VIEW_SUMMARY = "task-summary"
 TASK_VIEW_CONTEXT = "task-context"
@@ -171,6 +161,10 @@ EVIDENCE_VIEW_CATEGORIES = {
     TASK_VIEW_EVIDENCE: TaskTimelineCategory.ACTIVITY,
     TASK_VIEW_AGENT: TaskTimelineCategory.SIGNAL,
 }
+LIST_VIEW_FOCUS = {
+    TASK_VIEW_EVIDENCE: TASK_DETAIL_TIMELINE_LIST,
+    TASK_VIEW_RELATIONSHIPS: TASK_DETAIL_RELATED_LIST,
+}
 TASK_VIEW_WIDGETS = {
     TASK_VIEW_SUMMARY: (TASK_DETAIL_BRIEFING, TASK_DETAIL_ACTIONS),
     TASK_VIEW_USAGE: (TASK_DETAIL_SESSIONS,),
@@ -178,18 +172,16 @@ TASK_VIEW_WIDGETS = {
     TASK_VIEW_REPORTS: (TASK_DETAIL_REPORT, TASK_DETAIL_VERDICT),
     TASK_VIEW_REQUEST: (TASK_DETAIL_REQUEST, TASK_DETAIL_CRITERIA),
     TASK_VIEW_EVIDENCE: (
-        TASK_DETAIL_EVIDENCE,
         TASK_DETAIL_TIMELINE_TITLE,
-        TASK_DETAIL_TIMELINE_FILTERS,
-        TASK_DETAIL_TIMELINE_NAVIGATION,
         TASK_DETAIL_TIMELINE_STATUS,
-        TASK_DETAIL_TIMELINE_ENTRY,
+        TASK_DETAIL_TIMELINE_FILTERS,
+        TASK_DETAIL_TIMELINE_LIST,
         TASK_DETAIL_TIMELINE_SELECTED,
     ),
     TASK_VIEW_RELATIONSHIPS: (
         TASK_DETAIL_BLOCKER,
         TASK_DETAIL_RELATIONSHIPS,
-        TASK_DETAIL_RELATED_TOOLS,
+        TASK_DETAIL_RELATED_LIST,
     ),
     TASK_VIEW_FACTS: (TASK_DETAIL_FACTS,),
     TASK_VIEW_WORKSPACE: (TASK_DETAIL_WORKSPACE, TASK_DETAIL_WORKSPACE_TOOLS),
@@ -210,7 +202,14 @@ NO_DECISION_TO_ANSWER = "No open decision to answer for this task."
 NO_REPORT = "No validated report is recorded."
 NO_VERDICT = "No validated verdict is recorded."
 NO_CRITERIA = "No validated acceptance criteria are recorded."
-NO_EVIDENCE = "No recorded agent signals or task events are available."
+NO_TIMELINE_ROWS = "No recorded entries match."
+NO_RELATED_ROWS = "No related tasks are recorded."
+RELATIONSHIPS_UNAVAILABLE = "Relationship evidence is unavailable."
+NO_REPLACEMENT_TASKS = "No replacement task IDs are present in the recorded scope-change event."
+FOLLOWING_LABEL = "following"
+PAUSED_LABEL = "paused · End to follow"
+HEADING_SEPARATOR = " · "
+PAGE_LABEL = "page"
 NO_FACTS = "No engine-computed git facts are recorded."
 CLOSED_RUN_STATUS = "closed"
 COST_VALUE_FORMAT = ".2f"
@@ -265,8 +264,6 @@ class TaskDetailPanel(Vertical):
     BINDINGS: ClassVar[list[BindingType]] = [
         (TASK_DETAIL_VIEWS_KEY, TASK_DETAIL_VIEWS_ACTION, "Views"),
         (TASK_DETAIL_ENTER_KEY, TASK_DETAIL_ENTER_ACTION, "Details"),
-        (TASK_DETAIL_PREVIOUS_PAGE_KEY, TASK_DETAIL_PREVIOUS_PAGE_ACTION, "Previous page"),
-        (TASK_DETAIL_NEXT_PAGE_KEY, TASK_DETAIL_NEXT_PAGE_ACTION, "Next page"),
     ]
 
     DEFAULT_CSS = """
@@ -295,14 +292,12 @@ class TaskDetailPanel(Vertical):
     #task-detail-body.compact-summary #task-detail-ownership,
     #task-detail-body.compact-summary #task-detail-sessions { padding: 0; }
     #task-detail-body.compact-summary .task-detail-section { padding: 0; }
-    #task-detail-timeline-filters, #task-detail-timeline-navigation,
-    #task-detail-related-tools, #task-detail-workspace-tools { width: 100%; height: auto; }
-    #task-detail-timeline-filters HorizontalScroll,
-    #task-detail-timeline-navigation HorizontalScroll,
-    #task-detail-related-tools HorizontalScroll,
-    #task-detail-workspace-tools HorizontalScroll { width: 100%; }
-    #task-detail-related-tools Horizontal,
-    #task-detail-workspace-tools Horizontal { width: 100%; }
+    #task-detail-timeline-filters, #task-detail-workspace-tools { width: 100%; height: auto; }
+    #task-detail-timeline-title, #task-detail-timeline-status { height: auto; padding: 0; }
+    #task-detail-timeline-category { width: 34; }
+    #task-detail-timeline-role { width: 18; }
+    #task-detail-timeline-turn { width: 14; }
+    #task-detail-relationships { padding: 0; }
     .task-detail-section {
         height: auto; padding: 1 0; color: $primary-text;
     }
@@ -330,8 +325,7 @@ class TaskDetailPanel(Vertical):
         self._relationship_offset = 0
         self._relationship_previous_offset: int | None = None
         self._relationship_next_offset: int | None = None
-        self._shown_related_references: tuple[TaskReferenceView, ...] = ()
-        self._selected_related_reference: TaskReferenceView | None = None
+        self._related_rows: tuple[RelatedRow, ...] = ()
         self._timeline_cursors: list[str | None] = [None]
         self._timeline_following = True
         self._timeline_role: str | None = None
@@ -340,7 +334,7 @@ class TaskDetailPanel(Vertical):
             initial_view, TaskTimelineCategory.ACTIVITY
         ).value
         self._timeline_selected_identity: str | None = None
-        self._timeline_selected_entry: TaskTimelineEntryView | None = None
+        self._timeline_section = _timeline_section(initial_view)
         self._timeline_page: TaskTimelinePageView | None = None
         self._timeline_worker: Worker[None] | None = None
         self._remove_motion_callback: Callable[[], None] | None = None
@@ -374,26 +368,13 @@ class TaskDetailPanel(Vertical):
             yield Static(
                 "", id=TASK_DETAIL_RELATIONSHIPS, classes="task-detail-section", markup=False
             )
-            with Vertical(id=TASK_DETAIL_RELATED_TOOLS):
-                with HorizontalScroll():
-                    yield Select(
-                        (),
-                        prompt="Related task",
-                        allow_blank=True,
-                        value=Select.BLANK,
-                        id=TASK_DETAIL_RELATED_TASK,
-                    )
-                    yield Button("Open related task", id=TASK_DETAIL_OPEN_RELATED)
-                yield Static("Page 1", id=TASK_DETAIL_RELATIONSHIP_PAGE)
-                with Horizontal():
-                    yield Button("p previous", id=TASK_DETAIL_PREVIOUS_RELATIONSHIPS)
-                    yield Button("n next", id=TASK_DETAIL_MORE_RELATIONSHIPS)
+            yield RowList(widget_id=TASK_DETAIL_RELATED_LIST)
             yield Static(
-                "Evidence timeline",
+                "",
                 id=TASK_DETAIL_TIMELINE_TITLE,
-                classes="task-detail-section",
                 markup=False,
             )
+            yield Static("", id=TASK_DETAIL_TIMELINE_STATUS, markup=False)
             with HorizontalScroll(id=TASK_DETAIL_TIMELINE_FILTERS):
                 yield Select(
                     TIMELINE_FILTER_OPTIONS,
@@ -413,21 +394,9 @@ class TaskDetailPanel(Vertical):
                     id=TASK_DETAIL_TIMELINE_ROLE,
                 )
                 yield Input(placeholder="Any turn", id=TASK_DETAIL_TIMELINE_TURN)
-                yield Button("Apply filters", id=TASK_DETAIL_TIMELINE_FILTER)
-            with HorizontalScroll(id=TASK_DETAIL_TIMELINE_NAVIGATION):
-                yield Button("p previous", id=TASK_DETAIL_TIMELINE_NEWER)
-                yield Button("n next", id=TASK_DETAIL_TIMELINE_OLDER)
-                yield Button("Follow latest", id=TASK_DETAIL_TIMELINE_FOLLOW)
-            yield Static("", id=TASK_DETAIL_TIMELINE_STATUS, markup=False)
-            yield Select(
-                (),
-                prompt="Recorded evidence",
-                allow_blank=True,
-                value=Select.BLANK,
-                id=TASK_DETAIL_TIMELINE_ENTRY,
-            )
+            yield RowList(widget_id=TASK_DETAIL_TIMELINE_LIST)
             yield Static(
-                "No evidence selected.",
+                "",
                 id=TASK_DETAIL_TIMELINE_SELECTED,
                 classes="task-detail-section",
                 markup=False,
@@ -436,7 +405,6 @@ class TaskDetailPanel(Vertical):
             yield Static("", id=TASK_DETAIL_CRITERIA, classes="task-detail-section", markup=False)
             yield Static("", id=TASK_DETAIL_REPORT, classes="task-detail-section", markup=False)
             yield Static("", id=TASK_DETAIL_VERDICT, classes="task-detail-section", markup=False)
-            yield Static("", id=TASK_DETAIL_EVIDENCE, classes="task-detail-section", markup=False)
             yield Static("", id=TASK_DETAIL_FACTS, classes="task-detail-section", markup=False)
             yield Static("", id=TASK_DETAIL_WORKSPACE, classes="task-detail-section", markup=False)
             with HorizontalScroll(id=TASK_DETAIL_WORKSPACE_TOOLS):
@@ -524,15 +492,14 @@ class TaskDetailPanel(Vertical):
         self._view = None
         self._relationship_previous_offset = None
         self._relationship_next_offset = None
-        self._shown_related_references = ()
-        self._selected_related_reference = None
+        self._related_rows = ()
         self._timeline_cursors = [None]
         self._timeline_following = True
         self._timeline_role = None
         self._timeline_turn = None
         self._timeline_category = TaskTimelineCategory.ACTIVITY.value
         self._timeline_selected_identity = None
-        self._timeline_selected_entry = None
+        self._timeline_section = DetailsSection.EVENTS
         self._timeline_page = None
         if not self.is_mounted:
             return
@@ -544,7 +511,6 @@ class TaskDetailPanel(Vertical):
             TASK_DETAIL_CRITERIA,
             TASK_DETAIL_REPORT,
             TASK_DETAIL_VERDICT,
-            TASK_DETAIL_EVIDENCE,
             TASK_DETAIL_FACTS,
             TASK_DETAIL_WORKSPACE,
             TASK_DETAIL_SESSIONS,
@@ -555,36 +521,18 @@ class TaskDetailPanel(Vertical):
             self.query_one(f"#{section_id}", Static).update("")
         self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static).display = False
         self._set_feedback(None)
-        related_select = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select))
-        related_select.value = Select.BLANK
-        related_select.set_options(())
-        self.query_one(f"#{TASK_DETAIL_OPEN_RELATED}", Button).disabled = True
-        self.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button).disabled = True
-        self.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button).disabled = True
-        self.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static).update("Page 1")
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update("")
         self.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select).value = Select.BLANK
         self.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input).value = ""
         self.query_one(
             f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select
         ).value = TaskTimelineCategory.ACTIVITY.value
-        timeline_entry = cast(
-            "Select[str]", self.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select)
+        self.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList).set_rows(
+            (), selected=0, empty=NO_RELATED_ROWS
         )
-        timeline_entry.value = Select.BLANK
-        timeline_entry.set_options(())
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_SELECTED}", Static).update(
-            "No recorded evidence is available for this page."
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_LIST}", RowList).set_rows(
+            (), selected=0, empty=NO_TIMELINE_ROWS
         )
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_STATUS}", Static).update(
-            "Loading evidence timeline…"
-        )
-        for control_id in (
-            TASK_DETAIL_TIMELINE_NEWER,
-            TASK_DETAIL_TIMELINE_OLDER,
-            TASK_DETAIL_TIMELINE_FOLLOW,
-        ):
-            self.query_one(f"#{control_id}", Button).disabled = True
         self._apply_view_visibility(blocker_visible=False)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -600,22 +548,55 @@ class TaskDetailPanel(Vertical):
             TASK_DETAIL_LEADER_BUTTON: lambda: self._navigate_role_pane(Role.LEADER),
             TASK_DETAIL_IMPLEMENTER_BUTTON: lambda: self._navigate_role_pane(Role.IMPLEMENTER),
             TASK_DETAIL_VIEWS_BUTTON: self.open_contextual_views,
-            TASK_DETAIL_OPEN_RELATED: self._open_related_task,
-            TASK_DETAIL_PREVIOUS_RELATIONSHIPS: self._previous_relationship_page,
-            TASK_DETAIL_MORE_RELATIONSHIPS: self._next_relationship_page,
-            TASK_DETAIL_TIMELINE_FILTER: self._apply_timeline_filters,
-            TASK_DETAIL_TIMELINE_NEWER: self._newer_timeline_page,
-            TASK_DETAIL_TIMELINE_OLDER: self._older_timeline_page,
-            TASK_DETAIL_TIMELINE_FOLLOW: self._follow_latest,
         }
         handler = handlers.get(button_id)
         if handler is not None:
             await handler()
 
     async def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id == TASK_DETAIL_TIMELINE_ENTRY:
-            identity = event.value if isinstance(event.value, str) else None
-            self._select_timeline_entry(identity)
+        if event.select.id in {TASK_DETAIL_TIMELINE_CATEGORY, TASK_DETAIL_TIMELINE_ROLE}:
+            await self._apply_timeline_filters()
+
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == TASK_DETAIL_TIMELINE_TURN:
+            await self._apply_timeline_filters()
+
+    @on(RowList.Moved, f"#{TASK_DETAIL_TIMELINE_LIST}")
+    def _timeline_moved(self, message: RowList.Moved) -> None:
+        message.stop()
+        page = self._timeline_page
+        if page is None:
+            return
+        self._timeline_selected_identity = (
+            page.entries[message.index].identity if message.index > 0 else None
+        )
+        if message.index > 0:
+            self._pause_timeline_follow()
+        self._paint_timeline_selection()
+
+    @on(RowList.Paged, f"#{TASK_DETAIL_TIMELINE_LIST}")
+    async def _timeline_paged(self, message: RowList.Paged) -> None:
+        message.stop()
+        await (self._older_timeline_page() if message.older else self._newer_timeline_page())
+
+    @on(RowList.Latest, f"#{TASK_DETAIL_TIMELINE_LIST}")
+    async def _timeline_latest(self, message: RowList.Latest) -> None:
+        message.stop()
+        await self._follow_latest()
+
+    @on(RowList.Paged, f"#{TASK_DETAIL_RELATED_LIST}")
+    async def _related_paged(self, message: RowList.Paged) -> None:
+        message.stop()
+        await (
+            self._next_relationship_page() if message.older else self._previous_relationship_page()
+        )
+
+    @on(RowList.Opened, f"#{TASK_DETAIL_RELATED_LIST}")
+    async def _related_opened(self, message: RowList.Opened) -> None:
+        message.stop()
+        callback = self._widget_context.open_task_detail
+        if callback is not None and message.index < len(self._related_rows):
+            await callback(self._related_rows[message.index].task_id)
 
     async def _watch_timeline(self) -> None:
         while True:
@@ -739,9 +720,7 @@ class TaskDetailPanel(Vertical):
                 )
             except (ShikiruError, OSError, ValueError, TypeError) as error:
                 if self._screen_is_active() and generation == self._timeline_request_generation:
-                    self.query_one(f"#{TASK_DETAIL_TIMELINE_STATUS}", Static).update(
-                        f"Evidence timeline refresh failed: {error}"
-                    )
+                    self._set_feedback(f"Evidence timeline refresh failed: {error}")
                 return
             if (
                 self._screen_is_active()
@@ -762,12 +741,7 @@ class TaskDetailPanel(Vertical):
         self._timeline_following = False
         self._timeline_request_generation += 1
         if self._screen_is_active():
-            page = self._timeline_page
-            status = "Follow paused while viewing older evidence"
-            if page is not None and page.has_older:
-                status += " · older evidence available"
-            self.query_one(f"#{TASK_DETAIL_TIMELINE_STATUS}", Static).update(status)
-            self.query_one(f"#{TASK_DETAIL_TIMELINE_FOLLOW}", Button).disabled = False
+            self._paint_timeline_heading()
 
     async def _apply_timeline_filters(self) -> None:
         role_value = cast(
@@ -777,20 +751,29 @@ class TaskDetailPanel(Vertical):
             "Select[str]", self.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
         ).value
         turn_value = self.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input).value.strip()
-        self._timeline_role = role_value or None if isinstance(role_value, str) else None
-        self._timeline_category = (
+        role = role_value or None if isinstance(role_value, str) else None
+        category = (
             category_value
             if isinstance(category_value, str)
             else TaskTimelineCategory.ACTIVITY.value
         )
-        self._timeline_turn = turn_value or None
+        turn = turn_value or None
+        if (role, category, turn) == (
+            self._timeline_role,
+            self._timeline_category,
+            self._timeline_turn,
+        ):
+            return
+        self._timeline_role = role
+        self._timeline_category = category
+        self._timeline_turn = turn
+        self._restart_timeline()
+
+    def _restart_timeline(self) -> None:
         self._timeline_cursors = [None]
         self._timeline_following = True
         self._timeline_request_generation += 1
         self._timeline_selected_identity = None
-        self._timeline_selected_entry = None
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select).value = Select.BLANK
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_SELECTED}", Static).update("No evidence selected.")
         self._queue_refresh()
 
     async def _older_timeline_page(self) -> None:
@@ -800,6 +783,7 @@ class TaskDetailPanel(Vertical):
         self._timeline_cursors.append(page.older_cursor)
         self._timeline_following = False
         self._timeline_request_generation += 1
+        self._timeline_selected_identity = None
         self._queue_refresh()
 
     async def _newer_timeline_page(self) -> None:
@@ -808,13 +792,11 @@ class TaskDetailPanel(Vertical):
         self._timeline_cursors.pop()
         self._timeline_following = len(self._timeline_cursors) == 1
         self._timeline_request_generation += 1
+        self._timeline_selected_identity = None
         self._queue_refresh()
 
     async def _follow_latest(self) -> None:
-        self._timeline_cursors = [None]
-        self._timeline_following = True
-        self._timeline_request_generation += 1
-        self._queue_refresh()
+        self._restart_timeline()
 
     async def _back(self) -> None:
         if self._active_view != TASK_VIEW_SUMMARY:
@@ -903,44 +885,11 @@ class TaskDetailPanel(Vertical):
         del parameters
         if action == TASK_DETAIL_ENTER_ACTION:
             return self._active_view == TASK_VIEW_SUMMARY
-        if action in {
-            TASK_DETAIL_VIEWS_ACTION,
-            TASK_DETAIL_PREVIOUS_PAGE_ACTION,
-            TASK_DETAIL_NEXT_PAGE_ACTION,
-        } and native_editor_has_focus(cast("App[None]", self.app).focused):
+        if action == TASK_DETAIL_VIEWS_ACTION and native_editor_has_focus(
+            cast("App[None]", self.app).focused
+        ):
             return None
-        if action in {
-            TASK_DETAIL_PREVIOUS_PAGE_ACTION,
-            TASK_DETAIL_NEXT_PAGE_ACTION,
-        }:
-            if self._active_view == TASK_VIEW_EVIDENCE:
-                control_id = (
-                    TASK_DETAIL_TIMELINE_NEWER
-                    if action == TASK_DETAIL_PREVIOUS_PAGE_ACTION
-                    else TASK_DETAIL_TIMELINE_OLDER
-                )
-            elif self._active_view == TASK_VIEW_RELATIONSHIPS:
-                control_id = (
-                    TASK_DETAIL_PREVIOUS_RELATIONSHIPS
-                    if action == TASK_DETAIL_PREVIOUS_PAGE_ACTION
-                    else TASK_DETAIL_MORE_RELATIONSHIPS
-                )
-            else:
-                return None
-            return not self.query_one(f"#{control_id}", Button).disabled
         return True
-
-    async def action_previous_page(self) -> None:
-        if self._active_view == TASK_VIEW_EVIDENCE:
-            await self._newer_timeline_page()
-        elif self._active_view == TASK_VIEW_RELATIONSHIPS:
-            await self._previous_relationship_page()
-
-    async def action_next_page(self) -> None:
-        if self._active_view == TASK_VIEW_EVIDENCE:
-            await self._older_timeline_page()
-        elif self._active_view == TASK_VIEW_RELATIONSHIPS:
-            await self._next_relationship_page()
 
     def open_usage_details(self) -> None:
         self._show_task_view(TASK_VIEW_USAGE)
@@ -1011,6 +960,8 @@ class TaskDetailPanel(Vertical):
         heading_view = view_id
         view_id = _panel_view(view_id)
         self._apply_evidence_category(heading_view)
+        if view_id == TASK_VIEW_EVIDENCE:
+            self._timeline_section = _timeline_section(heading_view)
         self._active_view = view_id
         if isinstance(self.screen, TaskDetailScreen):
             self.screen.set_view_heading(heading_view)
@@ -1026,8 +977,7 @@ class TaskDetailPanel(Vertical):
             TASK_VIEW_CONTEXT: TASK_DETAIL_CONTEXT_INFO,
             TASK_VIEW_REPORTS: TASK_DETAIL_REPORT,
             TASK_VIEW_REQUEST: TASK_DETAIL_REQUEST,
-            TASK_VIEW_EVIDENCE: TASK_DETAIL_TIMELINE_ENTRY,
-            TASK_VIEW_RELATIONSHIPS: TASK_DETAIL_RELATED_TASK,
+            **LIST_VIEW_FOCUS,
             TASK_VIEW_FACTS: TASK_DETAIL_FACTS,
             TASK_VIEW_WORKSPACE: TASK_DETAIL_WINDOW_BUTTON,
         }[view_id]
@@ -1039,11 +989,8 @@ class TaskDetailPanel(Vertical):
         if category is None or category.value == self._timeline_category:
             return
         self._timeline_category = category.value
-        self._timeline_cursors = [None]
-        self._timeline_following = True
-        self._timeline_request_generation += 1
         self.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select).value = category.value
-        self._queue_refresh()
+        self._restart_timeline()
 
     async def _navigate_task_window(self) -> None:
         if self._task_id is None:
@@ -1181,7 +1128,6 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_VERDICT}", Static).update(
             _report_text("Latest validated verdict", view.latest_verdict, NO_VERDICT)
         )
-        self.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static).update(_evidence_text(view))
         if render_timeline:
             self._render_timeline(view.timeline)
         facts = (
@@ -1219,9 +1165,7 @@ class TaskDetailPanel(Vertical):
             widget_id for widgets in TASK_VIEW_WIDGETS.values() for widget_id in widgets
         } | {
             TASK_DETAIL_TIMELINE_FILTERS,
-            TASK_DETAIL_TIMELINE_NAVIGATION,
             TASK_DETAIL_TIMELINE_STATUS,
-            TASK_DETAIL_TIMELINE_ENTRY,
             TASK_DETAIL_TIMELINE_SELECTED,
         }
         visible = set(TASK_VIEW_WIDGETS[self._active_view])
@@ -1257,68 +1201,39 @@ class TaskDetailPanel(Vertical):
 
     def _render_timeline(self, page: TaskTimelinePageView | None) -> None:
         self._timeline_page = page
-        entry_select = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select))
-        page_entries = list(page.entries) if page is not None else []
-        current = next(
-            (item for item in page_entries if item.identity == self._timeline_selected_identity),
-            None,
+        entries = page.entries if page is not None else ()
+        selected = next(
+            (
+                index
+                for index, item in enumerate(entries)
+                if item.identity == self._timeline_selected_identity
+            ),
+            0,
         )
-        if current is not None:
-            self._timeline_selected_entry = current
-        elif self._timeline_selected_identity is None and page_entries:
-            current = page_entries[0]
-            self._timeline_selected_identity = current.identity
-            self._timeline_selected_entry = current
-        options = [(_timeline_option(item), item.identity) for item in page_entries]
-        available = {identity for _, identity in options}
-        if (
-            self._timeline_selected_entry is not None
-            and self._timeline_selected_identity not in available
-        ):
-            selected = self._timeline_selected_entry
-            options.append(
-                (f"Selected outside page · {_timeline_option(selected)}", selected.identity)
-            )
-        entry_select.set_options(options)
-        entry_select.value = (
-            self._timeline_selected_identity
-            if self._timeline_selected_identity in {value for _, value in options}
-            else Select.BLANK
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_LIST}", RowList).set_rows(
+            [timeline_cells(item) for item in entries], selected=selected, empty=NO_TIMELINE_ROWS
         )
-        self._select_timeline_entry(self._timeline_selected_identity)
-        status = (
-            "Following latest"
-            if self._timeline_following
-            else "Follow paused while viewing older evidence"
-        )
-        if page is None:
-            status += " · evidence page unavailable"
-        elif page.has_older:
-            status += " · older evidence available"
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_STATUS}", Static).update(status)
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_NEWER}", Button).disabled = (
-            len(self._timeline_cursors) <= 1
-        )
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_OLDER}", Button).disabled = (
-            page is None or not page.has_older
-        )
-        self.query_one(
-            f"#{TASK_DETAIL_TIMELINE_FOLLOW}", Button
-        ).disabled = self._timeline_following
+        self._paint_timeline_heading()
+        self._paint_timeline_selection()
 
-    def _select_timeline_entry(self, identity: str | None) -> None:
-        if identity is not None and self._timeline_page is not None:
-            entry = next(
-                (item for item in self._timeline_page.entries if item.identity == identity),
-                None,
+    def _paint_timeline_heading(self) -> None:
+        heading = Text(self._timeline_section.value, style=BOLD_PRIMARY)
+        heading.append_text(
+            grey(
+                HEADING_SEPARATOR + (FOLLOWING_LABEL if self._timeline_following else PAUSED_LABEL)
             )
-            if entry is not None:
-                self._timeline_selected_identity = identity
-                self._timeline_selected_entry = entry
-        selected = self._timeline_selected_entry
+        )
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_TITLE}", Static).update(heading)
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_STATUS}", Static).update(grey(EVENTS_HINT))
+
+    def _paint_timeline_selection(self) -> None:
+        page = self._timeline_page
+        entries = page.entries if page is not None else ()
+        chosen = self.query_one(f"#{TASK_DETAIL_TIMELINE_LIST}", RowList).selected
         target = self.query_one(f"#{TASK_DETAIL_TIMELINE_SELECTED}", Static)
+        selected = entries[chosen] if chosen < len(entries) else None
+        target.display = selected is not None and self._active_view == TASK_VIEW_EVIDENCE
         if selected is None:
-            target.update("No recorded evidence is available for this page.")
             return
         lines = [
             f"{selected.source} · {selected.category}",
@@ -1331,62 +1246,35 @@ class TaskDetailPanel(Vertical):
         lines.extend((selected.summary, selected.detail))
         target.update("\n".join(lines))
 
-    async def _open_related_task(self) -> None:
-        selected = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select)).value
-        callback = self._widget_context.open_task_detail
-        if isinstance(selected, str) and callback is not None:
-            await callback(selected)
-
     async def _next_relationship_page(self) -> None:
-        if self._relationship_next_offset is None:
-            return
-        more = self.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button)
-        focused = more.has_focus
-        self._relationship_offset = self._relationship_next_offset
-        await self._refresh()
-        if focused and more.disabled:
-            self.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button).focus()
+        if self._relationship_next_offset is not None:
+            await self._show_relationship_page(self._relationship_next_offset)
 
     async def _previous_relationship_page(self) -> None:
-        if self._relationship_previous_offset is None:
-            return
-        previous = self.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button)
-        focused = previous.has_focus
-        self._relationship_offset = self._relationship_previous_offset
+        if self._relationship_previous_offset is not None:
+            await self._show_relationship_page(self._relationship_previous_offset)
+
+    async def _show_relationship_page(self, offset: int) -> None:
+        self._relationship_offset = offset
+        self._related_rows = ()
         await self._refresh()
-        if focused and previous.disabled:
-            self.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button).focus()
 
     def _render_relationships(self, view: TaskDetailView) -> None:
-        related_select = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select))
-        previous_value = related_select.value
-        if isinstance(previous_value, str):
-            self._selected_related_reference = next(
-                (item for item in self._shown_related_references if item.task_id == previous_value),
-                self._selected_related_reference,
-            )
-        references = list(_related_references(view))
-        reference_ids = {item.task_id for item in references}
-        if (
-            isinstance(previous_value, str)
-            and previous_value not in reference_ids
-            and self._selected_related_reference is not None
-            and self._selected_related_reference.task_id == previous_value
-        ):
-            references.append(self._selected_related_reference)
-        self._shown_related_references = tuple(references)
-        options = tuple(
-            (f"{item.task_id} · {item.title} · {item.status}", item.task_id)
-            for item in self._shown_related_references
+        related = self.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList)
+        chosen = (
+            self._related_rows[related.selected].task_id
+            if related.selected < len(self._related_rows)
+            else None
         )
-        related_select.set_options(options)
-        valid_values = {value for _, value in options}
-        related_select.value = (
-            previous_value
-            if isinstance(previous_value, str) and previous_value in valid_values
-            else Select.BLANK
+        self._related_rows = relation_rows(view)
+        related.set_rows(
+            [row.cells for row in self._related_rows],
+            selected=next(
+                (index for index, row in enumerate(self._related_rows) if row.task_id == chosen),
+                0,
+            ),
+            empty=NO_RELATED_ROWS,
         )
-        self.query_one(f"#{TASK_DETAIL_OPEN_RELATED}", Button).disabled = not options
         relationships = view.relationships
         self._relationship_previous_offset = (
             max(relationships.page_offset - relationships.page_size, 0)
@@ -1398,22 +1286,21 @@ class TaskDetailPanel(Vertical):
             if relationships is not None and relationships.has_more
             else None
         )
-        self.query_one(f"#{TASK_DETAIL_PREVIOUS_RELATIONSHIPS}", Button).disabled = (
-            self._relationship_previous_offset is None
-        )
-        self.query_one(f"#{TASK_DETAIL_MORE_RELATIONSHIPS}", Button).disabled = (
-            self._relationship_next_offset is None
-        )
+        heading = Text(DetailsSection.BLOCKERS.value, style=BOLD_PRIMARY)
+        notes = [RELATIONSHIPS_HINT]
         if relationships is None:
-            page_text = "Page unavailable."
+            notes.append(RELATIONSHIPS_UNAVAILABLE)
         else:
-            page = relationships.page_offset // relationships.page_size + 1
-            start = relationships.page_offset + 1
-            end = relationships.page_offset + relationships.page_size
-            page_text = f"Page {page} · {start} to {end}"
-        self.query_one(f"#{TASK_DETAIL_RELATIONSHIP_PAGE}", Static).update(page_text)
+            if relationships.page_offset > 0 or relationships.has_more:
+                page = relationships.page_offset // relationships.page_size + 1
+                heading.append_text(grey(f"{HEADING_SEPARATOR}{PAGE_LABEL} {page}"))
+            if (
+                view.status_reason == StatusReason.SUPERSEDED.value
+                and relationships.replacement_count == 0
+            ):
+                notes.append(NO_REPLACEMENT_TASKS)
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update(
-            _relationships_text(view.task_id, view.status_reason, view.relationships)
+            Group(heading, grey("\n".join(notes)))
         )
 
     def _render_ownership(self, view: TaskDetailView) -> None:
@@ -1520,11 +1407,13 @@ class TaskDetailScreen(ModalScreen[None]):
     async def on_mount(self) -> None:
         self._apply_layout(self.size.width, self.size.height)
         panel = self.query_one("#task-detail-panel", TaskDetailPanel)
-        target = (
-            panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button)
-            if panel.active_view == TASK_VIEW_SUMMARY
-            else panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
-        )
+        target: Widget
+        if panel.active_view == TASK_VIEW_SUMMARY:
+            target = panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button)
+        elif panel.active_view in LIST_VIEW_FOCUS:
+            target = panel.query_one(f"#{LIST_VIEW_FOCUS[panel.active_view]}")
+        else:
+            target = panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         self.set_focus(target)
         if self._open_views_on_mount:
             await panel.open_contextual_views()
@@ -1633,171 +1522,8 @@ def _task_context_text(view: TaskDetailView) -> str:
     return "\n".join(lines)
 
 
-def _related_references(view: TaskDetailView) -> tuple[TaskReferenceView, ...]:
-    references: list[TaskReferenceView] = []
-    if view.blocker is not None:
-        references.extend(view.blocker.related_tasks)
-    relationships = view.relationships
-    if relationships is not None:
-        references.extend(
-            (
-                relationships.family_parent,
-                relationships.family_root,
-                *relationships.family_children,
-                *relationships.dependencies,
-                *relationships.blocking_dependencies,
-                *relationships.dependents,
-                *relationships.replacements,
-            )
-        )
-    seen: set[str] = set()
-    unique: list[TaskReferenceView] = []
-    for reference in references:
-        if reference.task_id not in seen:
-            seen.add(reference.task_id)
-            unique.append(reference)
-    return tuple(unique)
-
-
-def _relationships_text(
-    task_id: str,
-    status_reason: str | None,
-    relationships: TaskRelationshipsView | None,
-) -> str:
-    if relationships is None:
-        return "Relationships\nRelationship evidence is unavailable."
-    lines = _family_relationship_lines(task_id, relationships)
-    _append_paginated_relationships(
-        lines,
-        "Dependencies",
-        relationships.dependencies,
-        relationships.dependency_count,
-        relationships.page_offset,
-    )
-    _append_paginated_relationships(
-        lines,
-        "Dependents",
-        relationships.dependents,
-        relationships.dependent_count,
-        relationships.page_offset,
-    )
-    _append_paginated_relationships(
-        lines,
-        "Recorded replacements",
-        relationships.replacements,
-        relationships.replacement_count,
-        relationships.page_offset,
-    )
-    if status_reason == StatusReason.SUPERSEDED.value and relationships.replacement_count == 0:
-        lines.append("No replacement task IDs are present in the recorded scope-change event.")
-    if relationships.has_more:
-        lines.append("More recorded relationships are available from the next page.")
-    return "Relationships\n" + "\n".join(lines)
-
-
-def _family_relationship_lines(task_id: str, relationships: TaskRelationshipsView) -> list[str]:
-    family_parent = relationships.family_parent
-    family_root = relationships.family_root
-    parent_label = "Root" if family_parent.task_id == task_id else "Parent"
-    lines = [
-        f"{parent_label} · {family_parent.task_id} {family_parent.title}",
-        f"Family root · {family_root.task_id} {family_root.title}",
-        f"Children of {task_id}",
-    ]
-    if relationships.family_children:
-        lines.extend(
-            f"  ↳ {child.task_id} · {child.title} · {child.status}"
-            f"{' · selected' if child.task_id == task_id else ''}"
-            for child in relationships.family_children
-        )
-    else:
-        lines.append("  No child tasks are recorded under this parent.")
-    if (
-        relationships.page_offset + len(relationships.family_children)
-        < relationships.family_child_count
-    ):
-        lines.append(
-            f"Showing {relationships.page_offset + 1} to "
-            f"{relationships.page_offset + len(relationships.family_children)} of "
-            f"{relationships.family_child_count} children on this page."
-        )
-    outcomes = " · ".join(f"{item.outcome} {item.count}" for item in relationships.family_outcomes)
-    root = relationships.family_root
-    lines.append(f"Family-wide outcomes · root {root.task_id} · {outcomes}")
-    unfinished_family = any(
-        item.count > 0
-        and item.outcome
-        in {
-            Status.QUEUED.value,
-            Status.RUNNING.value,
-            Status.INTEGRATING.value,
-            Status.ESCALATED.value,
-        }
-        for item in relationships.family_outcomes
-    )
-    if root.mode == Mode.PLAN.value and root.status == Status.DONE.value and unfinished_family:
-        lines.append(
-            "The plan parent integrated; unfinished child tasks remain part of the family."
-        )
-    return lines
-
-
-def _append_paginated_relationships(
-    lines: list[str],
-    label: str,
-    references: tuple[TaskReferenceView, ...],
-    count: int,
-    offset: int,
-) -> None:
-    _append_relationship_group(lines, label, references)
-    if offset + len(references) < count:
-        noun = label.lower()
-        lines.append(f"Showing {offset + 1} to {offset + len(references)} of {count} {noun}.")
-
-
-def _append_relationship_group(
-    lines: list[str],
-    label: str,
-    references: tuple[TaskReferenceView, ...],
-) -> None:
-    if references:
-        lines.append(
-            f"{label} · "
-            + "; ".join(f"{item.task_id} {item.title} ({item.status})" for item in references)
-        )
-
-
-def _evidence_text(view: TaskDetailView) -> str:
-    sections = ["Recorded evidence"]
-    if view.signals:
-        sections.extend(
-            f"{signal.role} agent signals\n" + "\n".join(signal.lines) for signal in view.signals
-        )
-    else:
-        sections.append(NO_EVIDENCE)
-    if view.events:
-        sections.append(
-            "Recent engine events\n"
-            + "\n".join(
-                f"{event.timestamp} · {event.kind} · {event.message}" for event in view.events
-            )
-        )
-    if view.evidence_errors:
-        sections.append(
-            "Evidence unavailable\n" + "\n".join(f"- {item}" for item in view.evidence_errors)
-        )
-    return "\n\n".join(sections)
-
-
-def _timeline_option(entry: TaskTimelineEntryView) -> str:
-    source = (
-        "Engine event" if entry.source == TaskTimelineSource.ENGINE else "Normalized agent signal"
-    )
-    timestamp = entry.timestamp or "Timestamp missing"
-    context = " · ".join(
-        item for item in (entry.role, entry.turn, entry.summary) if item is not None
-    )
-    return f"{timestamp} · {source} · {context}"
+def _timeline_section(view_id: str) -> DetailsSection:
+    return DetailsSection.AGENT_ACTIVITY if view_id == TASK_VIEW_AGENT else DetailsSection.EVENTS
 
 
 def _workspace_text(view: TaskDetailView) -> str:
