@@ -23,13 +23,11 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_TIMELINE_CATEGORY,
     TASK_DETAIL_TIMELINE_ROLE,
     TASK_DETAIL_TIMELINE_TURN,
-    TASK_DETAIL_VIEWS_KEY,
     TASK_DETAIL_WINDOW_BUTTON,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_RELATIONSHIPS,
     TASK_VIEW_WORKSPACE,
     TaskDetailPanel,
-    TaskDetailViewsScreen,
 )
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import NewTask, Verdict
@@ -47,6 +45,7 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
+    choose_details_entry,
     ignore_palette_action,
     state_views,
     widget_context,
@@ -304,13 +303,7 @@ async def _open_detail_view(
     view_id: str,
 ) -> TaskDetailPanel:
     panel.query_one("#task-detail-details", Button).focus()
-    await pilot.press(TASK_DETAIL_VIEWS_KEY)
-    await wait_until(
-        lambda: isinstance(pilot.app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS
-    )
-    choice = cast("Select[str]", pilot.app.screen.query_one("#task-detail-view-choice", Select))
-    choice.value = view_id
-    await pilot.press("tab", "enter")
+    await choose_details_entry(pilot, view_id)
     await wait_until(
         lambda: (
             (

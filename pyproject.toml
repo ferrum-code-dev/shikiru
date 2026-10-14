@@ -217,6 +217,8 @@ forbidden_modules = [
   "shikiru.dashboard.diagnostics",
   "shikiru.dashboard.diagnostics_sections",
   "shikiru.dashboard.detail",
+  "shikiru.dashboard.details_list",
+  "shikiru.dashboard.details_list_view",
   "shikiru.dashboard.interaction",
   "shikiru.dashboard.motion",
   "shikiru.dashboard.palette",

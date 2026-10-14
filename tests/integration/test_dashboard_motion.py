@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import ListView, Select, Static
+from textual.widgets import ListView, Static
 
 from shikiru.agents.contracts import (
     QuotaWindow,
@@ -29,9 +29,8 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
-    TASK_DETAIL_VIEWS_OPEN_BUTTON,
-    TaskDetailViewsScreen,
 )
+from shikiru.dashboard.details_list import TaskDetailsListScreen
 from shikiru.domain.briefing import LAST_WORDS_LIMIT
 from shikiru.domain.escalation import Escalation, options_for
 from shikiru.domain.events import EventKind
@@ -77,6 +76,7 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
+    choose_details_entry,
     choose_focus_view,
     ignore_palette_action,
     state_views,
@@ -288,17 +288,10 @@ async def _assert_closed_history_callback_is_safe(
 ) -> None:
     await pilot.press("escape")
     await wait_until(
-        lambda: not isinstance(app.screen, TaskDetailViewsScreen),
+        lambda: not isinstance(app.screen, TaskDetailsListScreen),
         timeout=UI_WAIT_SECONDS,
     )
-    await pilot.press("v")
-    await wait_until(
-        lambda: isinstance(app.screen, TaskDetailViewsScreen),
-        timeout=UI_WAIT_SECONDS,
-    )
-    choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
-    choice.value = FOCUS_COMMAND_HISTORY
-    await pilot.click(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}")
+    await choose_details_entry(pilot, FOCUS_COMMAND_HISTORY)
     await wait_until(
         lambda: bool(app.screen.query("#command-history-page")),
         timeout=UI_WAIT_SECONDS,
@@ -1254,7 +1247,7 @@ async def test_task_detail_keeps_refreshing_facts_under_a_covering_screen(
             assert Hold.PAUSED.value not in plain_text(ownership.content)
             await pilot.press("v")
             await wait_until(
-                lambda: isinstance(app.screen, TaskDetailViewsScreen),
+                lambda: isinstance(app.screen, TaskDetailsListScreen),
                 timeout=UI_WAIT_SECONDS,
             )
             await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
@@ -1290,14 +1283,7 @@ async def test_usage_result_finishing_after_context_screen_teardown_is_discarded
                 ),
                 timeout=UI_WAIT_SECONDS,
             )
-            await pilot.press("v")
-            await wait_until(
-                lambda: isinstance(app.screen, TaskDetailViewsScreen),
-                timeout=UI_WAIT_SECONDS,
-            )
-            choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
-            choice.value = FOCUS_USAGE_DETAILS
-            await pilot.click(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}")
+            await choose_details_entry(pilot, FOCUS_USAGE_DETAILS)
             await wait_until(
                 lambda: bool(app.screen.query(UsagePanel)),
                 timeout=UI_WAIT_SECONDS,

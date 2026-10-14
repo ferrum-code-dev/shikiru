@@ -42,22 +42,20 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_OWNERSHIP,
     TASK_DETAIL_SESSIONS,
     TASK_DETAIL_TIMELINE_CATEGORY,
-    TASK_DETAIL_TIMELINE_ENTRY,
-    TASK_DETAIL_TIMELINE_ROLE,
     TASK_DETAIL_TIMELINE_TURN,
-    TASK_DETAIL_VIEWS_CLOSE_BUTTON,
-    TASK_DETAIL_VIEWS_OPEN_BUTTON,
-    TASK_VIEW_ACTIONS,
     TASK_VIEW_CONTEXT,
     TASK_VIEW_EVIDENCE,
-    TASK_VIEW_HELP,
+    TASK_VIEW_FACTS,
     TASK_VIEW_RELATIONSHIPS,
+    TASK_VIEW_REPORTS,
+    TASK_VIEW_REQUEST,
     TASK_VIEW_USAGE,
     TASK_VIEW_WORKSPACE,
     TaskDetailPanel,
     TaskDetailScreen,
-    TaskDetailViewsScreen,
+    TaskDetailsListScreen,
 )
+from shikiru.dashboard.details_list_view import DetailsSection
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.services import TaskNavigation
 from shikiru.domain.briefing import (
@@ -83,7 +81,7 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.reports import TestRun as AgentTestRun
-from shikiru.domain.steps import ACTING_ROLE, Step, Transition, first_step
+from shikiru.domain.steps import ACTING_ROLE, Step, Transition
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, RepoState, Role, Status, Task
 from shikiru.engine.events import emit_turn_completed, emit_turn_started
 from shikiru.engine.turn_execution import TurnExecution
@@ -99,13 +97,17 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.session import HOME_WINDOW_NAME
-from shikiru.ui.popup import PopupFrame
 from shikiru.view_log import view_log_path
 from shikiru.workspace.facts import WorkspaceFacts, render_facts
 from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices, ignore_palette_action, state_views
+from tests.support.dashboard import (
+    StubServices,
+    choose_details_entry,
+    ignore_palette_action,
+    state_views,
+)
 from tests.support.entry_points import FakeDistribution
 from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG
 from tests.support.git_repo import commit_all, init_repo
@@ -211,6 +213,7 @@ if TYPE_CHECKING:
 
     from rich.text import Text
     from textual.pilot import Pilot
+    from textual.screen import Screen
     from textual.widget import Widget
 
     from shikiru.clock import Clock
@@ -486,12 +489,7 @@ async def _open_task_view(
         panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
         await wait_until(lambda: panel.active_view == view_id, timeout=UI_WAIT_SECONDS)
         return
-    await pilot.press("v")
-    await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS)
-    choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
-    choice.value = view_id
-    await wait_until(lambda: choice.value == view_id, timeout=UI_WAIT_SECONDS)
-    await pilot.press("tab", "enter")
+    await choose_details_entry(pilot, view_id)
     await wait_until(
         lambda: (
             isinstance(app.screen, TaskDetailScreen)
@@ -506,15 +504,7 @@ async def _open_task_context_choice(
     pilot: Pilot[None],
     choice_id: str,
 ) -> None:
-    await pilot.press("v")
-    await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS)
-    choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
-    choice.value = choice_id
-    await wait_until(lambda: choice.value == choice_id, timeout=UI_WAIT_SECONDS)
-    await pilot.press("tab", "enter")
-    await wait_until(
-        lambda: not isinstance(app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS
-    )
+    await choose_details_entry(pilot, choice_id)
     await wait_until(
         lambda: bool(app.screen.query("#context-widget-frame")), timeout=UI_WAIT_SECONDS
     )
@@ -2008,7 +1998,7 @@ async def test_detail_ctrl_p_carries_the_task_and_its_current_role(
             app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll).focus()
             await pilot.press("enter")
             await wait_until(
-                lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS
+                lambda: isinstance(app.screen, TaskDetailsListScreen), timeout=UI_WAIT_SECONDS
             )
 
         assert opened == [
@@ -2017,281 +2007,6 @@ async def test_detail_ctrl_p_carries_the_task_and_its_current_role(
                 action=BriefingAction.PAUSE.value, task_id=task.id, role=Role.LEADER.value
             ),
         ]
-    finally:
-        reader.close()
-
-
-async def _close_task_views_preserving_evidence_at_narrow_sizes(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    task_id: str,
-    queue: CommandQueue,
-    pending_before: list[QueuedCommand],
-) -> None:
-    await _open_task_view(app, pilot, TASK_VIEW_EVIDENCE)
-    workspace_screen = app.screen
-    panel = workspace_screen.query_one("#task-detail-panel", TaskDetailPanel)
-    timeline_turn = workspace_screen.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
-    timeline_turn.value = "3"
-    timeline_category = cast(
-        "Select[str]", workspace_screen.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
-    )
-    timeline_category.value = TaskTimelineCategory.SIGNAL.value
-    timeline_role = cast(
-        "Select[str]", workspace_screen.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select)
-    )
-    timeline_role.value = Role.LEADER.value
-    timeline_entry = cast(
-        "Select[str]", workspace_screen.query_one(f"#{TASK_DETAIL_TIMELINE_ENTRY}", Select)
-    )
-    await wait_until(lambda: timeline_entry.value != Select.BLANK, timeout=UI_WAIT_SECONDS)
-    selected_entry = timeline_entry.value
-    body = workspace_screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
-    body.scroll_to_widget(timeline_turn, animate=False)
-    timeline_turn.focus()
-    await pilot.wait_for_scheduled_animations()
-    await pilot.pause()
-    assert queue.pending() == pending_before
-
-    for width, height in ((36, 20), (20, 8)):
-        if (app.size.width, app.size.height) != (width, height):
-            await pilot.resize_terminal(width, height)
-            await pilot.wait_for_scheduled_animations()
-        await _assert_popup_close_reachable(
-            workspace_screen,
-            close_id="task-detail-popup-close",
-            frame_id="task-detail-popup-frame",
-            body_id=TASK_DETAIL_BODY,
-            width=width,
-            height=height,
-        )
-        timeline_turn.focus()
-        await pilot.press("right", "p", "n", "right")
-        await pilot.press("v")
-        await pilot.pause()
-        assert not isinstance(app.screen, TaskDetailViewsScreen)
-        assert timeline_turn.value == "3pnv"
-        timeline_turn.value = "3"
-        body.scroll_to_widget(timeline_category, animate=False)
-        saved_scroll_position = body.scroll_target_y
-        await _assert_native_views_shortcut_precedence(body, timeline_category, pilot)
-        await pilot.press("v")
-        await wait_until(
-            lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS
-        )
-        await pilot.wait_for_scheduled_animations()
-        close_button = await _assert_popup_close_reachable(
-            app.screen,
-            close_id=TASK_DETAIL_VIEWS_CLOSE_BUTTON,
-            frame_id="task-detail-views-frame",
-            body_id=None,
-            width=width,
-            height=height,
-        )
-        _assert_task_detail_views_controls_reachable(cast("TaskDetailViewsScreen", app.screen))
-        assert await pilot.click(close_button, offset=(0, 0))
-        await wait_until(
-            lambda saved_scroll_position=saved_scroll_position: (
-                app.screen is workspace_screen
-                and body.scroll_target_y == saved_scroll_position
-                and workspace_screen.focused is body
-            ),
-            timeout=UI_WAIT_SECONDS,
-        )
-        assert panel.active_view == TASK_VIEW_EVIDENCE
-        assert task_id in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-        assert timeline_turn.value == "3"
-        assert timeline_category.value == TaskTimelineCategory.SIGNAL.value
-        assert timeline_role.value == Role.LEADER.value
-        assert timeline_entry.value == selected_entry
-        assert queue.pending() == pending_before
-
-
-def _assert_task_detail_views_controls_reachable(screen: TaskDetailViewsScreen) -> None:
-    frame = screen.query_one("#task-detail-views-frame")
-    view_choice = cast("Select[str]", screen.query_one("#task-detail-view-choice", Select))
-    open_button = screen.query_one(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}", Button)
-    assert frame.content_region.contains_region(view_choice.region)
-    assert frame.content_region.contains_region(open_button.region)
-    assert screen.region.contains_region(view_choice.region)
-    assert screen.region.contains_region(open_button.region)
-
-
-async def _assert_native_views_shortcut_precedence(
-    body: VerticalScroll,
-    timeline_category: Select[str],
-    pilot: Pilot[None],
-) -> None:
-    timeline_category.focus()
-    await pilot.press("v")
-    await pilot.pause()
-    assert not isinstance(pilot.app.screen, TaskDetailViewsScreen)
-    body.focus()
-
-
-async def _assert_popup_close_reachable(
-    screen: Widget,
-    *,
-    close_id: str,
-    frame_id: str,
-    body_id: str | None,
-    width: int,
-    height: int,
-) -> Button:
-    close = screen.query_one(f"#{close_id}", Button)
-    frame = screen.query_one(f"#{frame_id}")
-    body = screen.query_one(f"#{body_id}", VerticalScroll) if body_id is not None else None
-    await wait_until(
-        lambda: (
-            close.region.width > 0
-            and close.region.height > 0
-            and frame.region.contains_region(close.region)
-            and frame.content_region.contains_region(close.region)
-            and screen.region.contains_region(close.region)
-        ),
-        timeout=UI_WAIT_SECONDS,
-    )
-    assert close.visible
-    assert close.region.right <= width
-    assert close.region.bottom <= height
-    assert body is None or not body.scrollable_content_region.contains_region(close.region)
-    return close
-
-
-async def _replay_detached_popup_callbacks(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    frame: PopupFrame,
-    *screen_callbacks: Callable[[], None],
-) -> None:
-    app.call_after_refresh(frame.content_ready)
-    app.call_after_refresh(frame.update_preferred_size)
-    for callback in screen_callbacks:
-        app.call_after_refresh(callback)
-    await pilot.pause()
-
-
-async def _open_task_actions_palette(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    task_id: str,
-    queue: CommandQueue,
-    pending_before: list[QueuedCommand],
-) -> tuple[PaletteScreen, PopupFrame]:
-    app.set_focus(None)
-    await pilot.press("v")
-    await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS)
-    choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
-    choice.value = TASK_VIEW_ACTIONS
-    await pilot.click("#task-detail-views-open")
-    await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
-    palette = cast("PaletteScreen", app.screen)
-    frame = palette.query_one("#palette-frame", PopupFrame)
-    assert palette.query_one("#task-id", Input).value == task_id
-    assert cast("Select[str]", palette.query_one("#role", Select)).value == (Role.IMPLEMENTER.value)
-    assert queue.pending() == pending_before
-    return palette, frame
-
-
-async def _open_and_close_task_help(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    *,
-    task_id: str,
-    queue: CommandQueue,
-    pending_before: list[QueuedCommand],
-    task_detail_screen: TaskDetailScreen,
-) -> None:
-    app.set_focus(None)
-    await pilot.press("v")
-    await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS)
-    choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
-    choice.value = TASK_VIEW_HELP
-    await pilot.click("#task-detail-views-open")
-    await wait_until(
-        lambda: (
-            bool(app.screen.query("#workspace-help-context"))
-            and task_id in _text(app.screen.query_one("#workspace-help-context", Static))
-        ),
-        timeout=UI_WAIT_SECONDS,
-    )
-    help_frame = app.screen.query_one("#workspace-help-frame", PopupFrame)
-    assert queue.pending() == pending_before
-    await pilot.click("#workspace-help-close")
-    await wait_until(lambda: app.screen is task_detail_screen, timeout=UI_WAIT_SECONDS)
-    await _replay_detached_popup_callbacks(app, pilot, help_frame)
-    assert app.screen is task_detail_screen
-
-
-async def test_task_detail_views_mouse_opens_task_actions_and_help(
-    connection: Connection,
-    database: Database,
-    tmp_path: Path,
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Mouse task actions", mode=Mode.IMPLEMENT)
-    tasks = TaskStore(connection, clock)
-    tasks.set_slot(task.id, 0)
-    tasks.apply_transition(task.id, first_step(task))
-    EventLog(connection, clock).append(
-        EventKind.TASK_QUEUED,
-        task_id=task.id,
-        message="queued for reading-position exercise",
-    )
-    reader = StateReader(database, SystemClock())
-    queue = CommandQueue(connection, clock)
-    pending_before = queue.pending()
-
-    try:
-        app = _operator_task_app(reader, project_root, task.id, queue, clock)
-        async with app.run_test(size=(36, 20)) as pilot:
-            workspace_screen = app.screen
-            await wait_until(
-                lambda: (
-                    "Mouse task actions" in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
-            await _close_task_views_preserving_evidence_at_narrow_sizes(
-                app, pilot, task.id, queue, pending_before
-            )
-            task_detail_screen = cast("TaskDetailScreen", app.screen)
-            task_detail_frame = task_detail_screen.query_one("#task-detail-popup-frame", PopupFrame)
-            await pilot.resize_terminal(100, 40)
-            await pilot.wait_for_scheduled_animations()
-
-            palette, palette_frame = await _open_task_actions_palette(
-                app, pilot, task.id, queue, pending_before
-            )
-
-            await pilot.press("escape")
-            await wait_until(lambda: app.screen is task_detail_screen, timeout=UI_WAIT_SECONDS)
-            await _replay_detached_popup_callbacks(
-                app, pilot, palette_frame, palette.update_popup_geometry
-            )
-            assert app.screen is task_detail_screen
-            await _open_and_close_task_help(
-                app,
-                pilot,
-                task_id=task.id,
-                queue=queue,
-                pending_before=pending_before,
-                task_detail_screen=task_detail_screen,
-            )
-            await pilot.press("escape")
-            await wait_until(lambda: app.screen is workspace_screen, timeout=UI_WAIT_SECONDS)
-            await _replay_detached_popup_callbacks(
-                app, pilot, task_detail_frame, task_detail_screen.mark_popup_content_ready
-            )
-            assert app.screen is workspace_screen
-            assert task.id in _text(workspace_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-            await pilot.press("?")
-            await wait_until(
-                lambda: bool(app.screen.query("#workspace-help-close")), timeout=UI_WAIT_SECONDS
-            )
-            await pilot.press("escape")
-            await wait_until(lambda: app.screen is workspace_screen, timeout=UI_WAIT_SECONDS)
     finally:
         reader.close()
 
@@ -2343,22 +2058,7 @@ async def _assert_responsive_task_actions(
     pilot: Pilot[None],
     task: Task,
 ) -> None:
-    await pilot.press("v")
-    await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS)
-    choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
-    choice.value = TASK_VIEW_ACTIONS
-    open_button = app.screen.query_one("#task-detail-views-open", Button)
-    open_button.focus()
-    await pilot.pause()
-    assert open_button.region.width > 0
-    assert open_button.region.x >= 0
-    assert open_button.region.right <= app.size.width
-    if app.size.height >= 20:
-        assert open_button.region.y >= 0
-        assert open_button.region.bottom <= app.size.height
-        await pilot.click("#task-detail-views-open")
-    else:
-        await pilot.press("enter")
+    await pilot.press("ctrl+p")
     await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
     palette = cast("PaletteScreen", app.screen)
     assert palette.query_one("#task-id", Input).value == task.id
@@ -2375,11 +2075,7 @@ async def _assert_responsive_task_actions(
 
 
 async def _assert_task_context_keeps_priority(app: DashboardApp, pilot: Pilot[None]) -> None:
-    await pilot.press("v")
-    await wait_until(lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS)
-    choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
-    choice.value = TASK_VIEW_CONTEXT
-    await pilot.press("tab", "enter")
+    await choose_details_entry(pilot, TASK_VIEW_CONTEXT)
     await wait_until(
         lambda: (
             isinstance(app.screen, TaskDetailScreen)
@@ -2625,7 +2321,7 @@ async def test_task_detail_refreshes_durable_ownership_after_palette_closes(
             assert Hold.PAUSED.value in _text(ownership)
             await _open_task_view(app, pilot, TASK_VIEW_CONTEXT)
             detail_screen = app.screen
-            assert "Project attention" in _text(
+            assert "Project attention" not in _text(
                 detail_screen.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)
             )
             await pilot.press("escape")
@@ -2856,7 +2552,7 @@ async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_re
             assert not app.query("#task-view-extension-panel")
             assert len(app.query("#task-browser-list")) == 0
             await _open_task_view(app, pilot, TASK_VIEW_CONTEXT)
-            assert "Project attention · 1 decisions · 1 engine faults" in _text(
+            assert "Project attention" not in _text(
                 app.screen.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)
             )
             await pilot.press("escape")
@@ -2869,43 +2565,6 @@ async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_re
                 other_run.agent,
             )
             await _assert_task_context_extensions_and_workspace_are_available(app, pilot)
-    finally:
-        reader.close()
-
-
-async def test_task_window_global_attention_uses_injected_home_navigation(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    task = seed_task(connection, SystemClock(), title="Return to project attention")
-    reader = StateReader(database, SystemClock())
-    home_results: list[str] = []
-
-    async def navigate_home() -> str:
-        result = "opened existing home window"
-        home_results.append(result)
-        return result
-
-    try:
-        app = _dashboard_app(
-            reader,
-            project_root,
-            focus_task=task.id,
-            widget_names=TASK_DETAIL_WIDGETS,
-            navigate_home=navigate_home,
-        )
-        async with app.run_test(size=(100, 30)) as pilot:
-            identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-            await wait_until(lambda: task.title in _text(identity), timeout=UI_WAIT_SECONDS)
-            await pilot.press("escape")
-            feedback = app.query_one("#task-detail-feedback", Static)
-            await wait_until(
-                lambda: "opened existing home window" in _text(feedback),
-                timeout=UI_WAIT_SECONDS,
-            )
-            assert home_results == ["opened existing home window"]
     finally:
         reader.close()
 
@@ -3071,3 +2730,164 @@ async def test_role_navigation_rejects_a_recorded_pane_moved_to_another_window(
         assert CommandQueue(connection, context.clock).pending() == context.pending_before
     finally:
         context.reader.close()
+
+
+@dataclass(frozen=True)
+class _SectionCase:
+    section: DetailsSection
+    view: str
+    category: TaskTimelineCategory | None
+    by_click: bool
+
+
+_SECTION_CASES = [
+    _SectionCase(DetailsSection.REPORTS, TASK_VIEW_REPORTS, None, False),
+    _SectionCase(DetailsSection.REQUEST, TASK_VIEW_REQUEST, None, True),
+    _SectionCase(DetailsSection.EVENTS, TASK_VIEW_EVIDENCE, TaskTimelineCategory.ACTIVITY, False),
+    _SectionCase(
+        DetailsSection.AGENT_ACTIVITY, TASK_VIEW_EVIDENCE, TaskTimelineCategory.SIGNAL, True
+    ),
+    _SectionCase(DetailsSection.USAGE, TASK_VIEW_USAGE, None, False),
+    _SectionCase(DetailsSection.FACTS, TASK_VIEW_FACTS, None, True),
+    _SectionCase(DetailsSection.WORKSPACE, TASK_VIEW_WORKSPACE, None, False),
+    _SectionCase(DetailsSection.BLOCKERS, TASK_VIEW_RELATIONSHIPS, None, True),
+    _SectionCase(DetailsSection.SETTINGS, TASK_VIEW_CONTEXT, None, False),
+]
+_ESCAPE_HOME_RESULT = "opened existing home window"
+
+
+def _details_list_text(screen: TaskDetailsListScreen) -> str:
+    rows = [row for row in screen.query(Static) if row.has_class("task-details-row")]
+    return "\n".join(plain_text(row.content) for row in rows)
+
+
+async def test_details_list_opens_each_section_by_key_or_click_without_creating_commands(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Details list target", priority=5)
+    reader = StateReader(database, SystemClock())
+    queue = CommandQueue(connection, clock)
+    pending_before = queue.pending()
+
+    try:
+        app = _operator_task_app(reader, project_root, task.id, queue, clock)
+        async with app.run_test(size=(100, 40)) as pilot:
+            await wait_until(
+                lambda: task.title in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
+                timeout=UI_WAIT_SECONDS,
+            )
+            for case in _SECTION_CASES:
+                await _open_section_from_list(app, pilot, case)
+                await pilot.press("escape")
+                await wait_until(
+                    lambda: not isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
+                )
+            assert queue.pending() == pending_before
+    finally:
+        reader.close()
+
+
+async def _open_section_from_list(
+    app: DashboardApp, pilot: Pilot[None], case: _SectionCase
+) -> None:
+    await pilot.press("v")
+    await wait_until(lambda: isinstance(app.screen, TaskDetailsListScreen), timeout=UI_WAIT_SECONDS)
+    menu = cast("TaskDetailsListScreen", app.screen)
+    assert "priority 5" in _details_list_text(menu)
+    index = list(DetailsSection).index(case.section)
+    if case.by_click:
+        assert await pilot.click(menu.query(".task-details-row")[index])
+    else:
+        await pilot.press(*["down"] * index, "enter")
+    await wait_until(
+        lambda: (
+            isinstance(app.screen, TaskDetailScreen)
+            and app.screen.query_one("#task-detail-panel", TaskDetailPanel).active_view == case.view
+        ),
+        timeout=UI_WAIT_SECONDS,
+    )
+    if case.category is not None:
+        selected = cast(
+            "Select[str]", app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
+        )
+        assert selected.value == case.category.value
+
+
+@pytest.mark.parametrize("surface", ["task-window", "home-inspector"])
+async def test_escape_goes_up_one_level_from_section_list_and_surface(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    surface: str,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    task = seed_task(connection, SystemClock(), title="Escape levels target")
+    reader = StateReader(database, SystemClock())
+    home_results: list[str] = []
+
+    async def navigate_home() -> str:
+        home_results.append(_ESCAPE_HOME_RESULT)
+        return _ESCAPE_HOME_RESULT
+
+    in_window = surface == "task-window"
+    try:
+        app = _dashboard_app(
+            reader,
+            project_root,
+            focus_task=task.id if in_window else None,
+            widget_names=TASK_DETAIL_WIDGETS,
+            navigate_home=navigate_home,
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            base = await _open_escape_base(app, task.id, in_window=in_window)
+            await pilot.press("v")
+            await wait_until(
+                lambda: isinstance(app.screen, TaskDetailsListScreen), timeout=UI_WAIT_SECONDS
+            )
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is base, timeout=UI_WAIT_SECONDS)
+
+            await choose_details_entry(pilot, TASK_VIEW_USAGE)
+            await wait_until(
+                lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
+            )
+            panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+            await wait_until(lambda: panel.active_view == TASK_VIEW_USAGE, timeout=UI_WAIT_SECONDS)
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is base, timeout=UI_WAIT_SECONDS)
+
+            await pilot.press("escape")
+            if in_window:
+                await wait_until(lambda: home_results == [_ESCAPE_HOME_RESULT], timeout=5.0)
+            else:
+                await wait_until(
+                    lambda: task.id not in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
+                    timeout=UI_WAIT_SECONDS,
+                )
+                assert app.screen is base
+    finally:
+        reader.close()
+
+
+async def _open_escape_base(app: DashboardApp, task_id: str, *, in_window: bool) -> Screen[object]:
+    if in_window:
+        await wait_until(
+            lambda: task_id in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
+            timeout=UI_WAIT_SECONDS,
+        )
+        return app.screen
+    row = f"#task-row-{task_id}"
+    await wait_until(lambda: bool(app.query(row)), timeout=UI_WAIT_SECONDS)
+    task_list = cast("ListView", app.query_one(row).parent)
+    task_list.focus()
+    task_list.index = tuple(task_list.children).index(app.query_one(row))
+    await wait_until(
+        lambda: task_id in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
+        timeout=UI_WAIT_SECONDS,
+    )
+    app.query_one("#task-detail-details", Button).focus()
+    return app.screen

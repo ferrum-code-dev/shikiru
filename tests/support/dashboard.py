@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from textual.app import App, ComposeResult
 from textual.widgets import Label, ListItem, ListView
@@ -18,6 +18,7 @@ from shikiru.dashboard.contract import (
     ResourceView,
     WidgetContext,
 )
+from shikiru.dashboard.details_list import TaskDetailsListScreen
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.operator.queries import OperatorQueries
@@ -123,6 +124,28 @@ async def choose_focus_view(pilot: Pilot[None], label: str) -> None:
         timeout=UI_WAIT_SECONDS,
     )
     await pilot.pause()
+
+
+MAX_DETAILS_ENTRIES = 20
+
+
+async def choose_details_entry(pilot: Pilot[None], entry_id: str) -> None:
+    await pilot.press("v")
+    await pick_details_entry(pilot, entry_id)
+
+
+async def pick_details_entry(pilot: Pilot[None], entry_id: str) -> None:
+    await wait_until(
+        lambda: isinstance(pilot.app.screen, TaskDetailsListScreen), timeout=UI_WAIT_SECONDS
+    )
+    menu = cast("TaskDetailsListScreen", pilot.app.screen)
+    for _ in range(MAX_DETAILS_ENTRIES):
+        if menu.selected_id == entry_id:
+            break
+        await pilot.press("down")
+    assert menu.selected_id == entry_id
+    await pilot.press("enter")
+    await wait_until(lambda: pilot.app.screen is not menu, timeout=UI_WAIT_SECONDS)
 
 
 def state_views(

@@ -21,11 +21,9 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_TIMELINE_OLDER,
     TASK_DETAIL_TIMELINE_SELECTED,
     TASK_DETAIL_TIMELINE_STATUS,
-    TASK_DETAIL_VIEWS_KEY,
     TASK_VIEW_EVIDENCE,
     TaskDetailBody,
     TaskDetailPanel,
-    TaskDetailViewsScreen,
 )
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
@@ -44,7 +42,13 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices, WidgetHostApp, state_views, widget_context
+from tests.support.dashboard import (
+    StubServices,
+    WidgetHostApp,
+    choose_details_entry,
+    state_views,
+    widget_context,
+)
 from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
@@ -83,13 +87,7 @@ FAILED_COMMAND_EXIT_CODE = 2
 
 async def _open_timeline_view(panel: TaskDetailPanel, pilot: Pilot[None]) -> None:
     panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).focus()
-    await pilot.press(TASK_DETAIL_VIEWS_KEY)
-    await wait_until(
-        lambda: isinstance(pilot.app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS
-    )
-    choice = cast("Select[str]", pilot.app.screen.query_one("#task-detail-view-choice", Select))
-    choice.value = TASK_VIEW_EVIDENCE
-    await pilot.press("tab", "enter")
+    await choose_details_entry(pilot, TASK_VIEW_EVIDENCE)
     await wait_until(lambda: panel.active_view == TASK_VIEW_EVIDENCE, timeout=UI_WAIT_SECONDS)
 
 

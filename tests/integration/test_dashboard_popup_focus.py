@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import Button, DataTable, ListView, Select
+from textual.widgets import Button, DataTable, ListView
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
@@ -301,35 +301,6 @@ async def test_overflowing_task_detail_has_a_one_column_scrollbar(
             body.region.width - body.styles.gutter.width - SCROLLBAR_WIDTH
         )
         assert _scrollbar_width(body) == SCROLLBAR_WIDTH
-
-
-async def test_task_views_select_dropdown_uses_the_one_column_scrollbar(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    task_id = seed_task(connection, clock, title="Views task", mode=Mode.IMPLEMENT).id
-    app = _dashboard(
-        connection,
-        reader,
-        write_minimal_project(tmp_path),
-        clock,
-        focus_task=task_id,
-    )
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        await pilot.press("v")
-        await wait_until(
-            lambda: bool(app.screen.query("#task-detail-view-choice")),
-            timeout=UI_WAIT_SECONDS,
-        )
-        choice = cast("Select[str]", app.screen.query_one("#task-detail-view-choice", Select))
-        choice.focus()
-        await pilot.press("enter")
-        await pilot.pause()
-        dropdown = choice.query_one("SelectOverlay")
-        assert _scrollbar_width(dropdown) == SCROLLBAR_WIDTH
 
 
 async def test_help_body_scrolls_from_its_initial_focus_without_resizing_the_frame(

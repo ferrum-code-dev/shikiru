@@ -1262,7 +1262,6 @@ class DashboardApp(App[None]):
                         context,
                         self._selected_task_id,
                         fixed=False,
-                        embedded=True,
                     )
                     yield self._home_detail_panel
                 else:

@@ -168,6 +168,12 @@ def needed_from_you(view: TaskDetailView) -> str | None:
     return _sentence(f"{WAITING_ON} {reason.replace('_', ' ')}")
 
 
+def total_cost_text(sessions: Sequence[TaskSessionView]) -> str | None:
+    """Return the task's summed cost with its basis, `subscription`, or nothing when unknown."""
+    groups = _cost_groups(sessions, compact=True)
+    return _joined(groups).plain if groups else None
+
+
 def header_text(view: TaskDetailView, now: datetime, *, compact: bool) -> Text:
     """Return the identity line, the state line and, when wide, the time line."""
     header = Text(f"{view.task_id} · {view.title}", style=BOLD_PRIMARY)

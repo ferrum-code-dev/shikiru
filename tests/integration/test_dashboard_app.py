@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, cast
 import psutil
 import pytest
 from rich.cells import cell_len
-from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
+from textual.containers import Grid, Horizontal, VerticalScroll
 from textual.events import MouseScrollDown
 from textual.geometry import Region
 from textual.widgets import (
@@ -77,7 +77,6 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_TIMELINE_NEWER,
     TASK_DETAIL_TIMELINE_OLDER,
     TASK_DETAIL_VERDICT,
-    TASK_DETAIL_VIEWS_OPEN_BUTTON,
     TASK_DETAIL_WORKSPACE,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_RELATIONSHIPS,
@@ -122,7 +121,13 @@ from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.ui.compact import format_cpu_pct
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices, ignore_palette_action, state_views
+from tests.support.dashboard import (
+    StubServices,
+    choose_details_entry,
+    ignore_palette_action,
+    pick_details_entry,
+    state_views,
+)
 from tests.support.entry_points import FakeDistribution
 from tests.support.escalations import (
     operator_services,
@@ -3101,15 +3106,7 @@ async def test_task_detail_page_shortcuts_match_page_buttons_and_stop_at_boundar
                 lambda: panel.active_view == TASK_VIEW_EVIDENCE, timeout=UI_WAIT_SECONDS
             )
             await _assert_task_timeline_page_shortcuts(app, pilot)
-            await pilot.press("v")
-            await wait_until(
-                lambda: bool(app.screen.query("#task-detail-view-choice")), timeout=UI_WAIT_SECONDS
-            )
-            view_choice = cast(
-                "Select[str]", app.screen.query_one("#task-detail-view-choice", Select)
-            )
-            view_choice.value = TASK_VIEW_RELATIONSHIPS
-            await pilot.press("tab", "enter")
+            await choose_details_entry(pilot, TASK_VIEW_RELATIONSHIPS)
             await wait_until(
                 lambda: panel.active_view == TASK_VIEW_RELATIONSHIPS, timeout=UI_WAIT_SECONDS
             )
@@ -3870,13 +3867,7 @@ async def _exercise_task_secondary_menu_routes(
         cast("PaletteScreen", app.screen),
         "palette-menu-view-secondary",
     )
-    await wait_until(
-        lambda: bool(app.screen.query("#task-detail-views-frame")),
-        timeout=UI_WAIT_SECONDS,
-    )
-    views = app.screen
-    views.query_one("#task-detail-view-choice", Select).value = "widget-faults"
-    await pilot.click(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}")
+    await pick_details_entry(pilot, "widget-faults")
     await wait_until(
         lambda: bool(app.screen.query("#context-widget-frame")),
         timeout=UI_WAIT_SECONDS,
@@ -4460,29 +4451,7 @@ async def _open_compact_task_evidence_route(
         cast("PaletteScreen", app.screen),
         "palette-menu-view-secondary",
     )
-    await wait_until(
-        lambda: bool(app.screen.query("#task-detail-views-frame")),
-        timeout=UI_WAIT_SECONDS,
-    )
-    views = app.screen
-    views_frame = views.query_one("#task-detail-views-frame")
-    choice = cast("Select[str]", views.query_one("#task-detail-view-choice", Select))
-    choice.value = TASK_VIEW_EVIDENCE
-    views_content = views.query_one("#task-detail-views-content", Vertical)
-    open_button = views.query_one(f"#{TASK_DETAIL_VIEWS_OPEN_BUTTON}", Button)
-    close_button = views.query_one("#task-detail-views-close", Button)
-    await pilot.press("tab")
-    await pilot.pause()
-    await wait_until(
-        lambda: views_frame.content_region.contains_region(open_button.region),
-        timeout=UI_WAIT_SECONDS,
-    )
-    assert pilot.app.focused is open_button
-    assert views_frame.content_region.contains_region(open_button.region)
-    assert views_content.region.contains_region(choice.region)
-    assert views_content.region.contains_region(open_button.region)
-    assert views.region.contains_region(close_button.region)
-    await pilot.press("enter")
+    await pick_details_entry(pilot, TASK_VIEW_EVIDENCE)
     await wait_until(
         lambda: isinstance(app.screen, TaskDetailScreen),
         timeout=UI_WAIT_SECONDS,

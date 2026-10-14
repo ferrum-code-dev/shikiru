@@ -28,6 +28,8 @@ from shikiru.dashboard.contract import (
     TaskTimelineCategory,
     TaskTimelineSource,
 )
+from shikiru.dashboard.details_list import TaskDetailsListScreen
+from shikiru.dashboard.details_list_view import DetailsEntry, DetailsSection, section_headline
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.domain.briefing import BriefingAction
 from shikiru.domain.runs import RunStatus
@@ -109,9 +111,6 @@ TASK_DETAIL_CONTEXT = "task-detail-context"
 TASK_DETAIL_CONTEXT_INFO = "task-detail-context-info"
 TASK_DETAIL_HINTS = "task-detail-hints"
 TASK_DETAIL_VIEWS_BUTTON = "task-detail-views"
-TASK_DETAIL_VIEWS_OPEN_BUTTON = "task-detail-views-open"
-TASK_DETAIL_VIEWS_CLOSE_BUTTON = "task-detail-views-close"
-TASK_DETAIL_VIEWS_CONTENT = "task-detail-views-content"
 TASK_DETAIL_TINY_MAX_ROWS = 8
 _TASK_DETAIL_COMPACT_MAX_COLUMNS = 48
 _TASK_DETAIL_COMPACT_MAX_ROWS = 20
@@ -149,8 +148,6 @@ TASK_DETAIL_TIMELINE_ENTRY = "task-detail-timeline-entry"
 TASK_DETAIL_TIMELINE_SELECTED = "task-detail-timeline-selected"
 TASK_VIEW_SUMMARY = "task-summary"
 TASK_VIEW_CONTEXT = "task-context"
-TASK_VIEW_ACTIONS = "task-actions"
-TASK_VIEW_HELP = "task-help"
 TASK_VIEW_USAGE = "task-usage"
 TASK_VIEW_REPORTS = "task-reports"
 TASK_VIEW_REQUEST = "task-request"
@@ -158,18 +155,22 @@ TASK_VIEW_EVIDENCE = "task-evidence"
 TASK_VIEW_RELATIONSHIPS = "task-relationships"
 TASK_VIEW_FACTS = "task-facts"
 TASK_VIEW_WORKSPACE = "task-workspace"
-TASK_VIEW_CHOICES = (
-    ("Usage details", TASK_VIEW_USAGE),
-    ("Task details", TASK_VIEW_CONTEXT),
-    ("Reports and decisions", TASK_VIEW_REPORTS),
-    ("Request and criteria", TASK_VIEW_REQUEST),
-    ("Evidence timeline and signals", TASK_VIEW_EVIDENCE),
-    ("Blockers and relationships", TASK_VIEW_RELATIONSHIPS),
-    ("Engine facts", TASK_VIEW_FACTS),
-    ("Workspace targets", TASK_VIEW_WORKSPACE),
-    ("Operator actions", TASK_VIEW_ACTIONS),
-    ("Help", TASK_VIEW_HELP),
-)
+TASK_VIEW_AGENT = "task-agent"
+DETAILS_SECTION_VIEWS = {
+    DetailsSection.REPORTS: TASK_VIEW_REPORTS,
+    DetailsSection.REQUEST: TASK_VIEW_REQUEST,
+    DetailsSection.EVENTS: TASK_VIEW_EVIDENCE,
+    DetailsSection.AGENT_ACTIVITY: TASK_VIEW_AGENT,
+    DetailsSection.USAGE: TASK_VIEW_USAGE,
+    DetailsSection.FACTS: TASK_VIEW_FACTS,
+    DetailsSection.WORKSPACE: TASK_VIEW_WORKSPACE,
+    DetailsSection.BLOCKERS: TASK_VIEW_RELATIONSHIPS,
+    DetailsSection.SETTINGS: TASK_VIEW_CONTEXT,
+}
+EVIDENCE_VIEW_CATEGORIES = {
+    TASK_VIEW_EVIDENCE: TaskTimelineCategory.ACTIVITY,
+    TASK_VIEW_AGENT: TaskTimelineCategory.SIGNAL,
+}
 TASK_VIEW_WIDGETS = {
     TASK_VIEW_SUMMARY: (TASK_DETAIL_BRIEFING, TASK_DETAIL_ACTIONS),
     TASK_VIEW_USAGE: (TASK_DETAIL_SESSIONS,),
@@ -313,7 +314,6 @@ class TaskDetailPanel(Vertical):
         task_id: str | None,
         *,
         fixed: bool,
-        embedded: bool = False,
         close_detail: CloseDetail | None = None,
         initial_view: str = TASK_VIEW_SUMMARY,
         on_initial_content: Callable[[], None] | None = None,
@@ -323,7 +323,6 @@ class TaskDetailPanel(Vertical):
         self._widget_context = context
         self._task_id = task_id
         self._fixed = fixed
-        self._embedded = embedded
         self._close_detail = close_detail
         self._refresh_lock = asyncio.Lock()
         self._refresh_worker: Worker[None] | None = None
@@ -337,7 +336,9 @@ class TaskDetailPanel(Vertical):
         self._timeline_following = True
         self._timeline_role: str | None = None
         self._timeline_turn: str | None = None
-        self._timeline_category = TaskTimelineCategory.ACTIVITY.value
+        self._timeline_category = EVIDENCE_VIEW_CATEGORIES.get(
+            initial_view, TaskTimelineCategory.ACTIVITY
+        ).value
         self._timeline_selected_identity: str | None = None
         self._timeline_selected_entry: TaskTimelineEntryView | None = None
         self._timeline_page: TaskTimelinePageView | None = None
@@ -347,7 +348,7 @@ class TaskDetailPanel(Vertical):
         self._body_focus_generation = 0
         self._views_return_state: tuple[float, Widget | None] | None = None
         self._rendered_task_id: str | None = None
-        self._active_view = initial_view
+        self._active_view = _panel_view(initial_view)
         self._view: TaskDetailView | None = None
         self._on_initial_content = on_initial_content
         self._initial_content_reported = False
@@ -446,6 +447,7 @@ class TaskDetailPanel(Vertical):
     async def on_mount(self) -> None:
         self.disabled = self._task_id is None
         self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).add_class("compact-summary")
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select).value = self._timeline_category
         self._apply_view_visibility(blocker_visible=False)
         identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         identity.update(
@@ -821,10 +823,6 @@ class TaskDetailPanel(Vertical):
         if self._fixed:
             await self._navigate_home()
             return
-        if self._embedded:
-            if self._task_id is not None and self._widget_context.open_task_detail is not None:
-                await self._widget_context.open_task_detail(self._task_id)
-            return
         if self._close_detail is not None:
             await self._close_detail()
 
@@ -875,12 +873,25 @@ class TaskDetailPanel(Vertical):
         self._views_return_state = (body.scroll_target_y, self.screen.focused)
         app = cast("App[None]", self.app)
         app.push_screen(
-            TaskDetailViewsScreen(
-                self._task_id,
-                self._widget_context.task_contextual_views,
-            ),
+            TaskDetailsListScreen(self._task_id, self._details_entries()),
             callback=self._show_selected_view,
         )
+
+    def _details_entries(self) -> tuple[DetailsEntry, ...]:
+        view = (
+            self._view if self._view is not None and self._view.task_id == self._task_id else None
+        )
+        sections = (
+            DetailsEntry(
+                DETAILS_SECTION_VIEWS[section], section.value, section_headline(section, view)
+            )
+            for section in DetailsSection
+        )
+        projects = (
+            DetailsEntry(choice_id, label)
+            for label, choice_id in self._widget_context.task_contextual_views
+        )
+        return (*sections, *projects)
 
     async def action_open_contextual_views(self) -> None:
         await self.open_contextual_views()
@@ -952,7 +963,7 @@ class TaskDetailPanel(Vertical):
             self._restore_contextual_position()
             return
         self._views_return_state = None
-        if selected in TASK_VIEW_WIDGETS:
+        if selected in TASK_VIEW_WIDGETS or selected in EVIDENCE_VIEW_CATEGORIES:
             if isinstance(self.screen, TaskDetailScreen):
                 self._queue_refresh()
                 self._show_task_view(selected)
@@ -966,10 +977,6 @@ class TaskDetailPanel(Vertical):
             else:
                 self._queue_refresh()
                 self._show_task_view(selected)
-        elif selected == TASK_VIEW_ACTIONS:
-            self.run_worker(self.open_palette(), group=TASK_DETAIL_WORKER_GROUP)
-        elif selected == TASK_VIEW_HELP:
-            self.run_worker(self.open_help(), group=TASK_DETAIL_WORKER_GROUP)
         elif self._widget_context.open_contextual_view is not None:
             self._queue_refresh()
             self.run_worker(
@@ -999,11 +1006,14 @@ class TaskDetailPanel(Vertical):
         body.scroll_to(y=scroll_y, animate=False, immediate=True)
 
     def _show_task_view(self, view_id: str) -> None:
-        if view_id not in TASK_VIEW_WIDGETS:
+        if view_id not in TASK_VIEW_WIDGETS and view_id not in EVIDENCE_VIEW_CATEGORIES:
             return
+        heading_view = view_id
+        view_id = _panel_view(view_id)
+        self._apply_evidence_category(heading_view)
         self._active_view = view_id
         if isinstance(self.screen, TaskDetailScreen):
-            self.screen.set_view_heading(view_id)
+            self.screen.set_view_heading(heading_view)
         if self._view is None or not self.is_mounted:
             return
         if view_id == TASK_VIEW_RELATIONSHIPS:
@@ -1023,6 +1033,17 @@ class TaskDetailPanel(Vertical):
         }[view_id]
         app = cast("App[None]", self.app)
         self.call_after_refresh(app.set_focus, self.query_one(f"#{target_id}"))
+
+    def _apply_evidence_category(self, view_id: str) -> None:
+        category = EVIDENCE_VIEW_CATEGORIES.get(view_id)
+        if category is None or category.value == self._timeline_category:
+            return
+        self._timeline_category = category.value
+        self._timeline_cursors = [None]
+        self._timeline_following = True
+        self._timeline_request_generation += 1
+        self.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select).value = category.value
+        self._queue_refresh()
 
     async def _navigate_task_window(self) -> None:
         if self._task_id is None:
@@ -1303,16 +1324,10 @@ class TaskDetailPanel(Vertical):
             f"{selected.source} · {selected.category}",
             f"Timestamp · {selected.timestamp or NO_VALUE}",
         ]
-        if selected.timestamp_error:
-            lines.append(f"Timestamp evidence · {selected.timestamp_error}")
         if selected.role is not None:
             lines.append(f"Role · {selected.role}")
         if selected.turn is not None:
             lines.append(f"Turn · {selected.turn}")
-        if selected.event_id is not None:
-            lines.append(f"Engine event ID · {selected.event_id}")
-        if selected.incomplete:
-            lines.append("Incomplete live JSONL row")
         lines.extend((selected.summary, selected.detail))
         target.update("\n".join(lines))
 
@@ -1446,88 +1461,6 @@ class TaskDetailPanel(Vertical):
         return Role(view.acting_role)
 
 
-class TaskDetailViewsScreen(ModalScreen[str | None]):
-    """Route task detail to its views, actions or help."""
-
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Back")]
-    DEFAULT_CSS = (
-        POPUP_CSS
-        + """
-    #task-detail-views-frame Select { width: 100%; }
-    #task-detail-views-content { height: auto; }
-    #task-detail-views-frame.compact { margin: 0 1; padding: 0 1; }
-    #task-detail-views-open {
-        width: 100%; height: auto; min-width: 1; padding: 0; border: none;
-    }
-    #task-detail-views-frame.tiny #task-detail-view-choice,
-    #task-detail-views-frame.tiny #task-detail-views-open {
-        height: 1; border: none;
-    }
-    #task-detail-views-frame.tiny {
-        height: 100%; margin: 0; padding: 0 1;
-    }
-    """
-    )
-
-    def __init__(self, task_id: str, extra_choices: tuple[tuple[str, str], ...]) -> None:
-        super().__init__()
-        prepare_popup(self)
-        self._task_id = task_id
-        self._choices = (*TASK_VIEW_CHOICES, *extra_choices)
-
-    def compose(self) -> ComposeResult:
-        with PopupFrame(widget_id="task-detail-views-frame", classes=POPUP_FRAME_CLASS):
-            with Horizontal(id="task-detail-views-heading", classes=POPUP_HEADER_CLASS):
-                yield Static(
-                    f"Task views · {self._task_id}",
-                    id="task-detail-views-title",
-                    classes=POPUP_TITLE_CLASS,
-                    markup=False,
-                )
-                yield Button(
-                    TASK_DETAIL_POPUP_CLOSE_LABEL,
-                    id=TASK_DETAIL_VIEWS_CLOSE_BUTTON,
-                    classes=POPUP_CLOSE_CLASS,
-                )
-            yield Rule(classes=POPUP_RULE_CLASS)
-            with Vertical(id=TASK_DETAIL_VIEWS_CONTENT):
-                yield Select(self._choices, value=TASK_VIEW_USAGE, id="task-detail-view-choice")
-                yield Button("Open", id=TASK_DETAIL_VIEWS_OPEN_BUTTON)
-
-    async def on_mount(self) -> None:
-        self._apply_layout(self.size.width, self.size.height)
-        self.set_focus(cast("Select[str]", self.query_one("#task-detail-view-choice", Select)))
-        self.call_after_refresh(
-            self.query_one("#task-detail-views-frame", PopupFrame).content_ready
-        )
-
-    def on_resize(self, event: events.Resize) -> None:
-        if not self.is_mounted or not widget_is_attached(self):
-            return
-        self._apply_layout(event.size.width, event.size.height)
-        self.call_after_refresh(
-            self.query_one("#task-detail-views-frame", PopupFrame).update_preferred_size
-        )
-
-    def _apply_layout(self, width: int, height: int) -> None:
-        frame = self.query_one("#task-detail-views-frame", PopupFrame)
-        compact = (
-            width <= _TASK_DETAIL_COMPACT_MAX_COLUMNS or height <= _TASK_DETAIL_COMPACT_MAX_ROWS
-        )
-        frame.set_class(compact, "compact")
-        frame.set_class(height <= TASK_DETAIL_TINY_MAX_ROWS, "tiny")
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == TASK_DETAIL_VIEWS_CLOSE_BUTTON:
-            self.dismiss(None)
-        elif event.button.id == TASK_DETAIL_VIEWS_OPEN_BUTTON:
-            selected = cast("Select[str]", self.query_one("#task-detail-view-choice", Select)).value
-            self.dismiss(selected if isinstance(selected, str) else None)
-
-    async def action_close(self) -> None:
-        self.dismiss(None)
-
-
 class TaskDetailScreen(ModalScreen[None]):
     """Show a selected task's shared detail over the Home browser."""
 
@@ -1626,14 +1559,7 @@ class TaskDetailScreen(ModalScreen[None]):
     def _view_heading(self, view_id: str) -> str:
         name = {
             TASK_VIEW_SUMMARY: "Task details",
-            TASK_VIEW_USAGE: "Usage",
-            TASK_VIEW_EVIDENCE: "Evidence",
-            TASK_VIEW_CONTEXT: "Task context",
-            TASK_VIEW_REPORTS: "Reports and decisions",
-            TASK_VIEW_REQUEST: "Request and criteria",
-            TASK_VIEW_RELATIONSHIPS: "Blockers and relationships",
-            TASK_VIEW_FACTS: "Engine facts",
-            TASK_VIEW_WORKSPACE: "Workspace targets",
+            **{view: section.value for section, view in DETAILS_SECTION_VIEWS.items()},
         }.get(view_id, "Task details")
         return f"{name} · {self._task_id}"
 
@@ -1660,6 +1586,10 @@ class TaskDetailScreen(ModalScreen[None]):
 
 
 type CloseDetail = Callable[[], Awaitable[None]]
+
+
+def _panel_view(view_id: str) -> str:
+    return TASK_VIEW_EVIDENCE if view_id in EVIDENCE_VIEW_CATEGORIES else view_id
 
 
 def _report_text(label: str, report: TaskReportView | None, missing: str) -> str:
@@ -1690,7 +1620,7 @@ def _report_text(label: str, report: TaskReportView | None, missing: str) -> str
 
 
 def _task_context_text(view: TaskDetailView) -> str:
-    lines = ["Task details"]
+    lines = ["Task settings"]
     if view.mode is not None:
         lines.append(f"Mode · {view.mode}")
     lines.append(f"Submitted · {view.submitted_age}")
@@ -1700,10 +1630,6 @@ def _task_context_text(view: TaskDetailView) -> str:
         lines.append(f"Status reason · {view.status_reason}")
     if view.priority is not None:
         lines.append(f"Dispatch priority · {view.priority}")
-    attention = view.attention
-    lines.append(
-        f"Project attention · {attention.decisions} decisions · {attention.faults} engine faults"
-    )
     return "\n".join(lines)
 
 
@@ -1875,15 +1801,13 @@ def _timeline_option(entry: TaskTimelineEntryView) -> str:
 
 
 def _workspace_text(view: TaskDetailView) -> str:
-    lines = ["Workspace and existing targets"]
-    lines.append(f"Branch · {view.branch or NO_VALUE}")
-    lines.append(f"Recorded worktree path · {view.worktree_path}")
-    lines.append(f"Recorded task window ID · {view.window_id or NO_VALUE}")
-    lines.extend(
-        f"{pane.role.title()} pane ID · {pane.recorded_target or NO_VALUE}"
-        for pane in view.role_panes
+    return "\n".join(
+        (
+            "Workspace",
+            f"Branch · {view.branch or NO_VALUE}",
+            f"Worktree path · {view.worktree_path}",
+        )
     )
-    return "\n".join(lines)
 
 
 def _task_identity_text(identity: str) -> Text:
