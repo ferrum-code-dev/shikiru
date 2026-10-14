@@ -31,6 +31,7 @@ from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.tasks import Hold, Role, Status
 from shikiru.ui.compact import ROLE_LABELS, StageActivity, duration_text, recorded_age
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_STALLED, ROLE_GLYPHS
+from shikiru.ui.keys import key_hint
 from shikiru.ui.section import (
     BOLD_PRIMARY,
     GROUP_SEPARATOR,
@@ -143,6 +144,11 @@ class BriefingLayout:
     now_lines: int
     compact: bool = False
     tiny: bool = False
+
+
+def details_label(*, compact: bool) -> Text:
+    """Return the hint that leads to the task folds, its key painted."""
+    return key_hint(COMPACT_DETAILS_LABEL if compact else DETAILS_LABEL)
 
 
 def briefing_verbs(view: TaskDetailView) -> tuple[BriefingAction, ...]:

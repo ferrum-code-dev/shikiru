@@ -17,11 +17,10 @@ from textual.widgets import Button, Label, Rule, Static
 from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED
 from shikiru.dashboard.briefing_view import (
     ACTION_LABELS,
-    COMPACT_DETAILS_LABEL,
-    DETAILS_LABEL,
     Briefing,
     BriefingLayout,
     briefing_verbs,
+    details_label,
     header_text,
 )
 from shikiru.dashboard.contract import (
@@ -308,7 +307,7 @@ class TaskDetailPanel(Vertical):
                         yield Button(
                             ACTION_LABELS[action], id=f"{TASK_DETAIL_ACTION_PREFIX}{action.value}"
                         )
-                yield Button(DETAILS_LABEL, id=TASK_DETAIL_DETAILS_BUTTON)
+                yield Button(details_label(compact=False), id=TASK_DETAIL_DETAILS_BUTTON)
             with DetailFolds(widget_id=TASK_DETAIL_FOLDS):
                 for section in DetailsSection:
                     view_id = DETAILS_SECTION_VIEWS[section]
@@ -561,8 +560,8 @@ class TaskDetailPanel(Vertical):
             self.query_one(f"#{TASK_DETAIL_ACTION_PREFIX}{action.value}", Button).display = (
                 action in verbs
             )
-        self.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).label = (
-            COMPACT_DETAILS_LABEL if compact else DETAILS_LABEL
+        self.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).label = details_label(
+            compact=compact
         )
 
     def on_resize(self, event: events.Resize) -> None:

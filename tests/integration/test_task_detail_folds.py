@@ -30,6 +30,8 @@ from shikiru.paths import run_dir
 from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
+from shikiru.ui.tokens import STEEL_BLUE
+from tests.support.cells import foregrounds
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import WidgetHostApp, dashboard_app, list_rows, widget_context
@@ -290,5 +292,43 @@ async def test_escape_returns_from_an_open_list_to_its_header_before_leaving(
 
             await pilot.press("escape")
             await wait_until(lambda: left_for_home == [task_id], timeout=UI_WAIT_SECONDS)
+    finally:
+        reader.close()
+
+
+async def test_the_details_hint_and_a_paused_timeline_paint_their_key_names_steel_blue(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task_id, _ = _seed(connection, project_root, clock, "Key names")
+    for index in range(3):
+        append_event(connection, clock, task_id, f"event-{index}")
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(widget_context(reader, project_root, clock), task_id, fixed=True)
+    try:
+        async with WidgetHostApp(panel).run_test(size=(100, 40)) as pilot:
+            await wait_until(
+                lambda: (
+                    task_id
+                    in plain_text(panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
+            hint = panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button)
+            assert set(foregrounds(hint, "\N{DOWNWARDS ARROW}")) == {STEEL_BLUE}
+            assert STEEL_BLUE not in foregrounds(hint, "details")
+            hint.press()
+            await wait_until(
+                lambda: _focused_stop(pilot) == TASK_VIEW_REPORTS, timeout=UI_WAIT_SECONDS
+            )
+            await pilot.press("down", "down", "enter")
+            await wait_until(
+                lambda: _focused_stop(pilot) == TASK_DETAIL_TIMELINE_LIST, timeout=UI_WAIT_SECONDS
+            )
+            await pilot.press("down", "down")
+            title = panel.query_one("#task-detail-timeline-title", Static)
+            await wait_until(lambda: "paused" in plain_text(title.content), timeout=UI_WAIT_SECONDS)
+            assert set(foregrounds(title, "End")) == {STEEL_BLUE}
     finally:
         reader.close()

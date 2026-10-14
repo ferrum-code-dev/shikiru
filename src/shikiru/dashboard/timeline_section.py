@@ -17,7 +17,7 @@ from shikiru.domain.tasks import Role
 from shikiru.errors import ShikiruError
 from shikiru.ui.keys import key_hint
 from shikiru.ui.screen import widget_is_current
-from shikiru.ui.section import BOLD_PRIMARY, grey
+from shikiru.ui.section import BOLD_PRIMARY
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
 if TYPE_CHECKING:
@@ -338,7 +338,10 @@ class TimelineSection(Vertical):
     def _paint_heading(self) -> None:
         heading = Text(self._section.value, style=BOLD_PRIMARY)
         heading.append_text(
-            grey(HEADING_SEPARATOR + (FOLLOWING_LABEL if self._following else PAUSED_LABEL))
+            key_hint(
+                HEADING_SEPARATOR + (FOLLOWING_LABEL if self._following else PAUSED_LABEL),
+                SECONDARY_TEXT_COLOR,
+            )
         )
         self.query_one(f"#{self.ids.title}", Static).update(heading)
         self.query_one(f"#{self.ids.status}", Static).update(
