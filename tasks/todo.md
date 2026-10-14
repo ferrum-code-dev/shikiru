@@ -305,3 +305,18 @@ Twelfth-review scope and evidence: [twelfth review, keys, escalation answers and
 - [x] Task 194: Route entry points to folds and retire the chooser
 - [x] Task 195: Cyan key names everywhere
 - [x] Task 196: Verify the twelfth review, reconcile the reference and docs
+
+Thirteenth-review scope and evidence: [thirteenth review](../docs/tui-feedback-thirteenth-review.md).
+
+- [ ] Task 197: Selection without a vertical bar; Recent pager style
+- [ ] Task 198: Edit area under the option, new keys
+- [ ] Task 199: Details section of the resolution panel
+- [ ] Task 200: Terminal-state correctness
+- [ ] Task 201: Briefing verbs
+- [ ] Task 202: Results data
+- [ ] Task 203: Briefing as Progress, Result so far and Problems
+- [ ] Task 204: Results and Decisions folds
+- [ ] Task 205: Task description, Dependencies, Workspace, Settings; no project-wide folds
+- [ ] Task 206: Events and Agent activity
+- [ ] Task 207: Usage
+- [ ] Task 208: Verify the thirteenth review, reconcile the reference and docs

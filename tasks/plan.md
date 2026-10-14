@@ -1849,3 +1849,58 @@ Refs: `ui/section.py`, `ui/compact.py` (`_append_aligned_hint`), `ui/popup.py`, 
 Refs: Tasks 186–195; design 05/06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference.
 - [x] Native before/after of all nine items; plain and `TERM=dumb NO_COLOR=1` gates; HTML reference and design docs match the TUI (exact srcdoc round-trip, Chrome check with a throwaway profile); spec marked delivered; record `docs/release-readiness-2026-10-14-phase11-twelfth-review.md`; README links; plan and todo ticked.
   - Proof: all nine items were run natively against `494c757` and `HEAD` in colour and `NO_COLOR` from 120x40 to 40x8 (one cleanup, two small fixes and one test fix found on the way: the dead embedded timeline path, the unpainted `↓ details` and paused `End`, the `1 tests passed` digest grammar and nine colour assertions that failed under `NO_COLOR`). The HTML reference round-trips exactly (SHA-256 `90df8a03...1672`) and matched the native colours, weights and key behaviour in headless Chrome under a throwaway profile; the design and operator documents, the spec status and README are reconciled and the record is written. Plain and `TERM=dumb NO_COLOR=1` gates are green (1611 passed each, 91.4 %); collected cases 1,589 at the review start, 1,632 now.
+
+## Answering escalations, a readable task panel and lighter detail lists (thirteenth review)
+
+Scope: [thirteenth review](../docs/tui-feedback-thirteenth-review.md); the operator approved the layouts. Execute Tasks 197–208 sequentially after Task 196, one fresh agent per task, root review by the orchestrator.
+
+### Task 197: Selection without a vertical bar; Recent pager style
+Refs: `dashboard/details_list_view.py` (`SELECTED_BAR`, `BAR_BLANK`, `_EntryLine`), `row_list.py`, `detail_fold.py`, `plugins/widgets/queue.py` (outline ~403, `_RecentPager`, `.recent-pager` ~416), `app.py` Views menu, `session_picker.py`.
+- [ ] No selection glyph remains; fold headers and `RowList` rows use the background highlight and bold name with the two-cell lead kept; the Tasks list non-focus outline is gone; Views menu and session picker use `$selected-surface`.
+- [ ] Recent pager reads `↑ later` / `↓ earlier`, grey with cyan arrows; docs line 06 §6.1 updated.
+
+### Task 198: Edit area under the option, new keys
+Refs: spec "Escalation resolution panel"; `dashboard/resolution.py` (`_AnswerBox`, `_open_answer`, `_PREFILL_SEPARATOR`, bindings, `check_action`, drafts), `resolution_view.py`, `ui/keys.py`.
+- [ ] `needs your input` is white; the box moves under the edited row, starts empty, bottom-rule look, no side border; drafts do not leak between rows.
+- [ ] Ctrl+S, Ctrl+Enter and Ctrl+J send; Enter newline; → enters, ← at start and Esc leave; Tab route removed; hints updated with the key helper; empty box on an alternative sends the label.
+
+### Task 199: Details section of the resolution panel
+Refs: `domain/attempts.py`, `engine/escalations.py`, `domain/escalation_panel.py` (`what_was_tried`), `resolution.py` (`_TriedSection`), `resolution_view.py` (`tried_renderable`).
+- [ ] Retitled `Details`, its own Tab stop (Enter/Space toggle, Up returns), virtual arrow row removed, highlight excludes the rule above.
+- [ ] Structured items rendered as the coloured label/value rows of the spec; the packet text and old packets keep working.
+
+### Task 200: Terminal-state correctness
+Refs: `domain/workflow.py` (`project_workflow`, `milestone_state`), `ui/compact.py` (`StageActivity`, `_milestone_marker`), `dashboard/briefing_view.py` (`_marker_and_label`, `_time_line`), `plugins/widgets/queue.py` (`_focus_row_state`, `_row_text`), `operator/strip_views.py`, `domain/briefing.py` (`PullRequestLine`), store `finish`.
+- [ ] Done and Cancelled tasks never show `? unknown`; Cancelled marks the stop stage `✕`; state line, list rows and strip show only the terminal status (and `stopped during …`); `wait_reason` cleared on finish; Done PR reads merged; unit tables and one Home check with a cancelled task whose step was kept.
+
+### Task 201: Briefing verbs
+Refs: `domain/briefing.py` (`briefing_actions`, `MAX_BRIEFING_ACTIONS`), `operator/queries.py` action availability, `detail.py` buttons, `briefing_view.py` `ACTION_LABELS`.
+- [ ] Cancel verb added with its palette action; waiting-for-dependency/slot/quota offers Pause/Resume and Cancel without Message; escalated offers Answer, Message, Cancel; running Take over, Message, Pause, Cancel; max four, fits at 40 columns.
+
+### Task 202: Results data
+Refs: `domain/briefing.py` (`parse_produced`), `domain/reports.py` (`Commit`, `ImplementationReport`), `TASK_DONE`/`PR_OPENED`/`SCOPE_CHANGE` events, `dashboard/views.py` `task_detail`, `contract.py` `TaskDetailView`.
+- [ ] A pure domain function derives the Results model (merged/branch, commits with hash and subject, files and lines, tests, PR state, plan changes, residual risks, `so far` marker) from recorded data without a render-time git call; unit table over done, in progress, cancelled, missing data.
+
+### Task 203: Briefing as Progress, Result so far and Problems
+Refs: spec "Task details"; `dashboard/briefing_view.py`, `domain/briefing.py`, Task 202 model.
+- [ ] The approved groups render at wide, compact and tiny; Done shows Summary and what was merged; Cancelled shows where it stopped and the kept branch; native colour and `NO_COLOR` for running, waiting, rejected, escalated, Done and Cancelled.
+
+### Task 204: Results and Decisions folds
+Refs: `dashboard/detail.py`, `details_list_view.py` (`DetailsSection`, headlines), Task 202, `VERDICT`, `ESCALATION_RESOLVED`, `OPERATOR_MESSAGE` events.
+- [ ] Results and Decisions folds replace Reports and decisions and Engine facts (ids, `FOLD_STATICS`, reset list, headlines `N commits · PR #n`, `N rounds · last …`); dead widgets and tests removed.
+
+### Task 205: Task description, Dependencies, Workspace, Settings; no project-wide folds
+Refs: `detail.py` (`_task_context_text`, `_workspace_text`, `_render_relationships`, `task_contextual_views`, `_fold_chosen`, `DetailFold.Chosen`), `app.py` (`_task_context_choices`), `section_rows.py` (`relation_rows`), `details_list_view.py`.
+- [ ] Task description first (request, criteria list); Dependencies aligned and coloured with Enter-to-open, no paging hint; Workspace and Settings label/value tables without repeated titles; workspace buttons styled like the verbs and hidden for Done and Cancelled; no project-wide fold or the dead body-less fold path; tests moved to Home/palette routes.
+
+### Task 206: Events and Agent activity
+Refs: `dashboard/timeline_section.py`, `section_rows.py`, `domain/timeline.py` (`parse_signal_row`, summaries), `ui/stream.py`, `contract.py` `TaskTimelineEntryView`.
+- [ ] Fixed meanings, human one-line rows with glyph, time and who; no category dropdown; role and turn filter behind `f` on Agent activity; selected row text wrapped (4 lines) without JSON, ids or ISO times; paging hint removed.
+
+### Task 207: Usage
+Refs: `detail.py` (`_sessions_text`, `_refresh_usage_observations`), `ui/compact.py` shared usage classes (do not change them for Home), `contract.py` `TaskSessionView`.
+- [ ] A task-local renderer draws the heading, the one-line-per-session aligned table, quota windows and the amber note; dropped items gone; Home usage widgets unchanged.
+
+### Task 208: Verify the thirteenth review, reconcile the reference and docs
+Refs: Tasks 197–207; design 05/06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference.
+- [ ] Native before/after of every item; plain and `TERM=dumb NO_COLOR=1` gates; HTML reference and docs match the TUI (exact srcdoc round-trip, Chrome check with a throwaway profile); spec marked delivered; record `docs/release-readiness-2026-10-14-phase11-thirteenth-review.md`; README links; plan and todo ticked.
