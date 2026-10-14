@@ -278,7 +278,7 @@ class TaskDetailPanel(Vertical):
     }
     #task-detail-verbs { width: 1fr; height: 1; }
     #task-detail-verbs Button, #task-detail-details {
-        width: auto; min-width: 1; height: 1; margin: 0 2 0 0; padding: 0;
+        width: auto; min-width: 1; height: 1; margin: 0; padding: 0;
         border: none; background: $background; color: $steel-blue;
         content-align: left middle; text-align: left; text-style: none;
     }

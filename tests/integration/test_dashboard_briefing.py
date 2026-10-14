@@ -13,8 +13,10 @@ from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.detail import (
     TASK_DETAIL_ACTION_PREFIX,
+    TASK_DETAIL_ACTIONS,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_IDENTITY,
+    TASK_DETAIL_VERBS,
 )
 from shikiru.domain.briefing import BriefingAction
 from shikiru.domain.escalation import options_for
@@ -281,10 +283,12 @@ CASES = {
 }
 
 
-def _app(reader: StateReader, project_root: Path, clock: FakeClock) -> DashboardApp:
+def _app(
+    reader: StateReader, project_root: Path, clock: FakeClock, focus_task: str | None = None
+) -> DashboardApp:
     settings = load_settings(project_root)
     return DashboardApp(
-        focus_task=None,
+        focus_task=focus_task,
         views=state_views(reader, project_root, clock, StubServices()),
         on_change=reader.watch,
         clock=clock,
@@ -338,3 +342,22 @@ async def test_briefing_shows_only_the_rows_the_task_has_data_for(
                 assert expected in text, (name, expected)
             for never in (*NEVER_SHOWN, *case.missing):
                 assert never not in text, (name, never)
+
+
+async def test_every_offered_verb_stays_inside_the_actions_row_at_compact_width(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = _seed_running(connection, clock, project_root)
+    app = _app(reader, project_root, clock, focus_task=task.id)
+    async with app.run_test(size=COMPACT_SIZE):
+        await wait_until(
+            lambda: _shown_verbs(app) == CASES["running"].verbs, timeout=UI_WAIT_SECONDS
+        )
+        row = app.query_one(f"#{TASK_DETAIL_ACTIONS}").region
+        for button in app.query(f"#{TASK_DETAIL_VERBS} Button"):
+            if button.display:
+                assert row.contains_region(button.region), button.id
