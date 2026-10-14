@@ -28,6 +28,7 @@ if TYPE_CHECKING:
         VerdictCounts,
     )
     from shikiru.domain.levels import UsageLevel
+    from shikiru.domain.results import TaskResults
     from shikiru.domain.tasks import EscalationReason, Role
     from shikiru.ui.strip import TaskStripData
 
@@ -545,6 +546,7 @@ class TaskDetailView:
     reported_tests: ReportedTests | None = None
     pull_request: PullRequestLine | None = None
     last_words: str | None = None
+    results: TaskResults | None = None
 
 
 @dataclass(frozen=True)

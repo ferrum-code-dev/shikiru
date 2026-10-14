@@ -66,6 +66,7 @@ recent_task_window = 3
 last_words_chars = 4000
 now_max_lines = 6
 now_compact_lines = 2
+results_commits = 3
 
 [dashboard.motion]
 refresh_hz = 4

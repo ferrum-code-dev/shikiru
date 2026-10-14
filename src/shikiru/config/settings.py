@@ -246,6 +246,7 @@ class DashboardConfig(ConfigModel):
     last_words_chars: int = Field(gt=0)
     now_max_lines: int = Field(gt=0)
     now_compact_lines: int = Field(gt=0)
+    results_commits: int = Field(gt=0)
 
     @model_validator(mode="after")
     def _recent_limit_covers_window(self) -> DashboardConfig:

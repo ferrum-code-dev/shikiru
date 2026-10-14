@@ -120,11 +120,7 @@ def reported_tests(tests: Sequence[TestRun]) -> ReportedTests:
     return ReportedTests(results.count("passed"), results.count("failed"), results.count("skipped"))
 
 
-def parse_produced(facts: str | None) -> ProducedNumbers | None:
-    """Read the commit count and diff summary from rendered facts, or None when unreadable.
-
-    An empty diff prints no summary line and renders as `(none)`, which is zero change.
-    """
+def _facts_blocks(facts: str | None) -> tuple[str, str] | None:
     if facts is None:
         return None
     parts = facts.split(_FACTS_SECTION_BREAK)
@@ -133,7 +129,27 @@ def parse_produced(facts: str | None) -> ProducedNumbers | None:
     commits_heading, commits_block, diff_heading, diff_block, *_ = parts
     if commits_heading != FACTS_COMMITS_HEADING or diff_heading != FACTS_DIFF_STAT_HEADING:
         return None
-    commits = 0 if commits_block == FACTS_NONE_MARKER else len(commits_block.splitlines())
+    return commits_block, diff_block
+
+
+def facts_commit_lines(facts: str | None) -> tuple[str, ...]:
+    """Return the one-line commits of rendered facts, empty when none or unreadable."""
+    blocks = _facts_blocks(facts)
+    if blocks is None or blocks[0] == FACTS_NONE_MARKER:
+        return ()
+    return tuple(blocks[0].splitlines())
+
+
+def parse_produced(facts: str | None) -> ProducedNumbers | None:
+    """Read the commit count and diff summary from rendered facts, or None when unreadable.
+
+    An empty diff prints no summary line and renders as `(none)`, which is zero change.
+    """
+    blocks = _facts_blocks(facts)
+    if blocks is None:
+        return None
+    commits = len(facts_commit_lines(facts))
+    diff_block = blocks[1]
     if diff_block == FACTS_NONE_MARKER:
         return ProducedNumbers(commits, 0, 0, 0)
     summary = _DIFF_SUMMARY.search(diff_block.strip().splitlines()[-1])

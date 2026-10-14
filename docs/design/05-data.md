@@ -114,6 +114,7 @@ recent_task_window = 3                          # Recent tasks shown at once
 last_words_chars = 4000                         # safety cap on the stored last agent message shown in Now
 now_max_lines = 6                               # lines Now wraps the last message over; ends with … only when cut
 now_compact_lines = 2                           # the same in the compact and tiny layouts
+results_commits = 3                             # commits the task Results list before "+N more"
 layout = { split = "v", panes = [
   { pane = "leader", size = 40 },
   { pane = "implementer", size = 40 },

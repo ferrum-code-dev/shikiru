@@ -1882,7 +1882,7 @@ Refs: `domain/briefing.py` (`briefing_actions`, `MAX_BRIEFING_ACTIONS`), `operat
 
 ### Task 202: Results data
 Refs: `domain/briefing.py` (`parse_produced`), `domain/reports.py` (`Commit`, `ImplementationReport`), `TASK_DONE`/`PR_OPENED`/`SCOPE_CHANGE` events, `dashboard/views.py` `task_detail`, `contract.py` `TaskDetailView`.
-- [ ] A pure domain function derives the Results model (merged/branch, commits with hash and subject, files and lines, tests, PR state, plan changes, residual risks, `so far` marker) from recorded data without a render-time git call; unit table over done, in progress, cancelled, missing data.
+- [x] A pure domain function derives the Results model (merged/branch, commits with hash and subject, files and lines, tests, PR state, plan changes, residual risks, `so far` marker) from recorded data without a render-time git call; unit table over done, in progress, cancelled, missing data. Proof: `derive_task_results` (domain/results.py) is exercised by a unit table over done, in progress, cancelled, missing data and the commit cap, and an integration check seeds a Done and an in-progress task through the real detail view (Done events pushed outside the 40-event window still resolve). No git call is made at render time; the commit cap is `dashboard.results_commits`. `uv run poe check` is green (1636 passed).
 
 ### Task 203: Briefing as Progress, Result so far and Problems
 Refs: spec "Task details"; `dashboard/briefing_view.py`, `domain/briefing.py`, Task 202 model.

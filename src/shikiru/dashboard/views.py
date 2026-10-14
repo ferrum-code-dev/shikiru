@@ -77,6 +77,7 @@ from shikiru.domain.reports import (
     TriageReport,
     Verdict,
 )
+from shikiru.domain.results import derive_task_results
 from shikiru.domain.runs import RunStatus, has_positive_token_evidence
 from shikiru.domain.scheduling import WaitReason, dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
@@ -102,13 +103,21 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.dashboard.motion import DashboardMotion
-    from shikiru.domain.briefing import PullRequestLine
+    from shikiru.domain.briefing import PullRequestLine, ReportedTests
     from shikiru.domain.events import Event
     from shikiru.domain.faults import FaultStreak
     from shikiru.domain.motion import MotionFrame, TaskMotionFrame
+    from shikiru.domain.reports import Commit
+    from shikiru.domain.results import TaskResults
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
-    from shikiru.operator.queries import EscalationView, OperatorQueries, ReportRow, UsageView
+    from shikiru.operator.queries import (
+        EscalationView,
+        OperatorQueries,
+        ReportRow,
+        TaskDetail,
+        UsageView,
+    )
     from shikiru.process import ProcessIdentity
     from shikiru.store.reader import StateReader
     from shikiru.store.tasks import TaskBrowserPage, TaskRelationships
@@ -122,6 +131,7 @@ TASK_TIMELINE_READ_ERROR_ID = "timeline-read-error"
 TASK_TIMELINE_READ_ERROR_SUMMARY = "Task evidence could not be read"
 ENGINE_LIFECYCLE_EVENT_LIMIT = 2
 TASK_MODEL_HISTORY_EVENT_LIMIT = 50
+RESULTS_PLAN_CHANGE_LIMIT = 20
 TASK_MODEL_HISTORY_EVENTS = (
     EventKind.TURN_STARTED,
     EventKind.TURN_COMPLETED,
@@ -993,6 +1003,8 @@ class StateDashboardViews:
             None,
         )
         workflow = _task_workflow(task, detail.events, detail.reports)
+        pull_request = self._pull_request_line(task.id, task_done=task.status is Status.DONE)
+        reported = reported_tests(implementation.tests) if implementation is not None else None
         return TaskDetailView(
             task_id=task.id,
             title=task.title,
@@ -1056,11 +1068,12 @@ class StateDashboardViews:
             ),
             verdict_counts=(verdict_counts(latest_verdict) if latest_verdict is not None else None),
             produced=parse_produced(detail.recorded_facts),
-            reported_tests=(
-                reported_tests(implementation.tests) if implementation is not None else None
-            ),
-            pull_request=self._pull_request_line(task.id, task_done=task.status is Status.DONE),
+            reported_tests=reported,
+            pull_request=pull_request,
             last_words=task_frame.last_words,
+            results=self._task_results(
+                task, detail, reported, pull_request, latest_verdict=latest_verdict
+            ),
         )
 
     async def task_timeline(
@@ -1324,6 +1337,33 @@ class StateDashboardViews:
                     f"observed {_age(now - window.observed_at)} ago"
                 )
         return lines
+
+    def _task_results(
+        self,
+        task: Task,
+        detail: TaskDetail,
+        reported: ReportedTests | None,
+        pull_request: PullRequestLine | None,
+        *,
+        latest_verdict: Verdict | None,
+    ) -> TaskResults:
+        done = self._state.latest_events(1, kinds=(EventKind.TASK_DONE,), task_id=task.id)
+        scope = self._state.latest_events(
+            RESULTS_PLAN_CHANGE_LIMIT, kinds=(EventKind.SCOPE_CHANGE,), task_id=task.id
+        )
+        return derive_task_results(
+            task.status,
+            branch=task.repo.branch if task.repo is not None else None,
+            base=task.repo.base if task.repo is not None else None,
+            done=done[0].data if done else None,
+            report_commits=_latest_report_commits(detail.reports),
+            facts=detail.recorded_facts,
+            tests=reported,
+            pull_request=pull_request,
+            scope_events=[event.data for event in scope],
+            verdict_risks=latest_verdict.residual_risks if latest_verdict is not None else (),
+            commit_cap=self._settings.dashboard.results_commits,
+        )
 
     def _pull_request_line(self, task_id: str, *, task_done: bool) -> PullRequestLine | None:
         events = self._state.latest_events(
@@ -1708,6 +1748,19 @@ def _step_label(status: Status, step: Step | None, iteration: int) -> str:
     if step is Step.IMPLEMENT and iteration > 1:
         return REWORK_STEP
     return step.value
+
+
+def _latest_report_commits(reports: Sequence[ReportRow]) -> list[Commit]:
+    empty: list[Commit] = []
+    return next(
+        (
+            item.data.commits
+            for item in reversed(reports)
+            if item.source == AGENT_REPORT_SOURCE
+            and isinstance(item.data, ImplementationReport | PlanReport)
+        ),
+        empty,
+    )
 
 
 def _task_report(row: ReportRow) -> TaskReportView:
