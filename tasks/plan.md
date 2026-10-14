@@ -1877,7 +1877,8 @@ Refs: `domain/workflow.py` (`project_workflow`, `milestone_state`), `ui/compact.
 
 ### Task 201: Briefing verbs
 Refs: `domain/briefing.py` (`briefing_actions`, `MAX_BRIEFING_ACTIONS`), `operator/queries.py` action availability, `detail.py` buttons, `briefing_view.py` `ACTION_LABELS`.
-- [ ] Cancel verb added with its palette action; waiting-for-dependency/slot/quota offers Pause/Resume and Cancel without Message; escalated offers Answer, Message, Cancel; running Take over, Message, Pause, Cancel; max four, fits at 40 columns.
+- [x] Cancel verb added with its palette action; waiting-for-dependency/slot/quota offers Pause/Resume and Cancel without Message; escalated offers Answer, Message, Cancel; running Take over, Message, Pause, Cancel; max four, fits at 40 columns.
+  Proof: briefing_actions now takes `waiting` and always ends with Cancel (max four, unit table over all states); the waiting task case offers Pause and Cancel only, running offers Take over, Message, Pause, Cancel, and pressing the Cancel verb opens the palette cancel action (no command dispatched). Four verbs fit at 100, 60, 48 and 40 columns and at 40x8 without overlapping the details hint (also fixed its stale width in the tiny layout). Gate: `uv run poe check` green.
 
 ### Task 202: Results data
 Refs: `domain/briefing.py` (`parse_produced`), `domain/reports.py` (`Commit`, `ImplementationReport`), `TASK_DONE`/`PR_OPENED`/`SCOPE_CHANGE` events, `dashboard/views.py` `task_detail`, `contract.py` `TaskDetailView`.

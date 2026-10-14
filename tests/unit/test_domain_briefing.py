@@ -4,6 +4,7 @@ from shikiru.domain.briefing import (
     FACTS_COMMITS_HEADING,
     FACTS_DIFF_STAT_HEADING,
     FACTS_NONE_MARKER,
+    MAX_BRIEFING_ACTIONS,
     BriefingAction,
     ProducedNumbers,
     PullRequestLine,
@@ -101,20 +102,25 @@ def test_a_done_task_has_its_pull_request_merged() -> None:
     assert line == PullRequestLine("MERGED", "https://h/o/r/pull/41", 41, None, None)
 
 
-def test_briefing_verbs_follow_the_task_state_and_never_exceed_three() -> None:
+def test_briefing_verbs_follow_the_task_state_and_never_exceed_the_maximum() -> None:
     take, hand, message = BriefingAction.TAKE_OVER, BriefingAction.HAND_BACK, BriefingAction.MESSAGE
     pause, resume, answer = BriefingAction.PAUSE, BriefingAction.RESUME, BriefingAction.ANSWER
+    cancel = BriefingAction.CANCEL
     cases = (
-        (Status.RUNNING, (), False, (take, message, pause)),
-        (Status.INTEGRATING, (), False, (take, message, pause)),
-        (Status.RUNNING, ("paused",), False, (take, message, resume)),
-        (Status.RUNNING, ("intervention",), True, (hand, message)),
-        (Status.RUNNING, ("paused", "intervention"), True, (hand, message, resume)),
-        (Status.QUEUED, (), False, (message, pause)),
-        (Status.ESCALATED, (), False, (answer, message, pause)),
-        (Status.ESCALATED, ("paused",), True, (answer, hand, message)),
-        (Status.DONE, (), False, ()),
-        (Status.CANCELLED, ("paused",), True, ()),
+        (Status.RUNNING, (), False, False, (take, message, pause, cancel)),
+        (Status.INTEGRATING, (), False, False, (take, message, pause, cancel)),
+        (Status.RUNNING, ("paused",), False, False, (take, message, resume, cancel)),
+        (Status.RUNNING, ("intervention",), True, False, (hand, message, cancel)),
+        (Status.RUNNING, ("paused", "intervention"), True, False, (hand, message, resume, cancel)),
+        (Status.QUEUED, (), False, False, (message, pause, cancel)),
+        (Status.QUEUED, (), False, True, (pause, cancel)),
+        (Status.QUEUED, ("paused",), False, True, (resume, cancel)),
+        (Status.ESCALATED, (), False, False, (answer, message, pause, cancel)),
+        (Status.ESCALATED, ("paused",), True, False, (answer, hand, message, cancel)),
+        (Status.DONE, (), False, False, ()),
+        (Status.CANCELLED, ("paused",), True, False, ()),
     )
-    for status, holds, owned, expected in cases:
-        assert briefing_actions(status, holds, operator_owned=owned) == expected
+    for status, holds, owned, waiting, expected in cases:
+        offered = briefing_actions(status, holds, operator_owned=owned, waiting=waiting)
+        assert offered == expected
+        assert len(offered) <= MAX_BRIEFING_ACTIONS

@@ -1939,6 +1939,11 @@ async def test_detail_ctrl_p_carries_the_task_and_its_current_role(
             ).focus()
             await pilot.press("enter")
             await wait_until(lambda: len(opened) == 2, timeout=UI_WAIT_SECONDS)
+            app.query_one(
+                f"#{TASK_DETAIL_ACTION_PREFIX}{BriefingAction.CANCEL.value}", Button
+            ).focus()
+            await pilot.press("enter")
+            await wait_until(lambda: len(opened) == 3, timeout=UI_WAIT_SECONDS)
             app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll).focus()
             await pilot.press("enter")
             await wait_until(lambda: isinstance(app.focused, FoldHeader), timeout=UI_WAIT_SECONDS)
@@ -1947,6 +1952,9 @@ async def test_detail_ctrl_p_carries_the_task_and_its_current_role(
             PaletteRequest(task_id=task.id, role=Role.LEADER.value),
             PaletteRequest(
                 action=BriefingAction.PAUSE.value, task_id=task.id, role=Role.LEADER.value
+            ),
+            PaletteRequest(
+                action=BriefingAction.CANCEL.value, task_id=task.id, role=Role.LEADER.value
             ),
         ]
     finally:

@@ -23,7 +23,7 @@ PR_URL_KEY = "url"
 PR_STATE_KEY = "state"
 PR_CHECKS_PENDING_KEY = "checks_pending"
 PR_CHECKS_FAILING_KEY = "checks_failing"
-MAX_BRIEFING_ACTIONS = 3
+MAX_BRIEFING_ACTIONS = 4
 FIRST_PASS_ITERATION = 1
 LAST_WORDS_ELLIPSIS = "…"
 _FACTS_SECTION_BREAK = "\n\n"
@@ -45,6 +45,7 @@ class BriefingAction(StrEnum):
     MESSAGE = "message"
     PAUSE = "pause"
     RESUME = "resume"
+    CANCEL = "cancel"
 
 
 @dataclass(frozen=True)
@@ -184,14 +185,15 @@ def one_line(text: str, limit: int) -> str | None:
 
 
 def briefing_actions(
-    status: Status, holds: Sequence[str], *, operator_owned: bool
+    status: Status, holds: Sequence[str], *, operator_owned: bool, waiting: bool = False
 ) -> tuple[BriefingAction, ...]:
-    """Return the at most three verbs the briefing offers for a task in this state.
+    """Return the at most four verbs the briefing offers for a task in this state.
 
     A decision comes first, then the ownership hand-over, a message, and the pause hold's
-    opposite; a finished task offers none. Take over needs a running role to stop, so it is
-    only offered while the task runs or integrates. An intervention hold is cleared by handing
-    back, so it never offers Resume.
+    opposite; Cancel always closes the row of an unfinished task and a finished task offers
+    none. Take over needs a running role to stop, so it is only offered while the task runs or
+    integrates. A waiting task has no agent to read a message, so it offers none. An
+    intervention hold is cleared by handing back, so it never offers Resume.
     """
     if status in (Status.DONE, Status.CANCELLED):
         return ()
@@ -202,12 +204,13 @@ def briefing_actions(
         verbs.append(BriefingAction.HAND_BACK)
     elif status in (Status.RUNNING, Status.INTEGRATING):
         verbs.append(BriefingAction.TAKE_OVER)
-    verbs.append(BriefingAction.MESSAGE)
+    if not waiting:
+        verbs.append(BriefingAction.MESSAGE)
     if Hold.PAUSED.value in holds:
         verbs.append(BriefingAction.RESUME)
     elif not holds:
         verbs.append(BriefingAction.PAUSE)
-    return tuple(verbs[:MAX_BRIEFING_ACTIONS])
+    return (*verbs[: MAX_BRIEFING_ACTIONS - 1], BriefingAction.CANCEL)
 
 
 def rework_progress(iteration: int, max_iterations: int) -> tuple[int, int] | None:

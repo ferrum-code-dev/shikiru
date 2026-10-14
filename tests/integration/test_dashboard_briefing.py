@@ -17,6 +17,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_ACTION_PREFIX,
     TASK_DETAIL_ACTIONS,
     TASK_DETAIL_BRIEFING,
+    TASK_DETAIL_DETAILS_BUTTON,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_VERBS,
 )
@@ -73,6 +74,7 @@ NOW_WORD = re.compile(r"\bw\d{3}\b")
 START = datetime(2026, 1, 1, tzinfo=UTC)
 WIDE_SIZE = (100, 40)
 COMPACT_SIZE = (40, 40)
+BUTTON_LINE_PAD = 1
 QUESTION = "Which failures should the parser retry?"
 LAST_WORDS = "Running the parser tests after the retry change."
 REPORT_SUMMARY = "Added bounded retries to the parser."
@@ -253,6 +255,15 @@ def _seed_cancelled(connection: Connection, clock: FakeClock, project_root: Path
     return task
 
 
+def _seed_waiting_on_dependency(
+    connection: Connection, clock: FakeClock, project_root: Path
+) -> Task:
+    del project_root
+    task = seed_task(connection, clock, title="Add retry to parser", mode=Mode.IMPLEMENT)
+    TaskStore(connection, clock).set_wait_reason(task.id, WaitReason.DEPENDENCY)
+    return task
+
+
 def _seed_cancelled_while_consulting(
     connection: Connection, clock: FakeClock, project_root: Path
 ) -> Task:
@@ -309,20 +320,47 @@ CASES = {
             "tests 1 passed · 1 failed (agent-reported)",
             "Leader $0.42 · Impl $1.10 billed",
         ),
-        frozenset({BriefingAction.TAKE_OVER, BriefingAction.MESSAGE, BriefingAction.PAUSE}),
+        frozenset(
+            {
+                BriefingAction.TAKE_OVER,
+                BriefingAction.MESSAGE,
+                BriefingAction.PAUSE,
+                BriefingAction.CANCEL,
+            }
+        ),
+    ),
+    "waiting-on-dependency": _Case(
+        _seed_waiting_on_dependency,
+        frozenset({"Needed from you"}),
+        ("Waiting on dependency",),
+        frozenset({BriefingAction.PAUSE, BriefingAction.CANCEL}),
     ),
     "waiting-on-decision": _Case(
         _seed_decision,
         frozenset({"Needed from you", "Produced"}),
         (QUESTION,),
-        frozenset({BriefingAction.ANSWER, BriefingAction.MESSAGE, BriefingAction.PAUSE}),
+        frozenset(
+            {
+                BriefingAction.ANSWER,
+                BriefingAction.MESSAGE,
+                BriefingAction.PAUSE,
+                BriefingAction.CANCEL,
+            }
+        ),
         ("rework",),
     ),
     "rejected-with-verdict": _Case(
         _seed_rejected,
         frozenset({"Now", "Produced", "Verdict", "PR"}),
         ("3 commits · 5 files · +120 \N{MINUS SIGN}34", "Rejected · 2 major · 1 minor", "#41 open"),
-        frozenset({BriefingAction.TAKE_OVER, BriefingAction.MESSAGE, BriefingAction.PAUSE}),
+        frozenset(
+            {
+                BriefingAction.TAKE_OVER,
+                BriefingAction.MESSAGE,
+                BriefingAction.PAUSE,
+                BriefingAction.CANCEL,
+            }
+        ),
     ),
     "done-with-report": _Case(
         _seed_done,
@@ -443,20 +481,24 @@ async def test_a_long_last_message_wraps_within_the_width_up_to_the_configured_l
         assert briefing.region.bottom <= app.screen.size.height
 
 
+@pytest.mark.parametrize("size", [COMPACT_SIZE, (40, 40), (40, 8)])
 async def test_every_offered_verb_stays_inside_the_actions_row_at_compact_width(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
+    size: tuple[int, int],
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = _seed_running(connection, clock, project_root)
     app = _app(reader, project_root, clock, focus_task=task.id)
-    async with app.run_test(size=COMPACT_SIZE):
+    async with app.run_test(size=size):
         await wait_until(
             lambda: _shown_verbs(app) == CASES["running"].verbs, timeout=UI_WAIT_SECONDS
         )
         row = app.query_one(f"#{TASK_DETAIL_ACTIONS}").region
+        details = app.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}").region
         for button in app.query(f"#{TASK_DETAIL_VERBS} Button"):
             if button.display:
                 assert row.contains_region(button.region), button.id
+                assert button.region.right - BUTTON_LINE_PAD <= details.x, button.id

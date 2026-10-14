@@ -109,6 +109,7 @@ ACTION_LABELS = {
     BriefingAction.PAUSE: "Pause",
     BriefingAction.RESUME: "Resume",
     BriefingAction.ANSWER: "Answer",
+    BriefingAction.CANCEL: "Cancel",
 }
 DETAILS_LABEL = "\N{DOWNWARDS ARROW} details"
 COMPACT_DETAILS_LABEL = "\N{DOWNWARDS ARROW}"
@@ -154,7 +155,12 @@ def details_label(*, compact: bool) -> Text:
 
 def briefing_verbs(view: TaskDetailView) -> tuple[BriefingAction, ...]:
     """Return the verbs the actions row offers for `view`."""
-    return briefing_actions(Status(view.status), view.holds, operator_owned=bool(view.ownership))
+    return briefing_actions(
+        Status(view.status),
+        view.holds,
+        operator_owned=bool(view.ownership),
+        waiting=view.wait_reason is not None,
+    )
 
 
 def needed_from_you(view: TaskDetailView) -> str | None:

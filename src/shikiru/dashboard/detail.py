@@ -560,9 +560,9 @@ class TaskDetailPanel(Vertical):
             self.query_one(f"#{TASK_DETAIL_ACTION_PREFIX}{action.value}", Button).display = (
                 action in verbs
             )
-        self.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).label = details_label(
-            compact=compact
-        )
+        details = self.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button)
+        details.label = details_label(compact=compact)
+        details.refresh(layout=True)
 
     def on_resize(self, event: events.Resize) -> None:
         del event
