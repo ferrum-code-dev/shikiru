@@ -59,7 +59,7 @@ def _implementation(report: ImplementationReport) -> str:
     tests = reported_tests(report.tests)
     parts = [_count(len(report.commits), "commit")]
     if tests.passed:
-        parts.append(f"{tests.passed} tests passed")
+        parts.append(f"{_count(tests.passed, 'test')} passed")
     if tests.failed:
         parts.append(f"{tests.failed} failed")
     return "Implementer: " + ", ".join(parts)
