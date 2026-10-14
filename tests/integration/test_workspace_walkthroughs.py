@@ -191,7 +191,7 @@ class WorkspaceRuntime:
                 self.reader,
                 self.project_root,
                 self.settings,
-                RoleViewTail(),
+                RoleViewTail(self.settings.dashboard.last_words_chars),
             ),
         )
         app_ref: list[DashboardApp] = []

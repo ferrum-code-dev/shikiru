@@ -25,6 +25,8 @@ from shikiru.agents.contracts import (
 )
 from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import (
+    DEFAULT_NOW_COMPACT_LINES,
+    DEFAULT_NOW_MAX_LINES,
     DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
     FOCUS_FAULTS_VIEW,
     FOCUS_PROJECT_DIAGNOSTICS_VIEW,
@@ -1171,6 +1173,8 @@ class DashboardApp(App[None]):
         navigate_role_pane: NavigateRolePane | None = None,
         navigate_home: NavigateHome | None = None,
         timeline_refresh_seconds: float = DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
+        now_max_lines: int = DEFAULT_NOW_MAX_LINES,
+        now_compact_lines: int = DEFAULT_NOW_COMPACT_LINES,
         tmux_detach_hint: str | None = None,
         detach_tmux_client: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
@@ -1187,6 +1191,8 @@ class DashboardApp(App[None]):
         self._docker_refresh_seconds = docker_refresh_seconds
         self._disk_refresh_seconds = disk_refresh_seconds
         self._timeline_refresh_seconds = timeline_refresh_seconds
+        self._now_max_lines = now_max_lines
+        self._now_compact_lines = now_compact_lines
         self._quota_warn_pct = quota_warn_pct
         self._quota_alert_pct = quota_alert_pct
         self._open_palette = open_palette
@@ -1321,6 +1327,8 @@ class DashboardApp(App[None]):
             docker_refresh_seconds=self._docker_refresh_seconds,
             disk_refresh_seconds=self._disk_refresh_seconds,
             timeline_refresh_seconds=self._timeline_refresh_seconds,
+            now_max_lines=self._now_max_lines,
+            now_compact_lines=self._now_compact_lines,
             quota_warn_pct=self._quota_warn_pct,
             quota_alert_pct=self._quota_alert_pct,
             clock=self._clock,

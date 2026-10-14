@@ -17,14 +17,15 @@ from shikiru.agents.contracts import (
     COST_BASIS_BILLED,
 )
 from shikiru.domain.briefing import (
+    LAST_WORDS_ELLIPSIS,
     BriefingAction,
     ProducedNumbers,
     PullRequestLine,
     ReportedTests,
     VerdictCounts,
     briefing_actions,
-    one_line,
     rework_progress,
+    squashed,
 )
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.tasks import Hold, Role, Status
@@ -78,7 +79,6 @@ TOTAL_WORD = "total"
 REWORK_WORD = "rework"
 NEEDED_INDENT = 2
 QUOTE = '"'
-QUOTE_PAIR_WIDTH = len(QUOTE) * 2
 MINUS = "\N{MINUS SIGN}"
 PASSED_MARK = "\N{CHECK MARK}"
 FAILED_MARK = "\N{BALLOT X}"
@@ -140,6 +140,7 @@ _BOLD_AMBER = f"{STYLE_BOLD} {AMBER}"
 class BriefingLayout:
     """How much room the briefing has: compact below the wide mockup, tiny when rows run out."""
 
+    now_lines: int
     compact: bool = False
     tiny: bool = False
 
@@ -196,12 +197,11 @@ class Briefing:
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         """Yield the milestones and the needed, working and produced blocks."""
-        del console
         width = options.max_width
         compact = self.layout.compact
         milestones = self._milestones()
         needed = self._needed(width)
-        facts = self._facts(width)
+        facts = self._facts(console, width)
         blocks = [needed, facts, milestones] if self.layout.tiny else [milestones, needed, facts]
         shown = [block for block in blocks if block]
         for index, block in enumerate(shown):
@@ -223,20 +223,29 @@ class Briefing:
         body = Padding(Text(text), (0, 0, 0, NEEDED_INDENT))
         return [Section(NEEDED_TITLE, body, ruled=False, title_style=_BOLD_AMBER)]
 
-    def _facts(self, width: int) -> list[RenderableType]:
+    def _facts(self, console: Console, width: int) -> list[RenderableType]:
         if self.layout.compact:
-            return self._compact_facts(width)
+            return self._compact_facts(console, width)
         value_width = width if width < STACKED_BELOW_WIDTH else width - LABEL_WIDTH - LABEL_GAP
-        rows = self._wide_rows(value_width)
+        rows = self._wide_rows(console, value_width)
         return [labelled_rows(rows, width, LABEL_WIDTH)] if rows else []
 
-    def _wide_rows(self, value_width: int) -> list[Row]:
+    def _wide_rows(self, console: Console, value_width: int) -> list[Row]:
         view = self.view
         rows: list[Row] = []
         if _working(view):
             rows.append((grey(NOW_LABEL), (_activity_text(view, self.now, compact=False),)))
             if view.last_words is not None:
-                rows.append((Text(), (Text(_quote(view.last_words, value_width)),)))
+                rows.extend(
+                    (Text(), (line,))
+                    for line in _wrapped(
+                        console,
+                        grey(_quote(view.last_words)),
+                        Text(),
+                        value_width,
+                        self.layout.now_lines,
+                    )
+                )
             rows.extend(_escalation_row(view))
         rows.extend(_produced_rows(view, value_width))
         verdict = _verdict_groups(view.verdict_counts)
@@ -250,11 +259,11 @@ class Briefing:
             rows.append((grey(COST_LABEL), cost))
         return rows
 
-    def _compact_facts(self, width: int) -> list[RenderableType]:
+    def _compact_facts(self, console: Console, width: int) -> list[RenderableType]:
         view = self.view
         lines: list[RenderableType] = []
         if _working(view):
-            lines.append(_compact_activity(view, self.now, width))
+            lines.extend(_compact_activity(console, view, self.now, width, self.layout.now_lines))
             lines.extend(row[1][0] for row in _escalation_row(view))
         summary = _terminal_summary(view, width)
         produced = _compact_produced(view)
@@ -332,20 +341,36 @@ def _activity_text(view: TaskDetailView, now: datetime, *, compact: bool) -> Tex
     return text
 
 
-def _quote(words: str, limit: int) -> str:
-    return QUOTE + _ellipsized(words, limit - QUOTE_PAIR_WIDTH) + QUOTE
+def _quote(words: str) -> str:
+    return QUOTE + words + QUOTE
 
 
-def _compact_activity(view: TaskDetailView, now: datetime, width: int) -> Text:
+def _wrapped(console: Console, text: Text, tail: Text, width: int, max_lines: int) -> list[Text]:
+    whole = text.copy()
+    whole.append_text(tail)
+    lines = list(whole.wrap(console, width))
+    for line in lines:
+        line.rstrip()
+    if len(lines) <= max_lines:
+        return lines
+    last = lines[max_lines - 1]
+    last.rstrip()
+    last.truncate(max(width - cell_len(tail.plain) - 1, 0))
+    last.append(LAST_WORDS_ELLIPSIS, style=text.style)
+    last.append_text(tail)
+    return [*lines[: max_lines - 1], last]
+
+
+def _compact_activity(
+    console: Console, view: TaskDetailView, now: datetime, width: int, max_lines: int
+) -> list[Text]:
     age = _activity_age(view, now, compact=True)
     suffix = Text(f" {age}" if age is not None else "", style=SECONDARY_TEXT_COLOR)
     if _stalled(view):
         suffix.append(f" {GLYPH_STALLED} {STALLED_WORD}", style=AMBER)
     if view.last_words is None:
-        return Text.assemble(grey(ACTIVE_WORD), suffix)
-    line = grey(_quote(view.last_words, width - cell_len(suffix.plain)))
-    line.append_text(suffix)
-    return line
+        return [Text.assemble(grey(ACTIVE_WORD), suffix)]
+    return _wrapped(console, grey(_quote(view.last_words)), suffix, width, max_lines)
 
 
 def _escalation_row(view: TaskDetailView) -> list[Row]:
@@ -426,7 +451,7 @@ def _compact_produced(view: TaskDetailView) -> Text | None:
 def _terminal_summary(view: TaskDetailView, limit: int) -> Text | None:
     if view.status not in _TERMINAL_STATUSES or view.latest_report is None:
         return None
-    summary = one_line(view.latest_report.summary)
+    summary = squashed(view.latest_report.summary)
     return grey(_ellipsized(summary, limit)) if summary is not None else None
 
 

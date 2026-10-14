@@ -33,7 +33,6 @@ from shikiru.dashboard.detail import (
     TaskDetailScreen,
 )
 from shikiru.dashboard.details_list import TaskDetailsListScreen
-from shikiru.domain.briefing import LAST_WORDS_LIMIT
 from shikiru.domain.escalation import Escalation, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
@@ -117,6 +116,7 @@ _UPTIME_AT_START = "Uptime 0s"
 _UPTIME_AFTER_STEP = "Uptime 1m"
 _UPTIME_AFTER_TWO_STEPS = "Uptime 2m"
 _TURN_NAME = "001-implement-i1"
+_LAST_WORDS_CAP = 400
 _STALE_TURN_NAME = "000-implement-i0"
 _OLD_ITERATION = 1
 _CURRENT_ITERATION = 2
@@ -507,7 +507,7 @@ def test_role_view_tail_recovers_a_new_turn_consumed_under_the_old_turn_name(
 ) -> None:
     path = tmp_path / "view.jsonl"
     path.write_text(f"{_row(_START, '001-implement-i1', VIEW_SESSION_STARTED_SIGNAL)}\n")
-    tail = RoleViewTail()
+    tail = RoleViewTail(_LAST_WORDS_CAP)
     assert tail.read(path, "001-implement-i1") is not None
 
     next_turn_at = _START + timedelta(seconds=1)
@@ -536,7 +536,7 @@ def test_role_view_tail_keeps_terminal_state_until_a_new_session_signal(tmp_path
             )
         )
     )
-    tail = RoleViewTail()
+    tail = RoleViewTail(_LAST_WORDS_CAP)
     activity = tail.read(path, _TURN_NAME)
     assert activity is not None
     assert activity.ended
@@ -582,18 +582,22 @@ def test_role_view_tail_reports_the_agents_last_words(tmp_path: Path) -> None:
     for index, (content, expected) in enumerate(cases):
         path = tmp_path / f"{index}.jsonl"
         path.write_text(content)
-        activity = RoleViewTail().read(path, _TURN_NAME)
+        activity = RoleViewTail(_LAST_WORDS_CAP).read(path, _TURN_NAME)
         assert activity is not None
         assert activity.last_words == expected
 
     path = tmp_path / "long.jsonl"
     path.write_text(f"{long}\n")
-    bounded = RoleViewTail().read(path, _TURN_NAME)
+    bounded = RoleViewTail(_LAST_WORDS_CAP).read(path, _TURN_NAME)
     assert bounded is not None
     assert bounded.last_words is not None
-    assert len(bounded.last_words) == LAST_WORDS_LIMIT
+    assert bounded.last_words.endswith("…")
+    assert len(bounded.last_words) == _LAST_WORDS_CAP
     assert "\n" not in bounded.last_words
-    assert RoleViewTail().read(tmp_path / "missing.jsonl", _TURN_NAME) is None
+    whole = RoleViewTail(_LAST_WORDS_CAP * 4).read(path, _TURN_NAME)
+    assert whole is not None
+    assert whole.last_words == "word " * 199 + "word"
+    assert RoleViewTail(_LAST_WORDS_CAP).read(tmp_path / "missing.jsonl", _TURN_NAME) is None
 
 
 async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_db_changes(

@@ -75,6 +75,8 @@ class TaskTimelineSource(StrEnum):
 
 DEFAULT_TASK_TIMELINE_CATEGORY = TaskTimelineCategory.ACTIVITY
 DEFAULT_TASK_TIMELINE_REFRESH_SECONDS = 1
+DEFAULT_NOW_MAX_LINES = 6
+DEFAULT_NOW_COMPACT_LINES = 2
 OnChange = Callable[[], Awaitable[None]]
 OnChangeRegistration = Callable[[OnChange], Awaitable[None]]
 MotionRegistration = Callable[[OnChange], Callable[[], None]]
@@ -931,6 +933,8 @@ class WidgetContext:
     docker_refresh_seconds: float
     disk_refresh_seconds: float
     timeline_refresh_seconds: float
+    now_max_lines: int
+    now_compact_lines: int
     quota_warn_pct: int
     quota_alert_pct: int
     clock: Clock

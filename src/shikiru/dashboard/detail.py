@@ -649,9 +649,13 @@ class TaskDetailPanel(Vertical):
         self._render_verbs(view, compact=layout.compact)
 
     def _briefing_layout(self) -> BriefingLayout:
+        compact = self.size.width <= _TASK_DETAIL_COMPACT_MAX_COLUMNS or self.has_class(
+            COMPACT_INSPECTOR_CLASS
+        )
+        context = self._widget_context
         return BriefingLayout(
-            compact=self.size.width <= _TASK_DETAIL_COMPACT_MAX_COLUMNS
-            or self.has_class(COMPACT_INSPECTOR_CLASS),
+            now_lines=context.now_compact_lines if compact else context.now_max_lines,
+            compact=compact,
             tiny=self.screen.size.height <= TASK_DETAIL_TINY_MAX_ROWS,
         )
 

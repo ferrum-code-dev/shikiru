@@ -24,7 +24,6 @@ PR_CHECKS_PENDING_KEY = "checks_pending"
 PR_CHECKS_FAILING_KEY = "checks_failing"
 MAX_BRIEFING_ACTIONS = 3
 FIRST_PASS_ITERATION = 1
-LAST_WORDS_LIMIT = 160
 LAST_WORDS_ELLIPSIS = "…"
 _FACTS_SECTION_BREAK = "\n\n"
 _FACTS_PARTS = 4
@@ -163,10 +162,15 @@ def pull_request_line(data: Mapping[str, object]) -> PullRequestLine:
     )
 
 
-def one_line(text: str, limit: int = LAST_WORDS_LIMIT) -> str | None:
+def squashed(text: str) -> str | None:
+    """Collapse the whitespace runs of `text` to single spaces, or None when it is blank."""
+    return " ".join(text.split()) or None
+
+
+def one_line(text: str, limit: int) -> str | None:
     """Collapse `text` to one line of at most `limit` characters, or None when it is blank."""
-    collapsed = " ".join(text.split())
-    if not collapsed:
+    collapsed = squashed(text)
+    if collapsed is None:
         return None
     if len(collapsed) <= limit:
         return collapsed

@@ -63,6 +63,9 @@ timeline_scan_rows = 256
 timeline_refresh_seconds = 1
 recent_task_limit = 30
 recent_task_window = 3
+last_words_chars = 4000
+now_max_lines = 6
+now_compact_lines = 2
 
 [dashboard.motion]
 refresh_hz = 4

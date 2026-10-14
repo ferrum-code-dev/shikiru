@@ -382,7 +382,7 @@ async def run_dashboard(
             services.reader,
             project_root,
             settings,
-            dashboard_activity_module.RoleViewTail(),
+            dashboard_activity_module.RoleViewTail(settings.dashboard.last_words_chars),
         )
         views = dashboard_views_module.StateDashboardViews(
             services.reader,
@@ -459,6 +459,8 @@ async def run_dashboard(
             quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
             animations=settings.dashboard.animations,
             timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
+            now_max_lines=settings.dashboard.now_max_lines,
+            now_compact_lines=settings.dashboard.now_compact_lines,
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
             open_palette_context=open_palette_context,

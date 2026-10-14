@@ -213,7 +213,9 @@ def _dashboard_views(
         sources=sources,
         queries=queries,
         clock=clock,
-        motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
+        motion=DashboardMotion(
+            reader, project_dir, settings, RoleViewTail(settings.dashboard.last_words_chars)
+        ),
     )
 
 

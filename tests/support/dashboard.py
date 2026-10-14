@@ -192,7 +192,9 @@ def state_views(
             clock=clock,
         ),
         clock=clock,
-        motion=DashboardMotion(reader, project_dir, settings, RoleViewTail()),
+        motion=DashboardMotion(
+            reader, project_dir, settings, RoleViewTail(settings.dashboard.last_words_chars)
+        ),
     )
 
 
@@ -220,6 +222,8 @@ def widget_context(
         docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
         disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
         timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
+        now_max_lines=settings.dashboard.now_max_lines,
+        now_compact_lines=settings.dashboard.now_compact_lines,
         quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
         quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
         clock=clock,
@@ -266,4 +270,6 @@ def dashboard_app(
         open_palette_context=open_palette_context,
         resolution_screen=resolution_screen,
         timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
+        now_max_lines=settings.dashboard.now_max_lines,
+        now_compact_lines=settings.dashboard.now_compact_lines,
     )

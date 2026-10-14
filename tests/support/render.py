@@ -14,6 +14,11 @@ def plain_text(content: object, *, width: int = RENDER_WIDTH) -> str:
     """Render content to text with layout whitespace collapsed, ignoring terminal settings."""
     if isinstance(content, Text):
         return " ".join(content.plain.split())
+    return " ".join("\n".join(rendered_lines(content, width=width)).split())
+
+
+def rendered_lines(content: object, *, width: int) -> list[str]:
+    """Render content at exactly `width` columns and return its lines, trailing blanks dropped."""
     console = Console(
         file=io.StringIO(),
         record=True,
@@ -23,4 +28,4 @@ def plain_text(content: object, *, width: int = RENDER_WIDTH) -> str:
         legacy_windows=False,
     )
     console.print(content)
-    return " ".join(console.export_text().split())
+    return [line.rstrip() for line in console.export_text().splitlines()]

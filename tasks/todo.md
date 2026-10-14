@@ -299,7 +299,7 @@ Twelfth-review scope and evidence: [twelfth review, keys, escalation answers and
   - Proof: Reproduced on the unchanged code: Down past the last choice never selected or expanded `What was tried` (the new table failed), and a compositor dump showed `▌` on the selected label and consequence rows. Now the glyph and bold are gone (text columns identical selected vs not, background `$selected-surface` as in the Tasks list, which has no extra NO_COLOR cue beyond that grey background, also seen in a NO_COLOR dump) and the tried row is the last arrow row (Enter toggles, never sends; hint shows Enter expand/collapse), checked at 100x40, 48 and 40 columns in colour and NO_COLOR. Gate `uv run poe check` is green: 1576 passed, 14 skipped, 91.18% coverage; collected cases 1596 to 1597.
 - [x] Task 189: What was tried digest
 - [x] Task 190: Alternatives that need Operator input
-- [ ] Task 191: Wrap the agent's current output in Now
+- [x] Task 191: Wrap the agent's current output in Now
 - [ ] Task 192: Independent timelines for Events and Agent activity
 - [ ] Task 193: Inline folds replace the details list popup
 - [ ] Task 194: Route entry points to folds and retire the chooser

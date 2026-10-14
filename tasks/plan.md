@@ -1820,8 +1820,9 @@ Refs: `domain/reports.py` (`Option`, `EscalationRequest`), `prompts/templates/co
 
 ### Task 191: Wrap the agent's current output in Now
 Refs: `domain/briefing.py` (`LAST_WORDS_LIMIT`, `one_line`), `dashboard/activity.py` (`RoleViewTail._words`), `dashboard/briefing_view.py` (`_quote`, `_wide_rows`, `_compact_activity`), `defaults.toml`, `test_dashboard_motion.py` role tail tests.
-- [ ] The last message is kept to `dashboard.last_words_chars`, wrapped to `dashboard.now_max_lines` (`now_compact_lines` compact) with `…` only past the cap; rows below move down; tiny layout does not overflow; tunables in `defaults.toml`.
-- [ ] Tests assert the wrap and cap outcome, not constants.
+- [x] The last message is kept to `dashboard.last_words_chars`, wrapped to `dashboard.now_max_lines` (`now_compact_lines` compact) with `…` only past the cap; rows below move down; tiny layout does not overflow; tunables in `defaults.toml`.
+- [x] Tests assert the wrap and cap outcome, not constants.
+- Proof: the long message previously showed one line cut at 160 characters; now a 120-word message wraps to 6 lines at 100 and 60 columns and 2 lines at 48, 40 and a tiny 40x8 pane, ending with `…` only when cut, with the age suffix inside the width and the pane not overflowed (native briefing dumps). `uv run poe check` is green (1590 passed).
 
 ### Task 192: Independent timelines for Events and Agent activity
 Refs: `dashboard/detail.py` timeline state (`_timeline_category`, `_timeline_cursors`, `_timeline_page`, `_watch_timeline`, filters), `row_list.py`, `views.task_detail`.

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import pytest
 from textual.widgets import Button, Static
 
 from shikiru.agents.contracts import Usage
@@ -52,7 +54,7 @@ from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, ignore_palette_action, state_views
 from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG
-from tests.support.render import plain_text
+from tests.support.render import plain_text, rendered_lines
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
@@ -64,6 +66,8 @@ if TYPE_CHECKING:
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
 
+LONG_WORDS = " ".join(f"w{index:03d}" for index in range(120))
+NOW_WORD = re.compile(r"\bw\d{3}\b")
 START = datetime(2026, 1, 1, tzinfo=UTC)
 WIDE_SIZE = (100, 40)
 COMPACT_SIZE = (40, 40)
@@ -148,7 +152,7 @@ def _spend(connection: Connection, clock: FakeClock, task: Task) -> None:
     runs.record_usage(implementer.id, Usage(30, 20, 0, 0, 1.10, "billed", 12))
 
 
-def _live_log(project_root: Path, task: Task, clock: FakeClock) -> None:
+def _live_log(project_root: Path, task: Task, clock: FakeClock, words: str = LAST_WORDS) -> None:
     role_root = run_dir(project_root, task.id) / Role.IMPLEMENTER.value
     role_root.mkdir(parents=True)
     turn = turns_dir(project_root, task.id) / f"001-implement-i{task.iteration}"
@@ -158,20 +162,22 @@ def _live_log(project_root: Path, task: Task, clock: FakeClock) -> None:
         VIEW_TIME_KEY: clock.now().isoformat(),
         VIEW_TURN_KEY: turn.name,
         VIEW_SIGNAL_KEY: VIEW_MESSAGE_SIGNAL,
-        VIEW_MESSAGE_TEXT_KEY: LAST_WORDS,
+        VIEW_MESSAGE_TEXT_KEY: words,
     }
     view_log_path(run_dir(project_root, task.id), Role.IMPLEMENTER.value).write_text(
         json.dumps(row) + "\n"
     )
 
 
-def _seed_running(connection: Connection, clock: FakeClock, project_root: Path) -> Task:
+def _seed_running(
+    connection: Connection, clock: FakeClock, project_root: Path, words: str = LAST_WORDS
+) -> Task:
     task = _running(connection, clock, iteration=RESCUED_ITERATION)
     _spend(connection, clock, task)
     _facts(_turn_dir(project_root, task, task.iteration))
     _report(_turn_dir(project_root, task, task.iteration), _implementation(REPORT_SUMMARY))
     clock.advance(ELAPSED_MINUTES * 60)
-    _live_log(project_root, task, clock)
+    _live_log(project_root, task, clock, words)
     return task
 
 
@@ -298,6 +304,8 @@ def _app(
         disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
         quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
         quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
+        now_max_lines=settings.dashboard.now_max_lines,
+        now_compact_lines=settings.dashboard.now_compact_lines,
         open_palette=ignore_palette_action,
         widget_names=["queue"],
     )
@@ -342,6 +350,37 @@ async def test_briefing_shows_only_the_rows_the_task_has_data_for(
                 assert expected in text, (name, expected)
             for never in (*NEVER_SHOWN, *case.missing):
                 assert never not in text, (name, never)
+
+
+@pytest.mark.parametrize(
+    ("size", "compact"),
+    [((100, 40), False), ((60, 40), False), ((48, 40), True), ((40, 40), True), ((40, 8), True)],
+)
+async def test_a_long_last_message_wraps_within_the_width_up_to_the_configured_lines(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    size: tuple[int, int],
+    compact: bool,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = _seed_running(connection, clock, project_root, LONG_WORDS)
+    dashboard = load_settings(project_root).dashboard
+    cap = dashboard.now_compact_lines if compact else dashboard.now_max_lines
+    app = _app(reader, project_root, clock, focus_task=task.id)
+    async with app.run_test(size=size):
+        briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
+        await wait_until(
+            lambda: "w000" in plain_text(briefing.content, width=size[0]), timeout=UI_WAIT_SECONDS
+        )
+        lines = rendered_lines(briefing.content, width=briefing.size.width)
+        quoted = [line for line in lines if NOW_WORD.search(line)]
+        assert len(quoted) == cap
+        assert "…" in quoted[-1]
+        assert not any("…" in line for line in quoted[:-1])
+        assert all(len(line) <= briefing.size.width for line in lines)
+        assert briefing.region.bottom <= app.screen.size.height
 
 
 async def test_every_offered_verb_stays_inside_the_actions_row_at_compact_width(

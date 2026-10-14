@@ -55,8 +55,9 @@ class _TailState:
 class RoleViewTail:
     """Scan each role log once, then read only newly appended rows."""
 
-    def __init__(self) -> None:
-        """Start with no role logs cached."""
+    def __init__(self, words_limit: int) -> None:
+        """Start with no role logs cached; keep the last words to `words_limit` characters."""
+        self._words_limit = words_limit
         self._states: dict[Path, _TailState] = {}
 
     def read(self, path: Path, turn_name: str) -> TurnActivity | None:
@@ -81,13 +82,12 @@ class RoleViewTail:
             state.message_words or state.ended_words,
         )
 
-    @staticmethod
-    def _initial_state(path: Path, turn_name: str) -> _TailState:
+    def _initial_state(self, path: Path, turn_name: str) -> _TailState:
         state = _TailState(offset=0, pending=b"", turn_name=turn_name)
         with path.open("rb") as handle:
             while line := handle.readline():
                 if line.endswith(_LINE_ENDING):
-                    RoleViewTail._consume_row(state, json.loads(line))
+                    self._consume_row(state, json.loads(line))
                 else:
                     state.pending = line
             offset = handle.tell()
@@ -102,16 +102,14 @@ class RoleViewTail:
             state.offset = handle.tell()
         return chunk
 
-    @staticmethod
-    def _consume(state: _TailState, chunk: bytes) -> None:
+    def _consume(self, state: _TailState, chunk: bytes) -> None:
         rows = (state.pending + chunk).split(_LINE_ENDING)
         state.pending = rows.pop()
         for line in rows:
             if line:
-                RoleViewTail._consume_row(state, json.loads(line))
+                self._consume_row(state, json.loads(line))
 
-    @staticmethod
-    def _consume_row(state: _TailState, row: object) -> None:
+    def _consume_row(self, state: _TailState, row: object) -> None:
         if not isinstance(row, dict):
             message = "role view log row must be a JSON object"
             raise TypeError(message)
@@ -132,11 +130,11 @@ class RoleViewTail:
         state.last_signal = signal
         if signal == VIEW_MESSAGE_SIGNAL:
             state.message_words = (
-                RoleViewTail._words(typed_row, VIEW_MESSAGE_TEXT_KEY) or state.message_words
+                self._words(typed_row, VIEW_MESSAGE_TEXT_KEY) or state.message_words
             )
         elif signal == VIEW_TURN_ENDED_SIGNAL:
             state.ended_words = (
-                RoleViewTail._words(typed_row, VIEW_TURN_ENDED_TEXT_KEY) or state.ended_words
+                self._words(typed_row, VIEW_TURN_ENDED_TEXT_KEY) or state.ended_words
             )
         if signal == VIEW_SESSION_STARTED_SIGNAL:
             state.ended = False
@@ -147,7 +145,6 @@ class RoleViewTail:
             state.tool_running = False
         state.ended = state.ended or signal in (VIEW_TURN_ENDED_SIGNAL, VIEW_TURN_FAILED_SIGNAL)
 
-    @staticmethod
-    def _words(row: dict[str, object], key: str) -> str | None:
+    def _words(self, row: dict[str, object], key: str) -> str | None:
         text = row.get(key)
-        return one_line(text) if isinstance(text, str) else None
+        return one_line(text, self._words_limit) if isinstance(text, str) else None

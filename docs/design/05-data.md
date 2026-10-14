@@ -108,6 +108,9 @@ timeline_scan_rows = 256                        # normalized signal rows scanned
 timeline_refresh_seconds = 1                    # latest task evidence page refresh interval
 recent_task_limit = 30                          # most recent terminal tasks the Home Recent list can page through (History is unlimited); at least recent_task_window
 recent_task_window = 3                          # Recent tasks shown at once
+last_words_chars = 4000                         # safety cap on the stored last agent message shown in Now
+now_max_lines = 6                               # lines Now wraps the last message over; ends with … only when cut
+now_compact_lines = 2                           # the same in the compact and tiny layouts
 layout = { split = "v", panes = [
   { pane = "leader", size = 40 },
   { pane = "implementer", size = 40 },
