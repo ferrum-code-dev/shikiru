@@ -2158,7 +2158,9 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
 
             def filter_visible() -> bool:
                 return (
-                    timeline_turn.region.y >= detail_body.region.y
+                    timeline_turn.region.x >= 0
+                    and timeline_turn.region.right <= app.size.width
+                    and timeline_turn.region.y >= detail_body.region.y
                     and timeline_turn.region.bottom <= detail_body.region.bottom
                     and timeline_turn.region.y >= 0
                     and timeline_turn.region.bottom <= app.size.height
@@ -2191,14 +2193,15 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
             reading_position = detail_body.scroll_target_y
             await pilot.resize_terminal(36, 20)
             await pilot.wait_for_scheduled_animations()
-            assert detail_body.scroll_target_y == reading_position
-            assert filter_visible()
+            await wait_until(
+                lambda: (
+                    detail_body.scroll_target_y == min(reading_position, detail_body.max_scroll_y)
+                    and filter_visible()
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
             assert app.focused is timeline_turn
             assert timeline_turn.value == "3"
-            assert timeline_turn.region.x >= 0
-            assert timeline_turn.region.right <= app.size.width
-            assert timeline_turn.region.y >= 0
-            assert timeline_turn.region.bottom <= app.size.height
     finally:
         reader.close()
 

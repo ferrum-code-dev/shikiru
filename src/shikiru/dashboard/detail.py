@@ -287,9 +287,10 @@ class TaskDetailPanel(Vertical):
     #task-detail-actions Button:hover { color: $primary-text; }
     #task-detail-timeline-filters, #task-detail-workspace-tools { width: 100%; height: auto; }
     #task-detail-timeline-title, #task-detail-timeline-status { height: auto; padding: 0; }
-    #task-detail-timeline-category { width: 34; }
-    #task-detail-timeline-role { width: 18; }
-    #task-detail-timeline-turn { width: 14; }
+    #task-detail-timeline-filters Select, #task-detail-timeline-filters Input { height: 3; }
+    #task-detail-timeline-category { width: 40%; min-width: 10; }
+    #task-detail-timeline-role { width: 30%; min-width: 10; }
+    #task-detail-timeline-turn { width: 30%; min-width: 8; }
     .task-detail-section { height: auto; padding: 0; color: $primary-text; }
     """
 
@@ -365,7 +366,7 @@ class TaskDetailPanel(Vertical):
                 markup=False,
             )
             yield Static("", id=TASK_DETAIL_TIMELINE_STATUS, markup=False)
-            with HorizontalScroll(id=TASK_DETAIL_TIMELINE_FILTERS):
+            with Horizontal(id=TASK_DETAIL_TIMELINE_FILTERS):
                 yield Select(
                     TIMELINE_FILTER_OPTIONS,
                     value=TaskTimelineCategory.ACTIVITY,
