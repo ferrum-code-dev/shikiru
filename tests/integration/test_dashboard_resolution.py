@@ -57,6 +57,8 @@ _CANCEL_ROW_AFTER_RETRY = 1
 _ALTERNATIVE = "Change behavior"
 _OWN_TEXT = "Keep the current behavior."
 _ARMED_TEXT = "Press Enter again to cancel"
+_TRIED_CONTENT = "One implementation and review round."
+_SELECTED_CLASS = "-selected"
 
 
 def _text_of(widget: Widget) -> str:
@@ -197,6 +199,43 @@ async def test_a_degraded_or_unknown_decision_opens_with_its_reason_and_dispatch
         await pilot.press("enter")
         await pilot.pause()
         assert queue.pending() == []
+
+
+async def test_what_was_tried_is_the_last_arrow_row_and_enter_only_toggles_it(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    clock = FakeClock(_START)
+    reader = StateReader(database, clock)
+    request.addfinalizer(reader.close)
+    task = seed_task(connection, clock, title="Tried row")
+    escalation, _ = seed_escalation(
+        connection, clock, task.id, tmp_path, EscalationReason.DECISION_REQUIRED
+    )
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
+    app = ResolutionHost(resolution_factory(commands, queries, clock, reader), escalation.id)
+
+    async with app.run_test(size=_SIZE) as pilot:
+        screen = await _opened(app)
+        rows = _rows(screen)
+        tried = screen.query_one("#resolution-tried")
+        first_text = _text_of(rows[0])
+        assert rows[0].has_class(_SELECTED_CLASS)
+        await pilot.press(*["down"] * len(rows))
+        await wait_until(lambda: tried.has_class(_SELECTED_CLASS), timeout=UI_WAIT_SECONDS)
+        assert not any(row.has_class(_SELECTED_CLASS) for row in rows)
+        assert _text_of(rows[0]) == first_text
+        await pilot.press("enter")
+        await wait_until(lambda: _TRIED_CONTENT in _text_of(tried), timeout=UI_WAIT_SECONDS)
+        await pilot.press("enter")
+        await wait_until(lambda: _TRIED_CONTENT not in _text_of(tried), timeout=UI_WAIT_SECONDS)
+        await pilot.press("up")
+        await wait_until(lambda: rows[-1].has_class(_SELECTED_CLASS), timeout=UI_WAIT_SECONDS)
+        assert not tried.has_class(_SELECTED_CLASS)
+        assert queue.pending() == []
+        assert app.results == []
 
 
 async def test_cancel_needs_a_second_enter_and_any_other_key_resets_it(

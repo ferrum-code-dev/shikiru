@@ -38,7 +38,6 @@ FOLDED_MAX_COLUMNS = 40
 TINY_MAX_ROWS = 8
 _LABEL_WIDTH = 9
 _MARK_WIDTH = 3
-_SELECTED_BAR = "\N{LEFT HALF BLOCK}"
 _RECOMMENDED_STAR = "\N{BLACK STAR}"
 _COLLAPSED_ARROW = "\N{BLACK RIGHT-POINTING SMALL TRIANGLE}"
 _EXPANDED_ARROW = "\N{BLACK DOWN-POINTING SMALL TRIANGLE}"
@@ -49,7 +48,16 @@ _CANCEL_LABEL = "Cancel task"
 _CANCEL_CONFIRM_LABEL = "Press Enter again to cancel"
 _DECISION_TITLE = "Decision"
 _CHOOSE_TITLE = "Choose"
-_CHOOSE_HINT = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW} select · Enter send"
+_SELECT_HINT = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW} select"
+_SEND_HINT = "Enter send"
+_EXPAND_HINT = "Enter expand"
+_COLLAPSE_HINT = "Enter collapse"
+_ENTER_HINTS = {
+    (False, False): _SEND_HINT,
+    (False, True): _SEND_HINT,
+    (True, False): _EXPAND_HINT,
+    (True, True): _COLLAPSE_HINT,
+}
 _TRIED_TITLE = "What was tried"
 _WAITING_WORD = "waiting"
 _TITLE_WIDE = "Resolve escalation"
@@ -145,9 +153,11 @@ def decision_renderable(
     return Section(_DECISION_TITLE, rows, grey(f"{_WAITING_WORD} {age}"), ruled=False)
 
 
-def choose_renderable() -> RenderableType:
+def choose_renderable(*, on_tried: bool, tried_expanded: bool) -> RenderableType:
     """Return the Choose heading: a steel-blue bold title with its grey key hint."""
-    return Section(_CHOOSE_TITLE, Group(), grey(_CHOOSE_HINT), title_style=BOLD_STEEL)
+    enter_hint = _ENTER_HINTS[(on_tried, tried_expanded)]
+    hint = GROUP_SEPARATOR.join((_SELECT_HINT, enter_hint))
+    return Section(_CHOOSE_TITLE, Group(), grey(hint), title_style=BOLD_STEEL)
 
 
 def tried_renderable(content: str, *, expanded: bool) -> RenderableType:
@@ -168,22 +178,19 @@ def starred_indexes(panel: ResolutionPanel) -> frozenset[int]:
 
 
 def choice_renderable(
-    choice: PanelChoice, *, starred: bool, selected: bool, armed: bool, disabled: bool
+    choice: PanelChoice, *, starred: bool, armed: bool, disabled: bool
 ) -> RenderableType:
-    """Return one choice row: bar and star beside the label, its consequence beneath in grey."""
+    """Return one choice row: star beside the label, its consequence beneath in grey."""
     style = SECONDARY_TEXT_COLOR if disabled else _LABEL_STYLES[choice.kind]
-    if selected and not disabled:
-        style = f"{STYLE_BOLD} {style}"
     if armed:
         label = Text(_CANCEL_CONFIRM_LABEL, style=f"{STYLE_BOLD} {DUSTY_ROSE}")
     else:
         label = Text(choice.label or _FIXED_LABELS[choice.kind], style=style)
-    bar = _SELECTED_BAR if selected else " "
     star = _RECOMMENDED_STAR if starred else " "
     grid = Table.grid()
     grid.add_column(width=_MARK_WIDTH, no_wrap=True)
     grid.add_column(ratio=1)
-    grid.add_row(Text(f"{bar}{star} ", style=style), label)
+    grid.add_row(Text(f" {star} ", style=style), label)
     if choice.kind is not ChoiceKind.OWN_ANSWER:
-        grid.add_row(Text(f"{bar}  ", style=style), grey(choice.consequence))
+        grid.add_row(Text(" " * _MARK_WIDTH), grey(choice.consequence))
     return grid

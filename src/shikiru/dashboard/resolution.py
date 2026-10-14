@@ -146,7 +146,7 @@ class ResolutionScreen(ModalScreen[bool]):
     #resolution-choices { height: auto; }
     #resolution-choices:focus { background-tint: transparent; }
     .resolution-choice { height: auto; width: 100%; }
-    .resolution-choice.-selected { background: $selected-surface; }
+    .resolution-choice.-selected, #resolution-tried.-selected { background: $selected-surface; }
     #resolution-answer { height: 4; margin: 0 0 0 3; }
     """
     )
@@ -243,14 +243,18 @@ class ResolutionScreen(ModalScreen[bool]):
         self.dismiss(False)
 
     def action_move(self, step: int) -> None:
-        """Select the neighbouring choice, stopping at both ends."""
+        """Select the neighbouring row, stopping at both ends."""
         panel = self._panel
         if panel is not None:
-            self._select(min(max(self._selected + step, 0), len(panel.choices) - 1))
+            self._select(min(max(self._selected + step, 0), self._last_index(panel)))
 
     def action_activate(self) -> None:
-        """Send the selected choice; Cancel asks for a second Enter."""
-        if self._panel is not None:
+        """Send the selected choice, or toggle `What was tried`; Cancel asks for a second Enter."""
+        if self._panel is None:
+            return
+        if self._selected == len(self._panel.choices):
+            self.action_toggle_tried()
+        else:
             self._activate(self._selected)
 
     def action_toggle_tried(self) -> None:
@@ -308,6 +312,10 @@ class ResolutionScreen(ModalScreen[bool]):
             return ""
         return self._drafts.get(self._panel.task_id, self._escalation_id)
 
+    @staticmethod
+    def _last_index(panel: ResolutionPanel) -> int:
+        return len(panel.choices) - (0 if panel.what_was_tried else 1)
+
     def _own_answer_index(self) -> int:
         panel = cast("ResolutionPanel", self._panel)
         return next(
@@ -322,7 +330,7 @@ class ResolutionScreen(ModalScreen[bool]):
         previous = self._panel
         self._panel = panel
         if panel is not None and previous is not None and panel.choices != previous.choices:
-            self._selected = min(self._selected, len(panel.choices) - 1)
+            self._selected = min(self._selected, self._last_index(panel))
             await self.recompose()
             self.call_after_refresh(self._after_recompose)
             return
@@ -351,7 +359,11 @@ class ResolutionScreen(ModalScreen[bool]):
             decision_renderable(panel, age, layout)
         )
         choose = self.query_one("#resolution-choose", Static)
-        choose.update(choose_renderable())
+        choose.update(
+            choose_renderable(
+                on_tried=self._selected == len(panel.choices), tried_expanded=self._tried_open
+            )
+        )
         choose.display = layout is not ResolutionLayout.TINY
         disabled = self._disabled_reason() is not None
         starred = starred_indexes(panel)
@@ -363,7 +375,6 @@ class ResolutionScreen(ModalScreen[bool]):
                 choice_renderable(
                     choice,
                     starred=index in starred,
-                    selected=selected,
                     armed=selected and self._cancel_armed,
                     disabled=disabled,
                 )
@@ -372,9 +383,9 @@ class ResolutionScreen(ModalScreen[bool]):
             answer.display = self._answer_open
             answer.disabled = disabled
         if panel.what_was_tried:
-            self.query_one("#resolution-tried", _TriedSection).update(
-                tried_renderable(panel.what_was_tried, expanded=self._tried_open)
-            )
+            tried = self.query_one("#resolution-tried", _TriedSection)
+            tried.set_class(self._selected == len(panel.choices), "-selected")
+            tried.update(tried_renderable(panel.what_was_tried, expanded=self._tried_open))
 
     def _render_notice(self) -> None:
         reason = self._disabled_reason()
@@ -395,8 +406,9 @@ class ResolutionScreen(ModalScreen[bool]):
         self._cancel_armed = False
         self._send_error = None
         self._paint()
+        rows = [*self.query(_ChoiceRow), *self.query(_TriedSection)]
         self.query_one("#resolution-body", VerticalScroll).scroll_to_widget(
-            self.query(_ChoiceRow)[index], animate=False
+            rows[index], animate=False
         )
 
     def _disarm(self) -> None:

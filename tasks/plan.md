@@ -1802,8 +1802,9 @@ Refs: `dashboard/app.py` (`_dispatch_workspace_key`, `_EVIDENCE_KEY`, help), `de
 
 ### Task 188: Resolution panel highlight and keyboard-reachable evidence
 Refs: `dashboard/resolution.py` (`_ChoiceList`, `_TriedSection`, `action_move`, `_activate`, `_paint`), `resolution_view.py` (`choice_renderable`, `_SELECTED_BAR`), `row_list.py` and `queue.py` selection styles.
-- [ ] The `▌` glyph is gone and the selected choice uses the Tasks-list background highlight, text columns unchanged, a `NO_COLOR` cue kept if the Tasks list has one.
-- [ ] `What was tried` is the last row of the arrow list: ↑↓ reach it, Enter toggles it and never sends, `t` and click keep working, Cancel arming resets as for other rows; hint text mentions it.
+- [x] The `▌` glyph is gone and the selected choice uses the Tasks-list background highlight, text columns unchanged, a `NO_COLOR` cue kept if the Tasks list has one.
+- [x] `What was tried` is the last row of the arrow list: ↑↓ reach it, Enter toggles it and never sends, `t` and click keep working, Cancel arming resets as for other rows; hint text mentions it.
+  - Proof: Reproduced on the unchanged code: Down past the last choice never selected or expanded `What was tried` (the new table failed), and a compositor dump showed `▌` on the selected label and consequence rows. Now the glyph and bold are gone (text columns identical selected vs not, background `$selected-surface` as in the Tasks list, which has no extra NO_COLOR cue beyond that grey background, also seen in a NO_COLOR dump) and the tried row is the last arrow row (Enter toggles, never sends; hint shows Enter expand/collapse), checked at 100x40, 48 and 40 columns in colour and NO_COLOR. Gate `uv run poe check` is green: 1576 passed, 14 skipped, 91.18% coverage; collected cases 1596 to 1597.
 
 ### Task 189: What was tried digest
 Refs: `engine/escalation_filing.py` (`escalation_narrative`), `engine/escalations.py` (`render_packet`, `_restored_context`, `raise_escalation`), `domain/briefing.py` (`verdict_counts`, `reported_tests`, `parse_produced`, `one_line`), `domain/events.py`, `defaults.toml`.
