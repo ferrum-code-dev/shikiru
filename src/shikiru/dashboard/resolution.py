@@ -159,8 +159,8 @@ class ResolutionScreen(ModalScreen[bool]):
     AUTO_FOCUS = ""
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("escape", "close", "Close"),
-        Binding("up", f"{_ACTION_MOVE}(-1)", "Previous choice", show=False),
-        Binding("down", f"{_ACTION_MOVE}(1)", "Next choice", show=False),
+        Binding("up", f"{_ACTION_MOVE}(-1)", "Previous choice", show=False, priority=True),
+        Binding("down", f"{_ACTION_MOVE}(1)", "Next choice", show=False, priority=True),
         Binding(_SUBMIT_KEY, _ACTION_ACTIVATE, "Send", show=False),
         Binding("t", _ACTION_TOGGLE_TRIED, "Details", show=False),
         Binding("right", _ACTION_EDIT, "Edit", show=False),

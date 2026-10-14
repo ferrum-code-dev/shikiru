@@ -298,6 +298,32 @@ async def test_the_answer_box_follows_its_row_and_the_keys_move_between_box_and_
     assert queued.command.resolution == AnswerResolution(text=_ALTERNATIVE)
 
 
+@pytest.mark.parametrize("size", [(40, 14), (40, 8)])
+async def test_down_selects_the_next_choice_when_the_panel_itself_scrolls(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    size: tuple[int, int],
+) -> None:
+    clock = FakeClock(_START)
+    reader = StateReader(database, clock)
+    request.addfinalizer(reader.close)
+    task = seed_task(connection, clock, title="Small pane")
+    escalation, _ = seed_escalation(
+        connection, clock, task.id, tmp_path, EscalationReason.DECISION_REQUIRED
+    )
+    commands, queries, _ = operator_services(connection, reader, clock, tmp_path)
+    app = ResolutionHost(resolution_factory(commands, queries, clock, reader), escalation.id)
+
+    async with app.run_test(size=size) as pilot:
+        screen = await _opened(app)
+        await pilot.press("down")
+        await wait_until(
+            lambda: _rows(screen)[1].has_class(_SELECTED_CLASS), timeout=UI_WAIT_SECONDS
+        )
+
+
 @pytest.mark.parametrize("record", ["missing-packet", "malformed-packet", "unknown-decision"])
 async def test_a_degraded_or_unknown_decision_opens_with_its_reason_and_dispatches_nothing(
     connection: Connection,
