@@ -108,8 +108,8 @@ ACTION_LABELS = {
     BriefingAction.RESUME: "Resume",
     BriefingAction.ANSWER: "Answer",
 }
-DETAILS_LABEL = "Enter details \N{BLACK RIGHT-POINTING SMALL TRIANGLE}"
-COMPACT_DETAILS_LABEL = "Enter \N{BLACK RIGHT-POINTING SMALL TRIANGLE}"
+DETAILS_LABEL = "\N{DOWNWARDS ARROW} details"
+COMPACT_DETAILS_LABEL = "\N{DOWNWARDS ARROW}"
 TERMINAL_STATE_LABELS = {
     Status.ESCALATED.value: ("!", "Escalated"),
     Status.DONE.value: ("\N{CHECK MARK}", "Done"),

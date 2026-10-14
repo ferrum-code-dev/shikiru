@@ -1831,8 +1831,9 @@ Refs: `dashboard/detail.py` timeline state (`_timeline_category`, `_timeline_cur
 
 ### Task 193: Inline folds replace the details list popup
 Refs: spec "Task details"; `details_list.py`, `details_list_view.py` (`entry_renderable`, headlines, add the missing Events/Request/Facts/Agent activity headlines), `detail.py` (`TASK_VIEW_WIDGETS`, `_apply_view_visibility`, `_render_view`), `ui/section.py`.
-- [ ] A fold widget (header with live headline, body) hosts each section; several may be open; keys as in the spec; fold state survives refresh and task change in one panel; live timers only for open folds; Home wide, compact, tiny, popup and task window.
-- [ ] The nine section bodies keep today's content; project contextual views follow the headers.
+- [x] A fold widget (header with live headline, body) hosts each section; several may be open; keys as in the spec; fold state survives refresh and task change in one panel; live timers only for open folds; Home wide, compact, tiny, popup and task window.
+- [x] The nine section bodies keep today's content; project contextual views follow the headers.
+- Proof: `DetailFold`/`DetailFolds` (`dashboard/detail_fold.py`) host the nine sections inline under the briefing in the Home wide and compact inspectors, the task popup and the task window; native dumps at 130x40, 100x40, 60, 48, 40 columns and a 40x8 pane (colour and `NO_COLOR`) showed ↑↓ moving the highlighted header, several folds open at once, live headlines, nested lists capped at 10 rows (6 compact, 3 tiny) and the contextual views after the nine headers. New tests prove the key table, both timelines live with folded ones costing no refresh, fold state surviving refresh and task change, and Esc stepping list to header to out; `detail.py` went from 1409 to about 1360 lines. `uv run poe check` is green.
 
 ### Task 194: Route entry points to folds and retire the chooser
 Refs: `app.py` (`open_task_detail_view`, palette Views route, `action_open_task_usage`/`evidence`, `open_contextual_view`), `contract.py`, `TaskDetailScreen` (`initial_view`, `open_views_on_mount`), `tests/support/dashboard.py` (`choose_details_entry`).

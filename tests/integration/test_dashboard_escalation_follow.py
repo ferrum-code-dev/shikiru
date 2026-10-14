@@ -15,9 +15,7 @@ from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.detail import (
     TASK_DETAIL_DETAILS_BUTTON,
     TASK_DETAIL_TIMELINE_CATEGORY,
-    TaskDetailScreen,
 )
-from shikiru.dashboard.details_list import TaskDetailsListScreen
 from shikiru.dashboard.details_list_view import DetailsSection
 from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
@@ -361,21 +359,12 @@ async def test_arrows_move_an_expanded_select_in_task_detail_without_moving_the_
         selected = task_list.highlighted_child
         await _tab_to(home, pilot, f"#{TASK_DETAIL_DETAILS_BUTTON}")
         await pilot.press("enter")
-        await wait_until(
-            lambda: isinstance(home.app.screen, TaskDetailsListScreen), timeout=UI_WAIT_SECONDS
-        )
         events = list(DetailsSection).index(DetailsSection.EVENTS)
         await pilot.press(*["down"] * events, "enter")
-        await wait_until(
-            lambda: (
-                isinstance(home.app.screen, TaskDetailScreen)
-                and bool(home.app.screen.query(f"#{TASK_DETAIL_TIMELINE_CATEGORY}"))
-            ),
-            timeout=UI_WAIT_SECONDS,
-        )
         category = cast(
-            "Select[str]", home.app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
+            "Select[str]", home.app.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
         )
+        await wait_until(lambda: category.region.height > 0, timeout=UI_WAIT_SECONDS)
         category.focus()
         await pilot.press("enter")
         await wait_until(lambda: category.expanded, timeout=UI_WAIT_SECONDS)

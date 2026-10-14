@@ -307,10 +307,10 @@ async def _open_detail_view(
         lambda: (
             (
                 isinstance(pilot.app.screen, TaskDetailScreen)
-                and pilot.app.screen.query_one("#task-detail-panel", TaskDetailPanel).active_view
-                == view_id
+                and view_id
+                in pilot.app.screen.query_one("#task-detail-panel", TaskDetailPanel).open_views
             )
-            or panel.active_view == view_id
+            or view_id in panel.open_views
         ),
         timeout=UI_WAIT_SECONDS,
     )
@@ -346,7 +346,7 @@ async def _open_related_task(
     task_id: str,
 ) -> None:
     panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
-    if panel.active_view != TASK_VIEW_RELATIONSHIPS:
+    if TASK_VIEW_RELATIONSHIPS not in panel.open_views:
         panel = await _open_relationships(panel, pilot)
     await _select_related_row(panel, pilot, task_id)
     await pilot.press("enter")
@@ -480,7 +480,7 @@ async def _exercise_paged_relationship_navigation(
         )
         assert not any(tasks.replacements[-1].id in row for row in _related_rows(panel))
         detail_screen = app.screen
-        await pilot.press("escape")
+        await pilot.press("escape", "escape")
         await wait_until(lambda: app.screen is not detail_screen, timeout=5.0)
         await _open_browser_task(app, pilot, tasks.blocked.title, tasks.blocked.id)
         await _open_related_task(app, pilot, tasks.dependencies[-1].id)
@@ -547,9 +547,9 @@ async def test_child_search_shows_parent_context_and_expands_the_family_group(
             timeout=5.0,
         )
         related_list = detail_panel.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList)
-        assert not related_list.display
+        assert TASK_VIEW_RELATIONSHIPS not in detail_panel.open_views
         await _open_relationships(detail_panel, pilot)
-        await wait_until(lambda: related_list.display, timeout=5.0)
+        await wait_until(lambda: related_list.region.height > 0, timeout=5.0)
         await wait_until(
             lambda: all(
                 any(task.id in row for row in _related_rows(detail_panel))
@@ -613,7 +613,7 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
             ),
             timeout=5.0,
         )
-        await pilot.press("escape")
+        await pilot.press("escape", "escape")
         await wait_until(
             lambda: (
                 root.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
@@ -621,7 +621,7 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
             timeout=5.0,
         )
         root_screen = app.screen
-        await pilot.press("escape")
+        await pilot.press("escape", "escape")
         await wait_until(
             lambda: (
                 app.screen is not root_screen

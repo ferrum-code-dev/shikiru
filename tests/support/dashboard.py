@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import (
+        NavigateHome,
         OpenPalette,
         OpenPaletteContext,
         OpenResolution,
@@ -246,13 +247,20 @@ def dashboard_app(
     resources_refresh_seconds: float | None = None,
     open_palette_context: OpenPaletteContext | None = None,
     resolution_screen: ResolutionScreenFactory | None = None,
+    focus_task: str | None = None,
+    navigate_home: NavigateHome | None = None,
 ) -> DashboardApp:
-    """Build the Home dashboard over `reader` with the stub services."""
+    """Build the Home dashboard, or the fixed view of `focus_task`, over `reader`."""
     settings = settings or load_settings(project_dir)
     return DashboardApp(
-        focus_task=None,
+        focus_task=focus_task,
         views=state_views(
-            reader, project_dir, clock, services or StubServices(), settings=settings
+            reader,
+            project_dir,
+            clock,
+            services or StubServices(),
+            focus_task=focus_task,
+            settings=settings,
         ),
         on_change=reader.watch,
         clock=clock,
@@ -269,6 +277,7 @@ def dashboard_app(
         widget_names=widget_names,
         open_palette_context=open_palette_context,
         resolution_screen=resolution_screen,
+        navigate_home=navigate_home,
         timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
         now_max_lines=settings.dashboard.now_max_lines,
         now_compact_lines=settings.dashboard.now_compact_lines,

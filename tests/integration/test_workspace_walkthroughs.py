@@ -472,8 +472,12 @@ async def test_fake_agent_workspace_finds_verdict_and_applies_contextual_message
             )
             app.route_task_palette(task_id, TaskPaletteRoute.INSPECT)
             await runtime.wait_for(lambda: isinstance(app.screen, TaskDetailScreen))
-            detail_verdict = app.screen.query_one("#task-detail-verdict", Static)
-            await runtime.wait_for(lambda: "changes_requested" in _plain(detail_verdict))
+            await runtime.wait_for(
+                lambda: (
+                    "changes_requested"
+                    in _plain(app.screen.query_one("#task-detail-verdict", Static))
+                )
+            )
             await pilot.press("ctrl+p")
             await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen))
             palette = cast("PaletteScreen", app.screen)

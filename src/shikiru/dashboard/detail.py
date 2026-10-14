@@ -28,6 +28,7 @@ from shikiru.dashboard.contract import (
     PaletteRequest,
     TaskTimelineCategory,
 )
+from shikiru.dashboard.detail_fold import DetailFold, DetailFolds
 from shikiru.dashboard.details_list import TaskDetailsListScreen
 from shikiru.dashboard.details_list_view import (
     RELATIONSHIPS_HINT,
@@ -74,7 +75,6 @@ if TYPE_CHECKING:
     from textual import events
     from textual.app import App, ComposeResult
     from textual.binding import BindingType
-    from textual.events import MouseScrollUp
     from textual.widget import Widget
     from textual.worker import Worker
 
@@ -117,6 +117,9 @@ TASK_DETAIL_WORKSPACE = "task-detail-workspace"
 TASK_DETAIL_SESSIONS = "task-detail-sessions"
 TASK_DETAIL_FEEDBACK = "task-detail-feedback"
 TASK_DETAIL_BODY = "task-detail-body"
+TASK_DETAIL_FOLDS = "task-detail-folds"
+FOLDS_COMPACT_CLASS = "folds-compact"
+FOLDS_TINY_CLASS = "folds-tiny"
 TASK_DETAIL_CONTEXT_INFO = "task-detail-context-info"
 TASK_DETAIL_TINY_MAX_ROWS = 8
 _TASK_DETAIL_COMPACT_MAX_COLUMNS = 48
@@ -159,29 +162,18 @@ DETAILS_SECTION_VIEWS = {
     DetailsSection.BLOCKERS: TASK_VIEW_RELATIONSHIPS,
     DetailsSection.SETTINGS: TASK_VIEW_CONTEXT,
 }
-EVIDENCE_VIEW_CATEGORIES = {
-    TASK_VIEW_EVIDENCE: TaskTimelineCategory.ACTIVITY,
-    TASK_VIEW_AGENT: TaskTimelineCategory.SIGNAL,
-}
-LIST_VIEW_FOCUS = {TASK_VIEW_RELATIONSHIPS: TASK_DETAIL_RELATED_LIST}
 TIMELINE_SECTIONS = {
     DetailsSection.EVENTS: (EVENTS_TIMELINE_IDS, TaskTimelineCategory.ACTIVITY),
     DetailsSection.AGENT_ACTIVITY: (AGENT_TIMELINE_IDS, TaskTimelineCategory.SIGNAL),
 }
-TASK_VIEW_WIDGETS = {
-    TASK_VIEW_SUMMARY: (TASK_DETAIL_BRIEFING, TASK_DETAIL_ACTIONS),
+FOLD_STATICS = {
     TASK_VIEW_USAGE: (TASK_DETAIL_SESSIONS,),
     TASK_VIEW_CONTEXT: (TASK_DETAIL_CONTEXT_INFO,),
     TASK_VIEW_REPORTS: (TASK_DETAIL_REPORT, TASK_DETAIL_VERDICT),
     TASK_VIEW_REQUEST: (TASK_DETAIL_REQUEST, TASK_DETAIL_CRITERIA),
-    TASK_VIEW_EVIDENCE: (),
-    TASK_VIEW_RELATIONSHIPS: (
-        TASK_DETAIL_BLOCKER,
-        TASK_DETAIL_RELATIONSHIPS,
-        TASK_DETAIL_RELATED_LIST,
-    ),
+    TASK_VIEW_RELATIONSHIPS: (TASK_DETAIL_BLOCKER, TASK_DETAIL_RELATIONSHIPS),
     TASK_VIEW_FACTS: (TASK_DETAIL_FACTS,),
-    TASK_VIEW_WORKSPACE: (TASK_DETAIL_WORKSPACE, TASK_DETAIL_WORKSPACE_TOOLS),
+    TASK_VIEW_WORKSPACE: (TASK_DETAIL_WORKSPACE,),
 }
 NO_DECISION_TO_ANSWER = "No open decision to answer for this task."
 NO_REPORT = "No validated report is recorded."
@@ -199,9 +191,8 @@ COMPACT_INSPECTOR_CLASS = "compact-inspector"
 
 
 class TaskDetailBody(VerticalScroll):
-    def __init__(self, scroll_away: Callable[[], None], *, always_focusable: bool) -> None:
+    def __init__(self, *, always_focusable: bool) -> None:
         super().__init__(id="task-detail-body")
-        self._scroll_away = scroll_away
         self._always_focusable = always_focusable
 
     def allow_focus(self) -> bool:
@@ -217,26 +208,6 @@ class TaskDetailBody(VerticalScroll):
                 focused,
                 animate=False,
             )
-
-    def on_mouse_scroll_up(self, event: MouseScrollUp) -> None:
-        del event
-        self._pause_if_scrolled()
-
-    def action_scroll_up(self) -> None:
-        self._pause_if_scrolled()
-        super().action_scroll_up()
-
-    def action_page_up(self) -> None:
-        self._pause_if_scrolled()
-        super().action_page_up()
-
-    def action_scroll_home(self) -> None:
-        self._pause_if_scrolled()
-        super().action_scroll_home()
-
-    def _pause_if_scrolled(self) -> None:
-        if self.scroll_y > 0:
-            self._scroll_away()
 
 
 class TaskDetailPanel(Vertical):
@@ -276,6 +247,9 @@ class TaskDetailPanel(Vertical):
     #task-detail-timeline-role { width: 30%; min-width: 10; }
     #task-detail-timeline-turn { width: 30%; min-width: 8; }
     .task-detail-section { height: auto; padding: 0; color: $primary-text; }
+    TaskDetailPanel RowList { max-height: 10; overflow-y: auto; scrollbar-size-vertical: 1; }
+    TaskDetailPanel.folds-compact RowList { max-height: 6; }
+    TaskDetailPanel.folds-tiny RowList { max-height: 3; }
     """
 
     def __init__(
@@ -301,29 +275,30 @@ class TaskDetailPanel(Vertical):
         self._relationship_previous_offset: int | None = None
         self._relationship_next_offset: int | None = None
         self._related_rows: tuple[RelatedRow, ...] = ()
-        self._timeline_section = _timeline_section(initial_view)
         host = TimelineHost(
             task_id=lambda: self._task_id,
             lock=self._refresh_lock,
-            queue_refresh=self._queue_refresh,
             report=self._set_feedback,
         )
         self._timelines = {
-            section: TimelineSection(context, host, ids=ids, section=section, category=category)
+            DETAILS_SECTION_VIEWS[section]: TimelineSection(
+                context, host, ids=ids, section=section, category=category
+            )
             for section, (ids, category) in TIMELINE_SECTIONS.items()
         }
+        self._folds: dict[str, DetailFold] = {}
+        self._initial_view = initial_view
         self._timeline_worker: Worker[None] | None = None
         self._remove_motion_callback: Callable[[], None] | None = None
         self._body_focus_generation = 0
         self._views_return_state: tuple[float, Widget | None] | None = None
         self._rendered_task_id: str | None = None
-        self._active_view = _panel_view(initial_view)
         self._view: TaskDetailView | None = None
         self._on_initial_content = on_initial_content
         self._initial_content_reported = False
 
     def compose(self) -> ComposeResult:
-        with TaskDetailBody(self._pause_timeline_follow, always_focusable=self._fixed):
+        with TaskDetailBody(always_focusable=self._fixed):
             yield GatedStatic("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
             yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
             yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
@@ -335,30 +310,46 @@ class TaskDetailPanel(Vertical):
                             ACTION_LABELS[action], id=f"{TASK_DETAIL_ACTION_PREFIX}{action.value}"
                         )
                 yield Button(DETAILS_LABEL, id=TASK_DETAIL_DETAILS_BUTTON)
-            yield Static("", id=TASK_DETAIL_SESSIONS, classes="task-detail-section")
-            yield Static(
-                "", id=TASK_DETAIL_CONTEXT_INFO, classes="task-detail-section", markup=False
+            with DetailFolds(widget_id=TASK_DETAIL_FOLDS):
+                for section in DetailsSection:
+                    view_id = DETAILS_SECTION_VIEWS[section]
+                    fold = DetailFold(
+                        view_id,
+                        section.value,
+                        self._section_widgets(view_id),
+                        is_open=view_id == self._initial_view,
+                    )
+                    self._folds[view_id] = fold
+                    yield fold
+                for label, choice_id in self._widget_context.task_contextual_views:
+                    yield DetailFold(choice_id, label)
+
+    def _section_widgets(self, view_id: str) -> list[Widget]:
+        timeline = self._timelines.get(view_id)
+        if timeline is not None:
+            return [timeline]
+        widgets: list[Widget] = [
+            Static("", id=widget_id, classes="task-detail-section", markup=False)
+            for widget_id in FOLD_STATICS.get(view_id, ())
+        ]
+        if view_id == TASK_VIEW_RELATIONSHIPS:
+            widgets.append(RowList(widget_id=TASK_DETAIL_RELATED_LIST))
+        if view_id == TASK_VIEW_WORKSPACE:
+            widgets.append(
+                HorizontalScroll(
+                    Button("Task window", id=TASK_DETAIL_WINDOW_BUTTON),
+                    Button("Leader pane", id=TASK_DETAIL_LEADER_BUTTON),
+                    Button("Implementer pane", id=TASK_DETAIL_IMPLEMENTER_BUTTON),
+                    id=TASK_DETAIL_WORKSPACE_TOOLS,
+                )
             )
-            yield Static("", id=TASK_DETAIL_BLOCKER, classes="task-detail-section", markup=False)
-            yield Static(
-                "", id=TASK_DETAIL_RELATIONSHIPS, classes="task-detail-section", markup=False
-            )
-            yield RowList(widget_id=TASK_DETAIL_RELATED_LIST)
-            yield from self._timelines.values()
-            yield Static("", id=TASK_DETAIL_REQUEST, classes="task-detail-section", markup=False)
-            yield Static("", id=TASK_DETAIL_CRITERIA, classes="task-detail-section", markup=False)
-            yield Static("", id=TASK_DETAIL_REPORT, classes="task-detail-section", markup=False)
-            yield Static("", id=TASK_DETAIL_VERDICT, classes="task-detail-section", markup=False)
-            yield Static("", id=TASK_DETAIL_FACTS, classes="task-detail-section", markup=False)
-            yield Static("", id=TASK_DETAIL_WORKSPACE, classes="task-detail-section", markup=False)
-            with HorizontalScroll(id=TASK_DETAIL_WORKSPACE_TOOLS):
-                yield Button("Task window", id=TASK_DETAIL_WINDOW_BUTTON)
-                yield Button("Leader pane", id=TASK_DETAIL_LEADER_BUTTON)
-                yield Button("Implementer pane", id=TASK_DETAIL_IMPLEMENTER_BUTTON)
+        return widgets
 
     async def on_mount(self) -> None:
         self.disabled = self._task_id is None
-        self._apply_view_visibility(blocker_visible=False)
+        self._folds_list().display = self._task_id is not None
+        self.query_one(f"#{TASK_DETAIL_BLOCKER}").display = False
+        self._sync_timelines()
         identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         identity.update(
             _task_identity_text(f"{self._task_id} · loading selected task")
@@ -388,6 +379,9 @@ class TaskDetailPanel(Vertical):
             self._remove_motion_callback = None
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        fold = self._fold_of(event.widget)
+        if fold is not None:
+            self._folds_list().make_current(fold)
         body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         if body in event.widget.ancestors:
             self._body_focus_generation += 1
@@ -407,6 +401,7 @@ class TaskDetailPanel(Vertical):
         self.disabled = task_id is None
         if not self.is_mounted:
             return
+        self._folds_list().display = task_id is not None
         identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         identity.update(
             _task_identity_text(f"{task_id} · loading selected task")
@@ -420,14 +415,12 @@ class TaskDetailPanel(Vertical):
 
     def _reset_task_identity_state(self) -> None:
         self._relationship_offset = 0
-        self._active_view = TASK_VIEW_SUMMARY
         self._view = None
         self._relationship_previous_offset = None
         self._relationship_next_offset = None
         self._related_rows = ()
         for timeline in self._timelines.values():
             timeline.reset()
-        self._timeline_section = DetailsSection.EVENTS
         if not self.is_mounted:
             return
         for section_id in (
@@ -449,7 +442,6 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList).set_rows(
             (), selected=0, empty=NO_RELATED_ROWS
         )
-        self._apply_view_visibility(blocker_visible=False)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""
@@ -459,7 +451,7 @@ class TaskDetailPanel(Vertical):
             )
             return
         handlers = {
-            TASK_DETAIL_DETAILS_BUTTON: self.open_contextual_views,
+            TASK_DETAIL_DETAILS_BUTTON: self.focus_folds,
             TASK_DETAIL_WINDOW_BUTTON: self._navigate_task_window,
             TASK_DETAIL_LEADER_BUTTON: lambda: self._navigate_role_pane(Role.LEADER),
             TASK_DETAIL_IMPLEMENTER_BUTTON: lambda: self._navigate_role_pane(Role.IMPLEMENTER),
@@ -487,10 +479,9 @@ class TaskDetailPanel(Vertical):
             await self._widget_context.clock.sleep(self._widget_context.timeline_refresh_seconds)
             if self._task_id is None or not self._screen_is_active():
                 continue
-            if self._active_view == TASK_VIEW_USAGE:
+            if self._folds[TASK_VIEW_USAGE].is_open:
                 await self._refresh_usage_observations()
-            elif self._active_view == TASK_VIEW_SUMMARY:
-                await self._refresh_activity()
+            await self._refresh_activity()
             for timeline in self._timelines.values():
                 await timeline.refresh_when_due()
 
@@ -499,7 +490,6 @@ class TaskDetailPanel(Vertical):
             self._task_id is None
             or self._view is None
             or self._view.task_id != self._task_id
-            or self._active_view != TASK_VIEW_SUMMARY
             or not self._screen_is_active()
         ):
             return
@@ -545,6 +535,8 @@ class TaskDetailPanel(Vertical):
     def _render_activity(self, view: TaskDetailView) -> None:
         now = self._widget_context.clock.now()
         layout = self._briefing_layout()
+        self.set_class(layout.compact, FOLDS_COMPACT_CLASS)
+        self.set_class(layout.tiny, FOLDS_TINY_CLASS)
         self.query_one(f"#{TASK_DETAIL_IDENTITY}", GatedStatic).update_if_changed(
             header_text(view, now, compact=layout.compact)
         )
@@ -582,14 +574,7 @@ class TaskDetailPanel(Vertical):
     def _screen_is_active(self) -> bool:
         return screen_is_active(self)
 
-    def _pause_timeline_follow(self) -> None:
-        for timeline in self._timelines.values():
-            timeline.pause_follow()
-
     async def _back(self) -> None:
-        if self._active_view != TASK_VIEW_SUMMARY:
-            self.close_contextual_view()
-            return
         if self._fixed:
             await self._navigate_home()
             return
@@ -633,8 +618,9 @@ class TaskDetailPanel(Vertical):
         return self._task_id
 
     @property
-    def active_view(self) -> str:
-        return self._active_view
+    def open_views(self) -> frozenset[str]:
+        """The view ids of the folds that are open."""
+        return frozenset(view_id for view_id, fold in self._folds.items() if fold.is_open)
 
     async def open_contextual_views(self) -> None:
         if self._task_id is None:
@@ -667,12 +653,15 @@ class TaskDetailPanel(Vertical):
         await self.open_contextual_views()
 
     async def action_open_details(self) -> None:
-        await self.open_contextual_views()
+        await self.focus_folds()
+
+    async def focus_folds(self) -> None:
+        """Move focus down to the section headers."""
+        folds = self._folds_list()
+        folds.focus_header(folds.current_fold)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         del parameters
-        if action == TASK_DETAIL_ENTER_ACTION:
-            return self._active_view == TASK_VIEW_SUMMARY
         if action == TASK_DETAIL_VIEWS_ACTION and native_editor_has_focus(
             cast("App[None]", self.app).focused
         ):
@@ -680,11 +669,28 @@ class TaskDetailPanel(Vertical):
         return True
 
     def open_view(self, view_id: str) -> None:
-        self._show_task_view(view_id)
+        """Open the fold for `view_id`, bring it into view and focus it."""
+        fold = self._folds.get(view_id)
+        if fold is None:
+            return
+        fold.set_open(True)
+        self.call_after_refresh(self._folds_list().focus_fold, fold)
 
-    def close_contextual_view(self) -> None:
-        if self._active_view != TASK_VIEW_SUMMARY:
-            self._show_task_view(TASK_VIEW_SUMMARY)
+    def step_out(self) -> bool:
+        """Move focus from inside a fold body to its header; False when it is not in a body."""
+        focused = self.screen.focused
+        fold = self._fold_of(focused)
+        if focused is None or fold is None or focused is fold.header:
+            return False
+        self._folds_list().focus_header(fold)
+        return True
+
+    def _fold_of(self, widget: Widget | None) -> DetailFold | None:
+        ancestors = widget.ancestors if widget is not None else ()
+        return next((item for item in ancestors if isinstance(item, DetailFold)), None)
+
+    def _folds_list(self) -> DetailFolds:
+        return self.query_one(f"#{TASK_DETAIL_FOLDS}", DetailFolds)
 
     async def return_from_detail(self) -> None:
         await self._back()
@@ -694,10 +700,10 @@ class TaskDetailPanel(Vertical):
             self._restore_contextual_position()
             return
         self._views_return_state = None
-        if selected in TASK_VIEW_WIDGETS or selected in EVIDENCE_VIEW_CATEGORIES:
+        if selected in self._folds:
             if isinstance(self.screen, TaskDetailScreen):
                 self._queue_refresh()
-                self._show_task_view(selected)
+                self.open_view(selected)
             elif (
                 self._task_id is not None and self._widget_context.open_task_detail_view is not None
             ):
@@ -707,7 +713,7 @@ class TaskDetailPanel(Vertical):
                 )
             else:
                 self._queue_refresh()
-                self._show_task_view(selected)
+                self.open_view(selected)
         elif self._widget_context.open_contextual_view is not None:
             self._queue_refresh()
             self.run_worker(
@@ -735,50 +741,6 @@ class TaskDetailPanel(Vertical):
         if focused is not None and focused.is_mounted and focused.display:
             cast("App[None]", self.app).set_focus(focused)
         body.scroll_to(y=scroll_y, animate=False, immediate=True)
-
-    def _show_task_view(self, view_id: str) -> None:
-        if view_id not in TASK_VIEW_WIDGETS and view_id not in EVIDENCE_VIEW_CATEGORIES:
-            return
-        heading_view = view_id
-        view_id = _panel_view(view_id)
-        self._select_timeline(heading_view)
-        self._active_view = view_id
-        if isinstance(self.screen, TaskDetailScreen):
-            self.screen.set_view_heading(heading_view)
-        if self._view is None or not self.is_mounted:
-            return
-        if view_id == TASK_VIEW_RELATIONSHIPS:
-            self._relationship_offset = 0
-            self._queue_refresh()
-        self._render_view(self._view, timeline=None)
-        target_id = {
-            TASK_VIEW_SUMMARY: TASK_DETAIL_DETAILS_BUTTON,
-            TASK_VIEW_USAGE: TASK_DETAIL_SESSIONS,
-            TASK_VIEW_CONTEXT: TASK_DETAIL_CONTEXT_INFO,
-            TASK_VIEW_REPORTS: TASK_DETAIL_REPORT,
-            TASK_VIEW_REQUEST: TASK_DETAIL_REQUEST,
-            TASK_VIEW_FACTS: TASK_DETAIL_FACTS,
-            TASK_VIEW_WORKSPACE: TASK_DETAIL_WINDOW_BUTTON,
-        }.get(view_id)
-        app = cast("App[None]", self.app)
-        self.call_after_refresh(
-            app.set_focus, self.query_one(f"#{self.list_focus_id() or target_id}")
-        )
-
-    def _select_timeline(self, view_id: str) -> None:
-        if view_id not in EVIDENCE_VIEW_CATEGORIES:
-            return
-        section = _timeline_section(view_id)
-        if section is self._timeline_section:
-            return
-        self._timeline_section = section
-        self._queue_refresh()
-
-    def list_focus_id(self) -> str | None:
-        """Return the id of the row list that takes focus in the current view, if it has one."""
-        if self._active_view == TASK_VIEW_EVIDENCE:
-            return TIMELINE_SECTIONS[self._timeline_section][0].list
-        return LIST_VIEW_FOCUS.get(self._active_view)
 
     async def _navigate_task_window(self) -> None:
         if self._task_id is None:
@@ -818,7 +780,13 @@ class TaskDetailPanel(Vertical):
         feedback.update(result or "")
         feedback.display = result is not None
 
-    async def _refresh(self, *, include_timeline: bool = True) -> None:
+    async def _refresh(self) -> None:
+        await self._load_view()
+        for timeline in self._timelines.values():
+            if timeline.shown:
+                await timeline.refresh_page()
+
+    async def _load_view(self) -> None:
         async with self._refresh_lock:
             if not self._screen_is_active():
                 return
@@ -828,21 +796,14 @@ class TaskDetailPanel(Vertical):
                     "Select a task to inspect it."
                 )
                 return
-            timeline = self._timelines[self._timeline_section]
-            generation = timeline.generation
-            request = timeline.request
             try:
                 view = await self._widget_context.views.task_detail(
                     task_id,
                     relationship_offset=self._relationship_offset,
-                    timeline_cursor=request.cursor,
-                    timeline_role=request.role,
-                    timeline_turn=request.turn,
-                    timeline_category=request.category,
-                    include_timeline=include_timeline,
+                    include_timeline=False,
                 )
             except (ShikiruError, OSError, ValueError, TypeError) as error:
-                if self._screen_is_active() and generation == timeline.generation:
+                if self._screen_is_active():
                     self._set_feedback(f"Task detail refresh failed: {error}")
                 return
             if not self._screen_is_active():
@@ -855,12 +816,7 @@ class TaskDetailPanel(Vertical):
                 )
                 self._set_feedback("Task state could not be read.")
                 return
-            self._render_view(
-                view,
-                timeline=(
-                    timeline if include_timeline and generation == timeline.generation else None
-                ),
-            )
+            self._render_view(view)
 
     async def _refresh_usage_observations(self) -> None:
         view = self._view
@@ -890,7 +846,7 @@ class TaskDetailPanel(Vertical):
         """Refresh the current task after this detail screen becomes active again."""
         self._queue_refresh()
 
-    def _render_view(self, view: TaskDetailView, *, timeline: TimelineSection | None) -> None:
+    def _render_view(self, view: TaskDetailView) -> None:
         self._view = view
         body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         scroll_y = body.scroll_target_y
@@ -916,8 +872,6 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_VERDICT}", Static).update(
             _report_text("Latest validated verdict", view.latest_verdict, NO_VERDICT)
         )
-        if timeline is not None:
-            timeline.show_page(view.timeline)
         facts = (
             f"Engine-computed git facts · {view.facts_turn}\n{view.recorded_facts}"
             if view.recorded_facts is not None
@@ -933,9 +887,10 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_IMPLEMENTER_BUTTON}", Button).disabled = (
             recorded_panes.get(Role.IMPLEMENTER.value) is None
         )
-        if self._active_view == TASK_VIEW_USAGE:
+        if self._folds[TASK_VIEW_USAGE].is_open:
             self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(view))
-        self._apply_view_visibility(blocker_visible=bool(blocker_lines))
+        blocker.display = bool(blocker_lines)
+        self._paint_headlines(view)
         if self._on_initial_content is not None and not self._initial_content_reported:
             self._initial_content_reported = True
             self.call_after_refresh(self._on_initial_content)
@@ -948,20 +903,35 @@ class TaskDetailPanel(Vertical):
                 focused,
             )
 
-    def _apply_view_visibility(self, *, blocker_visible: bool) -> None:
-        detail_widgets = {
-            widget_id for widgets in TASK_VIEW_WIDGETS.values() for widget_id in widgets
-        }
-        visible = set(TASK_VIEW_WIDGETS[self._active_view])
-        for widget_id in detail_widgets:
-            self.query_one(f"#{widget_id}").display = widget_id in visible
-        self.query_one(f"#{TASK_DETAIL_BLOCKER}").display = (
-            blocker_visible and self._active_view == TASK_VIEW_RELATIONSHIPS
-        )
-        for section, timeline in self._timelines.items():
-            timeline.shown = (
-                self._active_view == TASK_VIEW_EVIDENCE and section is self._timeline_section
+    def _paint_headlines(self, view: TaskDetailView) -> None:
+        for section in DetailsSection:
+            self._folds[DETAILS_SECTION_VIEWS[section]].set_headline(
+                section_headline(section, view)
             )
+
+    def _sync_timelines(self) -> None:
+        for view_id, timeline in self._timelines.items():
+            timeline.shown = self._folds[view_id].is_open
+
+    @on(DetailFold.Toggled)
+    def _fold_toggled(self, message: DetailFold.Toggled) -> None:
+        message.stop()
+        self._sync_timelines()
+        fold = message.fold
+        if not fold.is_open:
+            return
+        timeline = self._timelines.get(fold.view_id)
+        if timeline is not None:
+            self.run_worker(
+                timeline.refresh_page(), group=TASK_DETAIL_WORKER_GROUP, exclusive=False
+            )
+        elif fold.view_id == TASK_VIEW_USAGE and self._view is not None:
+            self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(self._view))
+
+    @on(DetailFold.Chosen)
+    def _fold_chosen(self, message: DetailFold.Chosen) -> None:
+        message.stop()
+        self._show_selected_view(message.fold.view_id)
 
     def _restore_body_scroll(
         self,
@@ -1148,14 +1118,10 @@ class TaskDetailScreen(ModalScreen[None]):
     async def on_mount(self) -> None:
         self._apply_layout(self.size.width, self.size.height)
         panel = self.query_one("#task-detail-panel", TaskDetailPanel)
-        target: Widget
-        if panel.active_view == TASK_VIEW_SUMMARY:
-            target = panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button)
-        elif (list_id := panel.list_focus_id()) is not None:
-            target = panel.query_one(f"#{list_id}")
+        if self._initial_view == TASK_VIEW_SUMMARY:
+            self.set_focus(panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button))
         else:
-            target = panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
-        self.set_focus(target)
+            panel.open_view(self._initial_view)
         if self._open_views_on_mount:
             await panel.open_contextual_views()
 
@@ -1184,17 +1150,7 @@ class TaskDetailScreen(ModalScreen[None]):
             self.dismiss()
 
     def _heading(self) -> str:
-        return self._view_heading(self._initial_view)
-
-    def _view_heading(self, view_id: str) -> str:
-        name = {
-            TASK_VIEW_SUMMARY: "Task details",
-            **{view: section.value for section, view in DETAILS_SECTION_VIEWS.items()},
-        }.get(view_id, "Task details")
-        return f"{name} · {self._task_id}"
-
-    def set_view_heading(self, view_id: str) -> None:
-        self.query_one(f"#{TASK_DETAIL_POPUP_TITLE}", Label).update(self._view_heading(view_id))
+        return f"Task details · {self._task_id}"
 
     async def _close(self) -> None:
         self.dismiss()
@@ -1213,10 +1169,6 @@ class TaskDetailScreen(ModalScreen[None]):
 
 
 type CloseDetail = Callable[[], Awaitable[None]]
-
-
-def _panel_view(view_id: str) -> str:
-    return TASK_VIEW_EVIDENCE if view_id in EVIDENCE_VIEW_CATEGORIES else view_id
 
 
 def _report_text(label: str, report: TaskReportView | None, missing: str) -> str:
@@ -1258,10 +1210,6 @@ def _task_context_text(view: TaskDetailView) -> str:
     if view.priority is not None:
         lines.append(f"Dispatch priority · {view.priority}")
     return "\n".join(lines)
-
-
-def _timeline_section(view_id: str) -> DetailsSection:
-    return DetailsSection.AGENT_ACTIVITY if view_id == TASK_VIEW_AGENT else DetailsSection.EVENTS
 
 
 def _workspace_text(view: TaskDetailView) -> str:

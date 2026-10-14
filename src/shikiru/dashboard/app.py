@@ -52,6 +52,7 @@ from shikiru.dashboard.detail import (
     TaskDetailPanel,
     TaskDetailScreen,
 )
+from shikiru.dashboard.detail_fold import FoldHeader
 from shikiru.dashboard.diagnostics import ProjectDiagnosticsPanel
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.dashboard.row_list import RowList
@@ -209,7 +210,7 @@ EMPTY_CONTEXT_CHOICE = ""
 TASK_PALETTE_ROUTE_WORKER = "task-palette-route"
 _MAX_CONTEXTUAL_PALETTE_DRAFTS = 16
 _TASK_MOVE_STEPS = {"up": -1, "down": 1}
-_ARROW_KEY_OWNERS = (ListView, RowList)
+_ARROW_KEY_OWNERS = (ListView, RowList, FoldHeader)
 
 
 @dataclass
@@ -1993,24 +1994,18 @@ class DashboardApp(App[None]):
         return
 
     async def action_return_from_section(self) -> None:
-        """Return from task-scoped details or the fixed task view."""
+        """Return from task-scoped details or the fixed task view, one level per press."""
+        panel = self._context_task_detail_panel()
+        if panel is not None and panel.step_out():
+            return
         if isinstance(self.screen, TaskDetailScreen):
             self.screen.dismiss()
             return
-        if self._focus_task is None and not isinstance(self.screen, TaskDetailScreen):
-            panel = self._context_task_detail_panel()
-            if panel is not None and panel.active_view != TASK_VIEW_SUMMARY:
-                panel.close_contextual_view()
-                return
+        if self._focus_task is None:
             self._clear_home_selection()
             return
-        panel = self._context_task_detail_panel()
-        if panel is None:
-            return
-        if panel.active_view != TASK_VIEW_SUMMARY:
-            panel.close_contextual_view()
-            return
-        await panel.return_from_detail()
+        if panel is not None:
+            await panel.return_from_detail()
 
     async def action_show_help(self) -> None:
         """Show the bindings and current home or task workspace context."""

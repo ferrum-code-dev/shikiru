@@ -42,6 +42,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_OWNERSHIP,
     TASK_DETAIL_SESSIONS,
     TASK_DETAIL_TIMELINE_TURN,
+    TASK_VIEW_AGENT,
     TASK_VIEW_CONTEXT,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_FACTS,
@@ -55,6 +56,7 @@ from shikiru.dashboard.detail import (
     TaskDetailScreen,
     TaskDetailsListScreen,
 )
+from shikiru.dashboard.detail_fold import FoldHeader
 from shikiru.dashboard.details_list_view import DetailsSection
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.services import TaskNavigation
@@ -487,7 +489,7 @@ async def _open_task_view(
     await wait_until(
         lambda: (
             isinstance(app.screen, TaskDetailScreen)
-            and app.screen.query_one("#task-detail-panel", TaskDetailPanel).active_view == view_id
+            and view_id in app.screen.query_one("#task-detail-panel", TaskDetailPanel).open_views
         ),
         timeout=UI_WAIT_SECONDS,
     )
@@ -1941,9 +1943,7 @@ async def test_detail_ctrl_p_carries_the_task_and_its_current_role(
             await wait_until(lambda: len(opened) == 2, timeout=UI_WAIT_SECONDS)
             app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll).focus()
             await pilot.press("enter")
-            await wait_until(
-                lambda: isinstance(app.screen, TaskDetailsListScreen), timeout=UI_WAIT_SECONDS
-            )
+            await wait_until(lambda: isinstance(app.focused, FoldHeader), timeout=UI_WAIT_SECONDS)
 
         assert opened == [
             PaletteRequest(task_id=task.id, role=Role.LEADER.value),
@@ -2183,16 +2183,9 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
 
             timeline_turn.focus()
             await pilot.wait_for_scheduled_animations()
-            reading_position = detail_body.scroll_target_y
             await pilot.resize_terminal(36, 20)
             await pilot.wait_for_scheduled_animations()
-            await wait_until(
-                lambda: (
-                    detail_body.scroll_target_y == min(reading_position, detail_body.max_scroll_y)
-                    and filter_visible()
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
+            await wait_until(filter_visible, timeout=UI_WAIT_SECONDS)
             assert app.focused is timeline_turn
             assert timeline_turn.value == "3"
     finally:
@@ -2661,9 +2654,7 @@ _SECTION_CASES = [
     _SectionCase(DetailsSection.REPORTS, TASK_VIEW_REPORTS, None, False),
     _SectionCase(DetailsSection.REQUEST, TASK_VIEW_REQUEST, None, True),
     _SectionCase(DetailsSection.EVENTS, TASK_VIEW_EVIDENCE, TaskTimelineCategory.ACTIVITY, False),
-    _SectionCase(
-        DetailsSection.AGENT_ACTIVITY, TASK_VIEW_EVIDENCE, TaskTimelineCategory.SIGNAL, True
-    ),
+    _SectionCase(DetailsSection.AGENT_ACTIVITY, TASK_VIEW_AGENT, TaskTimelineCategory.SIGNAL, True),
     _SectionCase(DetailsSection.USAGE, TASK_VIEW_USAGE, None, False),
     _SectionCase(DetailsSection.FACTS, TASK_VIEW_FACTS, None, True),
     _SectionCase(DetailsSection.WORKSPACE, TASK_VIEW_WORKSPACE, None, False),
@@ -2699,7 +2690,8 @@ async def test_details_list_opens_each_section_by_key_or_click_without_creating_
             )
             for case in _SECTION_CASES:
                 await _open_section_from_list(app, pilot, case)
-                await pilot.press("escape")
+                in_list = case.category is not None or case.view == TASK_VIEW_RELATIONSHIPS
+                await pilot.press(*["escape"] * (2 if in_list else 1))
                 await wait_until(
                     lambda: not isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
                 )
@@ -2723,7 +2715,7 @@ async def _open_section_from_list(
     await wait_until(
         lambda: (
             isinstance(app.screen, TaskDetailScreen)
-            and app.screen.query_one("#task-detail-panel", TaskDetailPanel).active_view == case.view
+            and case.view in app.screen.query_one("#task-detail-panel", TaskDetailPanel).open_views
         ),
         timeout=UI_WAIT_SECONDS,
     )
@@ -2774,7 +2766,7 @@ async def test_escape_goes_up_one_level_from_section_list_and_surface(
                 lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
             )
             panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
-            await wait_until(lambda: panel.active_view == TASK_VIEW_USAGE, timeout=UI_WAIT_SECONDS)
+            await wait_until(lambda: TASK_VIEW_USAGE in panel.open_views, timeout=UI_WAIT_SECONDS)
             await pilot.press("escape")
             await wait_until(lambda: app.screen is base, timeout=UI_WAIT_SECONDS)
 

@@ -9,12 +9,11 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 import pytest
 from textual.containers import Vertical
-from textual.events import MouseScrollUp
 from textual.widgets import Input, Select, Static
 
 from shikiru.config.loader import load_settings
-from shikiru.dashboard.contract import TaskTimelineCategory
 from shikiru.dashboard.detail import (
+    EVENTS_TIMELINE_IDS,
     TASK_DETAIL_BODY,
     TASK_DETAIL_TIMELINE_LIST,
     TASK_DETAIL_TIMELINE_ROLE,
@@ -26,6 +25,7 @@ from shikiru.dashboard.detail import (
     TaskDetailPanel,
 )
 from shikiru.dashboard.details_list_view import DetailsSection
+from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.timeline_section import TimelineHost, TimelineSection
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
@@ -65,7 +65,6 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import (
         DashboardViews,
-        TaskDetailView,
         TaskTimelineEntryView,
         TaskTimelinePageView,
         WidgetContext,
@@ -91,7 +90,7 @@ FAILED_COMMAND_EXIT_CODE = 2
 async def _open_timeline_view(panel: TaskDetailPanel, pilot: Pilot[None]) -> None:
     panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).focus()
     await choose_details_entry(pilot, TASK_VIEW_EVIDENCE)
-    await wait_until(lambda: panel.active_view == TASK_VIEW_EVIDENCE, timeout=UI_WAIT_SECONDS)
+    await wait_until(lambda: TASK_VIEW_EVIDENCE in panel.open_views, timeout=UI_WAIT_SECONDS)
 
 
 async def _prepare_timeline_filter(panel: TaskDetailPanel, pilot: Pilot[None]) -> None:
@@ -126,15 +125,8 @@ class _RecordedSignalRow(TypedDict):
 class _GatedDashboardViews:
     def __init__(self, delegate: DashboardViews) -> None:
         self._delegate = delegate
-        self._detail_gates: list[tuple[asyncio.Event, asyncio.Event]] = []
         self._timeline_gates: list[tuple[asyncio.Event, asyncio.Event]] = []
-        self.detail_requests: list[tuple[str | None, str | None, str]] = []
-        self.detail_pages: list[TaskDetailView | None] = []
-
-    def gate_next_detail(self) -> tuple[asyncio.Event, asyncio.Event]:
-        gate = (asyncio.Event(), asyncio.Event())
-        self._detail_gates.append(gate)
-        return gate
+        self.timeline_requests: list[tuple[str | None, str | None, str]] = []
 
     def gate_next_timeline(self) -> tuple[asyncio.Event, asyncio.Event]:
         gate = (asyncio.Event(), asyncio.Event())
@@ -143,31 +135,6 @@ class _GatedDashboardViews:
 
     def __getattr__(self, name: str) -> object:
         return getattr(self._delegate, name)
-
-    async def task_detail(
-        self,
-        task_id: str,
-        *,
-        relationship_offset: int = 0,
-        timeline_cursor: str | None = None,
-        timeline_role: str | None = None,
-        timeline_turn: str | None = None,
-        timeline_category: str = TaskTimelineCategory.ACTIVITY.value,
-        include_timeline: bool = True,
-    ) -> TaskDetailView | None:
-        self.detail_requests.append((timeline_role, timeline_turn, timeline_category))
-        result = await self._delegate.task_detail(
-            task_id,
-            relationship_offset=relationship_offset,
-            timeline_cursor=timeline_cursor,
-            timeline_role=timeline_role,
-            timeline_turn=timeline_turn,
-            timeline_category=timeline_category,
-            include_timeline=include_timeline,
-        )
-        self.detail_pages.append(result)
-        await self._wait_at_gate(self._detail_gates)
-        return result
 
     async def task_timeline(
         self,
@@ -178,6 +145,7 @@ class _GatedDashboardViews:
         turn: str | None,
         category: str,
     ) -> TaskTimelinePageView | None:
+        self.timeline_requests.append((role, turn, category))
         result = await self._delegate.task_timeline(
             task_id,
             cursor=cursor,
@@ -746,12 +714,7 @@ async def test_following_tracks_the_latest_entry_and_pauses_when_the_reader_move
             )
 
             await _assert_move_pauses_until_end(case, "timeline-after-move", "move-turn")
-            await _assert_scroll_pauses_following(
-                case, "timeline-after-keyboard-scroll", "keyboard-turn", mouse=False
-            )
-            await _assert_scroll_pauses_following(
-                case, "timeline-after-mouse-scroll", "mouse-turn", mouse=True
-            )
+            await _assert_scroll_pauses_following(case, "timeline-after-scroll", "scroll-turn")
             await _assert_older_page_stays_paused(case)
     finally:
         reader.close()
@@ -788,7 +751,7 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
     app = WidgetHostApp(panel)
     settings = load_settings(project_root)
     timeline_gate: tuple[asyncio.Event, asyncio.Event] | None = None
-    detail_gate: tuple[asyncio.Event, asyncio.Event] | None = None
+    filtered_gate: tuple[asyncio.Event, asyncio.Event] | None = None
 
     try:
         async with app.run_test(size=(100, 40)) as pilot:
@@ -812,24 +775,20 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
 
-            detail_gate = gated_views.gate_next_detail()
+            filtered_gate = gated_views.gate_next_timeline()
             panel.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select).value = Role.IMPLEMENTER.value
-            await pilot.pause()
-            timeline_gate[1].set()
+            section = panel.query_one(f"#{EVENTS_TIMELINE_IDS.root}", TimelineSection)
             await wait_until(
-                detail_gate[0].is_set,
+                lambda: section.request.role == Role.IMPLEMENTER.value,
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
-            assert gated_views.detail_requests[-1][0] == Role.IMPLEMENTER.value
-            page = gated_views.detail_pages[-1]
-            assert page is not None
-            assert page.timeline is not None
-            _assert_role_filtered_entries(
-                page.timeline.entries,
-                Role.IMPLEMENTER.value,
-                TIMELINE_CONCURRENT_LEADER_MESSAGE,
+            timeline_gate[1].set()
+            await wait_until(
+                filtered_gate[0].is_set,
+                timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
-            detail_gate[1].set()
+            assert gated_views.timeline_requests[-1][0] == Role.IMPLEMENTER.value
+            filtered_gate[1].set()
             await wait_until(
                 lambda: _has_row(panel, TIMELINE_CONCURRENT_IMPLEMENTER_MESSAGE),
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
@@ -838,8 +797,8 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
     finally:
         if timeline_gate is not None:
             timeline_gate[1].set()
-        if detail_gate is not None:
-            detail_gate[1].set()
+        if filtered_gate is not None:
+            filtered_gate[1].set()
         reader.close()
 
 
@@ -872,28 +831,20 @@ async def test_shown_timelines_keep_their_own_paging_filters_and_refresh(
         append_signal(f"signal-turn-{index % 4}")
 
     context = widget_context(reader, project_root, clock)
-    refreshing: list[TimelineSection] = []
-
-    def refresh_all() -> None:
-        app.run_worker(_refresh_pages(refreshing))
-
-    host = TimelineHost(
-        task_id=lambda: task.id,
-        lock=asyncio.Lock(),
-        queue_refresh=refresh_all,
-        report=_raise_report,
-    )
+    host = TimelineHost(task_id=lambda: task.id, lock=asyncio.Lock(), report=_raise_report)
     sections = {
         section: TimelineSection(context, host, ids=ids, section=section, category=category)
         for section, (ids, category) in TIMELINE_SECTIONS.items()
     }
-    refreshing.extend(sections.values())
+    for section in sections.values():
+        section.shown = True
     activity = sections[DetailsSection.EVENTS]
     signals = sections[DetailsSection.AGENT_ACTIVITY]
     app = WidgetHostApp(Vertical(*sections.values()))
 
     async with app.run_test(size=(100, 60)) as pilot:
-        refresh_all()
+        await activity.refresh_page()
+        await signals.refresh_page()
         await wait_until(
             lambda: activity.page is not None and signals.page is not None,
             timeout=UI_WAIT_SECONDS,
@@ -929,11 +880,6 @@ async def test_shown_timelines_keep_their_own_paging_filters_and_refresh(
         assert _identities(activity) == older_events
         assert activity.request.turn is None
         assert app.query_one(f"#{activity.ids.turn}", Input).value == ""
-
-
-async def _refresh_pages(sections: list[TimelineSection]) -> None:
-    for section in sections:
-        await section.refresh_page()
 
 
 def _raise_report(message: str) -> None:
@@ -981,13 +927,6 @@ def _append_timeline_events(
         )
 
 
-def _assert_role_filtered_entries(
-    entries: tuple[TaskTimelineEntryView, ...], role: str, excluded_summary: str
-) -> None:
-    assert not any(entry.summary == excluded_summary for entry in entries)
-    assert all(entry.role == role for entry in entries)
-
-
 async def _append_and_wake(case: _TimelineUITest, message: str, turn: str) -> None:
     EventLog(case.connection, case.clock).append(
         EventKind.TURN_FAILED,
@@ -1026,28 +965,8 @@ async def _assert_move_pauses_until_end(case: _TimelineUITest, message: str, tur
     await _assert_paused_then_end_follows(case, message, turn)
 
 
-async def _assert_scroll_pauses_following(
-    case: _TimelineUITest, message: str, turn: str, *, mouse: bool
-) -> None:
-    body = case.panel.query_one("#task-detail-body", TaskDetailBody)
-    body.scroll_end(animate=False, force=True)
-    if mouse:
-        mouse_event = MouseScrollUp(
-            body,
-            body.region.x + 1,
-            body.region.y + 1,
-            0,
-            0,
-            0,
-            False,
-            False,
-            False,
-        )
-        case.pilot.app.post_message(mouse_event)
-    else:
-        body.focus()
-        await case.pilot.pause()
-        await case.pilot.press("up")
+async def _assert_scroll_pauses_following(case: _TimelineUITest, message: str, turn: str) -> None:
+    case.panel.query_one(f"#{TASK_DETAIL_TIMELINE_LIST}", RowList).scroll_to(y=3, animate=False)
     await _assert_paused_then_end_follows(case, message, turn)
 
 

@@ -117,6 +117,9 @@ class RowList(Vertical, can_focus=True):
     class Latest(_Posted):
         """The latest rows were asked for."""
 
+    class Scrolled(_Posted):
+        """The operator scrolled the rows away from the first one."""
+
     def __init__(self, *, widget_id: str) -> None:
         """Create an empty list; rows arrive through `set_rows`."""
         super().__init__(id=widget_id)
@@ -151,12 +154,19 @@ class RowList(Vertical, can_focus=True):
 
     def action_latest(self) -> None:
         """Ask to jump to the latest rows and follow them."""
+        self.scroll_home(animate=False)
         self.post_message(self.Latest(self))
 
     def action_open(self) -> None:
         """Open the selected row."""
         if self._cells:
             self.post_message(self.Opened(self, self._selected))
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Tell the owner when the rows are scrolled away from the first one."""
+        super().watch_scroll_y(old_value, new_value)
+        if new_value > 0:
+            self.post_message(self.Scrolled(self))
 
     @on(_Row.Chosen)
     def _row_chosen(self, message: _Row.Chosen) -> None:

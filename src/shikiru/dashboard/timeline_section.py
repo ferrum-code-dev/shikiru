@@ -82,7 +82,6 @@ class TimelineHost:
 
     task_id: Callable[[], str | None]
     lock: asyncio.Lock
-    queue_refresh: Callable[[], None]
     report: Callable[[str], None]
 
 
@@ -92,7 +91,7 @@ def screen_is_active(widget: Widget) -> bool:
 
 
 class TimelineSection(Vertical):
-    """Own one category's timeline rows, paging, filters and follow state."""
+    """Own one category's timeline rows, paging, filters and follow state; `shown` while open."""
 
     DEFAULT_CSS = """
     TimelineSection { height: auto; }
@@ -123,6 +122,7 @@ class TimelineSection(Vertical):
         self._default_category = category.value
         self._page: TaskTimelinePageView | None = None
         self._generation = 0
+        self.shown = False
         self._reset_state()
 
     def compose(self) -> ComposeResult:
@@ -151,15 +151,6 @@ class TimelineSection(Vertical):
             yield Input(placeholder="Any turn", id=self.ids.turn, classes="timeline-turn")
         yield RowList(widget_id=self.ids.list)
         yield Static("", id=self.ids.selected, classes="task-detail-section", markup=False)
-
-    @property
-    def shown(self) -> bool:
-        """Whether this section is on screen; only a shown section refreshes."""
-        return self.display
-
-    @shown.setter
-    def shown(self, shown: bool) -> None:
-        self.display = shown
 
     @property
     def request(self) -> TimelineRequest:
@@ -294,6 +285,10 @@ class TimelineSection(Vertical):
         else:
             self._newer_page()
 
+    def on_row_list_scrolled(self, message: RowList.Scrolled) -> None:
+        message.stop()
+        self.pause_follow()
+
     def on_row_list_latest(self, message: RowList.Latest) -> None:
         message.stop()
         self.restart()
@@ -309,7 +304,7 @@ class TimelineSection(Vertical):
     def _invalidate(self) -> None:
         self._generation += 1
         self._selected_identity = None
-        self._host.queue_refresh()
+        self.run_worker(self.refresh_page(), exclusive=False)
 
     def _apply_filters(self) -> None:
         role_value = cast("Select[str]", self.query_one(f"#{self.ids.role}", Select)).value
