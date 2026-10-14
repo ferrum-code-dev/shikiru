@@ -242,6 +242,7 @@ async def test_a_degraded_or_unknown_decision_opens_with_its_reason_and_dispatch
         assert queue.pending() == []
 
 
+@pytest.mark.usefixtures("colour_terminal")
 async def test_what_was_tried_is_the_last_arrow_row_and_enter_only_toggles_it(
     connection: Connection,
     database: Database,

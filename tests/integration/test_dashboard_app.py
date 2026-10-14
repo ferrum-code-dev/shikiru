@@ -1863,6 +1863,7 @@ async def test_focus_operational_counts_and_contextual_task_filters(
         reader.close()
 
 
+@pytest.mark.usefixtures("colour_terminal")
 @pytest.mark.parametrize("size", _HOME_REVIEW_SIZES)
 async def test_focus_attention_opens_durable_decision_evidence(
     database: Database, connection: Connection, tmp_path: Path, size: tuple[int, int]

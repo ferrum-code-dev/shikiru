@@ -245,6 +245,7 @@ async def test_popup_starts_on_its_useful_control_and_closes_with_escape_or_its_
         pytest.param(_open_decision_packet, f".{POPUP_CLOSE_CLASS}", "Esc", "\u00d7", id="packet"),
     ],
 )
+@pytest.mark.usefixtures("colour_terminal")
 async def test_popup_key_names_are_steel_blue_and_their_labels_are_not(
     popup_app: DashboardApp,
     open_popup: Callable[[DashboardApp, Pilot[None]], Awaitable[Screen[Any]]],

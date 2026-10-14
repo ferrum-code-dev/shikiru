@@ -296,6 +296,7 @@ async def test_escape_returns_from_an_open_list_to_its_header_before_leaving(
         reader.close()
 
 
+@pytest.mark.usefixtures("colour_terminal")
 async def test_the_details_hint_and_a_paused_timeline_paint_their_key_names_steel_blue(
     connection: Connection, database: Database, tmp_path: Path
 ) -> None:
