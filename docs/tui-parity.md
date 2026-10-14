@@ -42,7 +42,7 @@ The terminal has a one-cell graphite frame and compact monospace content. At the
 | 7 | Selected task inspector | About 58% of available width, separated by one quiet vertical rule. Use the selected task's same identity and active/decision/hold state. |
 | 8 | Keyboard hints and latest command feedback when relevant | One quiet footer row when height allows. Latest durable feedback sits to the right of the actions, wraps or truncates in compact layouts, and opens full history by mouse or Enter. The hidden 20×8 footer leaves command history reachable through contextual Views. Hint text may be mouse-active without becoming a permanent button row. |
 
-The inspector order is fixed: task ID/title; state glyph and words; workflow milestone line; acting role, actual stage and elapsed value; situation; latest retained signal and recorded age; task token/charge summary with `u Details`; one role row per relevant session lineage; `e Evidence`. Rows can wrap to terminal cells. Task titles use the reference's `overflow-wrap:anywhere`: wrap rather than crop. Truncate only when required to keep a critical control reachable in the smallest pane, and keep the complete title available in inspection. Avoid extra headings and blank panels between these items. Identity, decision, ownership and every hold remain visible or immediately reachable by scrolling at compact heights.
+The inspector order is fixed by the eleventh-review briefing: task ID/title; state line with role and rework progress; total time; workflow milestone line; then only the rows with data (Needed from you, Now, Produced, Verdict, PR, Cost); the actions row with `Enter details ▸`. The earlier order (situation, latest signal and age, `u Details`, session rows, `e Evidence`) is superseded. Rows can wrap to terminal cells. Task titles use the reference's `overflow-wrap:anywhere`: wrap rather than crop. Truncate only when required to keep a critical control reachable in the smallest pane, and keep the complete title available in inspection. Avoid extra headings and blank panels between these items. Identity, decision, ownership and every hold remain visible or immediately reachable by scrolling at compact heights.
 
 ### Reference CSS spacing baseline and native-cell quantization
 
@@ -108,22 +108,24 @@ The `Recent` list uses the existing task browser/history queries and retains the
 | Up / Down | Select the previous/next task cyclically in the current task list. | None. |
 | Enter on the selected task | Open the task inspector in the wide contextual overlay. In compact Home, open the shared full task detail; Escape returns to the same list selection. | None. |
 | Ctrl+P | Open the selected task's contextual action menu; at Home with no task target, show applicable project actions. | None until a form is submitted. |
-| `e` | Open selected task Evidence. | None. |
-| `u` | Open selected task Usage Details. | None. |
+| `e` | Open selected task Events. | None. |
+| `u` | Open selected task Usage and sessions. | None. |
+| `v` (inspector or popup focused) | Open the task details list. | None. |
 | `?` | Open Help. | None. |
 | Escape | Close the current menu/form/overlay or return to its caller, preserving task, role, selection, entered text and reading position. | None. |
 | `/` in Home | Reveal and focus task search. Enter moves to results; Escape clears a nonempty query before hiding the empty input. Search remains hidden at rest. | None. |
 | Click actionable attention row | Select the affected task and open its resolution screen directly. A fault or engine-stop row opens the corresponding evidence/action route. | None until submitted. |
 | Click project token, billing or subscription summary | Open Project totals and recorded subscription/quota details. | None. |
 | Click Host/Shikiru resource summary | Open Diagnostics with the same cached observation. | None. |
-| Click `u details` or `e evidence` | Open the corresponding task view. | None. |
+| Click a briefing verb | Open that palette action (Answer opens the resolution screen). | None until submitted. |
+| Click or Enter on `Enter details ▸` | Open the task details list. | None. |
 | Click contextual action or form control | Select/open that action or submit only when the explicit submit control/key is activated. Inputs retain native editing keys. | Only explicit submission queues the typed operation. |
 
 The Home footer presents `↑↓ select`, `Enter inspect`, `Ctrl+P actions` and `? help`; its inline wrapping keeps every mouse route available at compact widths, including when search is focused or no task is selected. On task detail, the same menu exposes task-scoped actions and secondary views. Primary menu order is Answer decision when applicable; Inspect task; Evidence & reports; Message a role; Take over/Hand back a role when applicable; Usage; Commands; Project diagnostics. Each entry is a quiet left-aligned label with a short secondary meaning. More actions keeps submit, prioritize, rung change, pause/pause-now, resume, retry, cancel, stop, export, secondary views and configured Extensions discoverable on demand. Show only applicable actions and provide guidance and consequence before submission. A Role field appears only when the selected action needs a role.
 
 The action surface is centered where terminal geometry permits, is bounded to 64 columns (the 460px source maximum), uses `#171d25` surface, the neutral border token and a clear `Esc ×` close. Home and task detail push `PaletteScreen` over the mounted dashboard. Home's tmux `prefix + Space` delivers F12 to the existing dashboard process, while separate task and role panes keep standalone `PaletteApp` access with originating context. Evidence, Usage, Project Totals, Diagnostics and other task/widget details are bounded scrollable overlays with the dashboard visible underneath. Answer decision and `Ctrl+P` Resolve escalation open the resolution screen for one concrete escalation (the task's first open decision for `Ctrl+P`); there is no generic escalation picker. Drafts stay bounded by task/action/role and an old decision identity cannot replace a new decision on the same task. The surface is not a permanent button bank or a global action selector bar. Opening or navigating a menu, view or form never queues a command. Keep engine acceptance authoritative and report durable Pending, Applied or Rejected outcomes; a stale escalation disables its resolution choices and a rejection stays on screen, without discarding entered guidance.
 
-The task summary keeps its inline Usage and Evidence entry points. The Usage view has no self-link; Answer has no Evidence action; Evidence has no redundant return-to-Situation control; task detail no longer repeats `Ctrl+P actions` beside Evidence. Each view and form closes with `Esc ×`, and the Escape key first dismisses an expanded native selector before closing the enclosing overlay.
+The briefing's actions row and `Enter details ▸` replace the inline Usage and Evidence entry points; `e` and `u` remain as keys. Each view and form closes with `Esc ×`, and the Escape key first dismisses an expanded native selector before closing the enclosing overlay.
 
 ## 6. Compatibility and review proof
 
