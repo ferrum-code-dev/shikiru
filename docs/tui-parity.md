@@ -108,8 +108,6 @@ The `Recent` list uses the existing task browser/history queries and retains the
 | Up / Down | Select the previous/next task cyclically in the current task list. | None. |
 | Enter on the selected task | Open the task inspector in the wide contextual overlay. In compact Home, open the shared full task detail; Escape returns to the same list selection. | None. |
 | Ctrl+P | Open the selected task's contextual action menu; at Home with no task target, show applicable project actions. | None until a form is submitted. |
-| `e` | Open selected task Events. | None. |
-| `u` | Open selected task Usage and sessions. | None. |
 | `v` (inspector or popup focused) | Open the task details list. | None. |
 | `?` | Open Help. | None. |
 | Escape | Close the current menu/form/overlay or return to its caller, preserving task, role, selection, entered text and reading position. | None. |
@@ -125,7 +123,7 @@ The Home footer presents `↑↓ select`, `Enter inspect`, `Ctrl+P actions` and 
 
 The action surface is centered where terminal geometry permits, is bounded to 64 columns (the 460px source maximum), uses `#171d25` surface, the neutral border token and a clear `Esc ×` close. Home and task detail push `PaletteScreen` over the mounted dashboard. Home's tmux `prefix + Space` delivers F12 to the existing dashboard process, while separate task and role panes keep standalone `PaletteApp` access with originating context. Evidence, Usage, Project Totals, Diagnostics and other task/widget details are bounded scrollable overlays with the dashboard visible underneath. Answer decision and `Ctrl+P` Resolve escalation open the resolution screen for one concrete escalation (the task's first open decision for `Ctrl+P`); there is no generic escalation picker. Drafts stay bounded by task/action/role and an old decision identity cannot replace a new decision on the same task. The surface is not a permanent button bank or a global action selector bar. Opening or navigating a menu, view or form never queues a command. Keep engine acceptance authoritative and report durable Pending, Applied or Rejected outcomes; a stale escalation disables its resolution choices and a rejection stays on screen, without discarding entered guidance.
 
-The briefing's actions row and `Enter details ▸` replace the inline Usage and Evidence entry points; `e` and `u` remain as keys. Each view and form closes with `Esc ×`, and the Escape key first dismisses an expanded native selector before closing the enclosing overlay.
+The briefing's actions row and `Enter details ▸` replace the inline Usage and Evidence entry points. Each view and form closes with `Esc ×`, and the Escape key first dismisses an expanded native selector before closing the enclosing overlay.
 
 ## 6. Compatibility and review proof
 

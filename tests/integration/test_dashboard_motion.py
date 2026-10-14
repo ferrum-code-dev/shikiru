@@ -29,6 +29,8 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
+    TASK_VIEW_USAGE,
+    TaskDetailScreen,
 )
 from shikiru.dashboard.details_list import TaskDetailsListScreen
 from shikiru.domain.briefing import LAST_WORDS_LIMIT
@@ -1377,7 +1379,10 @@ async def test_task_usage_details_tick_quota_age_and_reset_without_motion_eviden
                 ),
                 timeout=UI_WAIT_SECONDS,
             )
-            await pilot.press("u")
+            await choose_details_entry(pilot, TASK_VIEW_USAGE)
+            await wait_until(
+                lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
+            )
             sessions = app.screen.query_one("#task-detail-sessions", Static)
             await wait_until(
                 lambda: (

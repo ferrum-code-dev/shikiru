@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from textual.app import App, ComposeResult
-from textual.widgets import Label, ListItem, ListView, Static
+from textual.widgets import Button, Label, ListItem, ListView, Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.activity import RoleViewTail
@@ -18,6 +18,7 @@ from shikiru.dashboard.contract import (
     ResourceView,
     WidgetContext,
 )
+from shikiru.dashboard.detail import TASK_DETAIL_DETAILS_BUTTON
 from shikiru.dashboard.details_list import TaskDetailsListScreen
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.views import StateDashboardViews
@@ -133,6 +134,17 @@ MAX_DETAILS_ENTRIES = 20
 async def choose_details_entry(pilot: Pilot[None], entry_id: str) -> None:
     await pilot.press("v")
     await pick_details_entry(pilot, entry_id)
+
+
+async def focus_inspector_details(pilot: Pilot[None]) -> None:
+    details = pilot.app.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button)
+    details.focus()
+    await wait_until(lambda: pilot.app.focused is details, timeout=UI_WAIT_SECONDS)
+
+
+async def choose_inspector_details_entry(pilot: Pilot[None], entry_id: str) -> None:
+    await focus_inspector_details(pilot)
+    await choose_details_entry(pilot, entry_id)
 
 
 async def pick_details_entry(pilot: Pilot[None], entry_id: str) -> None:

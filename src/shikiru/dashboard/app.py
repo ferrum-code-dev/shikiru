@@ -44,7 +44,6 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_ESCAPE,
     TASK_DETAIL_HELP_KEY,
     TASK_DETAIL_VIEWS_KEY,
-    TASK_USAGE_KEY,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_SUMMARY,
     TASK_VIEW_USAGE,
@@ -170,7 +169,6 @@ _CONTEXT_WIDGET_COMPACT_MAX_ROWS = 20
 _CONTEXT_WIDGET_COMPACT_MAX_COLUMNS = 48
 _CONTEXT_WIDGET_FRAME_VERTICAL_MARGIN_ROWS = 2
 _POPUP_CLOSE_LABEL = "Esc \u00d7"
-_EVIDENCE_KEY = "e"
 _DASHBOARD_PALETTE_EVENT_KEY = "f12"
 _SUMMARY_ATTENTION = "attention"
 _SUMMARY_RUNNING = "running"
@@ -588,7 +586,6 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
             lines = [
                 "Escape: return to the compact task summary or Home",
                 "v: choose reports, request, evidence, relationships, workspace or plugins",
-                "u: open task usage details",
                 "Ctrl+P: open applicable operator actions for this task",
                 "Events and relationships: Up/Down select · PgUp/PgDn page · End follows",
                 "Mouse: Views offers task sections, Actions and Help",
@@ -1843,10 +1840,6 @@ class DashboardApp(App[None]):
                 await panel.open_contextual_views()
             else:
                 await self.action_open_views()
-        elif event.key == TASK_USAGE_KEY:
-            await self.action_open_task_usage()
-        elif event.key == _EVIDENCE_KEY:
-            await self.action_open_task_evidence()
         else:
             return self._open_workspace_search(event.key)
         return True

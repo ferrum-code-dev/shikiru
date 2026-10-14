@@ -119,6 +119,8 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     choose_details_entry,
+    choose_inspector_details_entry,
+    focus_inspector_details,
     ignore_palette_action,
     list_rows,
     pick_details_entry,
@@ -3055,7 +3057,7 @@ async def test_task_detail_lists_page_with_page_keys_and_stop_at_boundaries(
             settings=settings,
         )
         async with app.run_test(size=(100, 34)) as pilot:
-            await pilot.press("e")
+            await choose_details_entry(pilot, TASK_VIEW_EVIDENCE)
             await wait_until(
                 lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
             )
@@ -3496,6 +3498,36 @@ async def test_home_row_click_and_enter_keep_the_shared_inspector_on_home(
                 first_id,
                 reader,
                 before_commands,
+            )
+    finally:
+        reader.close()
+
+
+async def test_task_usage_and_evidence_keys_open_nothing_and_send_nothing(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task = seed_task(connection, clock, title="Inert task keys")
+    reader = StateReader(database, clock)
+    try:
+        app = _app(reader, project_dir, widget_names=[], focus_task=task.id)
+        async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
+            await wait_until(
+                lambda: (
+                    task.title in _widget_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
+            task_screen = app.screen
+            before_commands = reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count
+            await pilot.press("u", "e")
+            assert app.screen is task_screen
+            assert (
+                reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count
+                == before_commands
             )
     finally:
         reader.close()
@@ -4516,7 +4548,7 @@ async def _assert_home_inline_secondary_routes(
     before_commands: int,
 ) -> None:
     home_screen = app.screen
-    await pilot.press("e")
+    await choose_inspector_details_entry(pilot, TASK_VIEW_EVIDENCE)
     await wait_until(
         lambda: isinstance(app.screen, TaskDetailScreen),
         timeout=UI_WAIT_SECONDS,
@@ -4529,7 +4561,7 @@ async def _assert_home_inline_secondary_routes(
     assert home_screen.is_mounted
     await pilot.press("escape")
     await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
-    await pilot.press("u")
+    await choose_inspector_details_entry(pilot, TASK_VIEW_USAGE)
     await wait_until(
         lambda: isinstance(app.screen, TaskDetailScreen),
         timeout=UI_WAIT_SECONDS,
@@ -4659,7 +4691,7 @@ async def _assert_evidence_editor_shortcut_precedence(
     task_id: str,
     palette_requests: list[PaletteRequest],
 ) -> None:
-    await pilot.press("e")
+    await choose_inspector_details_entry(pilot, TASK_VIEW_EVIDENCE)
     await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS)
     evidence_screen = app.screen
     role_select = cast(
@@ -4729,9 +4761,10 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
                 timeout=UI_WAIT_SECONDS,
             )
             task_list = home.query_one("#task-browser-list", ListView)
+            await focus_inspector_details(pilot)
             home_focus = home.focused
             assert home_focus is not None
-            await pilot.press("u")
+            await choose_details_entry(pilot, TASK_VIEW_USAGE)
             await wait_until(
                 lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
             )

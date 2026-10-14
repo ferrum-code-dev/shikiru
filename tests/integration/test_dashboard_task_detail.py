@@ -483,12 +483,6 @@ async def _open_task_view(
     pilot: Pilot[None],
     view_id: str,
 ) -> None:
-    if view_id == TASK_VIEW_USAGE:
-        await pilot.press("u")
-        await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS)
-        panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
-        await wait_until(lambda: panel.active_view == view_id, timeout=UI_WAIT_SECONDS)
-        return
     await choose_details_entry(pilot, view_id)
     await wait_until(
         lambda: (
@@ -1019,7 +1013,7 @@ async def _assert_task_history_rendering(
         lambda: task.title in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
         timeout=UI_WAIT_SECONDS,
     )
-    await pilot.press("u")
+    await _open_task_view(app, pilot, TASK_VIEW_USAGE)
     sessions = app.screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
     await wait_until(
         lambda: (
@@ -1988,8 +1982,7 @@ async def _assert_responsive_task_sections(
     assert "Escalation open" in plain_text(briefing.content)
     assert briefing.region.overlaps(body.scrollable_content_region)
 
-    await pilot.press("u")
-    await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS)
+    await _open_task_view(app, pilot, TASK_VIEW_USAGE)
     detail_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
     detail_body = detail_panel.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
     detailed_sessions = detail_panel.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
