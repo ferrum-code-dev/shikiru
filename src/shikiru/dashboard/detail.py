@@ -268,7 +268,7 @@ class TaskDetailPanel(Vertical):
         )
         self._timelines = {
             DETAILS_SECTION_VIEWS[section]: TimelineSection(
-                context, host, ids=ids, section=section, category=category, filterable=filterable
+                context, host, ids=ids, category=category, filterable=filterable
             )
             for section, (ids, category, filterable) in TIMELINE_SECTIONS.items()
         }

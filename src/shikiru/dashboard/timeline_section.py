@@ -10,14 +10,14 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Select, Static
 
-from shikiru.dashboard.details_list_view import EVENTS_HINT, DetailsSection
+from shikiru.dashboard.details_list_view import EVENTS_HINT
 from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.section_rows import timeline_cells, timeline_meta
 from shikiru.domain.tasks import Role
 from shikiru.errors import ShikiruError
 from shikiru.ui.keys import key_hint
 from shikiru.ui.screen import widget_is_current
-from shikiru.ui.section import BOLD_PRIMARY, BOLD_STEEL, grey
+from shikiru.ui.section import BOLD_STEEL, grey
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
 if TYPE_CHECKING:
@@ -130,7 +130,6 @@ class TimelineSection(Vertical):
         host: TimelineHost,
         *,
         ids: TimelineIds,
-        section: DetailsSection,
         category: TaskTimelineCategory,
         filterable: bool,
     ) -> None:
@@ -138,7 +137,6 @@ class TimelineSection(Vertical):
         self.ids = ids
         self._widget_context = context
         self._host = host
-        self._section = section
         self._category = category.value
         self._filterable = filterable
         self._page: TaskTimelinePageView | None = None
@@ -361,12 +359,8 @@ class TimelineSection(Vertical):
         self._invalidate()
 
     def _paint_heading(self) -> None:
-        heading = Text(self._section.value, style=BOLD_PRIMARY)
-        heading.append_text(
-            key_hint(
-                HEADING_SEPARATOR + (FOLLOWING_LABEL if self._following else PAUSED_LABEL),
-                SECONDARY_TEXT_COLOR,
-            )
+        heading = key_hint(
+            FOLLOWING_LABEL if self._following else PAUSED_LABEL, SECONDARY_TEXT_COLOR
         )
         notes = [
             note.format(value)

@@ -709,7 +709,7 @@ async def test_following_tracks_the_latest_entry_and_pauses_when_the_reader_move
                 lambda: bool(_rows(panel)) and latest in _rows(panel)[0],
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
-            assert "following" in _heading(panel)
+            assert _heading(panel) == "following"
 
             await _append_and_wake(case, "timeline-followed-new-entry", "new-turn")
             await wait_until(
@@ -837,9 +837,7 @@ async def test_shown_timelines_keep_their_own_paging_filters_and_refresh(
     context = widget_context(reader, project_root, clock)
     host = TimelineHost(task_id=lambda: task.id, lock=asyncio.Lock(), report=_raise_report)
     sections = {
-        section: TimelineSection(
-            context, host, ids=ids, section=section, category=category, filterable=filterable
-        )
+        section: TimelineSection(context, host, ids=ids, category=category, filterable=filterable)
         for section, (ids, category, filterable) in TIMELINE_SECTIONS.items()
     }
     for section in sections.values():
