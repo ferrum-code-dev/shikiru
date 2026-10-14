@@ -59,9 +59,10 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.dashboard.detail import (
     TASK_DETAIL_BLOCKER,
+    TASK_DETAIL_BRIEFING,
     TASK_DETAIL_CRITERIA,
+    TASK_DETAIL_DETAILS_BUTTON,
     TASK_DETAIL_EVIDENCE,
-    TASK_DETAIL_EVIDENCE_INLINE_BUTTON,
     TASK_DETAIL_FACTS,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_MORE_RELATIONSHIPS,
@@ -69,15 +70,12 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_OWNERSHIP,
     TASK_DETAIL_PREVIOUS_PAGE_KEY,
     TASK_DETAIL_PREVIOUS_RELATIONSHIPS,
-    TASK_DETAIL_PROGRESS,
     TASK_DETAIL_RELATIONSHIP_PAGE,
     TASK_DETAIL_REPORT,
     TASK_DETAIL_REQUEST,
     TASK_DETAIL_SESSIONS,
-    TASK_DETAIL_SITUATION,
     TASK_DETAIL_TIMELINE_NEWER,
     TASK_DETAIL_TIMELINE_OLDER,
-    TASK_DETAIL_USAGE_INLINE_BUTTON,
     TASK_DETAIL_VERDICT,
     TASK_DETAIL_VIEWS_OPEN_BUTTON,
     TASK_DETAIL_WORKSPACE,
@@ -267,9 +265,8 @@ def _rendered_widget_lines(widget: Static) -> tuple[str, ...]:
 
 _TASK_DETAIL_SECTION_IDS = (
     TASK_DETAIL_OWNERSHIP,
-    TASK_DETAIL_SITUATION,
     TASK_DETAIL_BLOCKER,
-    TASK_DETAIL_PROGRESS,
+    TASK_DETAIL_BRIEFING,
     TASK_DETAIL_REQUEST,
     TASK_DETAIL_CRITERIA,
     TASK_DETAIL_REPORT,
@@ -3734,7 +3731,7 @@ async def _exercise_inspector_mouse_and_native_escape(
     search = app.query_one("#task-browser-search", Input)
     await _select_home_task(app, task.id)
     assert task.id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-    app.query_one(f"#{TASK_DETAIL_EVIDENCE_INLINE_BUTTON}", Button).focus()
+    app.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).focus()
     await pilot.press("ctrl+p")
     await wait_until(
         lambda: isinstance(app.screen, PaletteScreen),
@@ -4582,47 +4579,6 @@ async def test_stopped_project_attention_without_rows_opens_command_history(
             assert queue.pending() == []
     finally:
         reader.close()
-
-
-@pytest.mark.parametrize(
-    ("button_id", "view"),
-    [
-        (TASK_DETAIL_USAGE_INLINE_BUTTON, TASK_VIEW_USAGE),
-        (TASK_DETAIL_EVIDENCE_INLINE_BUTTON, TASK_VIEW_EVIDENCE),
-    ],
-)
-async def test_compact_home_inline_detail_buttons_open_their_view_and_escape_returns(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-    button_id: str,
-    view: str,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    task = seed_task(connection, SystemClock(), title="Inline detail route")
-    app = _app(reader, project_dir, widget_names=["queue"])
-    async with app.run_test(size=_COMPACT_HOME_SIZE) as pilot:
-        home = app.screen
-        await wait_until(
-            lambda: bool(app.query(f"#task-row-{task.id}")),
-            timeout=UI_WAIT_SECONDS,
-        )
-        await _select_home_task(app, task.id)
-        button = app.query_one(f"#{button_id}", Button)
-        button.focus()
-        await wait_until(
-            lambda: button.region.bottom <= app.size.height,
-            timeout=UI_WAIT_SECONDS,
-        )
-        await pilot.press("enter")
-        await wait_until(
-            lambda: isinstance(app.screen, TaskDetailScreen),
-            timeout=UI_WAIT_SECONDS,
-        )
-        panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
-        await wait_until(lambda: panel.active_view == view, timeout=UI_WAIT_SECONDS)
-        await pilot.press("escape")
-        await wait_until(lambda: app.screen is home, timeout=UI_WAIT_SECONDS)
 
 
 async def _assert_home_inline_secondary_routes(

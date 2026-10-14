@@ -165,6 +165,7 @@ class TaskStripData:
     last_signal_identity: str | None = None
     last_signal_role: str | None = None
     last_signal_turn: str | None = None
+    last_words: str | None = None
 
 
 def _fit(text: str, width: int) -> str:

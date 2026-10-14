@@ -14,26 +14,32 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Rule, Select, Static
 
 from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED
+from shikiru.dashboard.briefing_view import (
+    ACTION_LABELS,
+    COMPACT_DETAILS_LABEL,
+    DETAILS_LABEL,
+    Briefing,
+    BriefingLayout,
+    briefing_verbs,
+    header_text,
+)
 from shikiru.dashboard.contract import (
     PaletteRequest,
     TaskTimelineCategory,
     TaskTimelineSource,
 )
 from shikiru.dashboard.interaction import native_editor_has_focus
+from shikiru.domain.briefing import BriefingAction
 from shikiru.domain.runs import RunStatus
-from shikiru.domain.tasks import Hold, Mode, Role, Status, StatusReason
+from shikiru.domain.tasks import Mode, Role, Status, StatusReason
 from shikiru.errors import ShikiruError
 from shikiru.ui.compact import (
     AgentUsageDetails,
     AgentUsageRow,
     AgentUsageRows,
     ProjectUsageTotals,
-    StageActivity,
-    TaskUsageMetric,
-    task_signal_text,
 )
 from shikiru.ui.gated_static import GatedStatic
-from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_STALLED
 from shikiru.ui.popup import (
     POPUP_CLOSE_CLASS,
     POPUP_CSS,
@@ -45,17 +51,7 @@ from shikiru.ui.popup import (
     prepare_popup,
 )
 from shikiru.ui.screen import widget_is_attached, widget_is_current
-from shikiru.ui.strip import PanelState
-from shikiru.ui.tokens import (
-    ALERT_COLOR,
-    ENGINE_COLOR,
-    HOLD_COLOR,
-    IDLE_COLOR,
-    ROLE_COLORS,
-    SECONDARY_TEXT_COLOR,
-    STEEL_BLUE,
-    SUCCESS_COLOR,
-)
+from shikiru.ui.section import BOLD_PRIMARY
 
 if TYPE_CHECKING:
     from textual import events
@@ -89,12 +85,11 @@ TASK_DETAIL_LEADER_BUTTON = "task-detail-leader"
 TASK_DETAIL_IMPLEMENTER_BUTTON = "task-detail-implementer"
 TASK_DETAIL_IDENTITY = "task-detail-identity"
 TASK_DETAIL_OWNERSHIP = "task-detail-ownership"
-TASK_DETAIL_SITUATION = "task-detail-situation"
-TASK_DETAIL_PROGRESS = "task-detail-progress"
-TASK_DETAIL_SIGNAL = "task-detail-signal"
-TASK_DETAIL_SUMMARY_USAGE = "task-detail-summary-usage"
-TASK_DETAIL_USAGE_INLINE_BUTTON = "task-detail-usage-inline"
-TASK_DETAIL_EVIDENCE_INLINE_BUTTON = "task-detail-evidence-inline"
+TASK_DETAIL_BRIEFING = "task-detail-briefing"
+TASK_DETAIL_ACTIONS = "task-detail-actions"
+TASK_DETAIL_VERBS = "task-detail-verbs"
+TASK_DETAIL_ACTION_PREFIX = "task-detail-action-"
+TASK_DETAIL_DETAILS_BUTTON = "task-detail-details"
 TASK_DETAIL_POPUP_FRAME = "task-detail-popup-frame"
 TASK_DETAIL_POPUP_HEADER = "task-detail-popup-header"
 TASK_DETAIL_POPUP_TITLE = "task-detail-popup-title"
@@ -122,6 +117,8 @@ _TASK_DETAIL_COMPACT_MAX_COLUMNS = 48
 _TASK_DETAIL_COMPACT_MAX_ROWS = 20
 TASK_DETAIL_VIEWS_KEY = "v"
 TASK_DETAIL_VIEWS_ACTION = "open_contextual_views"
+TASK_DETAIL_ENTER_KEY = "enter"
+TASK_DETAIL_ENTER_ACTION = "open_details"
 TASK_DETAIL_PREVIOUS_PAGE_KEY = "p"
 TASK_DETAIL_NEXT_PAGE_KEY = "n"
 TASK_DETAIL_PREVIOUS_PAGE_ACTION = "previous_page"
@@ -174,14 +171,7 @@ TASK_VIEW_CHOICES = (
     ("Help", TASK_VIEW_HELP),
 )
 TASK_VIEW_WIDGETS = {
-    TASK_VIEW_SUMMARY: (
-        TASK_DETAIL_PROGRESS,
-        TASK_DETAIL_SITUATION,
-        TASK_DETAIL_SIGNAL,
-        TASK_DETAIL_SUMMARY_USAGE,
-        TASK_DETAIL_SESSIONS,
-        "task-detail-evidence-link",
-    ),
+    TASK_VIEW_SUMMARY: (TASK_DETAIL_BRIEFING, TASK_DETAIL_ACTIONS),
     TASK_VIEW_USAGE: (TASK_DETAIL_SESSIONS,),
     TASK_VIEW_CONTEXT: (TASK_DETAIL_CONTEXT_INFO,),
     TASK_VIEW_REPORTS: (TASK_DETAIL_REPORT, TASK_DETAIL_VERDICT),
@@ -215,6 +205,7 @@ TIMELINE_FILTER_OPTIONS = (
     ("All evidence", TaskTimelineCategory.ALL),
 )
 NO_VALUE = "\N{EN DASH}"
+NO_DECISION_TO_ANSWER = "No open decision to answer for this task."
 NO_REPORT = "No validated report is recorded."
 NO_VERDICT = "No validated verdict is recorded."
 NO_CRITERIA = "No validated acceptance criteria are recorded."
@@ -223,20 +214,7 @@ NO_FACTS = "No engine-computed git facts are recorded."
 CLOSED_RUN_STATUS = "closed"
 COST_VALUE_FORMAT = ".2f"
 AGE_NOW = "now"
-TERMINAL_TASK_STATES = {
-    Status.ESCALATED.value: "! Escalated",
-    Status.DONE.value: "✓ Done",
-    Status.CANCELLED.value: "○ Cancelled",
-    Status.QUEUED.value: "· Queued",
-}
-ACTIVE_STAGE_LABELS = {
-    "triage": "Triaging",
-    "plan": "Planning",
-    "implement": "Implementing",
-    "consult": "Consulting",
-    "verify": "Verifying",
-    "integrate": "Integrating",
-}
+COMPACT_INSPECTOR_CLASS = "compact-inspector"
 
 
 class TaskDetailBody(VerticalScroll):
@@ -285,6 +263,7 @@ class TaskDetailPanel(Vertical):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         (TASK_DETAIL_VIEWS_KEY, TASK_DETAIL_VIEWS_ACTION, "Views"),
+        (TASK_DETAIL_ENTER_KEY, TASK_DETAIL_ENTER_ACTION, "Details"),
         (TASK_DETAIL_PREVIOUS_PAGE_KEY, TASK_DETAIL_PREVIOUS_PAGE_ACTION, "Previous page"),
         (TASK_DETAIL_NEXT_PAGE_KEY, TASK_DETAIL_NEXT_PAGE_ACTION, "Next page"),
     ]
@@ -298,32 +277,21 @@ class TaskDetailPanel(Vertical):
     #task-detail-body {
         height: auto; max-height: 32; padding: 0 1; scrollbar-size-vertical: $scrollbar-width;
     }
-    #task-detail-summary-usage {
-        width: 100%; height: auto; margin-top: 1; padding-top: 0;
-        border-top: solid $neutral-border;
+    #task-detail-briefing { height: auto; padding: 0; }
+    #task-detail-actions {
+        width: 100%; height: auto; border-top: solid $neutral-border;
     }
-    #task-detail-summary-usage Static { width: 1fr; height: auto; }
-    #task-detail-summary-usage Button,
-    #task-detail-evidence-inline,
-    #task-detail-actions-inline {
-        width: auto; min-width: 1; height: 1; margin: 0; padding: 0;
+    #task-detail-verbs { width: 1fr; height: 1; }
+    #task-detail-verbs Button, #task-detail-details {
+        width: auto; min-width: 1; height: 1; margin: 0 2 0 0; padding: 0;
         border: none; background: $background; color: $steel-blue;
         content-align: left middle; text-align: left; text-style: none;
     }
-    #task-detail-summary-usage Button:focus,
-    #task-detail-evidence-inline:focus,
-    #task-detail-actions-inline:focus { text-style: reverse; }
-    #task-detail-evidence-inline:hover,
-    #task-detail-actions-inline:hover { color: $primary-text; }
-    #task-detail-evidence-link {
-        width: 100%; height: auto; min-height: 2; margin-top: 1;
-        border-top: solid $neutral-border;
-    }
+    #task-detail-details { margin: 0; color: $secondary-text; }
+    #task-detail-actions Button:focus { text-style: reverse; }
+    #task-detail-actions Button:hover { color: $primary-text; }
     #task-detail-body.compact-summary #task-detail-identity,
     #task-detail-body.compact-summary #task-detail-ownership,
-    #task-detail-body.compact-summary #task-detail-situation,
-    #task-detail-body.compact-summary #task-detail-progress,
-    #task-detail-body.compact-summary #task-detail-signal,
     #task-detail-body.compact-summary #task-detail-sessions { padding: 0; }
     #task-detail-body.compact-summary .task-detail-section { padding: 0; }
     #task-detail-timeline-filters, #task-detail-timeline-navigation,
@@ -389,17 +357,15 @@ class TaskDetailPanel(Vertical):
             yield GatedStatic("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
             yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
             yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
-            yield GatedStatic("", id=TASK_DETAIL_PROGRESS, classes="task-detail-section")
-            yield Static("", id=TASK_DETAIL_SITUATION, classes="task-detail-section", markup=False)
-            yield GatedStatic(
-                "", id=TASK_DETAIL_SIGNAL, classes="task-detail-section", markup=False
-            )
-            with Horizontal(id=TASK_DETAIL_SUMMARY_USAGE):
-                yield Static("", id="task-detail-task-usage", markup=False)
-                yield Button("u details", id=TASK_DETAIL_USAGE_INLINE_BUTTON)
+            yield GatedStatic("", id=TASK_DETAIL_BRIEFING, markup=False)
+            with Horizontal(id=TASK_DETAIL_ACTIONS):
+                with Horizontal(id=TASK_DETAIL_VERBS):
+                    for action in BriefingAction:
+                        yield Button(
+                            ACTION_LABELS[action], id=f"{TASK_DETAIL_ACTION_PREFIX}{action.value}"
+                        )
+                yield Button(DETAILS_LABEL, id=TASK_DETAIL_DETAILS_BUTTON)
             yield Static("", id=TASK_DETAIL_SESSIONS, classes="task-detail-section")
-            with Horizontal(id="task-detail-evidence-link"):
-                yield Button("e evidence", id=TASK_DETAIL_EVIDENCE_INLINE_BUTTON)
             yield Static(
                 "", id=TASK_DETAIL_CONTEXT_INFO, classes="task-detail-section", markup=False
             )
@@ -570,10 +536,8 @@ class TaskDetailPanel(Vertical):
             return
         for section_id in (
             TASK_DETAIL_OWNERSHIP,
-            TASK_DETAIL_SITUATION,
             TASK_DETAIL_BLOCKER,
-            TASK_DETAIL_PROGRESS,
-            TASK_DETAIL_SIGNAL,
+            TASK_DETAIL_BRIEFING,
             TASK_DETAIL_REQUEST,
             TASK_DETAIL_CRITERIA,
             TASK_DETAIL_REPORT,
@@ -589,7 +553,6 @@ class TaskDetailPanel(Vertical):
             self.query_one(f"#{section_id}", Static).update("")
         self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static).display = False
         self._set_feedback(None)
-        self.query_one("#task-detail-task-usage", Static).update("")
         related_select = cast("Select[str]", self.query_one(f"#{TASK_DETAIL_RELATED_TASK}", Select))
         related_select.value = Select.BLANK
         related_select.set_options(())
@@ -623,19 +586,14 @@ class TaskDetailPanel(Vertical):
         self._apply_view_visibility(blocker_visible=False)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == TASK_DETAIL_USAGE_INLINE_BUTTON:
-            if self._task_id is not None and self._widget_context.open_task_detail_view is not None:
-                await self._widget_context.open_task_detail_view(self._task_id, TASK_VIEW_USAGE)
-            else:
-                self.open_usage_details()
-            return
-        if event.button.id == TASK_DETAIL_EVIDENCE_INLINE_BUTTON:
-            if self._task_id is not None and self._widget_context.open_task_detail_view is not None:
-                await self._widget_context.open_task_detail_view(self._task_id, TASK_VIEW_EVIDENCE)
-            else:
-                self.open_evidence()
+        button_id = event.button.id or ""
+        if button_id.startswith(TASK_DETAIL_ACTION_PREFIX):
+            await self._run_briefing_action(
+                BriefingAction(button_id.removeprefix(TASK_DETAIL_ACTION_PREFIX))
+            )
             return
         handlers = {
+            TASK_DETAIL_DETAILS_BUTTON: self.open_contextual_views,
             TASK_DETAIL_WINDOW_BUTTON: self._navigate_task_window,
             TASK_DETAIL_LEADER_BUTTON: lambda: self._navigate_role_pane(Role.LEADER),
             TASK_DETAIL_IMPLEMENTER_BUTTON: lambda: self._navigate_role_pane(Role.IMPLEMENTER),
@@ -648,7 +606,7 @@ class TaskDetailPanel(Vertical):
             TASK_DETAIL_TIMELINE_OLDER: self._older_timeline_page,
             TASK_DETAIL_TIMELINE_FOLLOW: self._follow_latest,
         }
-        handler = handlers.get(event.button.id or "")
+        handler = handlers.get(button_id)
         if handler is not None:
             await handler()
 
@@ -717,6 +675,7 @@ class TaskDetailPanel(Vertical):
         return replace(
             view,
             progress=strip,
+            last_words=strip.last_words if strip.last_words is not None else view.last_words,
             signal_observed=strip.last_signal_at is not None
             and any(panel.spinner_frame for panel in strip.panels),
             actual_stage_started_at=strip.actual_step_started_at,
@@ -725,15 +684,36 @@ class TaskDetailPanel(Vertical):
 
     def _render_activity(self, view: TaskDetailView) -> None:
         now = self._widget_context.clock.now()
+        layout = self._briefing_layout()
         self.query_one(f"#{TASK_DETAIL_IDENTITY}", GatedStatic).update_if_changed(
-            f"{view.task_id} · {view.title}\n{_task_state_line(view)}"
+            header_text(view, now, compact=layout.compact)
         )
-        self.query_one(f"#{TASK_DETAIL_PROGRESS}", GatedStatic).update_if_changed(
-            StageActivity(view).render(now)
+        self.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).update_if_changed(
+            Briefing(view, now, layout)
         )
-        self.query_one(f"#{TASK_DETAIL_SIGNAL}", GatedStatic).update_if_changed(
-            task_signal_text(view, now)
+        self._render_verbs(view, compact=layout.compact)
+
+    def _briefing_layout(self) -> BriefingLayout:
+        return BriefingLayout(
+            compact=self.size.width <= _TASK_DETAIL_COMPACT_MAX_COLUMNS
+            or self.has_class(COMPACT_INSPECTOR_CLASS),
+            tiny=self.screen.size.height <= TASK_DETAIL_TINY_MAX_ROWS,
         )
+
+    def _render_verbs(self, view: TaskDetailView, *, compact: bool) -> None:
+        verbs = briefing_verbs(view)
+        for action in BriefingAction:
+            self.query_one(f"#{TASK_DETAIL_ACTION_PREFIX}{action.value}", Button).display = (
+                action in verbs
+            )
+        self.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).label = (
+            COMPACT_DETAILS_LABEL if compact else DETAILS_LABEL
+        )
+
+    def on_resize(self, event: events.Resize) -> None:
+        del event
+        if self._view is not None and self.is_mounted:
+            self._render_activity(self._view)
 
     async def _refresh_timeline(self) -> None:
         async with self._refresh_lock:
@@ -870,12 +850,7 @@ class TaskDetailPanel(Vertical):
 
     async def open_palette(self) -> None:
         """Open the shared palette with this detail's current task and selected role."""
-        role = (
-            Role(self._view.acting_role)
-            if self._view is not None and self._view.task_id == self._task_id
-            else None
-        )
-        await self._open_palette(role)
+        await self._open_palette(self._action_role())
 
     async def open_help(self) -> None:
         """Open help scoped to the current task and detail view."""
@@ -910,8 +885,13 @@ class TaskDetailPanel(Vertical):
     async def action_open_contextual_views(self) -> None:
         await self.open_contextual_views()
 
+    async def action_open_details(self) -> None:
+        await self.open_contextual_views()
+
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         del parameters
+        if action == TASK_DETAIL_ENTER_ACTION:
+            return self._active_view == TASK_VIEW_SUMMARY
         if action in {
             TASK_DETAIL_VIEWS_ACTION,
             TASK_DETAIL_PREVIOUS_PAGE_ACTION,
@@ -1031,7 +1011,7 @@ class TaskDetailPanel(Vertical):
             self._queue_refresh()
         self._render_view(self._view, render_timeline=False)
         target_id = {
-            TASK_VIEW_SUMMARY: TASK_DETAIL_PROGRESS,
+            TASK_VIEW_SUMMARY: TASK_DETAIL_DETAILS_BUTTON,
             TASK_VIEW_USAGE: TASK_DETAIL_SESSIONS,
             TASK_VIEW_CONTEXT: TASK_DETAIL_CONTEXT_INFO,
             TASK_VIEW_REPORTS: TASK_DETAIL_REPORT,
@@ -1139,9 +1119,7 @@ class TaskDetailPanel(Vertical):
             return
         refreshed = replace(view, quota_observations=quota_observations)
         self._view = refreshed
-        self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(
-            _sessions_text(refreshed, detailed=True)
-        )
+        self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(refreshed))
 
     def _queue_refresh(self) -> None:
         if self._task_id is None:
@@ -1164,18 +1142,13 @@ class TaskDetailPanel(Vertical):
         focused = self.screen.focused
         restore_scroll = self._rendered_task_id == view.task_id
         self._rendered_task_id = view.task_id
-        self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).update(_task_identity(view))
         self._render_ownership(view)
-        self.query_one(f"#{TASK_DETAIL_SITUATION}", Static).update(_task_situation(view))
         self.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static).update(_task_context_text(view))
         blocker_lines = list(view.blocker.lines) if view.blocker is not None else []
         blocker = self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
         blocker.update("Blocker evidence\n" + "\n".join(blocker_lines) if blocker_lines else "")
         self._render_relationships(view)
         self._render_activity(view)
-        self.query_one("#task-detail-task-usage", Static).update(
-            TaskUsageMetric(view.usage).render()
-        )
         self.query_one(f"#{TASK_DETAIL_REQUEST}", Static).update(f"Request\n{view.request}")
         criteria = "\n".join(f"- {item}" for item in view.acceptance_criteria)
         self.query_one(f"#{TASK_DETAIL_CRITERIA}", Static).update(
@@ -1205,9 +1178,8 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_IMPLEMENTER_BUTTON}", Button).disabled = (
             recorded_panes.get(Role.IMPLEMENTER.value) is None
         )
-        self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(
-            _sessions_text(view, detailed=self._active_view == TASK_VIEW_USAGE)
-        )
+        if self._active_view == TASK_VIEW_USAGE:
+            self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(_sessions_text(view))
         self._apply_view_visibility(blocker_visible=bool(blocker_lines))
         if self._on_initial_content is not None and not self._initial_content_reported:
             self._initial_content_reported = True
@@ -1234,12 +1206,6 @@ class TaskDetailPanel(Vertical):
         visible = set(TASK_VIEW_WIDGETS[self._active_view])
         for widget_id in detail_widgets:
             self.query_one(f"#{widget_id}").display = widget_id in visible
-        self.query_one(f"#{TASK_DETAIL_USAGE_INLINE_BUTTON}").display = (
-            self._active_view != TASK_VIEW_USAGE
-        )
-        self.query_one(f"#{TASK_DETAIL_EVIDENCE_INLINE_BUTTON}").display = (
-            self._active_view != TASK_VIEW_EVIDENCE
-        )
         self.query_one(f"#{TASK_DETAIL_BLOCKER}").display = (
             blocker_visible and self._active_view == TASK_VIEW_RELATIONSHIPS
         )
@@ -1449,13 +1415,35 @@ class TaskDetailPanel(Vertical):
             )
         if view.holds:
             ownership_lines.append(f"Holds · {', '.join(view.holds)}")
-        if view.ownership and Hold.PAUSED.value in view.holds:
-            ownership_lines.append(
-                "Hand back alone will not clear the pause; Resume is a separate action."
-            )
-        elif Hold.PAUSED.value in view.holds:
-            ownership_lines.append("Use Resume to clear the pause.")
-        self.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static).update("\n".join(ownership_lines))
+        ownership = self.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
+        ownership.update("\n".join(ownership_lines))
+        ownership.display = bool(ownership_lines)
+
+    async def _run_briefing_action(self, action: BriefingAction) -> None:
+        if action is not BriefingAction.ANSWER:
+            await self._open_palette(self._action_role(action), action=action.value)
+            return
+        resolve = self._widget_context.open_resolution
+        escalation = next(
+            (
+                item
+                for item in self._widget_context.views.escalations()
+                if item.task_id == self._task_id
+            ),
+            None,
+        )
+        if resolve is None or escalation is None:
+            self._set_feedback(NO_DECISION_TO_ANSWER)
+            return
+        await resolve(escalation.escalation_id)
+
+    def _action_role(self, action: BriefingAction | None = None) -> Role | None:
+        view = self._view
+        if view is None or view.task_id != self._task_id:
+            return None
+        if action is BriefingAction.HAND_BACK and view.ownership:
+            return Role(view.ownership[0])
+        return Role(view.acting_role)
 
 
 class TaskDetailViewsScreen(ModalScreen[str | None]):
@@ -1600,7 +1588,7 @@ class TaskDetailScreen(ModalScreen[None]):
         self._apply_layout(self.size.width, self.size.height)
         panel = self.query_one("#task-detail-panel", TaskDetailPanel)
         target = (
-            panel.query_one(f"#{TASK_DETAIL_USAGE_INLINE_BUTTON}", Button)
+            panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button)
             if panel.active_view == TASK_VIEW_SUMMARY
             else panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         )
@@ -1898,159 +1886,8 @@ def _workspace_text(view: TaskDetailView) -> str:
     return "\n".join(lines)
 
 
-def _task_state_line(view: TaskDetailView) -> str:
-    terminal = TERMINAL_TASK_STATES.get(view.status)
-    marker = GLYPH_CURRENT_STAGE
-    state = (
-        ACTIVE_STAGE_LABELS.get(view.actual_stage, view.actual_stage.title())
-        if view.actual_stage is not None
-        else terminal.split(" ", maxsplit=1)[1]
-        if terminal is not None
-        else view.status.title()
-    )
-    labels: list[str] = []
-    if view.status == Status.ESCALATED.value:
-        labels.append("Decision hold")
-    labels.extend(_hold_label(hold) for hold in view.holds)
-    current_ownership = (
-        view.ownership
-        if view.status in {Status.RUNNING.value, Status.INTEGRATING.value}
-        and view.actual_stage is not None
-        else ()
-    )
-    if current_ownership:
-        labels.append("Operator-owned")
-    if labels:
-        marker = "@" if current_ownership else "=" if view.holds else "!"
-        state = " · ".join((*labels, state))
-    elif terminal is not None:
-        marker = terminal.split(" ", maxsplit=1)[0]
-    else:
-        active_panel = next(
-            (
-                panel
-                for panel in view.progress.panels
-                if panel.state in {PanelState.ACTIVE, PanelState.STALLED}
-            ),
-            None,
-        )
-        if active_panel is not None:
-            if active_panel.state is PanelState.STALLED:
-                marker = GLYPH_STALLED
-            elif active_panel.spinner_frame:
-                marker = active_panel.spinner_frame
-    return f"{marker} {state}"
-
-
-def _task_identity(view: TaskDetailView) -> Text:
-    identity = Text(f"{view.task_id} · {view.title}", style=STEEL_BLUE)
-    identity.append("\n")
-    identity.append(_task_state_line(view), style=_task_state_color(view))
-    return identity
-
-
 def _task_identity_text(identity: str) -> Text:
-    return Text(identity, style=STEEL_BLUE)
-
-
-def _task_state_color(view: TaskDetailView) -> str:
-    if view.status == Status.ESCALATED.value:
-        color = ALERT_COLOR
-    elif view.holds:
-        color = HOLD_COLOR
-    elif view.status == Status.DONE.value:
-        color = SUCCESS_COLOR
-    elif view.status in {Status.CANCELLED.value, Status.QUEUED.value}:
-        color = IDLE_COLOR
-    else:
-        active_panel = next(
-            (panel for panel in view.progress.panels if panel.state is PanelState.ACTIVE),
-            None,
-        )
-        if active_panel is not None:
-            color = (
-                ROLE_COLORS[active_panel.role] if active_panel.role is not None else ENGINE_COLOR
-            )
-        elif any(panel.state is PanelState.STALLED for panel in view.progress.panels):
-            color = HOLD_COLOR
-        else:
-            color = SECONDARY_TEXT_COLOR
-    return color
-
-
-def _hold_label(hold: str) -> str:
-    if hold == Hold.PAUSED.value:
-        return "Paused"
-    if hold == Hold.INTERVENTION.value:
-        return "Intervention hold"
-    return f"{hold.replace('_', ' ').title()} hold"
-
-
-def _task_situation(view: TaskDetailView) -> str:
-    decision = _decision_situation(view)
-    if decision is not None:
-        return decision
-    blocking = _blocking_situation(view)
-    if blocking is not None:
-        return blocking
-    report = _report_situation(view)
-    if report is not None:
-        return report
-    return _status_situation(view)
-
-
-def _decision_situation(view: TaskDetailView) -> str | None:
-    if view.status != Status.ESCALATED.value:
-        return None
-    question = next(
-        (
-            report.question
-            for report in (view.latest_report, view.latest_verdict)
-            if report is not None and report.question
-        ),
-        None,
-    )
-    if question is not None:
-        return _sentence(f"Decision needed · {question}")
-    return "Escalation open; no validated decision question is recorded."
-
-
-def _blocking_situation(view: TaskDetailView) -> str | None:
-    if view.wait_reason is not None:
-        return _sentence(f"Waiting on {view.wait_reason.replace('_', ' ')}")
-    if view.status_reason == StatusReason.SUPERSEDED.value:
-        return "Task was superseded"
-    if view.holds:
-        holds = ", ".join(view.holds)
-        if view.ownership:
-            return _sentence(f"Operator ownership is holding {holds}")
-        return _sentence(f"Task is held on {holds}")
-    return None
-
-
-def _report_situation(view: TaskDetailView) -> str | None:
-    if view.latest_report is not None and view.latest_report.summary.strip():
-        return _sentence(view.latest_report.summary)
-    if view.latest_verdict is not None and view.latest_verdict.summary.strip():
-        return _sentence(view.latest_verdict.summary)
-    return None
-
-
-def _status_situation(view: TaskDetailView) -> str:
-    status_situations = {
-        Status.QUEUED.value: "Queued for execution.",
-        Status.RUNNING.value: "Work is active.",
-        Status.INTEGRATING.value: "Integration is in progress.",
-        Status.DONE.value: "Completed; no validated report is recorded.",
-        Status.CANCELLED.value: "Cancelled.",
-        Status.ESCALATED.value: "Decision required.",
-    }
-    return status_situations.get(view.status, "Task state is recorded.")
-
-
-def _sentence(value: str) -> str:
-    sentence = value.strip().splitlines()[0].strip()
-    return sentence if sentence.endswith((".", "!", "?")) else f"{sentence}."
+    return Text(identity, style=BOLD_PRIMARY)
 
 
 def _session_role_state(view: TaskDetailView, session: TaskSessionView) -> str:
@@ -2076,58 +1913,23 @@ def _session_role_state(view: TaskDetailView, session: TaskSessionView) -> str:
     return SESSION_STATE_USED
 
 
-def _summary_sessions(view: TaskDetailView) -> tuple[TaskSessionView, ...]:
-    current = [
-        session
-        for session in view.sessions
-        if _session_role_state(view, session) == SESSION_STATE_CURRENT
-    ]
-    current = _ordered_sessions(current)
-    current_run_ids = {session.run_id for session in current}
-    latest_used_by_role: dict[str, TaskSessionView] = {}
-    for session in _ordered_sessions(list(view.sessions)):
-        if session.role not in latest_used_by_role and session.run_id not in current_run_ids:
-            latest_used_by_role[session.role] = session
-    used = _ordered_sessions(list(latest_used_by_role.values()))
-    return (*current, *used)
-
-
-def _ordered_sessions(sessions: list[TaskSessionView]) -> list[TaskSessionView]:
-    return sorted(
-        sessions,
-        key=lambda session: (
-            session.run_id if session.run_id is not None else -1,
-            session.role,
-            session.agent,
-            session.model,
-            session.session_id or "",
-        ),
-        reverse=True,
-    )
-
-
-def _sessions_text(view: TaskDetailView, *, detailed: bool) -> Group:
-    lines: list[RenderableType] = []
-    if detailed:
-        lines.append(Text(f"Task {view.task_id} · recorded usage", style="bold"))
-        if view.usage is None:
-            lines.append(Text("Task usage coverage unavailable", style="bold"))
-        else:
-            lines.append(ProjectUsageTotals(view.usage))
+def _sessions_text(view: TaskDetailView) -> Group:
+    lines: list[RenderableType] = [Text(f"Task {view.task_id} · recorded usage", style="bold")]
+    if view.usage is None:
+        lines.append(Text("Task usage coverage unavailable", style="bold"))
+    else:
+        lines.append(ProjectUsageTotals(view.usage))
     if not view.sessions:
         lines.append(Text("No agent sessions are recorded."))
-    sessions = view.sessions if detailed else _summary_sessions(view)
-    for session in sessions:
+    for session in view.sessions:
         lines.append(AgentUsageRow(session, _session_role_state(view, session)).render())
-        if detailed:
-            lines.extend(_session_details(session))
-    if detailed:
-        if view.agent_usage:
-            lines.append(
-                Text("Agent totals · across recorded sessions, not model totals", style="bold")
-            )
-            lines.append(AgentUsageRows(view.agent_usage))
-        lines.extend(_quota_details(view.quota_observations, view.sessions))
+        lines.extend(_session_details(session))
+    if view.agent_usage:
+        lines.append(
+            Text("Agent totals · across recorded sessions, not model totals", style="bold")
+        )
+        lines.append(AgentUsageRows(view.agent_usage))
+    lines.extend(_quota_details(view.quota_observations, view.sessions))
     return Group(*lines)
 
 

@@ -23,11 +23,12 @@ from shikiru.config.loader import load_settings
 from shikiru.config.settings import TimeoutsConfig
 from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.app import FOCUS_COMMAND_HISTORY, FOCUS_USAGE_DETAILS, DashboardApp
+from shikiru.dashboard.briefing_view import header_text
 from shikiru.dashboard.contract import TaskBrowserFilter
 from shikiru.dashboard.detail import (
+    TASK_DETAIL_BRIEFING,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
-    TASK_DETAIL_SIGNAL,
     TASK_DETAIL_VIEWS_OPEN_BUTTON,
     TaskDetailViewsScreen,
 )
@@ -55,7 +56,6 @@ from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
-from shikiru.ui.compact import StageActivity
 from shikiru.ui.glyphs import GLYPH_ENGINE, GLYPH_ESCALATED, GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, TaskStrip
 from shikiru.ui.tokens import STYLE_REVERSE
@@ -972,7 +972,7 @@ async def test_home_status_blinks_only_for_a_recorded_active_turn(
             assert other_initial_bold is False
             app.query_one("#queue", QueuePanel).select_task(task.id)
             identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-            signal = app.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
+            signal = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
             await wait_until(
                 lambda: (
                     task.id in plain_text(identity.content)
@@ -981,7 +981,7 @@ async def test_home_status_blinks_only_for_a_recorded_active_turn(
                 timeout=UI_WAIT_SECONDS,
             )
             await wait_until(
-                lambda: "Last recorded signal ·" in plain_text(signal.content),
+                lambda: "active " in plain_text(signal.content),
                 timeout=UI_WAIT_SECONDS,
             )
             if animations:
@@ -989,89 +989,6 @@ async def test_home_status_blinks_only_for_a_recorded_active_turn(
                 assert detail is not None
                 assert detail.latest_signal == VIEW_TOOL_STARTED_SIGNAL
                 assert detail.latest_signal_at == _START
-    finally:
-        reader.close()
-
-
-async def test_static_home_refreshes_stall_and_signal_age(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = FakeClock(_START)
-    base_settings = _motion_settings(project_dir)
-    settings = base_settings.model_copy(
-        update={
-            "orchestration": base_settings.orchestration.model_copy(
-                update={
-                    "timeouts": base_settings.orchestration.timeouts.model_copy(
-                        update={"stall": _QUIET_STALL_SECONDS, "tool": _QUIET_TOOL_SECONDS}
-                    )
-                }
-            ),
-            "dashboard": base_settings.dashboard.model_copy(
-                update={"animations": False, "widgets": ["queue"]}
-            ),
-        }
-    )
-    task, _ = _seed_dashboard_state(connection, clock)
-    reader = StateReader(database, clock)
-    try:
-        views = state_views(
-            reader,
-            project_dir,
-            clock,
-            StubServices(engine_running=True),
-            settings=settings,
-        )
-        _write_current_turn_log(project_dir, task, views)
-
-        async def open_palette(action: str) -> None:
-            del action
-
-        interval = 1 / settings.dashboard.motion.refresh_hz
-        app = DashboardApp(
-            focus_task=None,
-            views=views,
-            on_change=reader.watch,
-            clock=clock,
-            motion_interval_seconds=interval,
-            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-            disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-            quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-            quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
-            animations=False,
-            open_palette=open_palette,
-            widget_names=settings.dashboard.widgets,
-        )
-        async with app.run_test(size=(120, 40)):
-            await wait_until(
-                lambda: bool(app.query(f"#task-row-{task.id} > Static")),
-                timeout=UI_WAIT_SECONDS,
-            )
-            row = app.query_one(f"#task-row-{task.id} > Static", Static)
-            app.query_one("#queue", QueuePanel).select_task(task.id)
-            signal = app.query_one(f"#{TASK_DETAIL_SIGNAL}", Static)
-            await wait_until(
-                lambda: "Last recorded signal · 0s ago" in plain_text(signal.content),
-                timeout=UI_WAIT_SECONDS,
-            )
-
-            clock.advance(_QUIET_TOOL_SECONDS + 1)
-            await wait_until(
-                lambda: "stalled" in cast("Content", row.render()).plain,
-                timeout=UI_WAIT_SECONDS,
-            )
-            await wait_until(
-                lambda: "Last recorded signal · 1m ago" in plain_text(signal.content),
-                timeout=UI_WAIT_SECONDS,
-            )
-            row_content = cast("Content", row.render())
-            state_offset = row_content.plain.index("Implementing")
-            assert row_content.get_style_at_offset(state_offset).bold is not True
-            assert app.is_running
     finally:
         reader.close()
 
@@ -1523,9 +1440,6 @@ async def test_task_activity_distinguishes_setup_from_a_missing_signal(
     assert setup_detail is not None
     assert setup_detail.actual_stage is None
     assert setup_detail.actual_stage_started_at is None
-    setup_activity = plain_text(StageActivity(setup_detail).render(clock.now()))
-    assert "Stage · setup" in setup_activity
-    assert "not started" not in setup_activity
 
     completed_task = TaskStore(connection, clock).get(setup.id)
     assert completed_task is not None
@@ -1538,17 +1452,14 @@ async def test_task_activity_distinguishes_setup_from_a_missing_signal(
     )
     completed_detail = await setup_views.task_detail(setup.id, include_timeline=False)
     assert completed_detail is not None
-    completed_activity = plain_text(StageActivity(completed_detail).render(clock.now()))
-    assert "Stage · complete" in completed_activity
-    assert "not started" not in completed_activity
+    assert completed_detail.actual_stage is None
 
     future_detail = replace(
         setup_detail,
         actual_stage=Step.VERIFY.value,
         actual_stage_started_at=clock.now() + timedelta(seconds=1),
     )
-    future_activity = plain_text(StageActivity(future_detail).render(clock.now()))
-    assert "future timestamp" in future_activity
+    assert "future timestamp" in plain_text(header_text(future_detail, clock.now(), compact=False))
 
 
 async def test_task_activity_claims_a_signal_only_for_a_running_current_turn(
@@ -1676,11 +1587,10 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
             timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
         )
         async with app.run_test(size=(90, 40)) as pilot:
-            progress = app.query_one("#task-detail-progress", Static)
-            signal = app.query_one("#task-detail-signal", Static)
+            signal = app.query_one("#task-detail-briefing", Static)
             identity = app.query_one("#task-detail-identity", Static)
             await wait_until(
-                lambda: "Implement" in plain_text(progress.content),
+                lambda: "Implement" in plain_text(identity.content),
                 timeout=UI_WAIT_SECONDS,
             )
             if popup_open:
@@ -1697,10 +1607,8 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
             clock.advance(tick)
             await wait_until(
                 lambda: (
-                    VIEW_SESSION_STARTED_SIGNAL in plain_text(signal.content)
-                    and "1s ago" in plain_text(signal.content)
-                    and _TURN_NAME not in plain_text(signal.content)
-                    and "1s" in plain_text(progress.content)
+                    "active 1s ago" in plain_text(signal.content)
+                    and "1s in step" in plain_text(identity.content)
                 ),
                 timeout=UI_WAIT_SECONDS,
             )
@@ -1709,7 +1617,7 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
             await wait_until(
                 lambda: (
                     GLYPH_STALLED in plain_text(identity.content)
-                    and "stalled" in plain_text(progress.content)
+                    and "stalled" in plain_text(signal.content)
                 ),
                 timeout=UI_WAIT_SECONDS,
             )

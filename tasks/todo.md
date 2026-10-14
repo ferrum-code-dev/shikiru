@@ -283,7 +283,7 @@ Tenth-review scope and evidence: [tenth review, escalation resolution panel](../
 Eleventh-review scope and evidence: [eleventh review, task details](../docs/tui-feedback-eleventh-review.md).
 
 - [x] Task 180: Briefing data
-- [ ] Task 181: Briefing render and actions row
+- [x] Task 181: Briefing render and actions row
 - [ ] Task 182: Details list and section views
 - [ ] Task 183: Arrow lists for events, agent activity and relationships
 - [ ] Task 184: Remove the old detail code and tests

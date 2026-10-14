@@ -1760,8 +1760,10 @@ Refs: `dashboard/contract.py` `TaskDetailView`, `dashboard/views.py` `task_detai
 
 ### Task 181: Briefing render and actions row
 Refs: spec "Briefing"; `dashboard/detail.py` (`_render_view`, `_render_activity`, `_render_ownership`, `_task_situation`, `_task_state_line`), `ui/section.py`, `ui/compact.py` (`StageActivity`, `task_signal_text`, usage rows).
-- [ ] The summary renders the approved wide and compact briefings from Task 180 with `Section`s and drops the removed items; a pure state-to-verbs mapping drives the actions row (verbs also reachable from `Ctrl+P`); rows without data disappear; the same content in the Home inspector, the popup and the task window.
-- [ ] Native colour and `NO_COLOR` renders at wide, 48, 40 columns and tiny for a running, a waiting, a rejected, a Done and a Cancelled task.
+- [x] The summary renders the approved wide and compact briefings from Task 180 with `Section`s and drops the removed items; a pure state-to-verbs mapping drives the actions row (verbs also reachable from `Ctrl+P`); rows without data disappear; the same content in the Home inspector, the popup and the task window.
+  - Proof: `dashboard/briefing_view.py` renders one `Briefing` (wide, compact, tiny) inside `TaskDetailPanel`, so the Home inspector, popup and task window share it; `domain/briefing.py` holds the verbs mapping (unit table) and the rework rule, and the action buttons open the palette action each verb names. One Home test checks which rows exist for a running, waiting, rejected, Done and Cancelled task; collected cases 1,603 to 1,601; `uv run poe check` is green.
+- [x] Native colour and `NO_COLOR` renders at wide, 48, 40 columns and tiny for a running, a waiting, a rejected, a Done and a Cancelled task.
+  - Proof: compositor text and style dumps of the real widget at Home 100 and 60 columns, the popup, the task window at 100, 48 and 40 columns and a 40x8 pane, in colour and with `NO_COLOR`, compared with the same seeded tasks at the previous commit; bold survives `NO_COLOR` and the amber `Needed from you` stays a bold heading.
 
 ### Task 182: Details list and section views
 Refs: spec "Details list"; `TaskDetailViewsScreen`, the view switch in `detail.py`, `app.py` key dispatch.

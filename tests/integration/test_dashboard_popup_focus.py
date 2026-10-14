@@ -45,7 +45,7 @@ _START = datetime(2026, 1, 1, tzinfo=UTC)
 _APP_SIZE = (120, 40)
 _COMPACT_APP_SIZE = (48, 20)
 _OVERFLOWING_HELP_SIZE = (70, 22)
-_OVERFLOWING_WORDS = 400
+_OVERFLOWING_WORDS = 800
 _PROJECT_NAME = "popup-focus"
 _COMMAND_HISTORY_LABEL = "Command history · pending, applied and rejected"
 _USAGE_DETAILS_LABEL = "Usage details"

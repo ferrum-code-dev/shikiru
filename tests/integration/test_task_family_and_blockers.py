@@ -303,7 +303,7 @@ async def _open_detail_view(
     pilot: Pilot[None],
     view_id: str,
 ) -> TaskDetailPanel:
-    panel.query_one("#task-detail-usage-inline", Button).focus()
+    panel.query_one("#task-detail-details", Button).focus()
     await pilot.press(TASK_DETAIL_VIEWS_KEY)
     await wait_until(
         lambda: isinstance(pilot.app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS

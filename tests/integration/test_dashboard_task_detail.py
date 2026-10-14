@@ -33,21 +33,18 @@ from shikiru.dashboard.contract import (
     TaskTimelineCategory,
 )
 from shikiru.dashboard.detail import (
+    TASK_DETAIL_ACTION_PREFIX,
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BODY,
+    TASK_DETAIL_BRIEFING,
     TASK_DETAIL_CONTEXT_INFO,
-    TASK_DETAIL_EVIDENCE_INLINE_BUTTON,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
-    TASK_DETAIL_PROGRESS,
-    TASK_DETAIL_REQUEST,
     TASK_DETAIL_SESSIONS,
-    TASK_DETAIL_SITUATION,
     TASK_DETAIL_TIMELINE_CATEGORY,
     TASK_DETAIL_TIMELINE_ENTRY,
     TASK_DETAIL_TIMELINE_ROLE,
     TASK_DETAIL_TIMELINE_TURN,
-    TASK_DETAIL_USAGE_INLINE_BUTTON,
     TASK_DETAIL_VIEWS_CLOSE_BUTTON,
     TASK_DETAIL_VIEWS_OPEN_BUTTON,
     TASK_VIEW_ACTIONS,
@@ -63,7 +60,13 @@ from shikiru.dashboard.detail import (
 )
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.services import TaskNavigation
-from shikiru.domain.briefing import ProducedNumbers, PullRequestLine, ReportedTests, VerdictCounts
+from shikiru.domain.briefing import (
+    BriefingAction,
+    ProducedNumbers,
+    PullRequestLine,
+    ReportedTests,
+    VerdictCounts,
+)
 from shikiru.domain.commands import HandBack, Resume
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
@@ -1028,8 +1031,6 @@ async def _assert_task_history_rendering(
         lambda: task.title in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
         timeout=UI_WAIT_SECONDS,
     )
-    sessions = app.screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
-    assert "session-wide 13 tok" in plain_text(sessions.content)
     await pilot.press("u")
     sessions = app.screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
     await wait_until(
@@ -1994,16 +1995,28 @@ async def test_detail_ctrl_p_carries_the_task_and_its_current_role(
         )
         async with app.run_test(size=(80, 40)) as pilot:
             await wait_until(
-                lambda: (
-                    "Verify"
-                    in plain_text(app.query_one(f"#{TASK_DETAIL_PROGRESS}", Static).content)
-                ),
+                lambda: "Verifying" in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
                 timeout=UI_WAIT_SECONDS,
             )
             await pilot.press("ctrl+p")
             await wait_until(lambda: bool(opened), timeout=UI_WAIT_SECONDS)
+            app.query_one(
+                f"#{TASK_DETAIL_ACTION_PREFIX}{BriefingAction.PAUSE.value}", Button
+            ).focus()
+            await pilot.press("enter")
+            await wait_until(lambda: len(opened) == 2, timeout=UI_WAIT_SECONDS)
+            app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll).focus()
+            await pilot.press("enter")
+            await wait_until(
+                lambda: isinstance(app.screen, TaskDetailViewsScreen), timeout=UI_WAIT_SECONDS
+            )
 
-        assert opened == [PaletteRequest(task_id=task.id, role=Role.LEADER.value)]
+        assert opened == [
+            PaletteRequest(task_id=task.id, role=Role.LEADER.value),
+            PaletteRequest(
+                action=BriefingAction.PAUSE.value, task_id=task.id, role=Role.LEADER.value
+            ),
+        ]
     finally:
         reader.close()
 
@@ -2292,7 +2305,7 @@ async def _assert_responsive_task_sections(
     body = app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
     identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
     ownership = app.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
-    situation = app.query_one(f"#{TASK_DETAIL_SITUATION}", Static)
+    briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
     assert task.id in _text(identity)
     assert task.title in _text(identity)
     body.scroll_to_widget(identity, animate=False)
@@ -2305,10 +2318,10 @@ async def _assert_responsive_task_sections(
     assert Hold.INTERVENTION.value in _text(ownership)
     assert ownership.region.overlaps(body.scrollable_content_region)
 
-    body.scroll_to_widget(situation, animate=False)
+    body.scroll_to_widget(briefing, animate=False)
     await pilot.pause()
-    assert "Escalation open" in _text(situation)
-    assert situation.region.overlaps(body.scrollable_content_region)
+    assert "Escalation open" in plain_text(briefing.content)
+    assert briefing.region.overlaps(body.scrollable_content_region)
 
     await pilot.press("u")
     await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS)
@@ -2429,58 +2442,6 @@ async def test_compact_task_detail_keeps_decisions_usage_and_actions_reachable(
         reader.close()
 
 
-async def test_task_usage_details_are_contextual_and_return_to_compact_summary(
-    connection: Connection,
-    database: Database,
-    tmp_path: Path,
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Task usage details")
-    run = RunStore(connection, clock).start(task.id, Role.LEADER, LEADER_RUNG)
-    RunStore(connection, clock).record_usage(
-        run.id,
-        Usage(12, 7, 3, 1, 0.25, COST_BASIS_BILLED, 20),
-    )
-    reader = StateReader(database, SystemClock())
-
-    try:
-        app = _dashboard_app(
-            reader,
-            project_root,
-            focus_task=task.id,
-            widget_names=TASK_DETAIL_WIDGETS,
-        )
-        async with app.run_test(size=(80, 40)) as pilot:
-            dashboard_screen = app.screen
-            await wait_until(
-                lambda: (
-                    "Task usage details" in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
-            assert app.query_one(f"#{TASK_DETAIL_REQUEST}", Static).display is False
-            assert app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).display
-            sessions = app.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
-            assert "Session-wide cumulative totals" not in plain_text(sessions.content)
-            await pilot.press("u")
-            await wait_until(
-                lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
-            )
-            sessions = app.screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
-            await wait_until(
-                lambda: "Session-wide cumulative totals" in plain_text(sessions.content),
-                timeout=UI_WAIT_SECONDS,
-            )
-            assert not app.screen.query_one(f"#{TASK_DETAIL_USAGE_INLINE_BUTTON}", Button).display
-            await pilot.press("escape")
-            await wait_until(lambda: app.screen is dashboard_screen, timeout=UI_WAIT_SECONDS)
-            sessions = dashboard_screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
-            assert "Session-wide cumulative totals" not in plain_text(sessions.content)
-    finally:
-        reader.close()
-
-
 async def test_task_palette_exposes_contextual_export_action(
     connection: Connection,
     database: Database,
@@ -2577,9 +2538,6 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
             detail_screen = app.screen
             timeline_turn = detail_screen.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input)
             detail_body = detail_screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
-            assert not detail_screen.query_one(
-                f"#{TASK_DETAIL_EVIDENCE_INLINE_BUTTON}", Button
-            ).display
 
             def filter_visible() -> bool:
                 return (
@@ -2891,8 +2849,8 @@ async def test_fixed_task_view_scopes_activity_and_usage_and_keeps_extensions_re
             await wait_until(lambda: focused.title in _text(identity), timeout=UI_WAIT_SECONDS)
             assert identity.region.width > 0
             assert focused.id in _text(identity)
-            situation = _text(app.query_one("#task-detail-situation", Static))
-            assert "Global attention" not in situation
+            briefing = plain_text(app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static).content)
+            assert "Global attention" not in briefing
             assert not app.query("#dialogue-table")
             assert not app.query("#usage")
             assert not app.query("#task-view-extension-panel")

@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Protocol
 
 from rich.cells import cell_len
 from rich.console import Group, RenderableType
-from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
@@ -20,16 +19,14 @@ from shikiru.agents.contracts import (
 )
 from shikiru.domain.escalation import escalation_reason_label
 from shikiru.domain.levels import UsageLevel
-from shikiru.domain.tasks import EscalationReason, Role, Status
+from shikiru.domain.tasks import EscalationReason, Role
 from shikiru.ui.gauge import Gauge
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_ESCALATED
 from shikiru.ui.section import Row, grey, labelled_rows, observed_text, wrap_groups
 from shikiru.ui.size import format_size
-from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
-    NEUTRAL_BORDER_COLOR,
     PRIMARY_TEXT_COLOR,
     SAGE,
     SECONDARY_TEXT_COLOR,
@@ -43,7 +40,6 @@ if TYPE_CHECKING:
 
     from rich.console import Console, ConsoleOptions, RenderResult
 
-    from shikiru.ui.strip import TaskStripData
 
 _BOLD_PRIMARY = f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}"
 _BOLD_STEEL = f"{STYLE_BOLD} {STEEL_BLUE}"
@@ -112,14 +108,8 @@ MILESTONE_LATER = "later"
 MILESTONE_SKIPPED = "skipped"
 MILESTONE_UNKNOWN = "unknown"
 MILESTONE_REWORK = "rework"
-NO_ACTIVE_STAGE_TEXT = {
-    Status.DONE: "Stage · complete",
-    Status.QUEUED: "Stage · not started",
-    Status.RUNNING: "Stage · setup",
-    Status.INTEGRATING: "Stage · integration setup",
-    Status.ESCALATED: "Stage · no active stage · decision held",
-    Status.CANCELLED: "Stage · no active stage · cancelled",
-}
+MILESTONE_GAP = "  "
+MILESTONE_GLYPH_GAP = " "
 
 
 class _RecordedUsage(Protocol):
@@ -398,25 +388,7 @@ class _TaskSession(Protocol):
 
 class _TaskDetail(Protocol):
     @property
-    def actual_stage(self) -> str | None: ...
-
-    @property
-    def status(self) -> str: ...
-
-    @property
-    def acting_role(self) -> str: ...
-
-    @property
-    def actual_stage_started_at(self) -> datetime | None: ...
-
-    @property
-    def stage_ended_at(self) -> datetime | None: ...
-
-    @property
     def milestones(self) -> tuple[_TaskMilestone, ...]: ...
-
-    @property
-    def progress(self) -> TaskStripData: ...
 
 
 class _TaskMilestone(Protocol):
@@ -425,76 +397,6 @@ class _TaskMilestone(Protocol):
 
     @property
     def state(self) -> str: ...
-
-
-class _TaskUsage(Protocol):
-    @property
-    def reported_sessions(self) -> int: ...
-
-    @property
-    def legacy_token_sessions(self) -> int: ...
-
-    @property
-    def unknown_token_sessions(self) -> int: ...
-
-    @property
-    def input_tokens(self) -> int: ...
-
-    @property
-    def output_tokens(self) -> int: ...
-
-    @property
-    def billed_cost_usd(self) -> float | None: ...
-
-    @property
-    def billed_cost_sessions(self) -> int: ...
-
-    @property
-    def api_billed_cost_usd(self) -> float | None: ...
-
-    @property
-    def api_billed_cost_sessions(self) -> int: ...
-
-    @property
-    def api_cost_unreported_sessions(self) -> int: ...
-
-    @property
-    def api_equivalent_cost_usd(self) -> float | None: ...
-
-    @property
-    def api_equivalent_cost_sessions(self) -> int: ...
-
-    @property
-    def unknown_billing_sessions(self) -> int: ...
-
-    @property
-    def subscription_sessions(self) -> int: ...
-
-    @property
-    def session_count(self) -> int: ...
-
-
-class _TaskSignal(Protocol):
-    @property
-    def latest_signal(self) -> str | None: ...
-
-    @property
-    def latest_signal_at(self) -> datetime | None: ...
-
-    @property
-    def latest_signal_role(self) -> str | None: ...
-
-    @property
-    def latest_signal_turn(self) -> str | None: ...
-
-    @property
-    def latest_signal_uncertain(self) -> bool: ...
-
-    @property
-    def latest_signal_error(self) -> str | None: ...
-
-    @property
-    def latest_signal_incomplete(self) -> bool: ...
 
 
 @dataclass(frozen=True)
@@ -506,103 +408,6 @@ class ProjectUsageMetric:
     def render_home(self, width: int | None = None) -> Text:
         """Render the Home token bar, wrapping only between its groups within `width`."""
         return _home_project_usage_text(self.usage, width)
-
-
-@dataclass(frozen=True)
-class TaskUsageMetric:
-    """Render the selected task's compact recorded token and charge summary."""
-
-    usage: _TaskUsage | None
-
-    def render(self) -> Text:
-        usage = self.usage
-        if usage is None:
-            return Text("Task usage unknown", style=SECONDARY_TEXT_COLOR)
-        return _join_text([_task_usage_tokens(usage), *_task_usage_charges(usage)])
-
-
-def _task_usage_tokens(usage: _TaskUsage) -> Text:
-    known_token_sessions = usage.reported_sessions + usage.legacy_token_sessions
-    token_label = (
-        f"{_compact_count(usage.input_tokens + usage.output_tokens)} tokens"
-        if known_token_sessions
-        else "tokens unknown"
-    )
-    text = Text(
-        token_label,
-        style=STEEL_BLUE if known_token_sessions else SECONDARY_TEXT_COLOR,
-    )
-    if known_token_sessions and usage.legacy_token_sessions:
-        text.append(f" · {usage.legacy_token_sessions} legacy", style=SECONDARY_TEXT_COLOR)
-    if known_token_sessions and usage.unknown_token_sessions:
-        text.append(f" · {usage.unknown_token_sessions} tokens unknown")
-    return text
-
-
-def _task_usage_charges(usage: _TaskUsage) -> list[Text]:
-    charges: list[Text] = []
-    if usage.api_billed_cost_sessions and usage.api_billed_cost_usd is not None:
-        charges.append(Text(f"API ${usage.api_billed_cost_usd:{SESSION_COST_FORMAT}}", style=SAGE))
-    if (
-        usage.billed_cost_sessions
-        and usage.billed_cost_usd is not None
-        and usage.billed_cost_usd != usage.api_billed_cost_usd
-    ):
-        charges.append(Text(f"billed ${usage.billed_cost_usd:{SESSION_COST_FORMAT}}", style=SAGE))
-    if usage.api_equivalent_cost_sessions and usage.api_equivalent_cost_usd is not None:
-        charges.append(
-            Text(
-                f"API est. ${usage.api_equivalent_cost_usd:{SESSION_COST_FORMAT}}",
-                style=AMBER,
-            )
-        )
-    if usage.api_cost_unreported_sessions:
-        charges.append(Text(f"API unreported {usage.api_cost_unreported_sessions}"))
-    if usage.unknown_billing_sessions:
-        charges.append(
-            Text(
-                f"billing unknown {usage.unknown_billing_sessions}",
-                style=SECONDARY_TEXT_COLOR,
-            )
-        )
-    return charges
-
-
-def task_signal_text(signal: _TaskSignal, now: datetime) -> Group:
-    """Render the latest retained signal and only its recorded observation age."""
-    if signal.latest_signal is None:
-        if signal.latest_signal_error:
-            return Group(
-                Text.assemble(("\u203a ", STEEL_BLUE), ("Signal evidence unavailable", AMBER)),
-                Text("Last recorded signal · evidence unavailable", style=SECONDARY_TEXT_COLOR),
-            )
-        return Group(
-            Text.assemble(("\u203a ", STEEL_BLUE), ("No retained signal", SECONDARY_TEXT_COLOR)),
-            Text("Last recorded signal · none recorded", style=SECONDARY_TEXT_COLOR),
-        )
-    uncertainty = " · ordering uncertain" if signal.latest_signal_uncertain else ""
-    if signal.latest_signal_incomplete:
-        uncertainty = " · incomplete row"
-    if signal.latest_signal_at is None:
-        age = f"time unknown{uncertainty}"
-    else:
-        age = _recorded_age(signal.latest_signal_at, now) + uncertainty
-    return Group(
-        Text.assemble(("\u203a ", STEEL_BLUE), (signal.latest_signal, PRIMARY_TEXT_COLOR)),
-        Text(
-            f"Last recorded signal · {age}",
-            style=SECONDARY_TEXT_COLOR,
-        ),
-    )
-
-
-def _join_text(parts: list[Text]) -> Text:
-    result = Text()
-    for index, part in enumerate(parts):
-        if index:
-            result.append(" · ", style=SECONDARY_TEXT_COLOR)
-        result.append_text(part)
-    return result
 
 
 def _known_token_sessions(usage: _RecordedUsage) -> int:
@@ -1342,51 +1147,25 @@ class AgentUsageDetails:
 
 @dataclass(frozen=True)
 class StageActivity:
-    """Render recorded workflow milestones and actual active-stage elapsed time."""
+    """Render the recorded workflow milestones of one task."""
 
     task: _TaskDetail
 
-    def render(self, now: datetime) -> Group:
-        task = self.task
-        milestone_line = Text()
-        for index, milestone in enumerate(task.milestones):
+    def render(self, *, glyphs_only: bool = False) -> Text:
+        """Return the milestone row, as bare glyphs when `glyphs_only`."""
+        line = Text()
+        for index, milestone in enumerate(self.task.milestones):
             if index:
-                milestone_line.append("  ", style=SECONDARY_TEXT_COLOR)
+                line.append(MILESTONE_GLYPH_GAP if glyphs_only else MILESTONE_GAP)
             marker, style = _milestone_marker(milestone.state)
-            milestone_line.append(f"{marker} {milestone.stage}", style=style)
-            if milestone.state in {
+            line.append(marker if glyphs_only else f"{marker} {milestone.stage}", style=style)
+            if not glyphs_only and milestone.state in {
                 MILESTONE_SKIPPED,
                 MILESTONE_REWORK,
                 MILESTONE_UNKNOWN,
             }:
-                milestone_line.append(f" {milestone.state}", style=style)
-        if not task.milestones:
-            milestone_line.append("Workflow milestones unavailable", style=SECONDARY_TEXT_COLOR)
-        if task.actual_stage is None:
-            stage_line = Text(_no_active_stage_text(task.status), style=SECONDARY_TEXT_COLOR)
-        else:
-            stage = task.actual_stage.replace("_", " ").title()
-            end = task.stage_ended_at or now
-            elapsed = (
-                _duration_text(end - task.actual_stage_started_at)
-                if task.actual_stage_started_at is not None
-                else "time unknown"
-            )
-            stage_line = Text.assemble(
-                (f"{task.acting_role.title()} · ", SECONDARY_TEXT_COLOR),
-                (f"{stage} · {elapsed}", STEEL_BLUE),
-            )
-            if any(panel.state is PanelState.STALLED for panel in task.progress.panels):
-                stage_line.append(" · stalled", style=AMBER)
-        return Group(
-            milestone_line,
-            Rule(style=NEUTRAL_BORDER_COLOR),
-            stage_line,
-        )
-
-
-def _no_active_stage_text(status: str) -> str:
-    return NO_ACTIVE_STAGE_TEXT[Status(status)]
+                line.append(f" {milestone.state}", style=style)
+        return line
 
 
 def _milestone_marker(state: str) -> tuple[str, str]:
@@ -1403,7 +1182,7 @@ def _milestone_marker(state: str) -> tuple[str, str]:
     return "?", AMBER
 
 
-def _duration_text(duration: timedelta) -> str:
+def duration_text(duration: timedelta) -> str:
     elapsed = duration.total_seconds()
     if elapsed < 0:
         return "future timestamp"
@@ -1417,7 +1196,7 @@ def _duration_text(duration: timedelta) -> str:
     return f"{hours}h {minutes}m" if minutes else f"{hours}h"
 
 
-def _recorded_age(timestamp: datetime, now: datetime) -> str:
+def recorded_age(timestamp: datetime, now: datetime) -> str:
     elapsed = (now - timestamp).total_seconds()
     if elapsed < 0:
         return "future timestamp"

@@ -17,7 +17,6 @@ from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.app import DashboardApp, TaskPaletteRoute
 from shikiru.dashboard.detail import (
     TASK_DETAIL_OWNERSHIP,
-    TASK_DETAIL_SITUATION,
     TaskDetailScreen,
 )
 from shikiru.dashboard.motion import DashboardMotion
@@ -374,8 +373,9 @@ async def _export_terminal_task(
     app = runtime.app(focus_task=task_id)
     async with app.run_test(size=TASK_SIZE) as pilot:
         identity = app.query_one("#task-detail-identity", Static)
-        situation = app.query_one(f"#{TASK_DETAIL_SITUATION}", Static)
-        await runtime.wait_for(lambda: task_id in _plain(identity) and bool(_plain(situation)))
+        await runtime.wait_for(
+            lambda: task_id in _plain(identity) and "loading" not in _plain(identity)
+        )
         await pilot.press("ctrl+p")
         await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen))
         palette = cast("PaletteScreen", app.screen)

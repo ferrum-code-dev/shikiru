@@ -40,6 +40,7 @@ from shikiru.dashboard.contract import (
     WidgetPlacement,
 )
 from shikiru.dashboard.detail import (
+    COMPACT_INSPECTOR_CLASS,
     TASK_DETAIL_ESCAPE,
     TASK_DETAIL_HELP_KEY,
     TASK_DETAIL_VIEWS_KEY,
@@ -1886,6 +1887,8 @@ class DashboardApp(App[None]):
             wide = width >= HOME_SPLIT_MIN_COLUMNS
             main.set_class(wide, "wide")
             main.set_class(not wide, "compact")
+            if self._home_detail_panel is not None:
+                self._home_detail_panel.set_class(not wide, COMPACT_INSPECTOR_CLASS)
             readouts = self.query_one("#focus-readouts", VerticalScroll)
             task_list_configured = bool(
                 self._widget_names_by_placement.get(WidgetPlacement.TASK_LIST)

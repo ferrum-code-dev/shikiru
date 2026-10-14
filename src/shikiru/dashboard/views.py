@@ -1602,6 +1602,7 @@ class StateDashboardViews:
             last_signal_identity=motion.last_signal_identity,
             last_signal_role=motion.last_signal_role,
             last_signal_turn=motion.last_signal_turn,
+            last_words=motion.last_words,
         )
 
     def _refresh_usage_cache_version(self) -> None:
