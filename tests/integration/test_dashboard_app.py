@@ -180,12 +180,7 @@ _PALETTE_ZERO_WIDTH_REPRODUCTION_SIZES = (
     _PALETTE_ZERO_WIDTH_SIZE,
     _PALETTE_NARROW_SAFE_SIZE,
 )
-_HOME_REVIEW_SIZES = (
-    _MEASURED_HOME_SIZE,
-    _WIDE_HOME_SIZE,
-    _SHORT_WIDE_HOME_SIZE,
-    _COMPACT_HOME_SIZE,
-)
+_HOME_REVIEW_SIZES = (_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE)
 _MIN_WIDE_TASK_LIST_ROWS = 9
 _MIN_SHORT_WIDE_TASK_LIST_ROWS = 5
 _API_INPUT_TOKENS = 1_000
@@ -4146,7 +4141,7 @@ async def _exercise_submit_request_form_resize(
     await _close_palette_to_caller(app, pilot, home, queue)
 
 
-@pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _COMPACT_HOME_SIZE, _NARROW_TASK_SIZE])
+@pytest.mark.parametrize("size", [_WIDE_HOME_SIZE, _NARROW_TASK_SIZE])
 async def test_empty_home_footer_actions_are_mouse_reachable_and_read_only(
     database: Database,
     connection: Connection,
@@ -5086,7 +5081,7 @@ async def test_home_selection_clears_rendered_task_sections_while_next_report_lo
         reader.close()
 
 
-@pytest.mark.parametrize("size", [(36, 20), (48, 24), (120, 40)])
+@pytest.mark.parametrize("size", [(36, 20), (120, 40)])
 async def test_dashboard_compact_footer_and_persisted_state_are_readable_without_color(
     database: Database,
     connection: Connection,

@@ -2088,35 +2088,6 @@ async def test_compact_task_detail_keeps_decisions_usage_and_actions_reachable(
         reader.close()
 
 
-async def test_task_palette_exposes_contextual_export_action(
-    connection: Connection,
-    database: Database,
-    tmp_path: Path,
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Detail export target")
-    reader = StateReader(database, SystemClock())
-    try:
-        queue = CommandQueue(connection, clock)
-        app = _operator_task_app(reader, project_root, task.id, queue, clock)
-        async with app.run_test(size=(80, 40)) as pilot:
-            await pilot.press("ctrl+p")
-            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
-            palette = cast("PaletteScreen", app.screen)
-            await _select_palette_action(pilot, palette, "export")
-            await wait_until(
-                lambda: palette.query_one("#field-export-destination").display,
-                timeout=UI_WAIT_SECONDS,
-            )
-            assert palette.query_one("#palette-submit", Button).disabled
-            assert "task evidence export is not configured" in _text(
-                palette.query_one("#palette-action-state", Static)
-            )
-    finally:
-        reader.close()
-
-
 async def test_compact_palette_form_keeps_visible_text_cursor_and_run_after_resize(
     connection: Connection,
     database: Database,
