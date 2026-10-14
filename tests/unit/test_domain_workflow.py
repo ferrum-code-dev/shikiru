@@ -511,3 +511,96 @@ def test_changes_requested_verdict_marks_verify_rework_after_its_entry() -> None
 
     assert _stage_states(progress)[Step.IMPLEMENT] is WorkflowMilestoneState.CURRENT
     assert _stage_states(progress)[Step.VERIFY] is WorkflowMilestoneState.REWORK
+
+
+def _entries(*steps: Step) -> tuple[Event, ...]:
+    return tuple(
+        _event(index, EventKind.STEP_STARTED, step=step, iteration=_PREVIOUS_ITERATION)
+        for index, step in enumerate(steps, start=_FIRST_EVENT_ID)
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "step", "events", "complete", "expected"),
+    [
+        pytest.param(
+            Status.DONE,
+            None,
+            _entries(Step.VERIFY, Step.INTEGRATE),
+            False,
+            {
+                Step.TRIAGE: WorkflowMilestoneState.SKIPPED,
+                Step.IMPLEMENT: WorkflowMilestoneState.SKIPPED,
+                Step.VERIFY: WorkflowMilestoneState.DONE,
+                Step.INTEGRATE: WorkflowMilestoneState.DONE,
+            },
+            id="done-with-truncated-history",
+        ),
+        pytest.param(
+            Status.DONE,
+            None,
+            _entries(Step.TRIAGE, Step.IMPLEMENT, Step.VERIFY, Step.INTEGRATE),
+            True,
+            {
+                Step.TRIAGE: WorkflowMilestoneState.DONE,
+                Step.IMPLEMENT: WorkflowMilestoneState.DONE,
+                Step.VERIFY: WorkflowMilestoneState.DONE,
+                Step.INTEGRATE: WorkflowMilestoneState.DONE,
+            },
+            id="done-with-all-records",
+        ),
+        pytest.param(
+            Status.CANCELLED,
+            Step.CONSULT,
+            _entries(Step.TRIAGE, Step.IMPLEMENT, Step.CONSULT),
+            True,
+            {
+                Step.TRIAGE: WorkflowMilestoneState.DONE,
+                Step.IMPLEMENT: WorkflowMilestoneState.DONE,
+                Step.CONSULT: WorkflowMilestoneState.STOPPED,
+                Step.VERIFY: WorkflowMilestoneState.SKIPPED,
+                Step.INTEGRATE: WorkflowMilestoneState.SKIPPED,
+            },
+            id="cancelled-at-consult-with-kept-step",
+        ),
+        pytest.param(
+            Status.CANCELLED,
+            None,
+            _entries(Step.TRIAGE, Step.IMPLEMENT),
+            True,
+            {
+                Step.TRIAGE: WorkflowMilestoneState.DONE,
+                Step.IMPLEMENT: WorkflowMilestoneState.DONE,
+                Step.VERIFY: WorkflowMilestoneState.SKIPPED,
+                Step.INTEGRATE: WorkflowMilestoneState.SKIPPED,
+            },
+            id="cancelled-with-cleared-step",
+        ),
+        pytest.param(
+            Status.RUNNING,
+            Step.IMPLEMENT,
+            _entries(Step.IMPLEMENT),
+            False,
+            {
+                Step.TRIAGE: WorkflowMilestoneState.UNKNOWN,
+                Step.IMPLEMENT: WorkflowMilestoneState.CURRENT,
+                Step.VERIFY: WorkflowMilestoneState.LATER,
+                Step.INTEGRATE: WorkflowMilestoneState.LATER,
+            },
+            id="live-task-keeps-unknown",
+        ),
+    ],
+)
+def test_terminal_tasks_never_show_unknown_stages(
+    status: Status,
+    step: Step | None,
+    events: tuple[Event, ...],
+    complete: bool,
+    expected: dict[Step, WorkflowMilestoneState],
+) -> None:
+    task = make_task(mode=Mode.IMPLEMENT, step=step, status=status)
+
+    progress = project_workflow(task, events, (), event_window_complete=complete)
+
+    states = _stage_states(progress)
+    assert {stage: states[stage] for stage in expected} == expected

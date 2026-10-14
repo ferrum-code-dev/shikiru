@@ -846,7 +846,8 @@ class TaskStore:
               mode = COALESCE(?, mode), title = COALESCE(?, title),
               started_at = CASE WHEN ? = ? AND started_at IS NULL THEN ? ELSE started_at END,
               finished_at = CASE WHEN ? IN (?, ?) AND finished_at IS NULL
-                THEN ? ELSE finished_at END
+                THEN ? ELSE finished_at END,
+              wait_reason = CASE WHEN ? IN (?, ?) THEN NULL ELSE wait_reason END
             WHERE id = ?
             """,
             (
@@ -868,6 +869,9 @@ class TaskStore:
                 Status.DONE.value,
                 Status.CANCELLED.value,
                 now,
+                status,
+                Status.DONE.value,
+                Status.CANCELLED.value,
                 task_id,
             ),
         )

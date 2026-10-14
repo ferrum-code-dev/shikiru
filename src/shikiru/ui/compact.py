@@ -21,7 +21,7 @@ from shikiru.domain.escalation import escalation_reason_label
 from shikiru.domain.levels import UsageLevel
 from shikiru.domain.tasks import EscalationReason, Role
 from shikiru.ui.gauge import Gauge
-from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_ESCALATED
+from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_ESCALATED, GLYPH_STOPPED
 from shikiru.ui.keys import append_key_hint
 from shikiru.ui.section import Row, grey, labelled_rows, observed_text, wrap_groups
 from shikiru.ui.size import format_size
@@ -109,6 +109,7 @@ MILESTONE_LATER = "later"
 MILESTONE_SKIPPED = "skipped"
 MILESTONE_UNKNOWN = "unknown"
 MILESTONE_REWORK = "rework"
+MILESTONE_STOPPED = "stopped"
 MILESTONE_GAP = "  "
 MILESTONE_GLYPH_GAP = " "
 
@@ -1163,23 +1164,24 @@ class StageActivity:
                 MILESTONE_SKIPPED,
                 MILESTONE_REWORK,
                 MILESTONE_UNKNOWN,
+                MILESTONE_STOPPED,
             }:
                 line.append(f" {milestone.state}", style=style)
         return line
 
 
+_MILESTONE_MARKERS = {
+    MILESTONE_DONE: ("✓", SAGE),
+    MILESTONE_CURRENT: (GLYPH_CURRENT_STAGE, STEEL_BLUE),
+    MILESTONE_LATER: ("·", SECONDARY_TEXT_COLOR),
+    MILESTONE_SKIPPED: ("—", SECONDARY_TEXT_COLOR),
+    MILESTONE_REWORK: ("!", AMBER),
+    MILESTONE_STOPPED: (GLYPH_STOPPED, ALERT_COLOR),
+}
+
+
 def _milestone_marker(state: str) -> tuple[str, str]:
-    if state == MILESTONE_DONE:
-        return "✓", SAGE
-    if state == MILESTONE_CURRENT:
-        return GLYPH_CURRENT_STAGE, STEEL_BLUE
-    if state == MILESTONE_LATER:
-        return "·", SECONDARY_TEXT_COLOR
-    if state == MILESTONE_SKIPPED:
-        return "—", SECONDARY_TEXT_COLOR
-    if state == MILESTONE_REWORK:
-        return "!", AMBER
-    return "?", AMBER
+    return _MILESTONE_MARKERS.get(state, ("?", AMBER))
 
 
 def duration_text(duration: timedelta) -> str:

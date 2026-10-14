@@ -34,6 +34,7 @@ SUCCESS_COLOR = palette.SAGE
 REWORK_COLOR = palette.AMBER
 HOLD_COLOR = palette.AMBER
 ALERT_COLOR = palette.DUSTY_ROSE
+STOPPED_DURING = "stopped during"
 IDLE_COLOR = palette.SECONDARY_TEXT_COLOR
 
 STYLE_DIM = "dim"

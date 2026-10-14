@@ -18,6 +18,7 @@ FACTS_COMMITS_HEADING = "### Commits (base..HEAD)"
 FACTS_DIFF_STAT_HEADING = "### Diff stat (base...HEAD)"
 FACTS_NONE_MARKER = "(none)"
 PR_OPEN_STATE = "OPEN"
+PR_MERGED_STATE = "MERGED"
 PR_URL_KEY = "url"
 PR_STATE_KEY = "state"
 PR_CHECKS_PENDING_KEY = "checks_pending"
@@ -145,8 +146,11 @@ def parse_produced(facts: str | None) -> ProducedNumbers | None:
     )
 
 
-def pull_request_line(data: Mapping[str, object]) -> PullRequestLine:
-    """Describe the latest recorded pull request event; an open event records no state yet."""
+def pull_request_line(data: Mapping[str, object], *, task_done: bool = False) -> PullRequestLine:
+    """Describe the latest recorded pull request event; an open event records no state yet.
+
+    A Done task has its pull request merged, whatever the last recorded event said.
+    """
     url = data.get(PR_URL_KEY)
     state = data.get(PR_STATE_KEY)
     link = url if isinstance(url, str) else None
@@ -154,7 +158,9 @@ def pull_request_line(data: Mapping[str, object]) -> PullRequestLine:
     pending = data.get(PR_CHECKS_PENDING_KEY)
     failing = data.get(PR_CHECKS_FAILING_KEY)
     return PullRequestLine(
-        state=state if isinstance(state, str) else PR_OPEN_STATE,
+        state=PR_MERGED_STATE
+        if task_done
+        else (state if isinstance(state, str) else PR_OPEN_STATE),
         url=link,
         number=int(match["number"]) if match is not None else None,
         checks_pending=pending if isinstance(pending, bool) else None,

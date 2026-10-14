@@ -95,6 +95,12 @@ def test_pull_request_line_reads_state_number_and_only_recorded_checks() -> None
         assert pull_request_line(data) == expected
 
 
+def test_a_done_task_has_its_pull_request_merged() -> None:
+    line = pull_request_line({"url": "https://h/o/r/pull/41"}, task_done=True)
+
+    assert line == PullRequestLine("MERGED", "https://h/o/r/pull/41", 41, None, None)
+
+
 def test_briefing_verbs_follow_the_task_state_and_never_exceed_three() -> None:
     take, hand, message = BriefingAction.TAKE_OVER, BriefingAction.HAND_BACK, BriefingAction.MESSAGE
     pause, resume, answer = BriefingAction.PAUSE, BriefingAction.RESUME, BriefingAction.ANSWER

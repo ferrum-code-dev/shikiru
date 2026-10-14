@@ -40,6 +40,7 @@ class WorkflowMilestoneState(StrEnum):
     SKIPPED = auto()
     REWORK = auto()
     UNKNOWN = auto()
+    STOPPED = auto()
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,9 @@ def project_workflow(
     stages = _workflow_stages(task, entered_steps, reported_steps, entries)
     if not stages:
         return WorkflowProgress((), history_complete)
+    if task.status in (Status.DONE, Status.CANCELLED):
+        recorded = entered_steps | reported_steps
+        return WorkflowProgress(_terminal_milestones(task, stages, recorded), history_complete)
     stage_positions = {step: index for index, step in enumerate(stages)}
     current_position = stage_positions.get(task.step) if task.step is not None else None
     last_entries = _last_step_entries(entries)
@@ -126,14 +130,10 @@ def project_workflow(
             )
             if rework_requested:
                 state = WorkflowMilestoneState.REWORK
-            elif (
-                (step is Step.INTEGRATE and task.status is Status.DONE)
-                or _completed_by_later_step(step, later_steps)
-                or _report_completes_entered_stage(
-                    step,
-                    latest_entry.event_id if latest_entry is not None else None,
-                    completed_reports,
-                )
+            elif _completed_by_later_step(step, later_steps) or _report_completes_entered_stage(
+                step,
+                latest_entry.event_id if latest_entry is not None else None,
+                completed_reports,
             ):
                 state = WorkflowMilestoneState.DONE
             else:
@@ -152,6 +152,19 @@ def project_workflow(
         for step in stages
     )
     return WorkflowProgress(milestones, history_complete)
+
+
+def _terminal_milestones(
+    task: Task, stages: tuple[Step, ...], recorded: set[Step]
+) -> tuple[WorkflowMilestone, ...]:
+    def state(step: Step) -> WorkflowMilestoneState:
+        if task.status is Status.CANCELLED and step is task.step:
+            return WorkflowMilestoneState.STOPPED
+        if step in recorded or (step is Step.INTEGRATE and task.status is Status.DONE):
+            return WorkflowMilestoneState.DONE
+        return WorkflowMilestoneState.SKIPPED
+
+    return tuple(WorkflowMilestone(step, state(step)) for step in stages)
 
 
 def _step_entries(events: Sequence[Event]) -> list[_StepEntry]:
