@@ -902,7 +902,7 @@ class TaskDetailPanel(Vertical):
             ):
                 notes.append(NO_REPLACEMENT_TASKS)
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update(
-            Group(hint, *(grey(note) for note in notes))
+            Group(*([hint] if self._related_rows else []), *(grey(note) for note in notes))
         )
 
     def _render_ownership(self, view: TaskDetailView) -> None:

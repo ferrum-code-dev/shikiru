@@ -150,7 +150,7 @@ def _round_row(index: int, decision: str, severities: tuple[Text, ...]) -> Row:
     )
     if severities:
         line.append(" (", style=SECONDARY_TEXT_COLOR)
-        line.append_text(Text(", ").join(severities))
+        line.append_text(Text(", ", style=SECONDARY_TEXT_COLOR).join(severities))
         line.append(")", style=SECONDARY_TEXT_COLOR)
     return grey(f"{ROUND_LABEL} {index}"), (line,)
 
