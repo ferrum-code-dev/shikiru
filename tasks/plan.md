@@ -1856,8 +1856,8 @@ Scope: [thirteenth review](../docs/tui-feedback-thirteenth-review.md); the opera
 
 ### Task 197: Selection without a vertical bar; Recent pager style
 Refs: `dashboard/details_list_view.py` (`SELECTED_BAR`, `BAR_BLANK`, `_EntryLine`), `row_list.py`, `detail_fold.py`, `plugins/widgets/queue.py` (outline ~403, `_RecentPager`, `.recent-pager` ~416), `app.py` Views menu, `session_picker.py`.
-- [ ] No selection glyph remains; fold headers and `RowList` rows use the background highlight and bold name with the two-cell lead kept; the Tasks list non-focus outline is gone; Views menu and session picker use `$selected-surface`.
-- [ ] Recent pager reads `↑ later` / `↓ earlier`, grey with cyan arrows; docs line 06 §6.1 updated.
+- [x] No selection glyph remains; fold headers and `RowList` rows use the background highlight and bold name with the two-cell lead kept; the Tasks list non-focus outline is gone; Views menu and session picker use `$selected-surface`.
+- [x] Recent pager reads `↑ later` / `↓ earlier`, grey with cyan arrows; docs line 06 §6.1 updated.
 
 ### Task 198: Edit area under the option, new keys
 Refs: spec "Escalation resolution panel"; `dashboard/resolution.py` (`_AnswerBox`, `_open_answer`, `_PREFILL_SEPARATOR`, bindings, `check_action`, drafts), `resolution_view.py`, `ui/keys.py`.

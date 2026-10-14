@@ -20,7 +20,6 @@ from shikiru.ui.tokens import (
     SCROLLBAR_TRACK_COLOR,
     SECONDARY_TEXT_COLOR,
     SELECTED_SURFACE_COLOR,
-    SELECTION_OUTLINE_COLOR,
     STEEL_BLUE,
     SUCCESS_COLOR,
     SURFACE_COLOR,
@@ -71,13 +70,12 @@ SHIKIRU_THEME = Theme(
         "scrollbar-width": str(SCROLLBAR_WIDTH),
         "secondary-text": SECONDARY_TEXT,
         "selected-surface": SELECTED_SURFACE_COLOR,
-        "selection-outline": SELECTION_OUTLINE_COLOR,
         "steel-blue": STEEL_BLUE,
     },
 )
 
 
-def install_theme(app: App[None]) -> None:
+def install_theme[ReturnT](app: App[ReturnT]) -> None:
     """Register the shared Shikiru palette on a Textual application."""
     app.register_theme(SHIKIRU_THEME)
     app.theme = THEME_NAME

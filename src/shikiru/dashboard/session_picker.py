@@ -11,6 +11,7 @@ from textual.widgets import Label, ListItem, ListView, Static
 from shikiru.errors import UsageError
 from shikiru.operator.sessions import SessionRow
 from shikiru.ui.keys import key_hint
+from shikiru.ui.theme import install_theme
 
 if TYPE_CHECKING:
     from textual.binding import BindingType
@@ -31,11 +32,15 @@ class SessionPicker(App[SessionRow | None]):
         border: round $accent; padding: 1 2;
     }
     #session-picker-list { height: auto; max-height: 1fr; }
+    #session-picker-list > ListItem.-highlight {
+        background: $selected-surface; color: $primary-text; text-style: none;
+    }
     """
 
     def __init__(self, rows: tuple[SessionRow, ...]) -> None:
         """Keep the rows so a visible selection returns its exact session record."""
         super().__init__()
+        install_theme(self)
         self._rows = rows
 
     def compose(self) -> ComposeResult:

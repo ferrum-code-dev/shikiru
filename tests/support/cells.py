@@ -17,6 +17,7 @@ from shikiru.ui.tokens import (
 )
 
 if TYPE_CHECKING:
+    from rich.color import Color as RichColor
     from rich.style import Style as RichStyle
     from textual.widget import Widget
 
@@ -51,12 +52,25 @@ def line(*groups: tuple[Piece, ...]) -> list[Cell]:
     return [(char, style) for text, style in pieces for char in text]
 
 
+def _hex_colour(colour: RichColor | None) -> str | None:
+    return Color.from_rich_color(colour).hex.lower() if colour is not None else None
+
+
 def style_of(style: RichStyle | None) -> Style:
     """Reduce a Rich style to its bold flag and lowercase hex foreground."""
     if style is None:
         return (False, None)
-    color = Color.from_rich_color(style.color).hex.lower() if style.color is not None else None
-    return (bool(style.bold), color)
+    return (bool(style.bold), _hex_colour(style.color))
+
+
+def painted_backgrounds(widget: Widget) -> set[str | None]:
+    """Return every background colour painted across the widget, blanks included."""
+    region = Region(0, 0, widget.region.width, widget.region.height)
+    return {
+        _hex_colour(segment.style.bgcolor if segment.style is not None else None)
+        for strip in widget.render_lines(region)
+        for segment in strip
+    }
 
 
 def rendered_lines(widget: Widget) -> list[list[Cell]]:

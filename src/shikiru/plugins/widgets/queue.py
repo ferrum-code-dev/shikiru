@@ -46,8 +46,8 @@ BROWSER_PAGE_SIZE = 24
 FOCUS_MAIN_CONTAINER_ID = "focus-main"
 TASK_ROW_LINES = 2
 TASK_ROW_GAP_LINES = 1
-RECENT_LATER_LABEL = "↑ Later"
-RECENT_EARLIER_LABEL = "↓ Earlier"
+RECENT_LATER_LABEL = "↑ later"
+RECENT_EARLIER_LABEL = "↓ earlier"
 RECENT_LATER_COMPACT_LABEL = "↑"
 RECENT_EARLIER_COMPACT_LABEL = "↓"
 RECENT_CONTROL_GAP = 1
@@ -400,10 +400,8 @@ class QueuePanel(Vertical):
         text-wrap: wrap; text-overflow: clip;
     }
     #task-browser-list > ListItem.-highlight {
-        outline: solid $selection-outline; background: $selected-surface; color: $primary-text;
-        text-style: none;
+        outline: none; background: $selected-surface; color: $primary-text; text-style: none;
     }
-    #task-browser-list.focus-list > ListItem.-highlight { outline: none; }
     #task-browser-list > ListItem.-highlight > Static {
         background: $selected-surface; color: $primary-text; text-style: none;
     }
@@ -413,7 +411,7 @@ class QueuePanel(Vertical):
         height: 3; min-height: 3; margin: 0; border-top: solid $neutral-border; padding: 0;
     }
     #task-browser-recent-title { width: 1fr; height: 1; color: $steel-blue; }
-    .recent-pager { width: auto; height: 1; margin-left: 1; color: $steel-blue; }
+    .recent-pager { width: auto; height: 1; margin-left: 1; color: $secondary-text; }
     .recent-pager:hover { text-style: bold; }
     .recent-pager.-inactive { color: $muted-text; text-style: dim; }
     .recent-pager.-inactive:hover { text-style: dim; }

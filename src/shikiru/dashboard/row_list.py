@@ -12,9 +12,9 @@ from textual.containers import Vertical
 from textual.message import Message
 from textual.widgets import Static
 
-from shikiru.dashboard.details_list_view import BAR_BLANK, SELECTED_BAR
+from shikiru.dashboard.details_list_view import ROW_LEAD
 from shikiru.ui.section import BOLD_PRIMARY, grey
-from shikiru.ui.tokens import PRIMARY_TEXT_COLOR, STEEL_BLUE
+from shikiru.ui.tokens import PRIMARY_TEXT_COLOR
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -43,7 +43,7 @@ class _RowLine:
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         del console
-        line = Text(SELECTED_BAR if self.selected else BAR_BLANK, style=STEEL_BLUE)
+        line = Text(ROW_LEAD)
         line.append_text(grey(f"{self.cells.lead}{_LEAD_GAP}" if self.cells.lead else ""))
         line.append(self.cells.text, style=BOLD_PRIMARY if self.selected else PRIMARY_TEXT_COLOR)
         line.truncate(max(options.max_width, 1), overflow="ellipsis", pad=True)
@@ -67,7 +67,7 @@ class _Row(Static):
 
 
 class RowList(Vertical, can_focus=True):
-    """Rows with a selection bar; arrows move, PgUp/PgDn page, End asks for the latest."""
+    """Rows with a selected background; arrows move, PgUp/PgDn page, End asks for the latest."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("up", f"move({_STEP_UP})", "Previous", show=False),
@@ -94,7 +94,7 @@ class RowList(Vertical, can_focus=True):
             return self.row_list
 
     class Moved(_Posted):
-        """The selection bar moved to `index`."""
+        """The selection moved to `index`."""
 
         def __init__(self, row_list: RowList, index: int) -> None:
             super().__init__(row_list)
@@ -130,11 +130,11 @@ class RowList(Vertical, can_focus=True):
 
     @property
     def selected(self) -> int:
-        """The index of the row the selection bar is on."""
+        """The index of the selected row."""
         return self._selected
 
     def set_rows(self, rows: Sequence[RowCells], *, selected: int, empty: str) -> None:
-        """Replace the rows, put the bar on `selected` (clamped) and show `empty` when none."""
+        """Replace the rows, select `selected` (clamped) and show `empty` when none."""
         previous = self._selected
         self._cells = tuple(rows)
         self._empty = empty
@@ -144,7 +144,7 @@ class RowList(Vertical, can_focus=True):
             self._reveal()
 
     def action_move(self, step: int) -> None:
-        """Move the bar, stopping at both ends."""
+        """Move the selection, stopping at both ends."""
         if self._cells:
             self._choose(min(max(self._selected + step, 0), len(self._cells) - 1))
 

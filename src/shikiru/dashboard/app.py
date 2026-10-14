@@ -317,6 +317,9 @@ class _ContextViewsScreen(ModalScreen[str]):
         POPUP_CSS
         + """
     #focus-views-list { max-height: 1fr; min-height: 0; border: none; background: $surface; }
+    #focus-views-list > ListItem.-highlight {
+        background: $selected-surface; color: $primary-text; text-style: none;
+    }
     #context-views-hint { height: 1; }
     #context-views-frame.compact { margin: 0 1; padding: 0 1; }
     """

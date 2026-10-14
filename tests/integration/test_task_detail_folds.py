@@ -30,8 +30,8 @@ from shikiru.paths import run_dir
 from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
-from shikiru.ui.tokens import STEEL_BLUE
-from tests.support.cells import foregrounds
+from shikiru.ui.tokens import SELECTED_SURFACE_COLOR, STEEL_BLUE
+from tests.support.cells import foregrounds, painted_backgrounds, rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import WidgetHostApp, dashboard_app, list_rows, widget_context
@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from textual.pilot import Pilot
+    from textual.widget import Widget
 
     from shikiru.dashboard.contract import DashboardViews
     from tests.support.store import Connection, Database
@@ -53,6 +54,7 @@ pytestmark = pytest.mark.asyncio
 START = datetime(2026, 1, 1, tzinfo=UTC)
 AGENT_LIST = "task-detail-agent-list"
 EVENTS_FOLD = TASK_VIEW_EVIDENCE
+LEFT_HALF_BLOCK = "\N{LEFT HALF BLOCK}"
 
 
 @dataclass(frozen=True)
@@ -331,5 +333,56 @@ async def test_the_details_hint_and_a_paused_timeline_paint_their_key_names_stee
             title = panel.query_one("#task-detail-timeline-title", Static)
             await wait_until(lambda: "paused" in plain_text(title.content), timeout=UI_WAIT_SECONDS)
             assert set(foregrounds(title, "End")) == {STEEL_BLUE}
+    finally:
+        reader.close()
+
+
+def _painted_text(widget: Widget) -> str:
+    return "\n".join("".join(char for char, _ in cells) for cells in rendered_lines(widget))
+
+
+def _fold_header(panel: TaskDetailPanel, view_id: str) -> Widget:
+    return next(fold.header for fold in panel.query(DetailFold) if fold.view_id == view_id)
+
+
+def _selected_row(panel: TaskDetailPanel) -> list[Static]:
+    rows = panel.query(f"#{TASK_DETAIL_TIMELINE_LIST} .row-list-row.-selected")
+    return list(rows.results(Static))
+
+
+@pytest.mark.usefixtures("colour_terminal")
+async def test_selection_is_the_selected_background_with_no_bar_glyph(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task_id, _ = _seed(connection, project_root, clock, "Selection marks")
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(widget_context(reader, project_root, clock), task_id, fixed=True)
+    try:
+        async with WidgetHostApp(panel).run_test(size=(100, 40)) as pilot:
+            await wait_until(
+                lambda: (
+                    task_id
+                    in plain_text(panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
+            panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).press()
+            await wait_until(
+                lambda: _focused_stop(pilot) == TASK_VIEW_REPORTS, timeout=UI_WAIT_SECONDS
+            )
+            focused_header = _fold_header(panel, TASK_VIEW_REPORTS)
+            assert LEFT_HALF_BLOCK not in _painted_text(focused_header)
+            assert painted_backgrounds(focused_header) == {SELECTED_SURFACE_COLOR}
+
+            await pilot.press("down", "down", "enter")
+            await wait_until(
+                lambda: _focused_stop(pilot) == TASK_DETAIL_TIMELINE_LIST, timeout=UI_WAIT_SECONDS
+            )
+            await wait_until(lambda: bool(_selected_row(panel)), timeout=UI_WAIT_SECONDS)
+            (selected_row,) = _selected_row(panel)
+            assert LEFT_HALF_BLOCK not in _painted_text(selected_row)
+            assert painted_backgrounds(selected_row) == {SELECTED_SURFACE_COLOR}
     finally:
         reader.close()

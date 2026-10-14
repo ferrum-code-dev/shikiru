@@ -11,7 +11,7 @@ from rich.text import Text
 
 from shikiru.dashboard.briefing_view import VERDICT_LABELS, total_cost_text
 from shikiru.ui.section import BOLD_PRIMARY, grey
-from shikiru.ui.tokens import PRIMARY_TEXT_COLOR, STEEL_BLUE
+from shikiru.ui.tokens import PRIMARY_TEXT_COLOR
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -23,8 +23,7 @@ if TYPE_CHECKING:
 _ARROWS = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW}"
 EVENTS_HINT = f"{_ARROWS} select · PgUp/PgDn page · End follow"
 RELATIONSHIPS_HINT = f"{_ARROWS} select · Enter open · PgUp/PgDn page"
-SELECTED_BAR = "\N{LEFT HALF BLOCK} "
-BAR_BLANK = "  "
+ROW_LEAD = "  "
 _HEADLINE_GAP = "  "
 _VERDICT_WORD = "verdict"
 _REPORT_WORD = "report"
@@ -70,20 +69,20 @@ class _EntryLine:
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         del console
         entry = self.entry
-        room = max(options.max_width - len(BAR_BLANK), 1)
+        room = max(options.max_width - len(ROW_LEAD), 1)
         headline = f"{_HEADLINE_GAP}{entry.headline}" if entry.headline else ""
         if cell_len(entry.name) + cell_len(headline) > room:
             headline = ""
         name = Text(entry.name, style=BOLD_PRIMARY if self.selected else PRIMARY_TEXT_COLOR)
         name.truncate(room - cell_len(headline), overflow="ellipsis", pad=True)
-        line = Text(SELECTED_BAR if self.selected else BAR_BLANK, style=STEEL_BLUE)
+        line = Text(ROW_LEAD)
         line.append_text(name)
         line.append_text(grey(headline))
         yield line
 
 
 def entry_renderable(entry: DetailsEntry, *, selected: bool) -> RenderableType:
-    """Return one row: selection bar, name, and the headline in grey on the right."""
+    """Return one row: the name in bold when selected, and the headline in grey on the right."""
     return _EntryLine(entry, selected)
 
 
