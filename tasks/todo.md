@@ -303,5 +303,5 @@ Twelfth-review scope and evidence: [twelfth review, keys, escalation answers and
 - [x] Task 192: Independent timelines for Events and Agent activity
 - [x] Task 193: Inline folds replace the details list popup
 - [x] Task 194: Route entry points to folds and retire the chooser
-- [ ] Task 195: Cyan key names everywhere
-- [ ] Task 196: Verify the twelfth review, reconcile the reference and docs
+- [x] Task 195: Cyan key names everywhere
+- [x] Task 196: Verify the twelfth review, reconcile the reference and docs

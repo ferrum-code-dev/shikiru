@@ -316,9 +316,9 @@ Commands that only set a value (`prioritize`) are naturally repeatable.
 **Packet** (`runs/T/escalations/E-n.md`, path stored in the DB):
 - headline (task, step, reason, one sentence)
 - timeline of recent events
-- what was tried
+- what was tried: a digest of the recorded work, at most `escalation.tried_lines` chronological lines — the reason sentence, the rounds (`implement ×3, verify ×2, iteration n of m`), the latest turns with their outcome (commits, tests passed or failed, verdict with its blocker count), recovery (nudges, helper actions, rung changes), the produced numbers and Operator messages, with older turns collapsed into `+N earlier`; a pure function of events, reports, task and facts (`domain.attempts`) used for every escalation path, restored and lost packets included
 - evidence: latest reports and verdict, facts, the last 60 view lines per role (read from the end of the log, never the whole file), session ids and resume commands; a report history that cannot be read is logged and the packet's facts section says so, instead of silently showing no reports
-- the Leader's question and typed agent-proposed alternatives, each with its recorded consequences and exactly one ★
+- the Leader's question and typed agent-proposed alternatives, each with its recorded consequences, exactly one ★ and an optional `needs_input` flag (an ask for the Operator to provide something, which the dashboard answers through a prefilled answer box; the consult and verify prompts say when to set it)
 - applicable engine resolution kinds with consequences and exactly one ★; these remain separate from the agent's alternatives
 
 When no agent proposal was recorded, the packet says so explicitly. Engine recovery actions remain under `Options`; they do not stand in for agent alternatives.

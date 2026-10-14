@@ -65,6 +65,9 @@ poll_attempts = 8                               # `gh pr view` tries per poll be
 pr_poll_seconds = 300                           # between two polls of an open PR
 pr_close_attempts = 5                           # `gh pr close` tries per engine start for a cancelled task
 
+[escalation]
+tried_lines = 8                                  # lines of the packet's What was tried digest (03 §8)
+
 [agents.claude]                                 # table name = plugin entry point
 [agents.codex]
 
@@ -337,7 +340,7 @@ class NewTask(BaseModel):      title: str; request: str; priority: int = 0
 class Commit(BaseModel):       sha: str; subject: str
 class TestRun(BaseModel):      name: str; result: Literal["passed", "failed", "skipped"]; details: str = ""
 class Issue(BaseModel):        severity: Literal["blocker", "major", "minor"]; description: str; location: str = ""
-class Option(BaseModel):       label: str; consequences: str; recommended: bool = False
+class Option(BaseModel):       label: str; consequences: str; recommended: bool = False; needs_input: bool = False   # needs_input: an ask for the Operator to provide something; old packets parse unchanged
 class EscalationRequest(BaseModel): question: str; options: list[Option]      # exactly one recommended
 
 class TriageReport(BaseModel):

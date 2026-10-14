@@ -1,6 +1,6 @@
 # Phase 11 twelfth review: keys, escalation answers and inline details
 
-Status: planned (Tasks 186–196). This specification refines the [tenth](tui-feedback-tenth-review.md) (resolution panel), [eleventh](tui-feedback-eleventh-review.md) (task details) and [fifth](tui-feedback-fifth-review.md) (escalation bar keys) reviews where it differs. **The TUI is the source of truth**; the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 196).
+Status: delivered (Tasks 186–196, 2026-10-14), verified in the [twelfth-review record](release-readiness-2026-10-14-phase11-twelfth-review.md). This specification refines the [tenth](tui-feedback-tenth-review.md) (resolution panel), [eleventh](tui-feedback-eleventh-review.md) (task details) and [fifth](tui-feedback-fifth-review.md) (escalation bar keys) reviews where it differs. **The TUI is the source of truth**; the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 196).
 
 Analysis: three read-only static analyses (Haiku 5.5 xhigh for focus, keys and `u`/`e`; Sonnet 5.5 medium for the resolution panel and for the task details). Nothing was run; the implementing task reproduces first. The operator approved the options below on 2026-10-14.
 
