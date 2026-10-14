@@ -4,10 +4,12 @@ from shikiru.domain.briefing import (
     FACTS_COMMITS_HEADING,
     FACTS_DIFF_STAT_HEADING,
     FACTS_NONE_MARKER,
+    BriefingAction,
     ProducedNumbers,
     PullRequestLine,
     ReportedTests,
     VerdictCounts,
+    briefing_actions,
     escalation_remaining,
     parse_produced,
     pull_request_line,
@@ -16,6 +18,7 @@ from shikiru.domain.briefing import (
 )
 from shikiru.domain.reports import Issue, Verdict
 from shikiru.domain.reports import TestRun as AgentTestRun
+from shikiru.domain.tasks import Status
 
 _STAT = " a.py | 3 ++-\n 2 files changed, 120 insertions(+), 34 deletions(-)"
 
@@ -90,3 +93,22 @@ def test_pull_request_line_reads_state_number_and_only_recorded_checks() -> None
     )
     for data, expected in cases:
         assert pull_request_line(data) == expected
+
+
+def test_briefing_verbs_follow_the_task_state_and_never_exceed_three() -> None:
+    take, hand, message = BriefingAction.TAKE_OVER, BriefingAction.HAND_BACK, BriefingAction.MESSAGE
+    pause, resume, answer = BriefingAction.PAUSE, BriefingAction.RESUME, BriefingAction.ANSWER
+    cases = (
+        (Status.RUNNING, (), False, (take, message, pause)),
+        (Status.INTEGRATING, (), False, (take, message, pause)),
+        (Status.RUNNING, ("paused",), False, (take, message, resume)),
+        (Status.RUNNING, ("intervention",), True, (hand, message)),
+        (Status.RUNNING, ("paused", "intervention"), True, (hand, message, resume)),
+        (Status.QUEUED, (), False, (message, pause)),
+        (Status.ESCALATED, (), False, (answer, message, pause)),
+        (Status.ESCALATED, ("paused",), True, (answer, hand, message)),
+        (Status.DONE, (), False, ()),
+        (Status.CANCELLED, ("paused",), True, ()),
+    )
+    for status, holds, owned, expected in cases:
+        assert briefing_actions(status, holds, operator_owned=owned) == expected

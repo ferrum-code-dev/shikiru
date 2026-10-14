@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import TYPE_CHECKING
+
+from shikiru.domain.tasks import Hold, Status
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -19,6 +22,8 @@ PR_URL_KEY = "url"
 PR_STATE_KEY = "state"
 PR_CHECKS_PENDING_KEY = "checks_pending"
 PR_CHECKS_FAILING_KEY = "checks_failing"
+MAX_BRIEFING_ACTIONS = 3
+FIRST_PASS_ITERATION = 1
 LAST_WORDS_LIMIT = 160
 LAST_WORDS_ELLIPSIS = "…"
 _FACTS_SECTION_BREAK = "\n\n"
@@ -29,6 +34,17 @@ _DIFF_SUMMARY = re.compile(
     r"(?:, (?P<deletions>\d+) deletions?\(-\))?"
 )
 _PR_NUMBER = re.compile(r"/pull/(?P<number>\d+)/?$")
+
+
+class BriefingAction(StrEnum):
+    """A briefing verb, declared in offer order; each value is the palette action it opens."""
+
+    ANSWER = "resolve"
+    TAKE_OVER = "take-over"
+    HAND_BACK = "hand-back"
+    MESSAGE = "message"
+    PAUSE = "pause"
+    RESUME = "resume"
 
 
 @dataclass(frozen=True)
@@ -155,3 +171,42 @@ def one_line(text: str, limit: int = LAST_WORDS_LIMIT) -> str | None:
     if len(collapsed) <= limit:
         return collapsed
     return collapsed[: limit - len(LAST_WORDS_ELLIPSIS)].rstrip() + LAST_WORDS_ELLIPSIS
+
+
+def briefing_actions(
+    status: Status, holds: Sequence[str], *, operator_owned: bool
+) -> tuple[BriefingAction, ...]:
+    """Return the at most three verbs the briefing offers for a task in this state.
+
+    A decision comes first, then the ownership hand-over, a message, and the pause hold's
+    opposite; a finished task offers none. Take over needs a running role to stop, so it is
+    only offered while the task runs or integrates. An intervention hold is cleared by handing
+    back, so it never offers Resume.
+    """
+    if status in (Status.DONE, Status.CANCELLED):
+        return ()
+    verbs: list[BriefingAction] = []
+    if status is Status.ESCALATED:
+        verbs.append(BriefingAction.ANSWER)
+    if operator_owned:
+        verbs.append(BriefingAction.HAND_BACK)
+    elif status in (Status.RUNNING, Status.INTEGRATING):
+        verbs.append(BriefingAction.TAKE_OVER)
+    verbs.append(BriefingAction.MESSAGE)
+    if Hold.PAUSED.value in holds:
+        verbs.append(BriefingAction.RESUME)
+    elif not holds:
+        verbs.append(BriefingAction.PAUSE)
+    return tuple(verbs[:MAX_BRIEFING_ACTIONS])
+
+
+def rework_progress(iteration: int, max_iterations: int) -> tuple[int, int] | None:
+    """Return `(reworks so far, reworks allowed)`, or None until the first rework.
+
+    `iteration` counts implement/verify rounds from 1, so the first pass is not a rework, and
+    the round that reaches `max_iterations` is the final one: `max_iterations - 1` reworks fit.
+    """
+    allowed = max_iterations - FIRST_PASS_ITERATION
+    if iteration <= FIRST_PASS_ITERATION or allowed < 1:
+        return None
+    return iteration - FIRST_PASS_ITERATION, allowed
