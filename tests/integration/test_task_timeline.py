@@ -349,19 +349,18 @@ async def test_one_unreadable_signal_source_keeps_other_evidence_and_task_state(
     )
     views = state_views(reader, project_root, clock, StubServices())
 
-    detail = await views.task_detail(task.id, timeline_category=TIMELINE_CATEGORY_ALL)
+    page = await views.task_timeline(
+        task.id, cursor=None, role=None, turn=None, category=TIMELINE_CATEGORY_ALL
+    )
 
-    assert detail is not None
-    assert detail.status == Status.QUEUED.value
-    assert detail.timeline is not None
-    assert f"engine:{event.id}" in {entry.identity for entry in detail.timeline.entries}
+    assert page is not None
+    assert f"engine:{event.id}" in {entry.identity for entry in page.entries}
     assert any(
         entry.role == Role.IMPLEMENTER.value and entry.turn == TIMELINE_TURN
-        for entry in detail.timeline.entries
+        for entry in page.entries
     )
     assert any(
-        entry.role == Role.LEADER.value and "view.jsonl" in entry.detail
-        for entry in detail.timeline.entries
+        entry.role == Role.LEADER.value and "view.jsonl" in entry.detail for entry in page.entries
     )
 
 
@@ -402,18 +401,16 @@ async def test_truncated_signal_cursor_is_visible_without_blocking_task_detail(
     assert first.older_cursor is not None
     signal_path.write_text("")
 
-    detail = await views.task_detail(
-        task.id,
-        timeline_cursor=first.older_cursor,
-        timeline_category=TIMELINE_CATEGORY_ALL,
+    page = await views.task_timeline(
+        task.id, cursor=first.older_cursor, role=None, turn=None, category=TIMELINE_CATEGORY_ALL
     )
+    detail = await views.task_detail(task.id)
 
     assert detail is not None
     assert detail.status == Status.QUEUED.value
-    assert detail.timeline is not None
+    assert page is not None
     assert any(
-        entry.role == Role.LEADER.value and "cursor" in entry.detail
-        for entry in detail.timeline.entries
+        entry.role == Role.LEADER.value and "cursor" in entry.detail for entry in page.entries
     )
 
 

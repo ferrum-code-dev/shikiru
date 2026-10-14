@@ -390,7 +390,6 @@ async def test_actual_stage_start_uses_latest_matching_workflow_entry(
     try:
         detail = await _build_views(reader, project_dir, settings, clock, task).task_detail(
             task.id,
-            include_timeline=False,
         )
 
         assert detail is not None
@@ -980,7 +979,7 @@ async def test_home_status_blinks_only_for_a_recorded_active_turn(
                 timeout=UI_WAIT_SECONDS,
             )
             if animations:
-                detail = await views.task_detail(task.id, include_timeline=False)
+                detail = await views.task_detail(task.id)
                 assert detail is not None
                 assert detail.latest_signal == VIEW_TOOL_STARTED_SIGNAL
                 assert detail.latest_signal_at == _START
@@ -1407,7 +1406,7 @@ async def test_task_activity_distinguishes_setup_from_a_missing_signal(
     ],
 ) -> None:
     connection, project_dir, clock, settings, task, reader, views = task_activity_environment
-    no_signal = await views.task_detail(task.id, include_timeline=False)
+    no_signal = await views.task_detail(task.id)
     assert no_signal is not None
     assert not no_signal.signal_observed
     assert no_signal.latest_signal is None
@@ -1422,7 +1421,7 @@ async def test_task_activity_distinguishes_setup_from_a_missing_signal(
     setup = TaskStore(connection, clock).get(setup.id)
     assert setup is not None
     setup_views = _build_views(reader, project_dir, settings, clock, setup)
-    setup_detail = await setup_views.task_detail(setup.id, include_timeline=False)
+    setup_detail = await setup_views.task_detail(setup.id)
     assert setup_detail is not None
     assert setup_detail.actual_stage is None
     assert setup_detail.actual_stage_started_at is None
@@ -1436,7 +1435,7 @@ async def test_task_activity_distinguishes_setup_from_a_missing_signal(
         message="setup task completed",
         data={"summary": "completed"},
     )
-    completed_detail = await setup_views.task_detail(setup.id, include_timeline=False)
+    completed_detail = await setup_views.task_detail(setup.id)
     assert completed_detail is not None
     assert completed_detail.actual_stage is None
 
@@ -1456,7 +1455,7 @@ async def test_task_activity_claims_a_signal_only_for_a_running_current_turn(
     connection, project_dir, clock, settings, task, reader, views = task_activity_environment
     log_path = _write_current_turn_log(project_dir, task, views)
     _append_message(log_path, "Running the parser tests")
-    observed = await views.task_detail(task.id, include_timeline=False)
+    observed = await views.task_detail(task.id)
     assert observed is not None
     assert observed.signal_observed
     assert observed.latest_signal_at == _START
@@ -1466,25 +1465,25 @@ async def test_task_activity_claims_a_signal_only_for_a_running_current_turn(
         update={"dashboard": settings.dashboard.model_copy(update={"animations": False})}
     )
     static_views = _build_views(reader, project_dir, static_settings, clock, task)
-    static_observed = await static_views.task_detail(task.id, include_timeline=False)
+    static_observed = await static_views.task_detail(task.id)
     assert static_observed is not None
     assert static_observed.signal_observed
     static_spinner = static_observed.progress.panels[1].spinner_frame
     clock.advance(1)
-    static_after_tick = await static_views.task_detail(task.id, include_timeline=False)
+    static_after_tick = await static_views.task_detail(task.id)
     assert static_after_tick is not None
     assert static_after_tick.progress.panels[1].spinner_frame == static_spinner
 
     tasks = TaskStore(connection, clock)
     tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
-    held = await views.task_detail(task.id, include_timeline=False)
+    held = await views.task_detail(task.id)
     assert held is not None
     assert Hold.PAUSED.value in held.holds
     assert not held.signal_observed
     assert held.latest_signal_at == _START
     assert held.actual_stage_started_at is None
     tasks.set_holds(task.id, frozenset())
-    released = await views.task_detail(task.id, include_timeline=False)
+    released = await views.task_detail(task.id)
     assert released is not None
     assert released.signal_observed
 
@@ -1502,7 +1501,7 @@ async def test_task_activity_claims_a_signal_only_for_a_running_current_turn(
             "iteration": current.iteration,
         },
     )
-    stopped = await views.task_detail(task.id, include_timeline=False)
+    stopped = await views.task_detail(task.id)
     assert stopped is not None
     assert not stopped.signal_observed
     assert stopped.latest_signal_at == _START
@@ -1516,7 +1515,7 @@ async def test_task_activity_claims_a_signal_only_for_a_running_current_turn(
         message="task completed",
         data={"summary": "completed"},
     )
-    completed = await views.task_detail(task.id, include_timeline=False)
+    completed = await views.task_detail(task.id)
     assert completed is not None
     assert completed.status == Status.DONE.value
     assert not completed.signal_observed
@@ -2254,9 +2253,9 @@ async def test_detail_marker_cycles_only_while_the_engine_works_on_the_task(
         )
 
         async def frames() -> tuple[str, str, bool]:
-            first = await views.task_detail(task.id, include_timeline=False)
+            first = await views.task_detail(task.id)
             clock.advance(_MOTION_TICK_SECONDS)
-            second = await views.task_detail(task.id, include_timeline=False)
+            second = await views.task_detail(task.id)
             assert first is not None
             assert second is not None
             return (

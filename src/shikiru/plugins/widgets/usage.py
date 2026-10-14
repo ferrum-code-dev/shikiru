@@ -116,7 +116,6 @@ class UsagePanel(GatedStatic):
         else:
             detail = await self._widget_context.views.task_detail(
                 self._widget_context.focus_task,
-                include_timeline=False,
             )
             if not widget_is_attached(self):
                 return

@@ -73,7 +73,6 @@ class TaskTimelineSource(StrEnum):
     ENGINE = TIMELINE_SOURCE_ENGINE
 
 
-DEFAULT_TASK_TIMELINE_CATEGORY = TaskTimelineCategory.ACTIVITY
 DEFAULT_TASK_TIMELINE_REFRESH_SECONDS = 1
 DEFAULT_NOW_MAX_LINES = 6
 DEFAULT_NOW_COMPACT_LINES = 2
@@ -527,7 +526,6 @@ class TaskDetailView:
     blocker: TaskBlockerView | None = None
     submitted_age: str = ""
     requeued_age: str | None = None
-    timeline: TaskTimelinePageView | None = None
     usage: RecordedUsageView | None = None
     signal_observed: bool = False
     quota_observations: tuple[AgentUsageView, ...] = ()
@@ -848,13 +846,8 @@ class DashboardViews(Protocol):
         task_id: str,
         *,
         relationship_offset: int = 0,
-        timeline_cursor: str | None = None,
-        timeline_role: str | None = None,
-        timeline_turn: str | None = None,
-        timeline_category: str = DEFAULT_TASK_TIMELINE_CATEGORY,
-        include_timeline: bool = True,
     ) -> TaskDetailView | None:
-        """Return task state, recorded workspace evidence and one bounded timeline page."""
+        """Return task state, recorded workspace evidence and and relationships."""
         ...
 
     async def task_timeline(

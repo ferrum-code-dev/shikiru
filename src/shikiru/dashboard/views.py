@@ -16,7 +16,6 @@ from shikiru.agents.contracts import (
     FailureKind,
 )
 from shikiru.dashboard.contract import (
-    DEFAULT_TASK_TIMELINE_CATEGORY,
     AgentUsageView,
     AttentionGroupView,
     AttentionView,
@@ -912,30 +911,11 @@ class StateDashboardViews:
         task_id: str,
         *,
         relationship_offset: int = 0,
-        timeline_cursor: str | None = None,
-        timeline_role: str | None = None,
-        timeline_turn: str | None = None,
-        timeline_category: str = DEFAULT_TASK_TIMELINE_CATEGORY,
-        include_timeline: bool = True,
     ) -> TaskDetailView | None:
         """Project current task state and its bounded, recorded evidence for the detail view."""
         detail = await self._queries.get_task_detail(task_id)
         if detail is None:
             return None
-        timeline_view = None
-        if include_timeline:
-            try:
-                timeline_view = await self.task_timeline(
-                    task_id,
-                    cursor=timeline_cursor,
-                    role=timeline_role,
-                    turn=timeline_turn,
-                    category=timeline_category,
-                )
-            except (ShikiruError, OSError, ValueError, TypeError) as error:
-                timeline_view = _timeline_read_error(error, role=timeline_role, turn=timeline_turn)
-            if timeline_view is None:
-                return None
         try:
             signal_page = await self.task_timeline(
                 task_id,
@@ -1052,7 +1032,6 @@ class StateDashboardViews:
             blocker=self._task_blocker(task, relationships, ownership, now),
             submitted_age=_age(now - task.created_at),
             requeued_age=_age(now - task.requeued_at) if task.requeued_at is not None else None,
-            timeline=timeline_view,
             usage=_recorded_usage(detail.sessions),
             signal_observed=task_frame.signal_observed,
             quota_observations=quota_observations,

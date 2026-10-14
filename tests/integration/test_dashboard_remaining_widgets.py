@@ -993,7 +993,7 @@ async def _assert_unknown_billing_source_views(
     task_id: str,
     operator_unknown_run_id: int,
 ) -> None:
-    task_detail = await context.views.task_detail(task_id, include_timeline=False)
+    task_detail = await context.views.task_detail(task_id)
     assert task_detail is not None
     assert task_detail.usage is not None
     operator_unknown_session = next(

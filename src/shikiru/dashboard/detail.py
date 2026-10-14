@@ -722,7 +722,6 @@ class TaskDetailPanel(Vertical):
                 view = await self._widget_context.views.task_detail(
                     task_id,
                     relationship_offset=self._relationship_offset,
-                    include_timeline=False,
                 )
             except (ShikiruError, OSError, ValueError, TypeError) as error:
                 if self._screen_is_active():

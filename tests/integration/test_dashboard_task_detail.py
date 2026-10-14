@@ -1602,23 +1602,25 @@ async def test_latest_signal_keeps_global_role_identity_past_filtered_evidence_a
     )
     assert filtered_latest is not None
     assert filtered_latest.older_cursor is not None
-    detail = await views.task_detail(
+    older = await views.task_timeline(
         task.id,
-        timeline_cursor=filtered_latest.older_cursor,
-        timeline_role=Role.IMPLEMENTER.value,
-        timeline_category=TaskTimelineCategory.SIGNAL.value,
+        cursor=filtered_latest.older_cursor,
+        role=Role.IMPLEMENTER.value,
+        turn=None,
+        category=TaskTimelineCategory.SIGNAL.value,
     )
+    detail = await views.task_detail(task.id)
 
+    assert older is not None
+    assert older.entries[0].turn == "02-implement-i1"
+    assert older.entries[0].summary == "SessionStarted"
     assert detail is not None
-    assert detail.timeline is not None
-    assert detail.timeline.entries[0].turn == "02-implement-i1"
-    assert detail.timeline.entries[0].summary == "SessionStarted"
     assert detail.latest_signal == "ToolStarted"
     assert detail.latest_signal_at == START + timedelta(seconds=_LATEST_SIGNAL_SECONDS)
     assert detail.actual_stage_started_at == START + timedelta(seconds=_STAGE_START_SECONDS)
 
     tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
-    paused = await views.task_detail(task.id, include_timeline=False)
+    paused = await views.task_detail(task.id)
     assert paused is not None
     assert paused.latest_signal_at == detail.latest_signal_at
 
@@ -1628,7 +1630,7 @@ async def test_latest_signal_keeps_global_role_identity_past_filtered_evidence_a
         Transition.stay(current_task, step=None, status=Status.DONE),
     )
     runs.close(leader.id)
-    completed = await views.task_detail(task.id, include_timeline=False)
+    completed = await views.task_detail(task.id)
     assert completed is not None
     assert completed.actual_stage is None
     assert completed.latest_signal_at == detail.latest_signal_at
