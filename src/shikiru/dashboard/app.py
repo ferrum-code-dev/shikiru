@@ -53,6 +53,7 @@ from shikiru.dashboard.detail import (
 )
 from shikiru.dashboard.diagnostics import ProjectDiagnosticsPanel
 from shikiru.dashboard.interaction import native_editor_has_focus
+from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.tick import pinned_tick
 from shikiru.domain.commands import command_rejection_cause
 from shikiru.errors import ConfigError
@@ -207,6 +208,8 @@ FOCUS_CONTEXT_HELP = "context-help"
 EMPTY_CONTEXT_CHOICE = ""
 TASK_PALETTE_ROUTE_WORKER = "task-palette-route"
 _MAX_CONTEXTUAL_PALETTE_DRAFTS = 16
+_TASK_MOVE_STEPS = {"up": -1, "down": 1}
+_ARROW_KEY_OWNERS = (ListView, RowList)
 
 
 @dataclass
@@ -225,6 +228,8 @@ class _MotionCallback:
 
 class _TaskBrowserNavigation(Protocol):
     async def activate_filter(self, task_filter: TaskBrowserFilter) -> None: ...
+
+    async def move_selection(self, step: int) -> None: ...
 
     def focus_task_results(self) -> None: ...
 
@@ -607,7 +612,10 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
             else:
                 lines.append(f"{self._tmux_detach_hint} d: detach from tmux")
         if _WIDGET_ESCALATIONS in self._widget_names:
-            lines.append("Escalations: Up/Down select, o opens evidence, r opens resolution")
+            lines.append(
+                "Escalations: Up/Down select, Left/Right choose a decision, "
+                "o opens evidence, r opens resolution"
+            )
         if _WIDGET_DIALOGUE in self._widget_names:
             lines.append("Dialogue: Enter opens full text")
         if _WIDGET_QUEUE in self._widget_names and self._task_id is None:
@@ -1776,10 +1784,27 @@ class DashboardApp(App[None]):
             isinstance(self.screen, ModalScreen) and not task_detail_screen
         ):
             return
+        if await self._move_task_selection(event.key):
+            event.stop()
+            event.prevent_default()
+            return
         if await self._dispatch_workspace_key(event):
             event.stop()
             if event.key in {_ACTIONS_KEY, TASK_DETAIL_ESCAPE}:
                 event.prevent_default()
+
+    async def _move_task_selection(self, key: str) -> bool:
+        if (
+            key not in _TASK_MOVE_STEPS
+            or isinstance(self.screen, ModalScreen)
+            or isinstance(self.focused, _ARROW_KEY_OWNERS)
+        ):
+            return False
+        queue = self._widget_instances.get(_WIDGET_QUEUE)
+        if queue is None:
+            return False
+        await cast("_TaskBrowserNavigation", queue).move_selection(_TASK_MOVE_STEPS[key])
+        return True
 
     def _focused_select_is_expanded(self) -> bool:
         focused = self.focused

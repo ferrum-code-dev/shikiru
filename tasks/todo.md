@@ -291,7 +291,8 @@ Eleventh-review scope and evidence: [eleventh review, task details](../docs/tui-
 
 Twelfth-review scope and evidence: [twelfth review, keys, escalation answers and inline details](../docs/tui-feedback-twelfth-review.md).
 
-- [ ] Task 186: Up/Down select tasks from any bar
+- [x] Task 186: Up/Down select tasks from any bar
+  - Proof: Reproduced on the unchanged code: a native DashboardApp pilot (Tab to each stop, Down, Up) left the selection on T-2 with focus on the escalation bar, usage, resources or the footer while the task list moved to T-3, and the new table failed for those four stops. After the change every stop moves T-2 to T-3 and back, the list moves one step, and the Left/Right, search-input (arrows then Escape), expanded-Select-in-task-detail and related-task RowList arrow tests stay green (a mutation check shows the RowList exclusion is guarded by existing tests). Text areas exist only in modals the route never handles, so no table row covers them. Gate `uv run poe check` is green: 1574 passed, 14 skipped, 91.21% coverage; collected cases 1589 to 1595.
 - [ ] Task 187: Remove the `u` and `e` task keys
 - [ ] Task 188: Resolution panel highlight and keyboard-reachable evidence
 - [ ] Task 189: What was tried digest

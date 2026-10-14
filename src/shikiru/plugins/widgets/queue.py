@@ -473,7 +473,7 @@ class QueuePanel(Vertical):
         self._task_list = _TaskBrowserListView(
             widget_id=TASK_LIST_ID,
             focus_layout=self._focus_layout,
-            move_selection=self._move_selection,
+            move_selection=self.move_selection,
             select_task=self.select_task,
             activate_attention_decision=context.activate_attention_decision,
         )
@@ -502,7 +502,7 @@ class QueuePanel(Vertical):
         self._recent_list = _TaskBrowserListView(
             widget_id=TASK_RECENT_LIST_ID,
             focus_layout=self._focus_layout,
-            move_selection=self._move_selection,
+            move_selection=self.move_selection,
             select_task=self.select_task,
             activate_attention_decision=context.activate_attention_decision,
         )
@@ -690,7 +690,8 @@ class QueuePanel(Vertical):
         if isinstance(focused, Input):
             return
 
-    async def _move_selection(self, step: int) -> None:
+    async def move_selection(self, step: int) -> None:
+        """Move the task selection by `step` rows across the visible task lists."""
         rows = self._visible_rows()
         if not rows:
             return

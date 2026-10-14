@@ -1791,8 +1791,9 @@ Scope: [twelfth review](../docs/tui-feedback-twelfth-review.md); the operator ap
 
 ### Task 186: Up/Down select tasks from any bar
 Refs: `plugins/widgets/escalations.py` (`on_key`, `_handle_vertical_key`), `plugins/widgets/queue.py` (`_move_selection`), `dashboard/app.py` (`on_key`, `_TaskBrowserNavigation`, stale help line "Escalations: Up/Down select"), `test_dashboard_escalation_follow.py`.
-- [ ] Reproduce first: with focus on the escalation, usage, resources and footer stops, Up/Down must move the task selection; the bar keeps Left/Right; text inputs, text areas and expanded Selects keep their arrows; the task list does not move twice.
-- [ ] Rewrite the test that pins the inert bar; add one table over the focus stops; fix the stale help line.
+- [x] Reproduce first: with focus on the escalation, usage, resources and footer stops, Up/Down must move the task selection; the bar keeps Left/Right; text inputs, text areas and expanded Selects keep their arrows; the task list does not move twice.
+- [x] Rewrite the test that pins the inert bar; add one table over the focus stops; fix the stale help line.
+  - Proof: Reproduced on the unchanged code: a native DashboardApp pilot (Tab to each stop, Down, Up) left the selection on T-2 with focus on the escalation bar, usage, resources or the footer while the task list moved to T-3, and the new table failed for those four stops. After the change every stop moves T-2 to T-3 and back, the list moves one step, and the Left/Right, search-input (arrows then Escape), expanded-Select-in-task-detail and related-task RowList arrow tests stay green (a mutation check shows the RowList exclusion is guarded by existing tests). Text areas exist only in modals the route never handles, so no table row covers them. Gate `uv run poe check` is green: 1574 passed, 14 skipped, 91.21% coverage; collected cases 1589 to 1595.
 
 ### Task 187: Remove the `u` and `e` task keys
 Refs: `dashboard/app.py` (`_dispatch_workspace_key`, `_EVIDENCE_KEY`, help), `detail.py` (`TASK_USAGE_KEY`); tests that press them (`_open_task_view`, `_assert_home_inline_secondary_routes`, `_assert_evidence_editor_shortcut_precedence` and the tests listed in the analysis).

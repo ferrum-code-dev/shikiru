@@ -213,7 +213,7 @@ class EscalationsPanel(Static):
 
     async def on_key(self, event: events.Key) -> None:
         """Choose a decision with Left and Right; open its task, evidence or resolution."""
-        if event.key in _MOVE_STEPS:
+        if event.key in _MOVE_STEPS and not self._attention.groups:
             self._handle_vertical_key(event)
             return
         if not self._attention.groups:
@@ -253,7 +253,7 @@ class EscalationsPanel(Static):
         event.stop()
 
     def _handle_vertical_key(self, event: events.Key) -> None:
-        if self._focus_row and not self._attention.groups:
+        if self._focus_row:
             panels = self.query_one("#escalation-panels", VerticalScroll)
             panels.scroll_to(
                 y=panels.scroll_y + _MOVE_STEPS[event.key],

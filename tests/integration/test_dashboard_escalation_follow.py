@@ -8,11 +8,17 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from rich.console import Console
 from textual.color import Color
-from textual.containers import VerticalScroll
-from textual.widgets import ListView
+from textual.widgets import Input, ListItem, ListView, Select
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
+from shikiru.dashboard.detail import (
+    TASK_DETAIL_DETAILS_BUTTON,
+    TASK_DETAIL_TIMELINE_CATEGORY,
+    TaskDetailScreen,
+)
+from shikiru.dashboard.details_list import TaskDetailsListScreen
+from shikiru.dashboard.details_list_view import DetailsSection
 from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Status, Step, Task
@@ -49,8 +55,9 @@ _WIDE = (120, 40)
 _COMPACT = (48, 20)
 _MAX_ROWS = 6
 _BAR = "#escalations"
-_SCROLLERS = ("#focus-root", "#focus-readouts", "#escalation-panels")
 _TASK_LIST = "#task-browser-list"
+_SEARCH = "#task-browser-search"
+_ARROW_STOPS = ("#escalations", "#usage", "#resources", "#focus-footer-actions", _TASK_LIST)
 _NO_HINT_ACTIONS = "Ctrl+P actions"
 _OTHER_DECISIONS = re.compile(r"\d+ decisions? on other tasks")
 
@@ -288,35 +295,94 @@ async def test_a_choice_made_with_left_and_right_survives_refreshes(
         assert extra in home.text()
 
 
-def _scroll_offsets(app: DashboardApp) -> tuple[float, ...]:
-    return tuple(app.query_one(selector, VerticalScroll).scroll_y for selector in _SCROLLERS)
+def _task_rows(home: _Home) -> list[ListItem]:
+    children = home.app.query_one(_TASK_LIST, ListView).children
+    return [child for child in children if isinstance(child, ListItem)]
 
 
-async def test_up_and_down_do_nothing_while_the_bar_has_focus_and_the_list_still_moves(
+def _selected_index(home: _Home) -> int:
+    highlighted = home.app.query_one(_TASK_LIST, ListView).highlighted_child
+    return next((i for i, row in enumerate(_task_rows(home)) if row is highlighted), -1)
+
+
+async def _wait_for_selection(home: _Home, index: int) -> None:
+    await wait_until(lambda: _selected_index(home) == index, timeout=UI_WAIT_SECONDS)
+
+
+async def _tab_to(home: _Home, pilot: Pilot[None], selector: str) -> None:
+    target = home.app.query_one(selector)
+    for _ in range(len(home.app.screen.focus_chain)):
+        if home.app.focused is target:
+            return
+        await pilot.press("tab")
+    pytest.fail(f"Tab never reached {selector}")
+
+
+@pytest.mark.parametrize("stop", _ARROW_STOPS)
+async def test_up_and_down_move_the_task_selection_one_step_from_every_home_stop(
     home: _Home,
+    stop: str,
 ) -> None:
     async with home.app.run_test(size=_COMPACT) as pilot:
         await _settled(home, pilot)
-        await _select(home, pilot, home.second)
-        await wait_until(
-            lambda: home.decisions[home.second.id] in home.text(), timeout=UI_WAIT_SECONDS
-        )
-        task_list = home.app.query_one(_TASK_LIST, ListView)
-        highlighted = task_list.highlighted_child
-        shown = home.text()
-        offsets = _scroll_offsets(home.app)
-        home.bar.focus()
-        for key in ("up", "down", "up"):
+        await _select(home, pilot, home.first)
+        await _tab_to(home, pilot, stop)
+        count = len(_task_rows(home))
+        current = _selected_index(home)
+        for key, step in (("down", 1), ("up", -1)):
+            expected = (current + step) % count
             await pilot.press(key)
-            await pilot.pause()
-            assert home.app.focused is home.bar
-            assert home.text() == shown
-            assert task_list.highlighted_child is highlighted
-            assert _scroll_offsets(home.app) == offsets
-        task_list.focus()
+            await _wait_for_selection(home, expected)
+            assert home.app.focused is home.app.query_one(stop)
+            current = expected
+
+
+async def test_up_and_down_leave_the_task_selection_alone_in_the_search_input(home: _Home) -> None:
+    async with home.app.run_test(size=_COMPACT) as pilot:
+        await _settled(home, pilot)
+        await _select(home, pilot, home.first)
+        selected = _selected_index(home)
+        task_list = home.app.query_one(_TASK_LIST, ListView)
+        await pilot.press("slash")
+        search = home.app.query_one(_SEARCH, Input)
+        await wait_until(lambda: home.app.focused is search, timeout=UI_WAIT_SECONDS)
+        await pilot.press("down", "up", "escape")
+        await wait_until(lambda: home.app.focused is task_list, timeout=UI_WAIT_SECONDS)
+        assert _selected_index(home) == selected
+
+
+async def test_arrows_move_an_expanded_select_in_task_detail_without_moving_the_task(
+    home: _Home,
+) -> None:
+    async with home.app.run_test(size=_WIDE) as pilot:
+        await _settled(home, pilot)
         await _select(home, pilot, home.plain)
-        await wait_until(lambda: "No decision needed" in home.text(), timeout=UI_WAIT_SECONDS)
-        assert task_list.highlighted_child is not highlighted
+        task_list = home.app.query_one(_TASK_LIST, ListView)
+        selected = task_list.highlighted_child
+        await _tab_to(home, pilot, f"#{TASK_DETAIL_DETAILS_BUTTON}")
+        await pilot.press("enter")
+        await wait_until(
+            lambda: isinstance(home.app.screen, TaskDetailsListScreen), timeout=UI_WAIT_SECONDS
+        )
+        events = list(DetailsSection).index(DetailsSection.EVENTS)
+        await pilot.press(*["down"] * events, "enter")
+        await wait_until(
+            lambda: (
+                isinstance(home.app.screen, TaskDetailScreen)
+                and bool(home.app.screen.query(f"#{TASK_DETAIL_TIMELINE_CATEGORY}"))
+            ),
+            timeout=UI_WAIT_SECONDS,
+        )
+        category = cast(
+            "Select[str]", home.app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
+        )
+        category.focus()
+        await pilot.press("enter")
+        await wait_until(lambda: category.expanded, timeout=UI_WAIT_SECONDS)
+        initial = category.value
+        await pilot.press("down", "enter")
+        await wait_until(lambda: category.value != initial, timeout=UI_WAIT_SECONDS)
+        assert task_list.highlighted_child is selected
 
 
 @pytest.mark.parametrize("key", ["left", "right"])
