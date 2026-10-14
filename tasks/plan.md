@@ -1861,8 +1861,9 @@ Refs: `dashboard/details_list_view.py` (`SELECTED_BAR`, `BAR_BLANK`, `_EntryLine
 
 ### Task 198: Edit area under the option, new keys
 Refs: spec "Escalation resolution panel"; `dashboard/resolution.py` (`_AnswerBox`, `_open_answer`, `_PREFILL_SEPARATOR`, bindings, `check_action`, drafts), `resolution_view.py`, `ui/keys.py`.
-- [ ] `needs your input` is white; the box moves under the edited row, starts empty, bottom-rule look, no side border; drafts do not leak between rows.
-- [ ] Ctrl+S, Ctrl+Enter and Ctrl+J send; Enter newline; → enters, ← at start and Esc leave; Tab route removed; hints updated with the key helper; empty box on an alternative sends the label.
+- [x] `needs your input` is white; the box moves under the edited row, starts empty, bottom-rule look, no side border; drafts do not leak between rows.
+- [x] Ctrl+S, Ctrl+Enter and Ctrl+J send; Enter newline; → enters, ← at start and Esc leave; Tab route removed; hints updated with the key helper; empty box on an alternative sends the label.
+- Proof: verified natively at 100x40 and 48 columns in colour (`needs your input` rendered `#dce2e9`, rest grey `#9aa5b5`; box directly under the option, text aligned with the option text, one bottom rule turning steel when focused, no left stripe, uniform selected background) and the key table in `test_dashboard_resolution.py` (Ctrl+S/Ctrl+J/Ctrl+Enter send, Enter newline, ←/Esc return, no draft leak). `poe check` green.
 
 ### Task 199: Details section of the resolution panel
 Refs: `domain/attempts.py`, `engine/escalations.py`, `domain/escalation_panel.py` (`what_was_tried`), `resolution.py` (`_TriedSection`), `resolution_view.py` (`tried_renderable`).

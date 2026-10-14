@@ -23,6 +23,7 @@ from shikiru.ui.section import (
 )
 from shikiru.ui.tokens import (
     DUSTY_ROSE,
+    PRIMARY_TEXT_COLOR,
     SAGE,
     SECONDARY_TEXT_COLOR,
     STEEL_BLUE,
@@ -53,8 +54,8 @@ _SELECT_HINT = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW} select"
 _SEND_HINT = "Enter send"
 _EXPAND_HINT = "Enter expand"
 _COLLAPSE_HINT = "Enter collapse"
-_ANSWER_HINT = "Enter answer"
-_DETAILS_HINT = "Tab add details"
+_EDIT_HINT = "Enter or \N{RIGHTWARDS ARROW} edit"
+_BOX_HINTS = ("Ctrl+S send", "Enter new line", "\N{LEFTWARDS ARROW} back")
 _NEEDS_INPUT_MARK = "\N{LOWER RIGHT PENCIL}"
 _NEEDS_INPUT_TEXT = "needs your input"
 _TRIED_TITLE = "What was tried"
@@ -155,16 +156,20 @@ def decision_renderable(
 def _enter_hints(selected: PanelChoice | None, *, tried_expanded: bool) -> tuple[str, ...]:
     if selected is None:
         return (_COLLAPSE_HINT if tried_expanded else _EXPAND_HINT,)
-    if selected.kind is not ChoiceKind.ANSWER_OPTION:
-        return (_SEND_HINT,)
-    return (_ANSWER_HINT,) if selected.needs_input else (_SEND_HINT, _DETAILS_HINT)
+    editable = selected.kind is ChoiceKind.OWN_ANSWER or selected.needs_input
+    return (_EDIT_HINT,) if editable else (_SEND_HINT,)
 
 
-def choose_renderable(selected: PanelChoice | None, *, tried_expanded: bool) -> RenderableType:
+def choose_renderable(
+    selected: PanelChoice | None, *, tried_expanded: bool, editing: bool = False
+) -> RenderableType:
     """Return the Choose heading with its key hint; `selected` is `None` on `What was tried`."""
-    hint = GROUP_SEPARATOR.join(
-        (_SELECT_HINT, *_enter_hints(selected, tried_expanded=tried_expanded))
+    hints = (
+        _BOX_HINTS
+        if editing
+        else (_SELECT_HINT, *_enter_hints(selected, tried_expanded=tried_expanded))
     )
+    hint = GROUP_SEPARATOR.join(hints)
     return Section(
         _CHOOSE_TITLE, Group(), key_hint(hint, SECONDARY_TEXT_COLOR), title_style=BOLD_STEEL
     )
@@ -187,6 +192,14 @@ def starred_indexes(panel: ResolutionPanel) -> frozenset[int]:
     )
 
 
+def _consequence(choice: PanelChoice, *, disabled: bool) -> Text:
+    if not choice.needs_input:
+        return grey(choice.consequence)
+    lead = Text(_NEEDS_INPUT_TEXT, style=SECONDARY_TEXT_COLOR if disabled else PRIMARY_TEXT_COLOR)
+    lead.append(GROUP_SEPARATOR + choice.consequence, style=SECONDARY_TEXT_COLOR)
+    return lead
+
+
 def choice_renderable(
     choice: PanelChoice, *, starred: bool, armed: bool, disabled: bool
 ) -> RenderableType:
@@ -204,10 +217,5 @@ def choice_renderable(
     grid.add_column(ratio=1)
     grid.add_row(Text(f" {star} ", style=style), label)
     if choice.kind is not ChoiceKind.OWN_ANSWER:
-        consequence = (
-            GROUP_SEPARATOR.join((_NEEDS_INPUT_TEXT, choice.consequence))
-            if choice.needs_input
-            else choice.consequence
-        )
-        grid.add_row(Text(" " * _MARK_WIDTH), grey(consequence))
+        grid.add_row(Text(" " * _MARK_WIDTH), _consequence(choice, disabled=disabled))
     return grid

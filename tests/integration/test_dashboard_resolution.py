@@ -103,21 +103,33 @@ async def _type(pilot: Pilot[None], text: str) -> None:
         ),
         pytest.param(
             EscalationReason.DECISION_REQUIRED,
-            "flagged-alternative",
+            "flagged-enter-details",
             AnswerResolution(text=f"{_ALTERNATIVE}{_PREFILL}{_DETAILS}"),
-            id="flagged-alternative-with-details",
+            id="flagged-alternative-sends-label-and-details",
         ),
         pytest.param(
             EscalationReason.DECISION_REQUIRED,
-            "tab-details",
+            "flagged-ctrl+j",
             AnswerResolution(text=f"{_ALTERNATIVE}{_PREFILL}{_DETAILS}"),
-            id="tab-adds-details-to-alternative",
+            id="ctrl-j-sends",
         ),
         pytest.param(
             EscalationReason.DECISION_REQUIRED,
-            "tab-keeps-draft",
+            "flagged-ctrl+enter",
+            AnswerResolution(text=f"{_ALTERNATIVE}{_PREFILL}{_DETAILS}"),
+            id="ctrl-enter-sends",
+        ),
+        pytest.param(
+            EscalationReason.DECISION_REQUIRED,
+            "flagged-empty",
+            AnswerResolution(text=_ALTERNATIVE),
+            id="empty-box-sends-the-label-alone",
+        ),
+        pytest.param(
+            EscalationReason.DECISION_REQUIRED,
+            "own-draft",
             AnswerResolution(text=_OWN_TEXT),
-            id="tab-keeps-an-existing-draft",
+            id="own-answer-draft-is-restored-and-sent",
         ),
         pytest.param(
             EscalationReason.DECISION_REQUIRED,
@@ -149,11 +161,11 @@ async def test_each_send_route_queues_one_resolution_the_engine_applies(
     request.addfinalizer(reader.close)
     task = seed_task(connection, clock, title="Send route")
     escalation, _ = seed_escalation(
-        connection, clock, task.id, tmp_path, reason, needs_input=act == "flagged-alternative"
+        connection, clock, task.id, tmp_path, reason, needs_input=act.startswith("flagged")
     )
     commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     drafts = ResolutionDrafts()
-    if act == "tab-keeps-draft":
+    if act == "own-draft":
         drafts.remember(task.id, escalation.id, _OWN_TEXT)
     app = ResolutionHost(
         resolution_factory(commands, queries, clock, reader, drafts=drafts), escalation.id
@@ -164,25 +176,22 @@ async def test_each_send_route_queues_one_resolution_the_engine_applies(
         assert queue.pending() == []
         if act == "alternative":
             await pilot.press("down", "enter")
-        elif act in {"flagged-alternative", "tab-details", "tab-keeps-draft"}:
-            move = "up" if act == "tab-keeps-draft" else "down"
-            await pilot.press(move, "enter" if act == "flagged-alternative" else "tab")
+        elif act.startswith("flagged") or act == "own-draft":
+            await pilot.press(*(["enter"] if act == "own-draft" else ["down", "enter"]))
             answer = screen.query_one("#resolution-answer", TextArea)
             await wait_until(lambda: app.focused is answer, timeout=UI_WAIT_SECONDS)
             assert queue.pending() == []
-            expected_box = _OWN_TEXT if act == "tab-keeps-draft" else f"{_ALTERNATIVE}{_PREFILL}"
-            assert answer.text == expected_box
-            if act != "tab-keeps-draft":
-                assert answer.cursor_location == answer.document.end
+            assert answer.text == (_OWN_TEXT if act == "own-draft" else "")
+            if act in {"flagged-enter-details", "flagged-ctrl+j", "flagged-ctrl+enter"}:
                 await _type(pilot, _DETAILS)
-            await pilot.press("enter")
+            await pilot.press(act.removeprefix("flagged-") if "+" in act else "ctrl+s")
         elif act == "own-answer":
             await pilot.click(_rows(screen)[_OWN_ANSWER_ROW])
             answer = screen.query_one("#resolution-answer", TextArea)
             await wait_until(lambda: app.focused is answer, timeout=UI_WAIT_SECONDS)
             await _type(pilot, _OWN_TEXT)
             assert queue.pending() == []
-            await pilot.press("enter")
+            await pilot.press("ctrl+s")
         elif act == "accept":
             await pilot.click(_rows(screen)[_ACCEPT_ROW])
         else:
@@ -203,6 +212,78 @@ async def test_each_send_route_queues_one_resolution_the_engine_applies(
         escalation_id=escalation.id,
         expected_type=type(expected),
     )
+
+
+async def test_the_answer_box_follows_its_row_and_the_keys_move_between_box_and_list(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    clock = FakeClock(_START)
+    reader = StateReader(database, clock)
+    request.addfinalizer(reader.close)
+    task = seed_task(connection, clock, title="Box follows row")
+    escalation, _ = seed_escalation(
+        connection,
+        clock,
+        task.id,
+        tmp_path,
+        EscalationReason.DECISION_REQUIRED,
+        needs_input=True,
+    )
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
+    app = ResolutionHost(resolution_factory(commands, queries, clock, reader), escalation.id)
+
+    async def focused_box_after(row: int) -> TextArea:
+        screen = app.screen
+        assert isinstance(screen, ResolutionScreen)
+        answer = screen.query_one("#resolution-answer", TextArea)
+        await wait_until(lambda: app.focused is answer, timeout=UI_WAIT_SECONDS)
+        assert answer.parent is not None
+        siblings = list(answer.parent.children)
+        assert siblings[siblings.index(answer) - 1] is _rows(screen)[row]
+        return answer
+
+    async def back_in_list() -> None:
+        await wait_until(
+            lambda: app.focused is not None and app.focused.id == "resolution-choices",
+            timeout=UI_WAIT_SECONDS,
+        )
+        assert isinstance(app.screen, ResolutionScreen)
+
+    async with app.run_test(size=_SIZE) as pilot:
+        await _opened(app)
+        await pilot.press("down", "right")
+        answer = await focused_box_after(1)
+        await _type(pilot, _DETAILS)
+        await pilot.press("enter")
+        await wait_until(lambda: answer.document.line_count == 2, timeout=UI_WAIT_SECONDS)
+        await pilot.press("left")
+        assert app.focused is answer
+        await pilot.press("up", "home")
+        await wait_until(lambda: answer.cursor_location == (0, 0), timeout=UI_WAIT_SECONDS)
+        await pilot.press("left")
+        await back_in_list()
+        await pilot.press("right")
+        await focused_box_after(1)
+        await pilot.press("escape")
+        await back_in_list()
+        await pilot.press("down", "enter")
+        answer = await focused_box_after(2)
+        assert answer.text == ""
+        await _type(pilot, _OWN_TEXT)
+        await pilot.press("escape")
+        await back_in_list()
+        await pilot.press("up", "enter")
+        answer = await focused_box_after(1)
+        assert answer.text == ""
+        await pilot.press("ctrl+s")
+        await wait_until(lambda: app.results == [True], timeout=UI_WAIT_SECONDS)
+
+    (queued,) = queue.pending()
+    assert isinstance(queued.command, Resolve)
+    assert queued.command.resolution == AnswerResolution(text=_ALTERNATIVE)
 
 
 @pytest.mark.parametrize("record", ["missing-packet", "malformed-packet", "unknown-decision"])

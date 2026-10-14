@@ -10,6 +10,7 @@ from shikiru.ui.section import BOLD_STEEL
 
 KEY_NAMES: tuple[str, ...] = (
     "Ctrl+P",
+    "Ctrl+S",
     "Escape",
     "Esc",
     "Enter",
