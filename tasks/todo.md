@@ -284,7 +284,7 @@ Eleventh-review scope and evidence: [eleventh review, task details](../docs/tui-
 
 - [x] Task 180: Briefing data
 - [x] Task 181: Briefing render and actions row
-- [ ] Task 182: Details list and section views
+- [x] Task 182: Details list and section views
 - [ ] Task 183: Arrow lists for events, agent activity and relationships
 - [ ] Task 184: Remove the old detail code and tests
 - [ ] Task 185: Verify the eleventh review, reconcile the reference and docs

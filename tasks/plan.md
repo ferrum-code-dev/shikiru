@@ -1767,7 +1767,8 @@ Refs: spec "Briefing"; `dashboard/detail.py` (`_render_view`, `_render_activity`
 
 ### Task 182: Details list and section views
 Refs: spec "Details list"; `TaskDetailViewsScreen`, the view switch in `detail.py`, `app.py` key dispatch.
-- [ ] A list screen (arrows, Enter opens, Esc goes up one level) with the nine sections and their right-hand headlines replaces the Views dropdown for a task; Enter on the focused inspector opens it; the engine event ids, timestamp-evidence rows and recorded window/pane ids leave the section views; Esc semantics as in the spec.
+- [x] A list screen (arrows, Enter opens, Esc goes up one level) with the nine sections and their right-hand headlines replaces the Views dropdown for a task; Enter on the focused inspector opens it; the engine event ids, timestamp-evidence rows and recorded window/pane ids leave the section views; Esc semantics as in the spec.
+  - Proof: `dashboard/details_list.py` and `details_list_view.py` replace the Views dropdown with the arrow list (nine sections with data-only headlines, project entries kept at the end); `e` and `u` jump into Events and Usage, Agent activity opens the evidence view on the signal category, and Esc closes the list, a section view or the Home selection. The section views lost event ids, timestamp-evidence rows, recorded window and pane ids and the project-attention line. One parametrised test opens each section by key or click and one covers the Esc levels in the task window and the Home inspector; collected cases stay at 1,601; `uv run poe check` is green.
 
 ### Task 183: Arrow lists for events, agent activity and relationships
 Refs: spec "Details list" paragraph; the timeline code in `detail.py`, `ui` list helpers, the command-history popup as the interaction precedent.
