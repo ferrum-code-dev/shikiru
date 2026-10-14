@@ -45,6 +45,7 @@ from shikiru.ui.tokens import AMBER, DUSTY_ROSE
 if TYPE_CHECKING:
     from textual import events
     from textual.app import ComposeResult
+    from textual.binding import BindingType
     from textual.worker import Worker
 
     from shikiru.clock import Clock
@@ -104,9 +105,23 @@ class _ChoiceRow(Static):
         self.post_message(self.Chosen(self._index))
 
 
-class _TriedSection(Static):
+class _TriedSection(Static, can_focus=True):
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("enter,space", "toggle_details", "Toggle", show=False),
+        Binding("up", "back_to_choices", "Back to choices", show=False),
+    ]
+
     class Toggled(Message):
         pass
+
+    class Left(Message):
+        pass
+
+    def action_toggle_details(self) -> None:
+        self.post_message(self.Toggled())
+
+    def action_back_to_choices(self) -> None:
+        self.post_message(self.Left())
 
     def on_click(self, event: events.Click) -> None:
         event.stop()
@@ -147,7 +162,7 @@ class ResolutionScreen(ModalScreen[bool]):
         Binding("up", f"{_ACTION_MOVE}(-1)", "Previous choice", show=False),
         Binding("down", f"{_ACTION_MOVE}(1)", "Next choice", show=False),
         Binding(_SUBMIT_KEY, _ACTION_ACTIVATE, "Send", show=False),
-        Binding("t", _ACTION_TOGGLE_TRIED, "What was tried", show=False),
+        Binding("t", _ACTION_TOGGLE_TRIED, "Details", show=False),
         Binding("right", _ACTION_EDIT, "Edit", show=False),
     ]
     DEFAULT_CSS = (
@@ -158,10 +173,11 @@ class ResolutionScreen(ModalScreen[bool]):
     #resolution-notice, #resolution-decision, #resolution-choose, #resolution-tried {
         height: auto;
     }
+    #resolution-tried:focus { background: $selected-surface; background-tint: transparent; }
     #resolution-choices { height: auto; }
     #resolution-choices:focus { background-tint: transparent; }
     .resolution-choice { height: auto; width: 100%; }
-    .resolution-choice.-selected, #resolution-tried.-selected { background: $selected-surface; }
+    .resolution-choice.-selected { background: $selected-surface; }
     #resolution-answer {
         height: auto; min-height: 2; max-height: 6; margin: 0 0 0 3; padding: 0;
         border: none; border-bottom: solid $neutral-border; background: $background;
@@ -225,7 +241,8 @@ class ResolutionScreen(ModalScreen[bool]):
                             yield _ChoiceRow(index)
                             if choice.kind is ChoiceKind.OWN_ANSWER:
                                 yield _AnswerBox(id="resolution-answer", text=self._draft())
-                    if panel.what_was_tried:
+                    if panel.details:
+                        yield Rule(classes=POPUP_RULE_CLASS)
                         yield _TriedSection("", id="resolution-tried", markup=False)
 
     def on_mount(self) -> None:
@@ -257,6 +274,8 @@ class ResolutionScreen(ModalScreen[bool]):
         if action in _SELECTION_ACTIONS:
             if isinstance(self.focused, TextArea):
                 return False
+            if isinstance(self.focused, _TriedSection) and action != _ACTION_TOGGLE_TRIED:
+                return False
             if action == _ACTION_EDIT:
                 return self._editable(self._selected)
         return True
@@ -269,15 +288,11 @@ class ResolutionScreen(ModalScreen[bool]):
         """Select the neighbouring row, stopping at both ends."""
         panel = self._panel
         if panel is not None:
-            self._select(min(max(self._selected + step, 0), self._last_index(panel)))
+            self._select(min(max(self._selected + step, 0), len(panel.choices) - 1))
 
     def action_activate(self) -> None:
-        """Send the selected choice, or toggle `What was tried`; Cancel asks for a second Enter."""
-        if self._panel is None:
-            return
-        if self._selected == len(self._panel.choices):
-            self.action_toggle_tried()
-        else:
+        """Send the selected choice; Cancel asks for a second Enter."""
+        if self._panel is not None:
             self._activate(self._selected)
 
     def action_edit(self) -> None:
@@ -285,8 +300,8 @@ class ResolutionScreen(ModalScreen[bool]):
         self._open_answer(self._selected)
 
     def action_toggle_tried(self) -> None:
-        """Expand or collapse `What was tried`."""
-        if self._panel is not None and self._panel.what_was_tried:
+        """Expand or collapse `Details`."""
+        if self._panel is not None and self._panel.details:
             self._tried_open = not self._tried_open
             self._paint()
             self._relayout()
@@ -304,6 +319,11 @@ class ResolutionScreen(ModalScreen[bool]):
     def _tried_toggled(self, message: _TriedSection.Toggled) -> None:
         message.stop()
         self.action_toggle_tried()
+
+    @on(_TriedSection.Left)
+    def _tried_left(self, message: _TriedSection.Left) -> None:
+        message.stop()
+        self.set_focus(self.query_one("#resolution-choices", _ChoiceList), scroll_visible=False)
 
     @on(_AnswerBox.Submitted)
     def _answer_submitted(self, message: _AnswerBox.Submitted) -> None:
@@ -365,10 +385,6 @@ class ResolutionScreen(ModalScreen[bool]):
             return ""
         return self._drafts.get(self._panel.task_id, self._escalation_id)
 
-    @staticmethod
-    def _last_index(panel: ResolutionPanel) -> int:
-        return len(panel.choices) - (0 if panel.what_was_tried else 1)
-
     def _own_answer_index(self) -> int:
         panel = cast("ResolutionPanel", self._panel)
         return next(
@@ -383,7 +399,7 @@ class ResolutionScreen(ModalScreen[bool]):
         previous = self._panel
         self._panel = panel
         if panel is not None and previous is not None and panel.choices != previous.choices:
-            self._selected = min(self._selected, self._last_index(panel))
+            self._selected = min(self._selected, len(panel.choices) - 1)
             self._answer_for = self._own_answer_index() if self._draft() else None
             await self.recompose()
             self.call_after_refresh(self._after_recompose)
@@ -415,8 +431,8 @@ class ResolutionScreen(ModalScreen[bool]):
         choose = self.query_one("#resolution-choose", Static)
         choose.update(
             choose_renderable(
-                None if self._selected == len(panel.choices) else panel.choices[self._selected],
-                tried_expanded=self._tried_open,
+                panel.choices[self._selected],
+                details_open=self._tried_open if isinstance(self.focused, _TriedSection) else None,
                 editing=isinstance(self.focused, _AnswerBox),
             )
         )
@@ -438,10 +454,10 @@ class ResolutionScreen(ModalScreen[bool]):
         for answer in self.query(_AnswerBox):
             answer.display = self._answer_for is not None
             answer.disabled = disabled
-        if panel.what_was_tried:
-            tried = self.query_one("#resolution-tried", _TriedSection)
-            tried.set_class(self._selected == len(panel.choices), "-selected")
-            tried.update(tried_renderable(panel.what_was_tried, expanded=self._tried_open))
+        if panel.details:
+            self.query_one("#resolution-tried", _TriedSection).update(
+                tried_renderable(panel.details, expanded=self._tried_open)
+            )
 
     def _render_notice(self) -> None:
         reason = self._disabled_reason()
@@ -462,9 +478,8 @@ class ResolutionScreen(ModalScreen[bool]):
         self._cancel_armed = False
         self._send_error = None
         self._paint()
-        rows = [*self.query(_ChoiceRow), *self.query(_TriedSection)]
         self.query_one("#resolution-body", VerticalScroll).scroll_to_widget(
-            rows[index], animate=False
+            list(self.query(_ChoiceRow))[index], animate=False
         )
 
     def _disarm(self) -> None:

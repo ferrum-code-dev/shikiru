@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter, ValidationError
 
-from shikiru.domain.attempts import summarise_attempts
+from shikiru.domain.attempts import attempt_lines, summarise_attempts
 from shikiru.domain.escalation import (
     ESCALATION_CAUSES,
     RESOLUTION_CONSEQUENCES,
@@ -346,7 +346,7 @@ class EscalationRaiser:
     def _attempts(
         self, task: Task, reason: str, reports: Sequence[dict[str, str]], facts: str
     ) -> str:
-        lines = summarise_attempts(
+        items = summarise_attempts(
             reason,
             self._events.since(0, task_id=task.id),
             self._readable_reports(reports),
@@ -355,7 +355,7 @@ class EscalationRaiser:
             max_iterations=self._settings.orchestration.max_iterations,
             limit=self._settings.escalation.tried_lines,
         )
-        return "\n".join(lines)
+        return attempt_lines(items)
 
     @staticmethod
     def _readable_reports(reports: Sequence[dict[str, str]]) -> dict[str, Report]:

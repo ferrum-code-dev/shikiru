@@ -23,8 +23,15 @@ from shikiru.domain.tasks import EscalationReason
 from shikiru.operator.commands import COMMAND_POLL_SECONDS
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
-from shikiru.ui.tokens import STEEL_BLUE
-from tests.support.cells import foregrounds
+from shikiru.ui.tokens import (
+    AMBER,
+    DUSTY_ROSE,
+    SAGE,
+    SECONDARY_TEXT_COLOR,
+    SELECTED_SURFACE_COLOR,
+    STEEL_BLUE,
+)
+from tests.support.cells import foregrounds, painted_backgrounds
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import dashboard_app
@@ -61,7 +68,12 @@ _PREFILL = " \N{EM DASH} "
 _DETAILS = "backend at 10.0.0.1"
 _OWN_TEXT = "Keep the current behavior."
 _ARMED_TEXT = "Press Enter again to cancel"
-_TRIED_CONTENT = "One implementation and review round."
+_ATTEMPTED = (
+    "The Leader escalated.\n"
+    "Rounds: implement \N{MULTIPLICATION SIGN}3 \N{MIDDLE DOT} verify \N{MULTIPLICATION SIGN}2\n"
+    "Implementer: 3 commits, 1 failed\n"
+    "Leader verdict: changes requested (1 blocker)"
+)
 _SELECTED_CLASS = "-selected"
 
 
@@ -324,7 +336,7 @@ async def test_a_degraded_or_unknown_decision_opens_with_its_reason_and_dispatch
 
 
 @pytest.mark.usefixtures("colour_terminal")
-async def test_what_was_tried_is_the_last_arrow_row_and_enter_only_toggles_it(
+async def test_details_is_its_own_tab_stop_whose_highlight_excludes_the_rule(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -333,9 +345,14 @@ async def test_what_was_tried_is_the_last_arrow_row_and_enter_only_toggles_it(
     clock = FakeClock(_START)
     reader = StateReader(database, clock)
     request.addfinalizer(reader.close)
-    task = seed_task(connection, clock, title="Tried row")
+    task = seed_task(connection, clock, title="Details stop")
     escalation, _ = seed_escalation(
-        connection, clock, task.id, tmp_path, EscalationReason.DECISION_REQUIRED
+        connection,
+        clock,
+        task.id,
+        tmp_path,
+        EscalationReason.DECISION_REQUIRED,
+        attempted=_ATTEMPTED,
     )
     commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     app = ResolutionHost(resolution_factory(commands, queries, clock, reader), escalation.id)
@@ -343,25 +360,41 @@ async def test_what_was_tried_is_the_last_arrow_row_and_enter_only_toggles_it(
     async with app.run_test(size=_SIZE) as pilot:
         screen = await _opened(app)
         rows = _rows(screen)
-        tried = screen.query_one("#resolution-tried")
-        first_text = _text_of(rows[0])
-        assert rows[0].has_class(_SELECTED_CLASS)
+        details = screen.query_one("#resolution-tried")
+        siblings = screen.query_one("#resolution-body").children
+        rule = siblings[siblings.index(details) - 1]
         choose = screen.query_one("#resolution-choose")
         assert set(foregrounds(choose, "Enter")) == {STEEL_BLUE}
-        assert STEEL_BLUE not in foregrounds(choose, "select")
         await pilot.press(*["down"] * len(rows))
-        await wait_until(lambda: tried.has_class(_SELECTED_CLASS), timeout=UI_WAIT_SECONDS)
-        assert not any(row.has_class(_SELECTED_CLASS) for row in rows)
-        assert _text_of(rows[0]) == first_text
-        await pilot.press("enter")
-        await wait_until(lambda: _TRIED_CONTENT in _text_of(tried), timeout=UI_WAIT_SECONDS)
-        await pilot.press("enter")
-        await wait_until(lambda: _TRIED_CONTENT not in _text_of(tried), timeout=UI_WAIT_SECONDS)
-        await pilot.press("up")
         await wait_until(lambda: rows[-1].has_class(_SELECTED_CLASS), timeout=UI_WAIT_SECONDS)
-        assert not tried.has_class(_SELECTED_CLASS)
+        assert app.focused is not None
+        assert app.focused.id == "resolution-choices"
+        await pilot.press("tab")
+        await wait_until(lambda: app.focused is details, timeout=UI_WAIT_SECONDS)
+        assert painted_backgrounds(details) == {SELECTED_SURFACE_COLOR}
+        assert SELECTED_SURFACE_COLOR not in painted_backgrounds(rule)
+        await pilot.press("enter")
+        await wait_until(lambda: "Reason" in _text_of(details), timeout=UI_WAIT_SECONDS)
         assert queue.pending() == []
         assert app.results == []
+        assert set(foregrounds(details, "Rounds")) == {SECONDARY_TEXT_COLOR}
+        assert set(foregrounds(details, "implement")) == {STEEL_BLUE}
+        assert set(foregrounds(details, "3 commits")) == {SAGE}
+        assert set(foregrounds(details, "1 failed")) == {DUSTY_ROSE}
+        assert set(foregrounds(details, "changes requested")) == {AMBER}
+        await pilot.press("space")
+        await wait_until(lambda: "Reason" not in _text_of(details), timeout=UI_WAIT_SECONDS)
+        await pilot.press("up")
+        await wait_until(
+            lambda: app.focused is not None and app.focused.id == "resolution-choices",
+            timeout=UI_WAIT_SECONDS,
+        )
+        await pilot.press("tab", "shift+tab")
+        await wait_until(
+            lambda: app.focused is not None and app.focused.id == "resolution-choices",
+            timeout=UI_WAIT_SECONDS,
+        )
+        assert queue.pending() == []
 
 
 async def test_cancel_needs_a_second_enter_and_any_other_key_resets_it(

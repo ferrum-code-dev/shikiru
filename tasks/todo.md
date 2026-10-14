@@ -311,7 +311,8 @@ Thirteenth-review scope and evidence: [thirteenth review](../docs/tui-feedback-t
 - [x] Task 197: Selection without a vertical bar; Recent pager style
   - Proof: Reproduced on the unchanged code: the focused fold header and the selected RowList row painted `▌` in steel blue, the Tasks list in a non-focus placement drew a `┌─┐` outline in `#99c8ff`, and the Views menu and session picker showed Textual's solid block cursor (`#83bddd` and `#0178d4`, bold). Now fold headers and rows keep only the `$selected-surface` background, the bold name and the two-cell lead; the outline and the `selection-outline` token are gone; Views and the session picker use `$selected-surface` (the picker installs the shikiru theme); and the Recent pager reads `↑ later` / `↓ earlier`, grey with cyan arrows. A lean test checks the background and no `▌` on a focused fold header and a selected row; native dumps before and after, in colour and `NO_COLOR`, show these changes, and 06 §6.1 and tui-parity are updated. Gate `uv run poe check` is green: 1612 passed, 14 skipped, 91.45% coverage; collected cases 1632 to 1633.
 - [x] Task 198: Edit area under the option, new keys
-- [ ] Task 199: Details section of the resolution panel
+- [x] Task 199: Details section of the resolution panel
+  - Proof: Details is its own Tab stop (Enter/Space/`t` toggle, Up returns) with the virtual arrow row removed, and its rule is a separate widget so the focus background no longer covers it. The digest is produced as typed rows, persisted as `Label: text` lines and rebuilt by `parse_attempt_lines` (old packets parse to one Reason row). Checked natively at 100x40 and 48 columns with colour cells asserted in the integration test; `poe check` green.
 - [ ] Task 200: Terminal-state correctness
 - [ ] Task 201: Briefing verbs
 - [ ] Task 202: Results data

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from shikiru.domain.attempts import AttemptKind
 from shikiru.domain.escalation import Escalation, EscalationStatus, options_for
 from shikiru.domain.escalation_evidence import EscalationPacket
 from shikiru.domain.escalation_panel import ChoiceKind, build_resolution_panel
@@ -42,15 +43,17 @@ _DECISION = EscalationReason.DECISION_REQUIRED
 _EXHAUSTED = EscalationReason.ITERATIONS_EXHAUSTED
 _BLOCKED = EscalationReason.INTEGRATION_BLOCKED
 _STUCK = EscalationReason.AGENT_STUCK
+_REASON_ONLY = [AttemptKind.REASON]
+_NO_ROWS: list[AttemptKind] = []
 
 _CASES = {
-    "alternatives": (_DECISION, _FULL, (_ANSWER_KINDS, 1, True, "two attempts", False)),
-    "question only": (_DECISION, _NO_ALTERNATIVES, (_OWN_OR_CANCEL, 0, True, None, False)),
-    "degraded": (_DECISION, _DEGRADED, (_OWN_OR_CANCEL, 0, False, None, False)),
-    "missing": (_DECISION, None, (_OWN_OR_CANCEL, 0, False, None, False)),
-    "accept": (_EXHAUSTED, _FULL, (_EXHAUSTED_KINDS, 1, True, "two attempts", True)),
-    "retry": (_BLOCKED, _FULL, (_RETRY_OR_CANCEL, 0, False, "two attempts", True)),
-    "retry, no packet": (_STUCK, None, (_RETRY_OR_CANCEL, 0, False, None, True)),
+    "alternatives": (_DECISION, _FULL, (_ANSWER_KINDS, 1, True, _REASON_ONLY, False)),
+    "question only": (_DECISION, _NO_ALTERNATIVES, (_OWN_OR_CANCEL, 0, True, _NO_ROWS, False)),
+    "degraded": (_DECISION, _DEGRADED, (_OWN_OR_CANCEL, 0, False, _NO_ROWS, False)),
+    "missing": (_DECISION, None, (_OWN_OR_CANCEL, 0, False, _NO_ROWS, False)),
+    "accept": (_EXHAUSTED, _FULL, (_EXHAUSTED_KINDS, 1, True, _REASON_ONLY, True)),
+    "retry": (_BLOCKED, _FULL, (_RETRY_OR_CANCEL, 0, False, _REASON_ONLY, True)),
+    "retry, no packet": (_STUCK, None, (_RETRY_OR_CANCEL, 0, False, _NO_ROWS, True)),
 }
 
 
@@ -62,7 +65,7 @@ def test_panel_orders_choices_preselects_and_carries_the_disabled_reason() -> No
             [choice.kind for choice in panel.choices],
             panel.preselected,
             panel.question is not None,
-            panel.what_was_tried,
+            [item.kind for item in panel.details],
             panel.cause is not None,
         )
         assert actual == expected, name

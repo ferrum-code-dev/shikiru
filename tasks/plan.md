@@ -1867,8 +1867,9 @@ Refs: spec "Escalation resolution panel"; `dashboard/resolution.py` (`_AnswerBox
 
 ### Task 199: Details section of the resolution panel
 Refs: `domain/attempts.py`, `engine/escalations.py`, `domain/escalation_panel.py` (`what_was_tried`), `resolution.py` (`_TriedSection`), `resolution_view.py` (`tried_renderable`).
-- [ ] Retitled `Details`, its own Tab stop (Enter/Space toggle, Up returns), virtual arrow row removed, highlight excludes the rule above.
-- [ ] Structured items rendered as the coloured label/value rows of the spec; the packet text and old packets keep working.
+- [x] Retitled `Details`, its own Tab stop (Enter/Space toggle, Up returns), virtual arrow row removed, highlight excludes the rule above.
+- [x] Structured items rendered as the coloured label/value rows of the spec; the packet text and old packets keep working.
+- Proof: verified natively at 100x40 and 48 columns (Details expanded: label column, role beside each turn, wrapped values, `+N earlier` last); `test_dashboard_resolution.py` checks Tab/Shift+Tab/Enter/Space/Up, that the focused Details background excludes the rule widget, and sage/rose/cyan/amber/grey cells; unit tables cover item kinds, the cap and the packet round trip for new and old packets. `poe check` green.
 
 ### Task 200: Terminal-state correctness
 Refs: `domain/workflow.py` (`project_workflow`, `milestone_state`), `ui/compact.py` (`StageActivity`, `_milestone_marker`), `dashboard/briefing_view.py` (`_marker_and_label`, `_time_line`), `plugins/widgets/queue.py` (`_focus_row_state`, `_row_text`), `operator/strip_views.py`, `domain/briefing.py` (`PullRequestLine`), store `finish`.

@@ -6,6 +6,7 @@ from datetime import datetime
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING
 
+from shikiru.domain.attempts import AttemptItem, parse_attempt_lines
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import (
     ESCALATION_CAUSES,
@@ -64,7 +65,7 @@ class ResolutionPanel(DomainModel):
     created_at: datetime
     choices: tuple[PanelChoice, ...]
     preselected: int
-    what_was_tried: str | None
+    details: tuple[AttemptItem, ...]
     disabled_reason: str | None
 
 
@@ -103,7 +104,7 @@ def build_resolution_panel(
         created_at=escalation.created_at,
         choices=choices,
         preselected=_preselected(choices),
-        what_was_tried=_what_was_tried(packet),
+        details=_details(packet),
         disabled_reason=disabled_reason,
     )
 
@@ -134,10 +135,10 @@ def _preselected(choices: tuple[PanelChoice, ...]) -> int:
     return 0
 
 
-def _what_was_tried(packet: EscalationPacket | None) -> str | None:
+def _details(packet: EscalationPacket | None) -> tuple[AttemptItem, ...]:
     if packet is None:
-        return None
+        return ()
     for label, content in packet.evidence_sections:
         if label == _WHAT_WAS_TRIED:
-            return content.strip() or None
-    return None
+            return parse_attempt_lines(content)
+    return ()

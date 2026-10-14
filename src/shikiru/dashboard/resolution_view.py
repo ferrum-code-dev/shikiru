@@ -10,6 +10,7 @@ from rich.console import Group, RenderableType
 from rich.table import Table
 from rich.text import Text
 
+from shikiru.domain.attempts import AttemptItem, AttemptKind, AttemptTone
 from shikiru.domain.escalation_panel import ChoiceKind
 from shikiru.ui.keys import key_hint
 from shikiru.ui.section import (
@@ -22,6 +23,7 @@ from shikiru.ui.section import (
     row_name,
 )
 from shikiru.ui.tokens import (
+    AMBER,
     DUSTY_ROSE,
     PRIMARY_TEXT_COLOR,
     SAGE,
@@ -53,12 +55,30 @@ _CHOOSE_TITLE = "Choose"
 _SELECT_HINT = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW} select"
 _SEND_HINT = "Enter send"
 _EXPAND_HINT = "Enter expand"
+_BACK_HINT = "\N{UPWARDS ARROW} choices"
 _COLLAPSE_HINT = "Enter collapse"
 _EDIT_HINT = "Enter or \N{RIGHTWARDS ARROW} edit"
 _BOX_HINTS = ("Ctrl+S send", "Enter new line", "\N{LEFTWARDS ARROW} back")
 _NEEDS_INPUT_MARK = "\N{LOWER RIGHT PENCIL}"
 _NEEDS_INPUT_TEXT = "needs your input"
-_TRIED_TITLE = "What was tried"
+_DETAILS_TITLE = "Details"
+_TURNS_LABEL = "Turns"
+_ROLE_GAP = 1
+_TURN_KINDS = frozenset({AttemptKind.TURN_OK, AttemptKind.TURN_FAILED, AttemptKind.VERDICT})
+_DETAIL_LABELS = {
+    AttemptKind.REASON: "Reason",
+    AttemptKind.ROUNDS: "Rounds",
+    AttemptKind.RECOVERY: "Recovery",
+    AttemptKind.PRODUCED: "Produced",
+    AttemptKind.OPERATOR: "Operator",
+}
+_TONE_STYLES = {
+    AttemptTone.PLAIN: PRIMARY_TEXT_COLOR,
+    AttemptTone.STEP: STEEL_BLUE,
+    AttemptTone.SUCCESS: SAGE,
+    AttemptTone.FAILURE: DUSTY_ROSE,
+    AttemptTone.REWORK: AMBER,
+}
 _WAITING_WORD = "waiting"
 _TITLE_WIDE = "Resolve escalation"
 _TITLE_NARROW = "Resolve"
@@ -153,33 +173,66 @@ def decision_renderable(
     return Section(_DECISION_TITLE, rows, grey(f"{_WAITING_WORD} {age}"), ruled=False)
 
 
-def _enter_hints(selected: PanelChoice | None, *, tried_expanded: bool) -> tuple[str, ...]:
-    if selected is None:
-        return (_COLLAPSE_HINT if tried_expanded else _EXPAND_HINT,)
+def _hints(selected: PanelChoice, details_open: bool | None, *, editing: bool) -> tuple[str, ...]:
+    if editing:
+        return _BOX_HINTS
+    if details_open is not None:
+        return (_COLLAPSE_HINT if details_open else _EXPAND_HINT, _BACK_HINT)
     editable = selected.kind is ChoiceKind.OWN_ANSWER or selected.needs_input
-    return (_EDIT_HINT,) if editable else (_SEND_HINT,)
+    return (_SELECT_HINT, _EDIT_HINT if editable else _SEND_HINT)
 
 
 def choose_renderable(
-    selected: PanelChoice | None, *, tried_expanded: bool, editing: bool = False
+    selected: PanelChoice, *, details_open: bool | None = None, editing: bool = False
 ) -> RenderableType:
-    """Return the Choose heading with its key hint; `selected` is `None` on `What was tried`."""
-    hints = (
-        _BOX_HINTS
-        if editing
-        else (_SELECT_HINT, *_enter_hints(selected, tried_expanded=tried_expanded))
-    )
+    """Return the Choose heading with its key hint.
+
+    `details_open` is `None` while the list has focus, else whether the focused Details is open.
+    """
+    hints = _hints(selected, details_open, editing=editing)
     hint = GROUP_SEPARATOR.join(hints)
     return Section(
         _CHOOSE_TITLE, Group(), key_hint(hint, SECONDARY_TEXT_COLOR), title_style=BOLD_STEEL
     )
 
 
-def tried_renderable(content: str, *, expanded: bool) -> RenderableType:
-    """Return the collapsible `What was tried` section."""
+def _toned(item: AttemptItem) -> Text:
+    if item.kind is AttemptKind.EARLIER:
+        return grey(item.text)
+    return Text.assemble(*((part.text, _TONE_STYLES[part.tone]) for part in item.parts))
+
+
+def _turn_rows(turns: list[AttemptItem]) -> RenderableType:
+    grid = Table.grid()
+    grid.add_column(no_wrap=True, width=max(len(item.label) for item in turns) + _ROLE_GAP)
+    grid.add_column(ratio=1)
+    for item in turns:
+        grid.add_row(Text(item.label, style=PRIMARY_TEXT_COLOR), _toned(item))
+    return grid
+
+
+def _detail_rows(items: tuple[AttemptItem, ...]) -> RenderableType:
+    grid = Table.grid()
+    grid.add_column(width=_LABEL_WIDTH + 1, no_wrap=True)
+    grid.add_column(ratio=1)
+    turns = [item for item in items if item.kind in _TURN_KINDS]
+    for item in items:
+        if item.kind in _TURN_KINDS:
+            if item is turns[0]:
+                grid.add_row(grey(_TURNS_LABEL), _turn_rows(turns))
+        elif item.kind is not AttemptKind.EARLIER:
+            grid.add_row(grey(_DETAIL_LABELS[item.kind]), _toned(item))
+    for item in items:
+        if item.kind is AttemptKind.EARLIER:
+            grid.add_row(Text(), _toned(item))
+    return grid
+
+
+def tried_renderable(items: tuple[AttemptItem, ...], *, expanded: bool) -> RenderableType:
+    """Return the collapsible `Details` section; its rule is a separate widget."""
     arrow = _EXPANDED_ARROW if expanded else _COLLAPSED_ARROW
-    body = grey(content) if expanded else Group()
-    return Section(f"{_TRIED_TITLE} {arrow}", body)
+    body = _detail_rows(items) if expanded else Group()
+    return Section(f"{_DETAILS_TITLE} {arrow}", body, ruled=False)
 
 
 def starred_indexes(panel: ResolutionPanel) -> frozenset[int]:

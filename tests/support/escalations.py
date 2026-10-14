@@ -90,6 +90,7 @@ def seed_escalation(
     *,
     write_packet: bool = True,
     needs_input: bool = False,
+    attempted: str = "One implementation and review round.",
 ) -> tuple[Escalation, str]:
     task = TaskStore(connection, clock).require(task_id)
     TaskStore(connection, clock).apply_transition(
@@ -117,7 +118,7 @@ def seed_escalation(
             step=Step.CONSULT,
             reason=reason,
             timeline=["turn completed: implementation"],
-            attempted="One implementation and review round.",
+            attempted=attempted,
             reports="Implementation report evidence.",
             facts="Recorded git facts.",
             view_tail="Recent stream tail.",
