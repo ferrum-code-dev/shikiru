@@ -12,7 +12,7 @@ from rich.text import Text
 from textual import on
 from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Rule, Select, Static
+from textual.widgets import Button, Label, Rule, Static
 
 from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED
 from shikiru.dashboard.briefing_view import (
@@ -30,7 +30,6 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.dashboard.details_list import TaskDetailsListScreen
 from shikiru.dashboard.details_list_view import (
-    EVENTS_HINT,
     RELATIONSHIPS_HINT,
     DetailsEntry,
     DetailsSection,
@@ -38,7 +37,15 @@ from shikiru.dashboard.details_list_view import (
 )
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.dashboard.row_list import RowList
-from shikiru.dashboard.section_rows import RelatedRow, relation_rows, timeline_cells
+from shikiru.dashboard.section_rows import RelatedRow, relation_rows
+from shikiru.dashboard.timeline_section import (
+    HEADING_SEPARATOR,
+    NO_VALUE,
+    TimelineHost,
+    TimelineIds,
+    TimelineSection,
+    screen_is_active,
+)
 from shikiru.domain.briefing import BriefingAction
 from shikiru.domain.runs import RunStatus
 from shikiru.domain.tasks import Role, Status, StatusReason
@@ -60,7 +67,7 @@ from shikiru.ui.popup import (
     PopupFrame,
     prepare_popup,
 )
-from shikiru.ui.screen import widget_is_attached, widget_is_current
+from shikiru.ui.screen import widget_is_attached
 from shikiru.ui.section import BOLD_PRIMARY, grey
 
 if TYPE_CHECKING:
@@ -78,7 +85,6 @@ if TYPE_CHECKING:
         TaskModelHistoryView,
         TaskReportView,
         TaskSessionView,
-        TaskTimelinePageView,
         WidgetContext,
     )
     from shikiru.ui.strip import TaskStripData
@@ -124,14 +130,14 @@ TASK_DETAIL_WORKSPACE_TOOLS = "task-detail-workspace-tools"
 TASK_DETAIL_BLOCKER = "task-detail-blocker"
 TASK_DETAIL_RELATIONSHIPS = "task-detail-relationships"
 TASK_DETAIL_RELATED_LIST = "task-detail-related-list"
-TASK_DETAIL_TIMELINE_ROLE = "task-detail-timeline-role"
-TASK_DETAIL_TIMELINE_TURN = "task-detail-timeline-turn"
-TASK_DETAIL_TIMELINE_CATEGORY = "task-detail-timeline-category"
-TASK_DETAIL_TIMELINE_FILTERS = "task-detail-timeline-filters"
-TASK_DETAIL_TIMELINE_STATUS = "task-detail-timeline-status"
-TASK_DETAIL_TIMELINE_TITLE = "task-detail-timeline-title"
-TASK_DETAIL_TIMELINE_LIST = "task-detail-timeline-list"
-TASK_DETAIL_TIMELINE_SELECTED = "task-detail-timeline-selected"
+EVENTS_TIMELINE_IDS = TimelineIds.with_prefix("task-detail-timeline")
+AGENT_TIMELINE_IDS = TimelineIds.with_prefix("task-detail-agent")
+TASK_DETAIL_TIMELINE_ROLE = EVENTS_TIMELINE_IDS.role
+TASK_DETAIL_TIMELINE_TURN = EVENTS_TIMELINE_IDS.turn
+TASK_DETAIL_TIMELINE_CATEGORY = EVENTS_TIMELINE_IDS.category
+TASK_DETAIL_TIMELINE_TITLE = EVENTS_TIMELINE_IDS.title
+TASK_DETAIL_TIMELINE_LIST = EVENTS_TIMELINE_IDS.list
+TASK_DETAIL_TIMELINE_SELECTED = EVENTS_TIMELINE_IDS.selected
 TASK_VIEW_SUMMARY = "task-summary"
 TASK_VIEW_CONTEXT = "task-context"
 TASK_VIEW_USAGE = "task-usage"
@@ -157,9 +163,10 @@ EVIDENCE_VIEW_CATEGORIES = {
     TASK_VIEW_EVIDENCE: TaskTimelineCategory.ACTIVITY,
     TASK_VIEW_AGENT: TaskTimelineCategory.SIGNAL,
 }
-LIST_VIEW_FOCUS = {
-    TASK_VIEW_EVIDENCE: TASK_DETAIL_TIMELINE_LIST,
-    TASK_VIEW_RELATIONSHIPS: TASK_DETAIL_RELATED_LIST,
+LIST_VIEW_FOCUS = {TASK_VIEW_RELATIONSHIPS: TASK_DETAIL_RELATED_LIST}
+TIMELINE_SECTIONS = {
+    DetailsSection.EVENTS: (EVENTS_TIMELINE_IDS, TaskTimelineCategory.ACTIVITY),
+    DetailsSection.AGENT_ACTIVITY: (AGENT_TIMELINE_IDS, TaskTimelineCategory.SIGNAL),
 }
 TASK_VIEW_WIDGETS = {
     TASK_VIEW_SUMMARY: (TASK_DETAIL_BRIEFING, TASK_DETAIL_ACTIONS),
@@ -167,13 +174,7 @@ TASK_VIEW_WIDGETS = {
     TASK_VIEW_CONTEXT: (TASK_DETAIL_CONTEXT_INFO,),
     TASK_VIEW_REPORTS: (TASK_DETAIL_REPORT, TASK_DETAIL_VERDICT),
     TASK_VIEW_REQUEST: (TASK_DETAIL_REQUEST, TASK_DETAIL_CRITERIA),
-    TASK_VIEW_EVIDENCE: (
-        TASK_DETAIL_TIMELINE_TITLE,
-        TASK_DETAIL_TIMELINE_STATUS,
-        TASK_DETAIL_TIMELINE_FILTERS,
-        TASK_DETAIL_TIMELINE_LIST,
-        TASK_DETAIL_TIMELINE_SELECTED,
-    ),
+    TASK_VIEW_EVIDENCE: (),
     TASK_VIEW_RELATIONSHIPS: (
         TASK_DETAIL_BLOCKER,
         TASK_DETAIL_RELATIONSHIPS,
@@ -182,29 +183,13 @@ TASK_VIEW_WIDGETS = {
     TASK_VIEW_FACTS: (TASK_DETAIL_FACTS,),
     TASK_VIEW_WORKSPACE: (TASK_DETAIL_WORKSPACE, TASK_DETAIL_WORKSPACE_TOOLS),
 }
-TIMELINE_FILTER_OPTIONS = (
-    ("Decisions and transitions", TaskTimelineCategory.ACTIVITY),
-    ("All engine events", TaskTimelineCategory.ENGINE),
-    ("Decisions", TaskTimelineCategory.DECISION),
-    ("Transitions", TaskTimelineCategory.TRANSITION),
-    ("Agent signals", TaskTimelineCategory.SIGNAL),
-    ("Tools", TaskTimelineCategory.TOOL),
-    ("Messages", TaskTimelineCategory.MESSAGE),
-    ("Usage", TaskTimelineCategory.USAGE),
-    ("All evidence", TaskTimelineCategory.ALL),
-)
-NO_VALUE = "\N{EN DASH}"
 NO_DECISION_TO_ANSWER = "No open decision to answer for this task."
 NO_REPORT = "No validated report is recorded."
 NO_VERDICT = "No validated verdict is recorded."
 NO_CRITERIA = "No validated acceptance criteria are recorded."
-NO_TIMELINE_ROWS = "No recorded entries match."
 NO_RELATED_ROWS = "No related tasks are recorded."
 RELATIONSHIPS_UNAVAILABLE = "Relationship evidence is unavailable."
 NO_REPLACEMENT_TASKS = "No replacement task IDs are present in the recorded scope-change event."
-FOLLOWING_LABEL = "following"
-PAUSED_LABEL = "paused · End to follow"
-HEADING_SEPARATOR = " · "
 PAGE_LABEL = "page"
 NO_FACTS = "No engine-computed git facts are recorded."
 CLOSED_RUN_STATUS = "closed"
@@ -316,19 +301,19 @@ class TaskDetailPanel(Vertical):
         self._relationship_previous_offset: int | None = None
         self._relationship_next_offset: int | None = None
         self._related_rows: tuple[RelatedRow, ...] = ()
-        self._timeline_cursors: list[str | None] = [None]
-        self._timeline_following = True
-        self._timeline_role: str | None = None
-        self._timeline_turn: str | None = None
-        self._timeline_category = EVIDENCE_VIEW_CATEGORIES.get(
-            initial_view, TaskTimelineCategory.ACTIVITY
-        ).value
-        self._timeline_selected_identity: str | None = None
         self._timeline_section = _timeline_section(initial_view)
-        self._timeline_page: TaskTimelinePageView | None = None
+        host = TimelineHost(
+            task_id=lambda: self._task_id,
+            lock=self._refresh_lock,
+            queue_refresh=self._queue_refresh,
+            report=self._set_feedback,
+        )
+        self._timelines = {
+            section: TimelineSection(context, host, ids=ids, section=section, category=category)
+            for section, (ids, category) in TIMELINE_SECTIONS.items()
+        }
         self._timeline_worker: Worker[None] | None = None
         self._remove_motion_callback: Callable[[], None] | None = None
-        self._timeline_request_generation = 0
         self._body_focus_generation = 0
         self._views_return_state: tuple[float, Widget | None] | None = None
         self._rendered_task_id: str | None = None
@@ -359,38 +344,7 @@ class TaskDetailPanel(Vertical):
                 "", id=TASK_DETAIL_RELATIONSHIPS, classes="task-detail-section", markup=False
             )
             yield RowList(widget_id=TASK_DETAIL_RELATED_LIST)
-            yield Static(
-                "",
-                id=TASK_DETAIL_TIMELINE_TITLE,
-                markup=False,
-            )
-            yield Static("", id=TASK_DETAIL_TIMELINE_STATUS, markup=False)
-            with Horizontal(id=TASK_DETAIL_TIMELINE_FILTERS):
-                yield Select(
-                    TIMELINE_FILTER_OPTIONS,
-                    value=TaskTimelineCategory.ACTIVITY,
-                    id=TASK_DETAIL_TIMELINE_CATEGORY,
-                )
-                yield Select(
-                    (
-                        ("Any role", ""),
-                        ("Leader", Role.LEADER.value),
-                        ("Implementer", Role.IMPLEMENTER.value),
-                        ("Helper", Role.HELPER.value),
-                    ),
-                    prompt="Any role",
-                    allow_blank=True,
-                    value=Select.BLANK,
-                    id=TASK_DETAIL_TIMELINE_ROLE,
-                )
-                yield Input(placeholder="Any turn", id=TASK_DETAIL_TIMELINE_TURN)
-            yield RowList(widget_id=TASK_DETAIL_TIMELINE_LIST)
-            yield Static(
-                "",
-                id=TASK_DETAIL_TIMELINE_SELECTED,
-                classes="task-detail-section",
-                markup=False,
-            )
+            yield from self._timelines.values()
             yield Static("", id=TASK_DETAIL_REQUEST, classes="task-detail-section", markup=False)
             yield Static("", id=TASK_DETAIL_CRITERIA, classes="task-detail-section", markup=False)
             yield Static("", id=TASK_DETAIL_REPORT, classes="task-detail-section", markup=False)
@@ -404,7 +358,6 @@ class TaskDetailPanel(Vertical):
 
     async def on_mount(self) -> None:
         self.disabled = self._task_id is None
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select).value = self._timeline_category
         self._apply_view_visibility(blocker_visible=False)
         identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         identity.update(
@@ -451,7 +404,6 @@ class TaskDetailPanel(Vertical):
             return
         self._task_id = task_id
         self._reset_task_identity_state()
-        self._timeline_request_generation += 1
         self.disabled = task_id is None
         if not self.is_mounted:
             return
@@ -473,14 +425,9 @@ class TaskDetailPanel(Vertical):
         self._relationship_previous_offset = None
         self._relationship_next_offset = None
         self._related_rows = ()
-        self._timeline_cursors = [None]
-        self._timeline_following = True
-        self._timeline_role = None
-        self._timeline_turn = None
-        self._timeline_category = TaskTimelineCategory.ACTIVITY.value
-        self._timeline_selected_identity = None
+        for timeline in self._timelines.values():
+            timeline.reset()
         self._timeline_section = DetailsSection.EVENTS
-        self._timeline_page = None
         if not self.is_mounted:
             return
         for section_id in (
@@ -494,24 +441,13 @@ class TaskDetailPanel(Vertical):
             TASK_DETAIL_FACTS,
             TASK_DETAIL_WORKSPACE,
             TASK_DETAIL_SESSIONS,
-            TASK_DETAIL_TIMELINE_TITLE,
-            TASK_DETAIL_TIMELINE_STATUS,
-            TASK_DETAIL_TIMELINE_SELECTED,
         ):
             self.query_one(f"#{section_id}", Static).update("")
         self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static).display = False
         self._set_feedback(None)
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update("")
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select).value = Select.BLANK
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input).value = ""
-        self.query_one(
-            f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select
-        ).value = TaskTimelineCategory.ACTIVITY.value
         self.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList).set_rows(
             (), selected=0, empty=NO_RELATED_ROWS
-        )
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_LIST}", RowList).set_rows(
-            (), selected=0, empty=NO_TIMELINE_ROWS
         )
         self._apply_view_visibility(blocker_visible=False)
 
@@ -531,37 +467,6 @@ class TaskDetailPanel(Vertical):
         handler = handlers.get(button_id)
         if handler is not None:
             await handler()
-
-    async def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id in {TASK_DETAIL_TIMELINE_CATEGORY, TASK_DETAIL_TIMELINE_ROLE}:
-            await self._apply_timeline_filters()
-
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == TASK_DETAIL_TIMELINE_TURN:
-            await self._apply_timeline_filters()
-
-    @on(RowList.Moved, f"#{TASK_DETAIL_TIMELINE_LIST}")
-    def _timeline_moved(self, message: RowList.Moved) -> None:
-        message.stop()
-        page = self._timeline_page
-        if page is None:
-            return
-        self._timeline_selected_identity = (
-            page.entries[message.index].identity if message.index > 0 else None
-        )
-        if message.index > 0:
-            self._pause_timeline_follow()
-        self._paint_timeline_selection()
-
-    @on(RowList.Paged, f"#{TASK_DETAIL_TIMELINE_LIST}")
-    async def _timeline_paged(self, message: RowList.Paged) -> None:
-        message.stop()
-        await (self._older_timeline_page() if message.older else self._newer_timeline_page())
-
-    @on(RowList.Latest, f"#{TASK_DETAIL_TIMELINE_LIST}")
-    async def _timeline_latest(self, message: RowList.Latest) -> None:
-        message.stop()
-        await self._follow_latest()
 
     @on(RowList.Paged, f"#{TASK_DETAIL_RELATED_LIST}")
     async def _related_paged(self, message: RowList.Paged) -> None:
@@ -584,10 +489,10 @@ class TaskDetailPanel(Vertical):
                 continue
             if self._active_view == TASK_VIEW_USAGE:
                 await self._refresh_usage_observations()
-            elif self._active_view == TASK_VIEW_EVIDENCE and self._timeline_following:
-                await self._refresh_timeline()
             elif self._active_view == TASK_VIEW_SUMMARY:
                 await self._refresh_activity()
+            for timeline in self._timelines.values():
+                await timeline.refresh_when_due()
 
     async def _refresh_activity(self) -> None:
         if (
@@ -674,105 +579,12 @@ class TaskDetailPanel(Vertical):
         if self._view is not None and self.is_mounted:
             self._render_activity(self._view)
 
-    async def _refresh_timeline(self) -> None:
-        async with self._refresh_lock:
-            if not self._screen_is_active():
-                return
-            task_id = self._task_id
-            if task_id is None:
-                return
-            generation = self._timeline_request_generation
-            cursor = None if self._timeline_following else self._timeline_cursors[-1]
-            role = self._timeline_role
-            turn = self._timeline_turn
-            category = self._timeline_category
-            try:
-                page = await self._widget_context.views.task_timeline(
-                    task_id,
-                    cursor=cursor,
-                    role=role,
-                    turn=turn,
-                    category=category,
-                )
-            except (ShikiruError, OSError, ValueError, TypeError) as error:
-                if self._screen_is_active() and generation == self._timeline_request_generation:
-                    self._set_feedback(f"Evidence timeline refresh failed: {error}")
-                return
-            if (
-                self._screen_is_active()
-                and task_id == self._task_id
-                and generation == self._timeline_request_generation
-            ):
-                self._render_timeline(page)
-
     def _screen_is_active(self) -> bool:
-        if not widget_is_current(self):
-            return False
-        app = cast("App[None]", self.app)
-        return app.is_running
+        return screen_is_active(self)
 
     def _pause_timeline_follow(self) -> None:
-        if not self._timeline_following:
-            return
-        self._timeline_following = False
-        self._timeline_request_generation += 1
-        if self._screen_is_active():
-            self._paint_timeline_heading()
-
-    async def _apply_timeline_filters(self) -> None:
-        role_value = cast(
-            "Select[str]", self.query_one(f"#{TASK_DETAIL_TIMELINE_ROLE}", Select)
-        ).value
-        category_value = cast(
-            "Select[str]", self.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
-        ).value
-        turn_value = self.query_one(f"#{TASK_DETAIL_TIMELINE_TURN}", Input).value.strip()
-        role = role_value or None if isinstance(role_value, str) else None
-        category = (
-            category_value
-            if isinstance(category_value, str)
-            else TaskTimelineCategory.ACTIVITY.value
-        )
-        turn = turn_value or None
-        if (role, category, turn) == (
-            self._timeline_role,
-            self._timeline_category,
-            self._timeline_turn,
-        ):
-            return
-        self._timeline_role = role
-        self._timeline_category = category
-        self._timeline_turn = turn
-        self._restart_timeline()
-
-    def _restart_timeline(self) -> None:
-        self._timeline_cursors = [None]
-        self._timeline_following = True
-        self._timeline_request_generation += 1
-        self._timeline_selected_identity = None
-        self._queue_refresh()
-
-    async def _older_timeline_page(self) -> None:
-        page = self._timeline_page
-        if page is None or not page.has_older or page.older_cursor is None:
-            return
-        self._timeline_cursors.append(page.older_cursor)
-        self._timeline_following = False
-        self._timeline_request_generation += 1
-        self._timeline_selected_identity = None
-        self._queue_refresh()
-
-    async def _newer_timeline_page(self) -> None:
-        if len(self._timeline_cursors) <= 1:
-            return
-        self._timeline_cursors.pop()
-        self._timeline_following = len(self._timeline_cursors) == 1
-        self._timeline_request_generation += 1
-        self._timeline_selected_identity = None
-        self._queue_refresh()
-
-    async def _follow_latest(self) -> None:
-        self._restart_timeline()
+        for timeline in self._timelines.values():
+            timeline.pause_follow()
 
     async def _back(self) -> None:
         if self._active_view != TASK_VIEW_SUMMARY:
@@ -929,9 +741,7 @@ class TaskDetailPanel(Vertical):
             return
         heading_view = view_id
         view_id = _panel_view(view_id)
-        self._apply_evidence_category(heading_view)
-        if view_id == TASK_VIEW_EVIDENCE:
-            self._timeline_section = _timeline_section(heading_view)
+        self._select_timeline(heading_view)
         self._active_view = view_id
         if isinstance(self.screen, TaskDetailScreen):
             self.screen.set_view_heading(heading_view)
@@ -940,27 +750,35 @@ class TaskDetailPanel(Vertical):
         if view_id == TASK_VIEW_RELATIONSHIPS:
             self._relationship_offset = 0
             self._queue_refresh()
-        self._render_view(self._view, render_timeline=False)
+        self._render_view(self._view, timeline=None)
         target_id = {
             TASK_VIEW_SUMMARY: TASK_DETAIL_DETAILS_BUTTON,
             TASK_VIEW_USAGE: TASK_DETAIL_SESSIONS,
             TASK_VIEW_CONTEXT: TASK_DETAIL_CONTEXT_INFO,
             TASK_VIEW_REPORTS: TASK_DETAIL_REPORT,
             TASK_VIEW_REQUEST: TASK_DETAIL_REQUEST,
-            **LIST_VIEW_FOCUS,
             TASK_VIEW_FACTS: TASK_DETAIL_FACTS,
             TASK_VIEW_WORKSPACE: TASK_DETAIL_WINDOW_BUTTON,
-        }[view_id]
+        }.get(view_id)
         app = cast("App[None]", self.app)
-        self.call_after_refresh(app.set_focus, self.query_one(f"#{target_id}"))
+        self.call_after_refresh(
+            app.set_focus, self.query_one(f"#{self.list_focus_id() or target_id}")
+        )
 
-    def _apply_evidence_category(self, view_id: str) -> None:
-        category = EVIDENCE_VIEW_CATEGORIES.get(view_id)
-        if category is None or category.value == self._timeline_category:
+    def _select_timeline(self, view_id: str) -> None:
+        if view_id not in EVIDENCE_VIEW_CATEGORIES:
             return
-        self._timeline_category = category.value
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select).value = category.value
-        self._restart_timeline()
+        section = _timeline_section(view_id)
+        if section is self._timeline_section:
+            return
+        self._timeline_section = section
+        self._queue_refresh()
+
+    def list_focus_id(self) -> str | None:
+        """Return the id of the row list that takes focus in the current view, if it has one."""
+        if self._active_view == TASK_VIEW_EVIDENCE:
+            return TIMELINE_SECTIONS[self._timeline_section][0].list
+        return LIST_VIEW_FOCUS.get(self._active_view)
 
     async def _navigate_task_window(self) -> None:
         if self._task_id is None:
@@ -1010,21 +828,21 @@ class TaskDetailPanel(Vertical):
                     "Select a task to inspect it."
                 )
                 return
-            generation = self._timeline_request_generation
+            timeline = self._timelines[self._timeline_section]
+            generation = timeline.generation
+            request = timeline.request
             try:
                 view = await self._widget_context.views.task_detail(
                     task_id,
                     relationship_offset=self._relationship_offset,
-                    timeline_cursor=(
-                        None if self._timeline_following else self._timeline_cursors[-1]
-                    ),
-                    timeline_role=self._timeline_role,
-                    timeline_turn=self._timeline_turn,
-                    timeline_category=self._timeline_category,
+                    timeline_cursor=request.cursor,
+                    timeline_role=request.role,
+                    timeline_turn=request.turn,
+                    timeline_category=request.category,
                     include_timeline=include_timeline,
                 )
             except (ShikiruError, OSError, ValueError, TypeError) as error:
-                if self._screen_is_active() and generation == self._timeline_request_generation:
+                if self._screen_is_active() and generation == timeline.generation:
                     self._set_feedback(f"Task detail refresh failed: {error}")
                 return
             if not self._screen_is_active():
@@ -1039,8 +857,8 @@ class TaskDetailPanel(Vertical):
                 return
             self._render_view(
                 view,
-                render_timeline=(
-                    include_timeline and generation == self._timeline_request_generation
+                timeline=(
+                    timeline if include_timeline and generation == timeline.generation else None
                 ),
             )
 
@@ -1072,7 +890,7 @@ class TaskDetailPanel(Vertical):
         """Refresh the current task after this detail screen becomes active again."""
         self._queue_refresh()
 
-    def _render_view(self, view: TaskDetailView, *, render_timeline: bool = True) -> None:
+    def _render_view(self, view: TaskDetailView, *, timeline: TimelineSection | None) -> None:
         self._view = view
         body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         scroll_y = body.scroll_target_y
@@ -1098,8 +916,8 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_VERDICT}", Static).update(
             _report_text("Latest validated verdict", view.latest_verdict, NO_VERDICT)
         )
-        if render_timeline:
-            self._render_timeline(view.timeline)
+        if timeline is not None:
+            timeline.show_page(view.timeline)
         facts = (
             f"Engine-computed git facts · {view.facts_turn}\n{view.recorded_facts}"
             if view.recorded_facts is not None
@@ -1133,10 +951,6 @@ class TaskDetailPanel(Vertical):
     def _apply_view_visibility(self, *, blocker_visible: bool) -> None:
         detail_widgets = {
             widget_id for widgets in TASK_VIEW_WIDGETS.values() for widget_id in widgets
-        } | {
-            TASK_DETAIL_TIMELINE_FILTERS,
-            TASK_DETAIL_TIMELINE_STATUS,
-            TASK_DETAIL_TIMELINE_SELECTED,
         }
         visible = set(TASK_VIEW_WIDGETS[self._active_view])
         for widget_id in detail_widgets:
@@ -1144,6 +958,10 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_BLOCKER}").display = (
             blocker_visible and self._active_view == TASK_VIEW_RELATIONSHIPS
         )
+        for section, timeline in self._timelines.items():
+            timeline.shown = (
+                self._active_view == TASK_VIEW_EVIDENCE and section is self._timeline_section
+            )
 
     def _restore_body_scroll(
         self,
@@ -1168,53 +986,6 @@ class TaskDetailPanel(Vertical):
             and not body.can_view_entire(focused)
         ):
             body.scroll_to_center(focused, animate=False)
-
-    def _render_timeline(self, page: TaskTimelinePageView | None) -> None:
-        self._timeline_page = page
-        entries = page.entries if page is not None else ()
-        selected = next(
-            (
-                index
-                for index, item in enumerate(entries)
-                if item.identity == self._timeline_selected_identity
-            ),
-            0,
-        )
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_LIST}", RowList).set_rows(
-            [timeline_cells(item) for item in entries], selected=selected, empty=NO_TIMELINE_ROWS
-        )
-        self._paint_timeline_heading()
-        self._paint_timeline_selection()
-
-    def _paint_timeline_heading(self) -> None:
-        heading = Text(self._timeline_section.value, style=BOLD_PRIMARY)
-        heading.append_text(
-            grey(
-                HEADING_SEPARATOR + (FOLLOWING_LABEL if self._timeline_following else PAUSED_LABEL)
-            )
-        )
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_TITLE}", Static).update(heading)
-        self.query_one(f"#{TASK_DETAIL_TIMELINE_STATUS}", Static).update(grey(EVENTS_HINT))
-
-    def _paint_timeline_selection(self) -> None:
-        page = self._timeline_page
-        entries = page.entries if page is not None else ()
-        chosen = self.query_one(f"#{TASK_DETAIL_TIMELINE_LIST}", RowList).selected
-        target = self.query_one(f"#{TASK_DETAIL_TIMELINE_SELECTED}", Static)
-        selected = entries[chosen] if chosen < len(entries) else None
-        target.display = selected is not None and self._active_view == TASK_VIEW_EVIDENCE
-        if selected is None:
-            return
-        lines = [
-            f"{selected.source} · {selected.category}",
-            f"Timestamp · {selected.timestamp or NO_VALUE}",
-        ]
-        if selected.role is not None:
-            lines.append(f"Role · {selected.role}")
-        if selected.turn is not None:
-            lines.append(f"Turn · {selected.turn}")
-        lines.extend((selected.summary, selected.detail))
-        target.update("\n".join(lines))
 
     async def _next_relationship_page(self) -> None:
         if self._relationship_next_offset is not None:
@@ -1380,8 +1151,8 @@ class TaskDetailScreen(ModalScreen[None]):
         target: Widget
         if panel.active_view == TASK_VIEW_SUMMARY:
             target = panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button)
-        elif panel.active_view in LIST_VIEW_FOCUS:
-            target = panel.query_one(f"#{LIST_VIEW_FOCUS[panel.active_view]}")
+        elif (list_id := panel.list_focus_id()) is not None:
+            target = panel.query_one(f"#{list_id}")
         else:
             target = panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         self.set_focus(target)

@@ -1826,7 +1826,8 @@ Refs: `domain/briefing.py` (`LAST_WORDS_LIMIT`, `one_line`), `dashboard/activity
 
 ### Task 192: Independent timelines for Events and Agent activity
 Refs: `dashboard/detail.py` timeline state (`_timeline_category`, `_timeline_cursors`, `_timeline_page`, `_watch_timeline`, filters), `row_list.py`, `views.task_detail`.
-- [ ] A timeline section class owns one category's rows, cursor, page, filters and follow state; the panel instantiates two. Behaviour is unchanged for the operator (same lists and filters); a 1 Hz refresh runs only for a section that is shown.
+- [x] A timeline section class owns one category's rows, cursor, page, filters and follow state; the panel instantiates two. Behaviour is unchanged for the operator (same lists and filters); a 1 Hz refresh runs only for a section that is shown.
+- Proof: `TimelineSection` (`dashboard/timeline_section.py`) now owns rows, cursor stack, page, filters, follow state and the shown-only refresh; the panel holds two (Events, Agent activity with `task-detail-agent-*` ids) and `detail.py` shrank from 1638 to 1409 lines. A native run of the real panel showed Events then Agent activity listing their own rows, Agent paging to `paused`, End returning to `following`, and Events unchanged on return; a new test proves two shown sections keep separate pages, follow state and turn filters. `uv run poe check` is green (1591 passed).
 
 ### Task 193: Inline folds replace the details list popup
 Refs: spec "Task details"; `details_list.py`, `details_list_view.py` (`entry_renderable`, headlines, add the missing Events/Request/Facts/Agent activity headlines), `detail.py` (`TASK_VIEW_WIDGETS`, `_apply_view_visibility`, `_render_view`), `ui/section.py`.

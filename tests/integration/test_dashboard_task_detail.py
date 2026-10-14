@@ -41,7 +41,6 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
     TASK_DETAIL_SESSIONS,
-    TASK_DETAIL_TIMELINE_CATEGORY,
     TASK_DETAIL_TIMELINE_TURN,
     TASK_VIEW_CONTEXT,
     TASK_VIEW_EVIDENCE,
@@ -51,6 +50,7 @@ from shikiru.dashboard.detail import (
     TASK_VIEW_REQUEST,
     TASK_VIEW_USAGE,
     TASK_VIEW_WORKSPACE,
+    TIMELINE_SECTIONS,
     TaskDetailPanel,
     TaskDetailScreen,
     TaskDetailsListScreen,
@@ -2729,7 +2729,8 @@ async def _open_section_from_list(
     )
     if case.category is not None:
         selected = cast(
-            "Select[str]", app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_CATEGORY}", Select)
+            "Select[str]",
+            app.screen.query_one(f"#{TIMELINE_SECTIONS[case.section][0].category}", Select),
         )
         assert selected.value == case.category.value
 

@@ -8,8 +8,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, TypedDict, cast
 
 import pytest
+from textual.containers import Vertical
 from textual.events import MouseScrollUp
-from textual.widgets import Select, Static
+from textual.widgets import Input, Select, Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.contract import TaskTimelineCategory
@@ -20,9 +21,12 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_TIMELINE_SELECTED,
     TASK_DETAIL_TIMELINE_TITLE,
     TASK_VIEW_EVIDENCE,
+    TIMELINE_SECTIONS,
     TaskDetailBody,
     TaskDetailPanel,
 )
+from shikiru.dashboard.details_list_view import DetailsSection
+from shikiru.dashboard.timeline_section import TimelineHost, TimelineSection
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
     FACTS_FILENAME,
@@ -837,6 +841,111 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
         if detail_gate is not None:
             detail_gate[1].set()
         reader.close()
+
+
+async def test_shown_timelines_keep_their_own_paging_filters_and_refresh(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(TIMELINE_START)
+    task = seed_task(connection, clock, title="Independent timelines")
+    RunStore(connection, clock).start(task.id, Role.LEADER, LEADER_RUNG)
+    signal_path = run_dir(project_root, task.id) / Role.LEADER.value / "view.jsonl"
+    signal_path.parent.mkdir(parents=True)
+    events = EventLog(connection, clock)
+
+    def append_signal(turn: str) -> None:
+        row = {"ts": clock.now().isoformat(), "turn": turn, "signal": "Message", "ordinal": 0}
+        with signal_path.open("a") as output:
+            output.write(json.dumps(row) + "\n")
+
+    for index in range(TIMELINE_ROW_COUNT):
+        clock.advance(1)
+        events.append(
+            EventKind.TURN_FAILED,
+            task_id=task.id,
+            message=f"event-{index}",
+            data={"role": Role.LEADER.value, "turn": f"event-turn-{index}"},
+        )
+        append_signal(f"signal-turn-{index % 4}")
+
+    context = widget_context(reader, project_root, clock)
+    refreshing: list[TimelineSection] = []
+
+    def refresh_all() -> None:
+        app.run_worker(_refresh_pages(refreshing))
+
+    host = TimelineHost(
+        task_id=lambda: task.id,
+        lock=asyncio.Lock(),
+        queue_refresh=refresh_all,
+        report=_raise_report,
+    )
+    sections = {
+        section: TimelineSection(context, host, ids=ids, section=section, category=category)
+        for section, (ids, category) in TIMELINE_SECTIONS.items()
+    }
+    refreshing.extend(sections.values())
+    activity = sections[DetailsSection.EVENTS]
+    signals = sections[DetailsSection.AGENT_ACTIVITY]
+    app = WidgetHostApp(Vertical(*sections.values()))
+
+    async with app.run_test(size=(100, 60)) as pilot:
+        refresh_all()
+        await wait_until(
+            lambda: activity.page is not None and signals.page is not None,
+            timeout=UI_WAIT_SECONDS,
+        )
+        newest_events = _identities(activity)
+        newest_signals = _identities(signals)
+        assert newest_events != newest_signals
+
+        app.query_one(f"#{activity.ids.list}").focus()
+        await pilot.press("pagedown")
+        await wait_until(lambda: _identities(activity) != newest_events, timeout=UI_WAIT_SECONDS)
+        older_events = _identities(activity)
+        assert (activity.following, signals.following) == (False, True)
+        assert _identities(signals) == newest_signals
+
+        append_signal("signal-turn-fresh")
+        events.append(
+            EventKind.TURN_FAILED,
+            task_id=task.id,
+            message="event-fresh",
+            data={"role": Role.LEADER.value, "turn": "event-turn-fresh"},
+        )
+        await activity.refresh_when_due()
+        await signals.refresh_when_due()
+        assert _identities(activity) == older_events
+        assert _turns(signals)[0] == "signal-turn-fresh"
+
+        turn_input = app.query_one(f"#{signals.ids.turn}", Input)
+        turn_input.focus()
+        turn_input.value = "signal-turn-3"
+        await pilot.press("enter")
+        await wait_until(lambda: set(_turns(signals)) == {"signal-turn-3"}, timeout=UI_WAIT_SECONDS)
+        assert _identities(activity) == older_events
+        assert activity.request.turn is None
+        assert app.query_one(f"#{activity.ids.turn}", Input).value == ""
+
+
+async def _refresh_pages(sections: list[TimelineSection]) -> None:
+    for section in sections:
+        await section.refresh_page()
+
+
+def _raise_report(message: str) -> None:
+    raise AssertionError(message)
+
+
+def _identities(section: TimelineSection) -> list[str]:
+    return [entry.identity for entry in section.page.entries] if section.page else []
+
+
+def _turns(section: TimelineSection) -> list[str | None]:
+    return [entry.turn for entry in section.page.entries] if section.page else []
 
 
 def _rows(panel: TaskDetailPanel) -> list[str]:

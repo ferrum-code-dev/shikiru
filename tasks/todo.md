@@ -300,7 +300,7 @@ Twelfth-review scope and evidence: [twelfth review, keys, escalation answers and
 - [x] Task 189: What was tried digest
 - [x] Task 190: Alternatives that need Operator input
 - [x] Task 191: Wrap the agent's current output in Now
-- [ ] Task 192: Independent timelines for Events and Agent activity
+- [x] Task 192: Independent timelines for Events and Agent activity
 - [ ] Task 193: Inline folds replace the details list popup
 - [ ] Task 194: Route entry points to folds and retire the chooser
 - [ ] Task 195: Cyan key names everywhere
