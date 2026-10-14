@@ -1,4 +1,4 @@
-"""Rows of the task details list: section names, their data headlines and the row renderable."""
+"""Rows of the task detail folds: section names, their data headlines and the row renderable."""
 
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from shikiru.dashboard.contract import TaskDetailView
 
 _ARROWS = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW}"
-DETAILS_HINT = f"{_ARROWS} select · Enter open"
 EVENTS_HINT = f"{_ARROWS} select · PgUp/PgDn page · End follow"
 RELATIONSHIPS_HINT = f"{_ARROWS} select · Enter open · PgUp/PgDn page"
 SELECTED_BAR = "\N{LEFT HALF BLOCK} "
@@ -35,7 +34,7 @@ _BLOCKER_NOUNS = ("blocker", "blockers")
 
 
 class DetailsSection(StrEnum):
-    """The task detail sections, in list order, named as the list shows them."""
+    """The task detail sections, in fold order, named as the headers show them."""
 
     REPORTS = "Reports and decisions"
     REQUEST = "Request and criteria"
@@ -50,7 +49,7 @@ class DetailsSection(StrEnum):
 
 @dataclass(frozen=True)
 class DetailsEntry:
-    """One list row: what it opens, its name and its optional grey headline."""
+    """One fold header row: what it opens, its name and its optional grey headline."""
 
     entry_id: str
     name: str

@@ -53,12 +53,11 @@ from shikiru.dashboard.detail import (
     TASK_VIEW_WORKSPACE,
     TIMELINE_SECTIONS,
     TaskDetailPanel,
-    TaskDetailScreen,
-    TaskDetailsListScreen,
 )
-from shikiru.dashboard.detail_fold import FoldHeader
+from shikiru.dashboard.detail_fold import DetailFolds, FoldHeader
 from shikiru.dashboard.details_list_view import DetailsSection
 from shikiru.dashboard.palette import PaletteScreen
+from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.services import TaskNavigation
 from shikiru.domain.briefing import (
     BriefingAction,
@@ -487,10 +486,7 @@ async def _open_task_view(
 ) -> None:
     await choose_details_entry(pilot, view_id)
     await wait_until(
-        lambda: (
-            isinstance(app.screen, TaskDetailScreen)
-            and view_id in app.screen.query_one("#task-detail-panel", TaskDetailPanel).open_views
-        ),
+        lambda: view_id in app.screen.query_one("#task-detail-panel", TaskDetailPanel).open_views,
         timeout=UI_WAIT_SECONDS,
     )
 
@@ -2021,13 +2017,11 @@ async def _assert_task_context_keeps_priority(app: DashboardApp, pilot: Pilot[No
     await choose_details_entry(pilot, TASK_VIEW_CONTEXT)
     await wait_until(
         lambda: (
-            isinstance(app.screen, TaskDetailScreen)
-            and "Dispatch priority · 5"
+            "Dispatch priority · 5"
             in _text(app.screen.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static))
         ),
         timeout=UI_WAIT_SECONDS,
     )
-    await pilot.press("escape")
 
 
 async def test_compact_task_detail_keeps_decisions_usage_and_actions_reachable(
@@ -2661,22 +2655,16 @@ _SECTION_CASES = [
     _SectionCase(DetailsSection.BLOCKERS, TASK_VIEW_RELATIONSHIPS, None, True),
     _SectionCase(DetailsSection.SETTINGS, TASK_VIEW_CONTEXT, None, False),
 ]
-_ESCAPE_HOME_RESULT = "opened existing home window"
 
 
-def _details_list_text(screen: TaskDetailsListScreen) -> str:
-    rows = [row for row in screen.query(Static) if row.has_class("task-details-row")]
-    return "\n".join(plain_text(row.content) for row in rows)
-
-
-async def test_details_list_opens_each_section_by_key_or_click_without_creating_commands(
+async def test_each_fold_opens_by_key_or_click_without_creating_commands(
     connection: Connection,
     database: Database,
     tmp_path: Path,
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Details list target", priority=5)
+    task = seed_task(connection, clock, title="Fold target", priority=5)
     reader = StateReader(database, SystemClock())
     queue = CommandQueue(connection, clock)
     pending_before = queue.pending()
@@ -2688,108 +2676,82 @@ async def test_details_list_opens_each_section_by_key_or_click_without_creating_
                 lambda: task.title in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
                 timeout=UI_WAIT_SECONDS,
             )
-            for case in _SECTION_CASES:
-                await _open_section_from_list(app, pilot, case)
-                in_list = case.category is not None or case.view == TASK_VIEW_RELATIONSHIPS
-                await pilot.press(*["escape"] * (2 if in_list else 1))
-                await wait_until(
-                    lambda: not isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
-                )
+            base = app.screen
+            panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+            for case in (
+                *reversed([c for c in _SECTION_CASES if c.by_click]),
+                *[c for c in _SECTION_CASES if not c.by_click],
+            ):
+                await _open_fold(app, pilot, panel, case)
+                assert app.screen is base
             assert queue.pending() == pending_before
     finally:
         reader.close()
 
 
-async def _open_section_from_list(
-    app: DashboardApp, pilot: Pilot[None], case: _SectionCase
+async def _open_fold(
+    app: DashboardApp, pilot: Pilot[None], panel: TaskDetailPanel, case: _SectionCase
 ) -> None:
-    await pilot.press("v")
-    await wait_until(lambda: isinstance(app.screen, TaskDetailsListScreen), timeout=UI_WAIT_SECONDS)
-    menu = cast("TaskDetailsListScreen", app.screen)
-    assert "priority 5" in _details_list_text(menu)
-    index = list(DetailsSection).index(case.section)
     if case.by_click:
-        assert await pilot.click(menu.query(".task-details-row")[index])
+        header = (
+            panel.query_one(DetailFolds).all_folds[list(DetailsSection).index(case.section)].header
+        )
+        header.scroll_visible(animate=False, immediate=True)
+        await wait_until(
+            lambda: (
+                header.region in app.screen.region
+                and app.get_widget_at(header.region.x, header.region.y)[0] is header
+            ),
+            timeout=UI_WAIT_SECONDS,
+        )
+        await pilot.click(header)
     else:
-        await pilot.press(*["down"] * index, "enter")
-    await wait_until(
-        lambda: (
-            isinstance(app.screen, TaskDetailScreen)
-            and case.view in app.screen.query_one("#task-detail-panel", TaskDetailPanel).open_views
-        ),
-        timeout=UI_WAIT_SECONDS,
-    )
+        await choose_details_entry(pilot, case.view)
+    await wait_until(lambda: case.view in panel.open_views, timeout=UI_WAIT_SECONDS)
     if case.category is not None:
         selected = cast(
             "Select[str]",
-            app.screen.query_one(f"#{TIMELINE_SECTIONS[case.section][0].category}", Select),
+            app.query_one(f"#{TIMELINE_SECTIONS[case.section][0].category}", Select),
         )
         assert selected.value == case.category.value
 
 
-@pytest.mark.parametrize("surface", ["task-window", "home-inspector"])
-async def test_escape_goes_up_one_level_from_section_list_and_surface(
+async def test_escape_steps_from_home_inspector_fold_list_to_header_to_cleared_selection(
     connection: Connection,
     database: Database,
     tmp_path: Path,
-    surface: str,
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     task = seed_task(connection, SystemClock(), title="Escape levels target")
     reader = StateReader(database, SystemClock())
-    home_results: list[str] = []
-
-    async def navigate_home() -> str:
-        home_results.append(_ESCAPE_HOME_RESULT)
-        return _ESCAPE_HOME_RESULT
-
-    in_window = surface == "task-window"
     try:
         app = _dashboard_app(
-            reader,
-            project_root,
-            focus_task=task.id if in_window else None,
-            widget_names=TASK_DETAIL_WIDGETS,
-            navigate_home=navigate_home,
+            reader, project_root, focus_task=None, widget_names=TASK_DETAIL_WIDGETS
         )
         async with app.run_test(size=(120, 40)) as pilot:
-            base = await _open_escape_base(app, task.id, in_window=in_window)
-            await pilot.press("v")
+            base = await _open_escape_base(app, task.id)
+            panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+            await choose_details_entry(pilot, TASK_VIEW_EVIDENCE)
             await wait_until(
-                lambda: isinstance(app.screen, TaskDetailsListScreen), timeout=UI_WAIT_SECONDS
+                lambda: isinstance(app.focused, RowList) and panel in app.focused.ancestors,
+                timeout=UI_WAIT_SECONDS,
             )
             await pilot.press("escape")
-            await wait_until(lambda: app.screen is base, timeout=UI_WAIT_SECONDS)
+            await wait_until(lambda: isinstance(app.focused, FoldHeader), timeout=UI_WAIT_SECONDS)
+            assert app.screen is base
+            assert TASK_VIEW_EVIDENCE in panel.open_views
 
-            await choose_details_entry(pilot, TASK_VIEW_USAGE)
+            await pilot.press("escape")
             await wait_until(
-                lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
+                lambda: task.id not in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
+                timeout=UI_WAIT_SECONDS,
             )
-            panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
-            await wait_until(lambda: TASK_VIEW_USAGE in panel.open_views, timeout=UI_WAIT_SECONDS)
-            await pilot.press("escape")
-            await wait_until(lambda: app.screen is base, timeout=UI_WAIT_SECONDS)
-
-            await pilot.press("escape")
-            if in_window:
-                await wait_until(lambda: home_results == [_ESCAPE_HOME_RESULT], timeout=5.0)
-            else:
-                await wait_until(
-                    lambda: task.id not in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
-                    timeout=UI_WAIT_SECONDS,
-                )
-                assert app.screen is base
+            assert app.screen is base
     finally:
         reader.close()
 
 
-async def _open_escape_base(app: DashboardApp, task_id: str, *, in_window: bool) -> Screen[object]:
-    if in_window:
-        await wait_until(
-            lambda: task_id in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
-            timeout=UI_WAIT_SECONDS,
-        )
-        return app.screen
+async def _open_escape_base(app: DashboardApp, task_id: str) -> Screen[object]:
     row = f"#task-row-{task_id}"
     await wait_until(lambda: bool(app.query(row)), timeout=UI_WAIT_SECONDS)
     task_list = cast("ListView", app.query_one(row).parent)

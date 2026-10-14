@@ -29,10 +29,8 @@ from shikiru.dashboard.contract import (
     TaskTimelineCategory,
 )
 from shikiru.dashboard.detail_fold import DetailFold, DetailFolds
-from shikiru.dashboard.details_list import TaskDetailsListScreen
 from shikiru.dashboard.details_list_view import (
     RELATIONSHIPS_HINT,
-    DetailsEntry,
     DetailsSection,
     section_headline,
 )
@@ -125,7 +123,7 @@ TASK_DETAIL_TINY_MAX_ROWS = 8
 _TASK_DETAIL_COMPACT_MAX_COLUMNS = 48
 _TASK_DETAIL_COMPACT_MAX_ROWS = 20
 TASK_DETAIL_VIEWS_KEY = "v"
-TASK_DETAIL_VIEWS_ACTION = "open_contextual_views"
+TASK_DETAIL_VIEWS_ACTION = "open_details"
 TASK_DETAIL_ENTER_KEY = "enter"
 TASK_DETAIL_ENTER_ACTION = "open_details"
 TASK_DETAIL_HELP_KEY = "question_mark"
@@ -291,7 +289,6 @@ class TaskDetailPanel(Vertical):
         self._timeline_worker: Worker[None] | None = None
         self._remove_motion_callback: Callable[[], None] | None = None
         self._body_focus_generation = 0
-        self._views_return_state: tuple[float, Widget | None] | None = None
         self._rendered_task_id: str | None = None
         self._view: TaskDetailView | None = None
         self._on_initial_content = on_initial_content
@@ -622,36 +619,6 @@ class TaskDetailPanel(Vertical):
         """The view ids of the folds that are open."""
         return frozenset(view_id for view_id, fold in self._folds.items() if fold.is_open)
 
-    async def open_contextual_views(self) -> None:
-        if self._task_id is None:
-            return
-        body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
-        self._views_return_state = (body.scroll_target_y, self.screen.focused)
-        app = cast("App[None]", self.app)
-        app.push_screen(
-            TaskDetailsListScreen(self._task_id, self._details_entries()),
-            callback=self._show_selected_view,
-        )
-
-    def _details_entries(self) -> tuple[DetailsEntry, ...]:
-        view = (
-            self._view if self._view is not None and self._view.task_id == self._task_id else None
-        )
-        sections = (
-            DetailsEntry(
-                DETAILS_SECTION_VIEWS[section], section.value, section_headline(section, view)
-            )
-            for section in DetailsSection
-        )
-        projects = (
-            DetailsEntry(choice_id, label)
-            for label, choice_id in self._widget_context.task_contextual_views
-        )
-        return (*sections, *projects)
-
-    async def action_open_contextual_views(self) -> None:
-        await self.open_contextual_views()
-
     async def action_open_details(self) -> None:
         await self.focus_folds()
 
@@ -694,53 +661,6 @@ class TaskDetailPanel(Vertical):
 
     async def return_from_detail(self) -> None:
         await self._back()
-
-    def _show_selected_view(self, selected: str | None) -> None:
-        if selected is None:
-            self._restore_contextual_position()
-            return
-        self._views_return_state = None
-        if selected in self._folds:
-            if isinstance(self.screen, TaskDetailScreen):
-                self._queue_refresh()
-                self.open_view(selected)
-            elif (
-                self._task_id is not None and self._widget_context.open_task_detail_view is not None
-            ):
-                self.run_worker(
-                    self._widget_context.open_task_detail_view(self._task_id, selected),
-                    group=TASK_DETAIL_WORKER_GROUP,
-                )
-            else:
-                self._queue_refresh()
-                self.open_view(selected)
-        elif self._widget_context.open_contextual_view is not None:
-            self._queue_refresh()
-            self.run_worker(
-                self._widget_context.open_contextual_view(selected),
-                group=TASK_DETAIL_WORKER_GROUP,
-            )
-
-    def _restore_contextual_position(self) -> None:
-        state = self._views_return_state
-        self._views_return_state = None
-        self._queue_refresh()
-        if state is None:
-            return
-        body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
-        self.call_after_refresh(self._restore_contextual_position_after_refresh, body, *state)
-
-    def _restore_contextual_position_after_refresh(
-        self,
-        body: TaskDetailBody,
-        scroll_y: float,
-        focused: Widget | None,
-    ) -> None:
-        if not self._screen_is_active():
-            return
-        if focused is not None and focused.is_mounted and focused.display:
-            cast("App[None]", self.app).set_focus(focused)
-        body.scroll_to(y=scroll_y, animate=False, immediate=True)
 
     async def _navigate_task_window(self) -> None:
         if self._task_id is None:
@@ -931,7 +851,11 @@ class TaskDetailPanel(Vertical):
     @on(DetailFold.Chosen)
     def _fold_chosen(self, message: DetailFold.Chosen) -> None:
         message.stop()
-        self._show_selected_view(message.fold.view_id)
+        if self._widget_context.open_contextual_view is not None:
+            self.run_worker(
+                self._widget_context.open_contextual_view(message.fold.view_id),
+                group=TASK_DETAIL_WORKER_GROUP,
+            )
 
     def _restore_body_scroll(
         self,
@@ -1083,14 +1007,14 @@ class TaskDetailScreen(ModalScreen[None]):
         task_id: str,
         *,
         initial_view: str = TASK_VIEW_SUMMARY,
-        open_views_on_mount: bool = False,
+        focus_folds_on_mount: bool = False,
     ) -> None:
         super().__init__()
         prepare_popup(self)
         self._widget_context = context
         self._task_id = task_id
         self._initial_view = initial_view
-        self._open_views_on_mount = open_views_on_mount
+        self._focus_folds_on_mount = focus_folds_on_mount
 
     def compose(self) -> ComposeResult:
         with PopupFrame(widget_id=TASK_DETAIL_POPUP_FRAME, classes=POPUP_FRAME_CLASS):
@@ -1122,8 +1046,8 @@ class TaskDetailScreen(ModalScreen[None]):
             self.set_focus(panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button))
         else:
             panel.open_view(self._initial_view)
-        if self._open_views_on_mount:
-            await panel.open_contextual_views()
+        if self._focus_folds_on_mount:
+            await panel.focus_folds()
 
     def on_resize(self, event: events.Resize) -> None:
         self._apply_layout(event.size.width, event.size.height)
@@ -1154,9 +1078,6 @@ class TaskDetailScreen(ModalScreen[None]):
 
     async def _close(self) -> None:
         self.dismiss()
-
-    async def action_open_contextual_views(self) -> None:
-        await self.query_one("#task-detail-panel", TaskDetailPanel).open_contextual_views()
 
     async def action_close(self) -> None:
         self.dismiss()

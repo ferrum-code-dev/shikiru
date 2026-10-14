@@ -588,10 +588,10 @@ class _WorkspaceHelpScreen(ModalScreen[None]):
         if self._task_id:
             lines = [
                 "Escape: return to the compact task summary or Home",
-                "v: choose reports, request, evidence, relationships, workspace or plugins",
+                "v: focus the section folds (reports, request, evidence, relationships, ...)",
                 "Ctrl+P: open applicable operator actions for this task",
                 "Events and relationships: Up/Down select · PgUp/PgDn page · End follows",
-                "Mouse: Views offers task sections, Actions and Help",
+                "Mouse: click a section header to fold it open; Views offers Actions and Help",
                 "Navigation to task and role windows is under Workspace and existing role targets",
                 "Command applied means queued/applied by the engine;",
                 "an agent may consume guidance later",
@@ -1600,21 +1600,15 @@ class DashboardApp(App[None]):
         elif route is TaskPaletteRoute.DIAGNOSTICS:
             await self._open_contextual_view(FOCUS_PROJECT_DIAGNOSTICS_VIEW)
         else:
-            panel = self._context_task_detail_panel()
-            if (
-                panel is None
-                and self._home_detail_panel is not None
-                and self._home_detail_panel.display
-            ):
-                panel = self._home_detail_panel
+            panel = self._inline_task_panel(task_id)
             if panel is not None:
-                await panel.open_contextual_views()
+                await panel.focus_folds()
             else:
                 self.push_screen(
                     TaskDetailScreen(
                         self._widget_context(),
                         task_id,
-                        open_views_on_mount=True,
+                        focus_folds_on_mount=True,
                     ),
                     callback=lambda _: self.refresh_task_detail_after_resume(),
                 )
@@ -1846,7 +1840,7 @@ class DashboardApp(App[None]):
         elif event.key == TASK_DETAIL_VIEWS_KEY:
             panel = self._context_task_detail_panel()
             if panel is not None:
-                await panel.open_contextual_views()
+                await panel.focus_folds()
             else:
                 await self.action_open_views()
         else:
@@ -2046,7 +2040,7 @@ class DashboardApp(App[None]):
     async def action_open_views(self) -> None:
         """Open configured filters, history and secondary dashboard widgets."""
         if self._focus_task is not None:
-            await self.query_one("#task-detail-panel", TaskDetailPanel).open_contextual_views()
+            await self.query_one("#task-detail-panel", TaskDetailPanel).focus_folds()
             return
         self.push_screen(
             _ContextViewsScreen(self._context_choices()),
@@ -2088,16 +2082,23 @@ class DashboardApp(App[None]):
         await self.open_task_detail_view(task_id, TASK_VIEW_EVIDENCE)
 
     async def open_task_detail_view(self, task_id: str, view_id: str) -> None:
-        """Open a task detail view over Home or switch views in the active task popup."""
-        panel = self._context_task_detail_panel()
-        if (
-            isinstance(self.screen, TaskDetailScreen)
-            and panel is not None
-            and panel.task_id == task_id
-        ):
-            panel.open_view(view_id)
+        """Open a task's fold where its panel is shown, otherwise in the task popup."""
+        panel = self._inline_task_panel(task_id)
+        if panel is None:
+            await self._open_task_detail(task_id, initial_view=view_id)
             return
-        await self._open_task_detail(task_id, initial_view=view_id)
+        panel.open_view(view_id)
+
+    def _inline_task_panel(self, task_id: str) -> TaskDetailPanel | None:
+        panel = self._context_task_detail_panel()
+        if panel is not None and panel.task_id == task_id:
+            return panel
+        if isinstance(self.screen, TaskDetailScreen):
+            return None
+        home = self._home_detail_panel
+        if home is not None:
+            home.select_task(task_id)
+        return home
 
     def _context_task_detail_panel(self) -> TaskDetailPanel | None:
         if isinstance(self.screen, TaskDetailScreen):

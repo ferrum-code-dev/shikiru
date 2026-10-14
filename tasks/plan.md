@@ -1837,7 +1837,8 @@ Refs: spec "Task details"; `details_list.py`, `details_list_view.py` (`entry_ren
 
 ### Task 194: Route entry points to folds and retire the chooser
 Refs: `app.py` (`open_task_detail_view`, palette Views route, `action_open_task_usage`/`evidence`, `open_contextual_view`), `contract.py`, `TaskDetailScreen` (`initial_view`, `open_views_on_mount`), `tests/support/dashboard.py` (`choose_details_entry`).
-- [ ] `Enter details ▸`, `v`, the palette Views route and every widget that opened a section now open the panel with that fold open and focused; `TaskDetailsListScreen` and its tests are deleted or converted; shape and wording tests deleted; collected cases fall.
+- [x] `Enter details ▸`, `v`, the palette Views route and every widget that opened a section now open the panel with that fold open and focused; `TaskDetailsListScreen` and its tests are deleted or converted; shape and wording tests deleted; collected cases fall.
+- Proof: `v`, Enter on the inspector and the `↓ details` button focus the first or last-used fold header, and `TaskDetailsListScreen` and its popup are gone. The palette Views route and `open_task_detail_view` (usage, evidence, Home widgets) open and focus the fold on the shown panel (Home wide or compact inspector, task window, task popup) and push `TaskDetailScreen` only where no panel is shown; converted tests cover key and click, no commands created, usage/evidence routes, popup route and Esc steps. Collected cases fell from 1624 to 1623; the unused `timeline_*` arguments of `task_detail` were kept because tests of the embedded timeline still use them. `uv run poe check` is green.
 
 ### Task 195: Cyan key names everywhere
 Refs: `ui/section.py`, `ui/compact.py` (`_append_aligned_hint`), `ui/popup.py`, `app.py` help and footer, `escalations.py`, `resolution_view.py`, `detail.py`, `briefing_view.py`, `session_picker.py`, `palette.py`, `dialogue.py`, `queue.py`.

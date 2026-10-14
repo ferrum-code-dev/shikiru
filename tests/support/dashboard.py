@@ -19,7 +19,7 @@ from shikiru.dashboard.contract import (
     WidgetContext,
 )
 from shikiru.dashboard.detail import TASK_DETAIL_DETAILS_BUTTON
-from shikiru.dashboard.details_list import TaskDetailsListScreen
+from shikiru.dashboard.detail_fold import DetailFold, FoldHeader
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.operator.queries import OperatorQueries
@@ -129,9 +129,6 @@ async def choose_focus_view(pilot: Pilot[None], label: str) -> None:
     await pilot.pause()
 
 
-MAX_DETAILS_ENTRIES = 20
-
-
 async def choose_details_entry(pilot: Pilot[None], entry_id: str) -> None:
     await pilot.press("v")
     await pick_details_entry(pilot, entry_id)
@@ -148,18 +145,25 @@ async def choose_inspector_details_entry(pilot: Pilot[None], entry_id: str) -> N
     await choose_details_entry(pilot, entry_id)
 
 
+def _focused_fold(pilot: Pilot[None]) -> DetailFold | None:
+    focused = pilot.app.focused
+    parent = focused.parent if isinstance(focused, FoldHeader) else None
+    return parent if isinstance(parent, DetailFold) else None
+
+
 async def pick_details_entry(pilot: Pilot[None], entry_id: str) -> None:
-    await wait_until(
-        lambda: isinstance(pilot.app.screen, TaskDetailsListScreen), timeout=UI_WAIT_SECONDS
-    )
-    menu = cast("TaskDetailsListScreen", pilot.app.screen)
-    for _ in range(MAX_DETAILS_ENTRIES):
-        if menu.selected_id == entry_id:
-            break
-        await pilot.press("down")
-    assert menu.selected_id == entry_id
+    await wait_until(lambda: _focused_fold(pilot) is not None, timeout=UI_WAIT_SECONDS)
+    fold = cast("DetailFold", _focused_fold(pilot))
+    ids = [item.view_id for item in fold.folds.all_folds]
+    step = 1 if ids.index(entry_id) > ids.index(fold.view_id) else -1
+    current, target = ids.index(fold.view_id), ids.index(entry_id)
+    for expected in (ids[index] for index in range(current + step, target + step, step)):
+        await pilot.press("down" if step > 0 else "up")
+        await wait_until(
+            lambda expected=expected: getattr(_focused_fold(pilot), "view_id", None) == expected,
+            timeout=UI_WAIT_SECONDS,
+        )
     await pilot.press("enter")
-    await wait_until(lambda: pilot.app.screen is not menu, timeout=UI_WAIT_SECONDS)
 
 
 def list_rows(root: DOMNode, list_id: str) -> list[str]:

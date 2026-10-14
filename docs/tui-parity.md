@@ -108,7 +108,7 @@ The `Recent` list uses the existing task browser/history queries and retains the
 | Up / Down | Select the previous/next task cyclically in the current task list. | None. |
 | Enter on the selected task | Open the task inspector in the wide contextual overlay. In compact Home, open the shared full task detail; Escape returns to the same list selection. | None. |
 | Ctrl+P | Open the selected task's contextual action menu; at Home with no task target, show applicable project actions. | None until a form is submitted. |
-| `v` (inspector or popup focused) | Open the task details list. | None. |
+| `v` (inspector or popup focused) | Focus the task detail folds. | None. |
 | `?` | Open Help. | None. |
 | Escape | Close the current menu/form/overlay or return to its caller, preserving task, role, selection, entered text and reading position. | None. |
 | `/` in Home | Reveal and focus task search. Enter moves to results; Escape clears a nonempty query before hiding the empty input. Search remains hidden at rest. | None. |
@@ -116,7 +116,7 @@ The `Recent` list uses the existing task browser/history queries and retains the
 | Click project token, billing or subscription summary | Open Project totals and recorded subscription/quota details. | None. |
 | Click Host/Shikiru resource summary | Open Diagnostics with the same cached observation. | None. |
 | Click a briefing verb | Open that palette action (Answer opens the resolution screen). | None until submitted. |
-| Click or Enter on `Enter details ▸` | Open the task details list. | None. |
+| Click or Enter on `Enter details ▸` | Focus the task detail folds. | None. |
 | Click contextual action or form control | Select/open that action or submit only when the explicit submit control/key is activated. Inputs retain native editing keys. | Only explicit submission queues the typed operation. |
 
 The Home footer presents `↑↓ select`, `Enter inspect`, `Ctrl+P actions` and `? help`; its inline wrapping keeps every mouse route available at compact widths, including when search is focused or no task is selected. On task detail, the same menu exposes task-scoped actions and secondary views. Primary menu order is Answer decision when applicable; Inspect task; Evidence & reports; Message a role; Take over/Hand back a role when applicable; Usage; Commands; Project diagnostics. Each entry is a quiet left-aligned label with a short secondary meaning. More actions keeps submit, prioritize, rung change, pause/pause-now, resume, retry, cancel, stop, export, secondary views and configured Extensions discoverable on demand. Show only applicable actions and provide guidance and consequence before submission. A Role field appears only when the selected action needs a role.

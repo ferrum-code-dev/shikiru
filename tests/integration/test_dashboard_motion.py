@@ -30,9 +30,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
     TASK_VIEW_USAGE,
-    TaskDetailScreen,
 )
-from shikiru.dashboard.details_list import TaskDetailsListScreen
 from shikiru.domain.escalation import Escalation, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
@@ -290,7 +288,7 @@ async def _assert_closed_history_callback_is_safe(
 ) -> None:
     await pilot.press("escape")
     await wait_until(
-        lambda: not isinstance(app.screen, TaskDetailsListScreen),
+        lambda: not app.screen.query(UsagePanel),
         timeout=UI_WAIT_SECONDS,
     )
     await choose_details_entry(pilot, FOCUS_COMMAND_HISTORY)
@@ -1249,11 +1247,9 @@ async def test_task_detail_keeps_refreshing_facts_under_a_covering_screen(
                 timeout=UI_WAIT_SECONDS,
             )
             assert Hold.PAUSED.value not in plain_text(ownership.content)
-            await pilot.press("v")
-            await wait_until(
-                lambda: isinstance(app.screen, TaskDetailsListScreen),
-                timeout=UI_WAIT_SECONDS,
-            )
+            base = app.screen
+            await pilot.press("question_mark")
+            await wait_until(lambda: app.screen is not base, timeout=UI_WAIT_SECONDS)
             await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
             clock.advance(1)
@@ -1384,9 +1380,6 @@ async def test_task_usage_details_tick_quota_age_and_reset_without_motion_eviden
                 timeout=UI_WAIT_SECONDS,
             )
             await choose_details_entry(pilot, TASK_VIEW_USAGE)
-            await wait_until(
-                lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
-            )
             sessions = app.screen.query_one("#task-detail-sessions", Static)
             await wait_until(
                 lambda: (

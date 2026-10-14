@@ -3058,9 +3058,6 @@ async def test_task_detail_lists_page_with_page_keys_and_stop_at_boundaries(
         )
         async with app.run_test(size=(100, 34)) as pilot:
             await choose_details_entry(pilot, TASK_VIEW_EVIDENCE)
-            await wait_until(
-                lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
-            )
             panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
             await wait_until(
                 lambda: TASK_VIEW_EVIDENCE in panel.open_views, timeout=UI_WAIT_SECONDS
@@ -3574,23 +3571,14 @@ async def _exercise_contextual_draft_and_evidence_route(
     await _resize_contextual_message_form(app, pilot, palette, guidance)
     await pilot.click("#palette-back-to-menu")
     await _click_palette_menu_button(pilot, palette, "palette-menu-view-evidence")
-    await wait_until(
-        lambda: isinstance(app.screen, TaskDetailScreen),
-        timeout=UI_WAIT_SECONDS,
-    )
-    evidence_screen = app.screen
-    evidence_panel = evidence_screen.query_one("#task-detail-panel", TaskDetailPanel)
+    evidence_panel = app.query_one("#task-detail-panel", TaskDetailPanel)
     await wait_until(
         lambda: TASK_VIEW_EVIDENCE in evidence_panel.open_views,
         timeout=UI_WAIT_SECONDS,
     )
-    assert task.id in _rendered_text(evidence_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+    assert app.screen is home
+    assert task.id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
     assert queue.pending() == []
-    await pilot.press("escape", "escape")
-    await wait_until(
-        lambda: app.screen is home,
-        timeout=UI_WAIT_SECONDS,
-    )
     list_view.focus()
     await pilot.press("ctrl+p")
     await wait_until(
@@ -3793,12 +3781,7 @@ async def _exercise_task_secondary_menu_routes(
     ]:
         await _open_task_context_menu(app, pilot, list_view)
         await pilot.click(route_button)
-        await wait_until(
-            lambda: isinstance(app.screen, TaskDetailScreen),
-            timeout=UI_WAIT_SECONDS,
-        )
-        detail_screen = app.screen
-        detail_panel = detail_screen.query_one("#task-detail-panel", TaskDetailPanel)
+        detail_panel = app.query_one("#task-detail-panel", TaskDetailPanel)
         await wait_until(
             lambda expected_view=expected_view, detail_panel=detail_panel: (
                 expected_view in detail_panel.open_views
@@ -3807,11 +3790,7 @@ async def _exercise_task_secondary_menu_routes(
         )
         assert search.value == task.title
         assert queue.pending() == []
-        await pilot.press(*["escape"] * (2 if expected_view == TASK_VIEW_EVIDENCE else 1))
-        await wait_until(
-            lambda: app.screen is home_screen,
-            timeout=UI_WAIT_SECONDS,
-        )
+        assert app.screen is home_screen
 
     await _open_task_context_menu(app, pilot, list_view)
     assert not app.screen.query("#palette-menu-inspect")
@@ -4333,12 +4312,10 @@ async def _no_tmux_clients(tmux: Tmux, target: str) -> bool:
     return not await tmux.list_clients(target, _TMUX_CLIENT_TTY_FORMAT)
 
 
-@pytest.mark.parametrize("size", [_COMPACT_HOME_SIZE, _TINY_HOME_SIZE])
 async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
     database: Database,
     connection: Connection,
     tmp_path: Path,
-    size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = SystemClock()
@@ -4378,25 +4355,14 @@ async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
             settings=settings,
         )
         app_instances.append(app)
-        async with app.run_test(size=size) as pilot:
-            home, list_view, evidence_screen = await _open_compact_task_evidence_route(
-                app,
-                pilot,
-                task.id,
-            )
-            evidence_panel = evidence_screen.query_one("#task-detail-panel", TaskDetailPanel)
+        async with app.run_test(size=_COMPACT_HOME_SIZE) as pilot:
+            home, list_view = await _open_compact_task_evidence_route(app, pilot, task.id)
+            evidence_panel = app.query_one("#task-detail-panel", TaskDetailPanel)
             assert TASK_VIEW_EVIDENCE in evidence_panel.open_views
-            assert task.id in _rendered_text(
-                evidence_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-            )
-            assert home.is_mounted
+            assert task.id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+            assert app.screen is home
             assert queue.pending() == []
             await pilot.press("escape", "escape")
-            await wait_until(
-                lambda: app.screen is home,
-                timeout=UI_WAIT_SECONDS,
-            )
-            await pilot.press("escape")
             await wait_until(
                 lambda: (
                     app.screen is home
@@ -4416,7 +4382,7 @@ async def _open_compact_task_evidence_route(
     app: DashboardApp,
     pilot: Pilot[None],
     task_id: str,
-) -> tuple[Widget, ListView, TaskDetailScreen]:
+) -> tuple[Widget, ListView]:
     home = cast("Widget", app.screen)
     list_view = app.query_one("#task-browser-list", ListView)
     await wait_until(
@@ -4442,11 +4408,7 @@ async def _open_compact_task_evidence_route(
         "palette-menu-view-secondary",
     )
     await pick_details_entry(pilot, TASK_VIEW_EVIDENCE)
-    await wait_until(
-        lambda: isinstance(app.screen, TaskDetailScreen),
-        timeout=UI_WAIT_SECONDS,
-    )
-    return home, list_view, cast("TaskDetailScreen", app.screen)
+    return home, list_view
 
 
 @pytest.mark.parametrize("widget_names", [["header"], ["escalations"]])
@@ -4504,6 +4466,30 @@ async def test_project_fault_attention_without_faults_extension_opens_existing_h
         reader.close()
 
 
+async def test_task_view_opens_in_the_popup_when_home_shows_no_inspector(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    task = seed_task(connection, SystemClock(), title="Popup route target")
+    reader = StateReader(database, SystemClock())
+    try:
+        app = _app(reader, project_dir, widget_names=["header"])
+        async with app.run_test(size=_STANDARD_HOME_SIZE):
+            await app.open_task_detail_view(task.id, TASK_VIEW_USAGE)
+            await wait_until(
+                lambda: (
+                    isinstance(app.screen, TaskDetailScreen)
+                    and TASK_VIEW_USAGE
+                    in app.screen.query_one("#task-detail-panel", TaskDetailPanel).open_views
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
+    finally:
+        reader.close()
+
+
 async def test_stopped_project_attention_without_rows_opens_command_history(
     database: Database,
     connection: Connection,
@@ -4548,33 +4534,17 @@ async def _assert_home_inline_secondary_routes(
     before_commands: int,
 ) -> None:
     home_screen = app.screen
-    await choose_inspector_details_entry(pilot, TASK_VIEW_EVIDENCE)
-    await wait_until(
-        lambda: isinstance(app.screen, TaskDetailScreen),
-        timeout=UI_WAIT_SECONDS,
-    )
-    evidence_screen = app.screen
-    assert (
-        TASK_VIEW_EVIDENCE
-        in evidence_screen.query_one("#task-detail-panel", TaskDetailPanel).open_views
-    )
-    assert task_id in _rendered_text(evidence_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-    assert home_screen.is_mounted
-    await pilot.press("escape", "escape")
-    await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
-    await choose_inspector_details_entry(pilot, TASK_VIEW_USAGE)
-    await wait_until(
-        lambda: isinstance(app.screen, TaskDetailScreen),
-        timeout=UI_WAIT_SECONDS,
-    )
-    usage_screen = app.screen
-    assert (
-        TASK_VIEW_USAGE in usage_screen.query_one("#task-detail-panel", TaskDetailPanel).open_views
-    )
-    assert task_id in _rendered_text(usage_screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-    assert reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count == before_commands
-    await pilot.press("escape")
-    await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
+    panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+    for view_id in (TASK_VIEW_EVIDENCE, TASK_VIEW_USAGE):
+        await choose_inspector_details_entry(pilot, view_id)
+        await wait_until(
+            lambda view_id=view_id: view_id in panel.open_views, timeout=UI_WAIT_SECONDS
+        )
+        assert app.screen is home_screen
+        assert task_id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
+        assert (
+            reader.command_history(limit=COMMAND_HISTORY_TEST_LIMIT).total_count == before_commands
+        )
 
 
 def _assert_home_navigation_fits(app: DashboardApp, width: int, height: int) -> None:
@@ -4693,7 +4663,6 @@ async def _assert_evidence_editor_shortcut_precedence(
     palette_requests: list[PaletteRequest],
 ) -> None:
     await choose_inspector_details_entry(pilot, TASK_VIEW_EVIDENCE)
-    await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS)
     evidence_screen = app.screen
     role_select = cast(
         "Select[str]", evidence_screen.query_one("#task-detail-timeline-role", Select)
@@ -4720,8 +4689,6 @@ async def _assert_evidence_editor_shortcut_precedence(
     await pilot.press("escape")
     await wait_until(lambda: not native_select.expanded, timeout=UI_WAIT_SECONDS)
     assert app.screen is evidence_screen
-    await pilot.press("escape", "escape")
-    await wait_until(lambda: not isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS)
     app.query_one("#task-detail-body").focus()
     await pilot.press("ctrl+p")
     assert palette_requests[-1].task_id == task_id
@@ -4763,15 +4730,9 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
             )
             task_list = home.query_one("#task-browser-list", ListView)
             await focus_inspector_details(pilot)
-            home_focus = home.focused
-            assert home_focus is not None
             await choose_details_entry(pilot, TASK_VIEW_USAGE)
-            await wait_until(
-                lambda: isinstance(app.screen, TaskDetailScreen), timeout=UI_WAIT_SECONDS
-            )
-            usage_screen = app.screen
-            usage_panel = usage_screen.query_one("#task-detail-panel", TaskDetailPanel)
-            sessions = usage_screen.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
+            usage_panel = home.query_one("#task-detail-panel", TaskDetailPanel)
+            sessions = home.query_one(f"#{TASK_DETAIL_SESSIONS}", Static)
             await wait_until(
                 lambda: (
                     TASK_VIEW_USAGE in usage_panel.open_views
@@ -4779,24 +4740,9 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
                 ),
                 timeout=UI_WAIT_SECONDS,
             )
-            usage_close = usage_screen.query_one("#task-detail-popup-close", Button)
-            await wait_until(
-                lambda: (
-                    usage_close.region.width > 0
-                    and usage_close.region.height > 0
-                    and usage_close.region.x >= 0
-                    and usage_close.region.y >= 0
-                    and usage_close.region.right <= app.size.width
-                    and usage_close.region.bottom <= app.size.height
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
-            await pilot.pause()
-            await pilot.click("#task-detail-popup-close")
-            await wait_until(lambda: app.screen is home, timeout=UI_WAIT_SECONDS)
+            assert app.screen is home
             assert task_list.highlighted_child is not None
             assert task_list.highlighted_child.id == f"task-row-{task.id}"
-            assert home.focused is home_focus
 
             await _assert_evidence_editor_shortcut_precedence(
                 app,
