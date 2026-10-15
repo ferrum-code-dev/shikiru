@@ -33,7 +33,7 @@ DONE = {
     "commits": ["1234567890 first", "abcdef0 second", "fedcba9 third", "0000000 fourth"],
     "residual_risks": ["slow on cold start"],
 }
-SCOPE = {"scope_changes": ["drop the CLI flag"], "new_task_ids": ["t-13"]}
+SCOPE = {"scope_changes": ["drop the CLI flag"], "new_task_ids": ["t-13", "t-14"]}
 
 
 def _derive(
@@ -44,6 +44,7 @@ def _derive(
     facts: str | None = None,
     scope: Sequence[Mapping[str, object]] = (),
     verdict_risks: Sequence[str] = (),
+    titles: Mapping[str, str] | None = None,
 ) -> TaskResults:
     return derive_task_results(
         status,
@@ -55,13 +56,20 @@ def _derive(
         tests=TESTS,
         pull_request=pull_request_line({"url": "https://h/o/r/pull/7"}, task_done=True),
         scope_events=scope,
+        titles=titles or {},
         verdict_risks=verdict_risks,
         commit_cap=CAP,
     )
 
 
 def test_a_done_task_reports_what_was_merged_from_its_done_record() -> None:
-    results = _derive(Status.DONE, done=DONE, report=[Commit(sha="x", subject="y")], scope=[SCOPE])
+    results = _derive(
+        Status.DONE,
+        done=DONE,
+        report=[Commit(sha="x", subject="y")],
+        scope=[SCOPE],
+        titles={"t-13": "Admin page"},
+    )
     assert results.outcome is ResultOutcome.MERGED
     assert results.commits == (
         ResultCommit("1234567", "first"),
@@ -70,7 +78,9 @@ def test_a_done_task_reports_what_was_merged_from_its_done_record() -> None:
     )
     assert results.more_commits == 1
     assert results.residual_risks == ("slow on cold start",)
-    assert results.plan_changes == (PlanChange(("drop the CLI flag",), ("t-13",)),)
+    assert results.plan_changes == (
+        PlanChange(("drop the CLI flag",), (("t-13", "Admin page"), ("t-14", None))),
+    )
     assert results.pull_request is not None
     assert results.pull_request.number == 7
 

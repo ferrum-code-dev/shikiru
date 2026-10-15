@@ -69,6 +69,7 @@ RESULT_SO_FAR_TITLE = "Result so far"
 RESULT_TITLE = "Result"
 PROBLEMS_TITLE = "Problems"
 NEEDS_YOU_PREFIX = "Needs you: "
+PENDING_PREFIX = "Pending: "
 STEP_LABEL = "Step"
 REWORK_LABEL = "Rework"
 NOW_LABEL = "Now"
@@ -79,7 +80,9 @@ COMMITS_LABEL = "Commits"
 TESTS_LABEL = "Tests"
 PR_LABEL = "PR"
 VERDICT_LABEL = "Verdict"
-NEEDED_LABEL = "Needed"
+BLOCKER_LABEL = "Blocker"
+PENDING_LABEL = "Pending"
+ADDED_LABEL = "Added"
 RISKS_LABEL = "Risks"
 COST_LABEL = "Cost"
 LABEL_WIDTH = max(
@@ -95,7 +98,9 @@ LABEL_WIDTH = max(
         TESTS_LABEL,
         PR_LABEL,
         VERDICT_LABEL,
-        NEEDED_LABEL,
+        BLOCKER_LABEL,
+        PENDING_LABEL,
+        ADDED_LABEL,
         RISKS_LABEL,
         COST_LABEL,
     )
@@ -108,6 +113,7 @@ STALLED_WORD = "stalled"
 IN_STEP_WORD = "in step"
 TOTAL_WORD = "total"
 REWORK_WORD = "rework"
+ADDED_WORD = "added"
 QUOTE = '"'
 MINUS = "\N{MINUS SIGN}"
 PASSED_MARK = "\N{CHECK MARK}"
@@ -192,7 +198,7 @@ def briefing_verbs(view: TaskDetailView) -> tuple[BriefingAction, ...]:
 
 def needed_from_you(view: TaskDetailView) -> str | None:
     """Return what the operator must act on: a decision question first, else a wait reason."""
-    if view.status == Status.ESCALATED.value:
+    if _escalated(view):
         question = next(
             (
                 report.question
@@ -207,6 +213,10 @@ def needed_from_you(view: TaskDetailView) -> str | None:
     if reason is None or reason == WaitReason.PAUSED.value:
         return None
     return _sentence(f"{WAITING_ON} {reason.replace('_', ' ')}")
+
+
+def _escalated(view: TaskDetailView) -> bool:
+    return view.status == Status.ESCALATED.value
 
 
 def total_cost_text(sessions: Sequence[TaskSessionView]) -> str | None:
@@ -286,7 +296,7 @@ class Briefing:
             return []
         lines = _wrapped(console, grey(summary), Text(), value_width, self.layout.now_lines)
         return [
-            (grey(SUMMARY_LABEL) if index == 0 else Text(), (line,))
+            (Text(SUMMARY_LABEL, style=STEEL_BLUE) if index == 0 else Text(), (line,))
             for index, line in enumerate(lines)
         ]
 
@@ -320,7 +330,7 @@ def _group(title: str, rows: list[Row], width: int) -> list[RenderableType]:
     if not rows:
         return []
     body = Padding(labelled_rows(rows, width - GROUP_INDENT, LABEL_WIDTH), (0, 0, 0, GROUP_INDENT))
-    return [Section(title, body, ruled=False)]
+    return [Section(title, body, ruled=False, title_style=STEEL_BLUE)]
 
 
 def _labelled(rows: list[Row], width: int) -> list[RenderableType]:
@@ -371,8 +381,20 @@ def _result_rows(view: TaskDetailView) -> list[Row]:
         _row(COMMITS_LABEL, _commit_groups(results, compact=False)),
         _row(TESTS_LABEL, tests_groups(results.tests)),
         _row(PR_LABEL, pull_request_groups(results.pull_request)),
+        _row(ADDED_LABEL, _added_groups(results)),
     ]
     return [row for row in rows if row is not None]
+
+
+def _added_groups(results: TaskResults) -> tuple[Text, ...]:
+    return tuple(
+        Text.assemble(
+            (f"{ADDED_WORD} {task_id}", SUCCESS_COLOR),
+            (f" {title}" if title else "", SECONDARY_TEXT_COLOR),
+        )
+        for change in results.plan_changes
+        for task_id, title in change.new_tasks
+    )
 
 
 def _verdict_groups(counts: VerdictCounts) -> tuple[Text, ...]:
@@ -408,7 +430,8 @@ def _problem_rows(view: TaskDetailView) -> list[Row]:
         rows.append(_row(VERDICT_LABEL, _verdict_groups(counts)))
     needed = needed_from_you(view)
     if needed is not None:
-        rows.append((Text(NEEDED_LABEL, style=_BOLD_AMBER), (Text(needed),)))
+        label = BLOCKER_LABEL if _escalated(view) else PENDING_LABEL
+        rows.append((Text(label, style=_BOLD_AMBER), (Text(needed),)))
     risks = view.results.residual_risks if view.results is not None else ()
     rows.append(_row(RISKS_LABEL, tuple(Text(risk, style=AMBER) for risk in risks)))
     return [row for row in rows if row is not None]
@@ -421,7 +444,8 @@ def _cost_rows(view: TaskDetailView) -> list[Row]:
 
 def _compact_needed(view: TaskDetailView, width: int) -> list[RenderableType]:
     text = needed_from_you(view)
-    return [] if text is None else [_hanging(NEEDS_YOU_PREFIX, text, width)]
+    prefix = NEEDS_YOU_PREFIX if _escalated(view) else PENDING_PREFIX
+    return [] if text is None else [_hanging(prefix, text, width)]
 
 
 def _compact_summary(view: TaskDetailView, width: int) -> list[RenderableType]:
@@ -442,6 +466,7 @@ def _compact_result(view: TaskDetailView) -> list[RenderableType]:
     pull_request = pull_request_groups(results.pull_request)
     if pull_request:
         lines.append(Text.assemble(grey(f"{PR_LABEL} "), _joined(pull_request)))
+    lines.extend(_added_groups(results))
     return lines
 
 
@@ -566,7 +591,11 @@ def _commit_groups(results: TaskResults, *, compact: bool) -> tuple[Text, ...]:
     if produced is None:
         count = len(results.commits) + results.more_commits
         return (Text(counted(count, "commit")),) if count else ()
-    lines = Text(f"+{produced.insertions} {MINUS}{produced.deletions}")
+    lines = Text.assemble(
+        (f"+{produced.insertions}", SUCCESS_COLOR),
+        " ",
+        (f"{MINUS}{produced.deletions}", ALERT_COLOR),
+    )
     files = () if compact else (Text(counted(produced.files, "file")),)
     return (Text(counted(produced.commits, "commit")), *files, lines)
 
@@ -668,7 +697,7 @@ def _time_line(view: TaskDetailView, now: datetime) -> Text | None:
             parts.append(f"{duration_text(now - view.started_at)} {TOTAL_WORD}")
     if not parts:
         return None
-    return grey(f"   {GROUP_SEPARATOR.join(parts)}")
+    return grey(GROUP_SEPARATOR.join(parts))
 
 
 def _state_line(view: TaskDetailView, now: datetime, *, compact: bool) -> Text:

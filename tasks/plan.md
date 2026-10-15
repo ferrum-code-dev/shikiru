@@ -1936,7 +1936,8 @@ Refs: `dashboard/detail.py` (`TaskDetailBody.allow_focus`, details button, bindi
 
 ### Task 213: Briefing colours, labels and added tasks
 Refs: `briefing_view.py` (`_group`, `_commit_groups`, `NEEDED_LABEL`, `_time_line`, `_result_rows`), `plugins/widgets/header.py` (`_checkout_text`), `domain/results.py` (`PlanChange`), `dashboard/views.py` `_task_results`.
-- [ ] Cyan group titles and `Summary`; sage `+n` / rose `−n` in Result and in the Header widget; `Blocker`/`Pending` labels; time line flush left; `PlanChange.new_tasks` (id, title) resolved by a bounded lookup and shown as sage `added T-15 title` rows in Result.
+- [x] Cyan group titles and `Summary`; sage `+n` / rose `−n` in Result and in the Header widget; `Blocker`/`Pending` labels; time line flush left; `PlanChange.new_tasks` (id, title) resolved by a bounded lookup and shown as sage `added T-15 title` rows in Result.
+  - Proof: before the change the verb row was 33 cells for 35 of verbs (`Cancel` clipped at 40 columns on Home; the extended verb test failed) and titles, `Summary`, `+n`/`−n` and the head were grey or plain. Now group titles and `Summary` are cyan, `+n` sage and `−n` rose in Result and in `main (+100 -20)`, `Blocker`/`Pending` replace `Needed`, the time line is flush left, and a planning task's Result lists `added T-5 Admin page` (an unresolved id stays bare); verified by real briefings at 100, 60, 48, 40 and 40x8 for running, waiting, escalated and planning Done tasks, and the four verbs fit at 40, 48, 60 and 100 columns. `uv run poe check` exited 0 (1632 passed, 14 skipped, coverage 91.46%); collected cases 1653 (+2: colour and header tests, no prior coverage).
 
 ### Task 214: Fold keys, click, blank line, cyan titles
 Refs: `dashboard/detail_fold.py` (`FoldHeader` bindings/`on_click`, `DetailFold.activate`/`toggle`, `.fold-body` padding), `details_list_view.py` (`_EntryLine`), `test_task_detail_folds.py`.

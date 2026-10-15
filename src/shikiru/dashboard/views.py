@@ -79,7 +79,7 @@ from shikiru.domain.reports import (
     TriageReport,
     Verdict,
 )
-from shikiru.domain.results import derive_task_results
+from shikiru.domain.results import derive_task_results, new_task_ids
 from shikiru.domain.runs import RunStatus, has_positive_token_evidence
 from shikiru.domain.scheduling import WaitReason, dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
@@ -1368,6 +1368,13 @@ class StateDashboardViews:
                 )
         return lines
 
+    def _new_task_titles(self, scope: Sequence[Event]) -> dict[str, str]:
+        found = {
+            task_id: self._state.get_task(task_id)
+            for task_id in new_task_ids([event.data for event in scope])
+        }
+        return {task_id: task.title for task_id, task in found.items() if task is not None}
+
     def _task_results(
         self,
         task: Task,
@@ -1391,6 +1398,7 @@ class StateDashboardViews:
             tests=reported,
             pull_request=pull_request,
             scope_events=[event.data for event in scope],
+            titles=self._new_task_titles(scope),
             verdict_risks=latest_verdict.residual_risks if latest_verdict is not None else (),
             commit_cap=self._settings.dashboard.results_commits,
         )

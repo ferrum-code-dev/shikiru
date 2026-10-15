@@ -20,6 +20,7 @@ from shikiru.ui.tokens import (
     SECONDARY_TEXT_COLOR,
     STEEL_BLUE,
     STYLE_BOLD,
+    SUCCESS_COLOR,
 )
 
 if TYPE_CHECKING:
@@ -180,7 +181,13 @@ def _checkout_text(view: HeaderView) -> Text:
     elif repo.dirty is None or repo.added_lines is None or repo.deleted_lines is None:
         rendered = Text(f"{repo.branch} (line counts unavailable)", style=AMBER)
     else:
-        rendered = Text(f"{repo.branch} (+{repo.added_lines} -{repo.deleted_lines})", style=AMBER)
+        rendered = Text.assemble(
+            (f"{repo.branch} (", AMBER),
+            (f"+{repo.added_lines}", SUCCESS_COLOR),
+            (" ", AMBER),
+            (f"-{repo.deleted_lines}", ALERT_COLOR),
+            (")", AMBER),
+        )
     rendered.append(f" · {_integration_label(view.integration_mode)}", style=SECONDARY_TEXT_COLOR)
     if (
         repo.state is not DiagnosticSampleState.FAILED

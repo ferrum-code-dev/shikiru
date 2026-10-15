@@ -136,7 +136,7 @@ async def test_results_show_what_exists_so_far_and_what_a_done_task_merged(
     assert merged.outcome is ResultOutcome.MERGED
     assert [commit.subject for commit in merged.commits] == ["merged work"]
     assert merged.residual_risks == ("risk",)
-    assert merged.plan_changes[0].new_task_ids == ("t-99",)
+    assert merged.plan_changes[0].new_tasks == (("t-99", None),)
 
     detail = await views.task_detail(finished)
     assert detail is not None

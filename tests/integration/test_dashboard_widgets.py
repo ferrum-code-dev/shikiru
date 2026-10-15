@@ -19,13 +19,14 @@ from shikiru.plugins.widgets.strips import StripsPanel, StripsWidget
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
-from tests.support.cells import rendered_lines
+from shikiru.ui.tokens import ALERT_COLOR, SAGE
+from tests.support.cells import foregrounds, rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, WidgetHostApp, state_views, widget_context
 from tests.support.render import plain_text
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -135,6 +136,34 @@ async def test_header_preserves_stale_and_unavailable_checkout_facts(
             assert "SHIKIRU demo" in rendered
             assert str(project_dir.resolve()) in rendered
             assert all(fact in rendered for fact in expected_facts)
+
+
+async def test_header_colours_the_dirty_line_counts_green_and_red(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    del connection
+    project_dir = write_minimal_project(tmp_path)
+    repo = RepoStatus(
+        branch="main",
+        ahead=0,
+        behind=0,
+        dirty=2,
+        root=str(project_dir.resolve()),
+        added_lines=100,
+        deleted_lines=20,
+        binary_entries=0,
+        untracked_paths=0,
+    )
+    context = widget_context(
+        reader, project_dir, FakeClock(START), services=StubServices(repo_status_value=repo)
+    )
+    widget = cast("HeaderPanel", HeaderWidget().create(context))
+    async with WidgetHostApp(widget).run_test():
+        await wait_until(
+            lambda: "main (+100 -20)" in _plain(widget.content), timeout=UI_WAIT_SECONDS
+        )
+        assert set(foregrounds(widget, "+100")) == {SAGE}
+        assert set(foregrounds(widget, "-20")) == {ALERT_COLOR}
 
 
 @pytest.mark.usefixtures("connection")

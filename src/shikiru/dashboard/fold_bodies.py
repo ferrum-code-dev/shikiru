@@ -98,8 +98,10 @@ def _changes_groups(produced: ProducedNumbers | None) -> tuple[Text, ...]:
 
 def _plan_line(change: PlanChange) -> Text:
     parts = [Text(one_line(GROUP_SEPARATOR.join(change.scope_changes), PLAN_TEXT_LIMIT) or "")]
-    if change.new_task_ids:
-        parts.append(Text(ADDED_TASKS.format(ids=", ".join(change.new_task_ids))))
+    if change.new_tasks:
+        parts.append(
+            Text(ADDED_TASKS.format(ids=", ".join(task_id for task_id, _ in change.new_tasks)))
+        )
     return Text(GROUP_SEPARATOR).join(part for part in parts if part.plain)
 
 

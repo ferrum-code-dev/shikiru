@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import json
 import re
 from dataclasses import dataclass
@@ -42,6 +43,7 @@ from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.ui.tokens import ALERT_COLOR, SAGE
 from shikiru.view_log import (
     VIEW_MESSAGE_SIGNAL,
     VIEW_MESSAGE_TEXT_KEY,
@@ -52,6 +54,7 @@ from shikiru.view_log import (
 )
 from shikiru.workspace.facts import WorkspaceFacts, render_facts
 from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME
+from tests.support.cells import CYAN, foregrounds
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, ignore_palette_action, state_views
@@ -78,6 +81,7 @@ BRIEFING_SIZES = (WIDE_SIZE, (60, 40), (48, 40), COMPACT_SIZE, TINY_SIZE)
 BRANCH = "task/t-12"
 QUESTION = "Which failures should the parser retry?"
 LAST_WORDS = "Running the parser tests after the retry change."
+MISSING_TASK_ID = "t-999"
 REPORT_SUMMARY = "Added bounded retries to the parser."
 RESCUED_ITERATION = 3
 ELAPSED_MINUTES = 31
@@ -93,7 +97,9 @@ LABELS = (
     "Tests",
     "PR",
     "Verdict",
-    "Needed",
+    "Blocker",
+    "Pending",
+    "Added",
     "Risks",
     "Cost",
 )
@@ -260,6 +266,26 @@ def _seed_done(connection: Connection, clock: FakeClock, project_root: Path) -> 
     return task
 
 
+def _seed_done_planning(connection: Connection, clock: FakeClock, project_root: Path) -> Task:
+    del project_root
+    task = _running(connection, clock, iteration=1)
+    child = seed_task(connection, clock, title="Admin page", mode=Mode.IMPLEMENT)
+    EventLog(connection, clock).append(
+        EventKind.SCOPE_CHANGE,
+        task_id=task.id,
+        message="scope",
+        data={"scope_changes": ["split"], "new_task_ids": [child.id, MISSING_TASK_ID]},
+    )
+    TaskStore(connection, clock).finish(
+        task.id,
+        Transition.stay(task, step=None, status=Status.DONE),
+        EventKind.TASK_DONE,
+        message="done",
+        data={"summary": "planned"},
+    )
+    return task
+
+
 def _seed_cancelled(connection: Connection, clock: FakeClock, project_root: Path) -> Task:
     del project_root
     task = _running(connection, clock, iteration=1)
@@ -355,14 +381,14 @@ CASES = {
     "waiting-on-dependency": _Case(
         _seed_waiting_on_dependency,
         frozenset({"Problems"}),
-        frozenset({"Needed"}),
+        frozenset({"Pending"}),
         ("Waiting on dependency",),
         frozenset({BriefingAction.PAUSE, BriefingAction.CANCEL}),
     ),
     "waiting-on-decision": _Case(
         _seed_decision,
         frozenset({"Progress", "Result so far", "Problems"}),
-        frozenset({"Step", "Branch", "Tests", "Needed"}),
+        frozenset({"Step", "Branch", "Tests", "Blocker"}),
         (QUESTION,),
         frozenset(
             {
@@ -392,6 +418,14 @@ CASES = {
         (REPORT_SUMMARY, f"{BRANCH} \N{RIGHTWARDS ARROW} main", "3 commits"),
         frozenset(),
         ("rework", "Progress", "Problems"),
+    ),
+    "done-planning-with-added-tasks": _Case(
+        _seed_done_planning,
+        frozenset({"Result"}),
+        frozenset({"Merged", "Added"}),
+        ("Admin page", f"\N{MIDDLE DOT} added {MISSING_TASK_ID}"),
+        frozenset(),
+        ("rework", "Progress", "Problems", "Summary"),
     ),
     "cancelled": _Case(
         _seed_cancelled,
@@ -552,9 +586,11 @@ async def test_every_offered_verb_stays_inside_the_actions_row_at_compact_width(
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = _seed_running(connection, clock, project_root)
-    for size in (COMPACT_SIZE, TINY_SIZE):
-        app = _app(reader, project_root, clock, focus_task=task.id)
+    for size, focus_task in itertools.product((COMPACT_SIZE, TINY_SIZE), (task.id, None)):
+        app = _app(reader, project_root, clock, focus_task=focus_task)
         async with app.run_test(size=size):
+            if focus_task is None:
+                app.query_one("#queue", QueuePanel).select_task(task.id)
             await wait_until(
                 lambda app=app: _shown_verbs(app) == CASES["running"].verbs,
                 timeout=UI_WAIT_SECONDS,
@@ -562,4 +598,22 @@ async def test_every_offered_verb_stays_inside_the_actions_row_at_compact_width(
             row = app.query_one(f"#{TASK_DETAIL_ACTIONS}").region
             for button in app.query(f"#{TASK_DETAIL_VERBS} Button"):
                 if button.display:
-                    assert row.contains_region(button.region), (size, button.id)
+                    assert row.contains_region(button.region), (size, focus_task, button.id)
+
+
+async def test_briefing_paints_group_titles_cyan_and_commit_lines_green_and_red(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = _seed_running(connection, clock, project_root)
+    app = _app(reader, project_root, clock, focus_task=task.id)
+    async with app.run_test(size=WIDE_SIZE):
+        briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
+        await wait_until(lambda: "+120" in plain_text(briefing.content), timeout=UI_WAIT_SECONDS)
+        for title in ("Progress", "Result so far"):
+            assert set(foregrounds(briefing, title)) == {CYAN[1]}, title
+        assert set(foregrounds(briefing, "+120")) == {SAGE}
+        assert set(foregrounds(briefing, f"{MINUS}34")) == {ALERT_COLOR}

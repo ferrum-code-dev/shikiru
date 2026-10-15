@@ -40,10 +40,10 @@ class ResultCommit:
 
 @dataclass(frozen=True)
 class PlanChange:
-    """One recorded scope change: what changed and the tasks it created."""
+    """One recorded scope change: what changed and the tasks it created as (id, title or None)."""
 
     scope_changes: tuple[str, ...]
-    new_task_ids: tuple[str, ...]
+    new_tasks: tuple[tuple[str, str | None], ...]
 
 
 @dataclass(frozen=True)
@@ -78,6 +78,15 @@ def _outcome(status: Status) -> ResultOutcome:
     return ResultOutcome.NOT_MERGED if status is Status.CANCELLED else ResultOutcome.SO_FAR
 
 
+def new_task_ids(scope_events: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
+    """Return the distinct ids of the tasks the recorded scope changes created, sorted."""
+    return tuple(
+        sorted(
+            {task_id for data in scope_events for task_id in _strings(data.get(NEW_TASK_IDS_KEY))}
+        )
+    )
+
+
 def derive_task_results(
     status: Status,
     *,
@@ -89,6 +98,7 @@ def derive_task_results(
     tests: ReportedTests | None,
     pull_request: PullRequestLine | None,
     scope_events: Sequence[Mapping[str, object]],
+    titles: Mapping[str, str],
     verdict_risks: Sequence[str],
     commit_cap: int,
 ) -> TaskResults:
@@ -96,7 +106,7 @@ def derive_task_results(
 
     Commits come from `TASK_DONE` for a Done task, else the latest report, else the facts; the
     first source with commits wins. Residual risks come from `TASK_DONE` when it recorded them,
-    else from the latest verdict.
+    else from the latest verdict. A new task missing from `titles` keeps its id with no title.
     """
     done_data = done or {}
     candidates = (
@@ -117,7 +127,13 @@ def derive_task_results(
         tests=tests,
         pull_request=pull_request,
         plan_changes=tuple(
-            PlanChange(_strings(data.get(SCOPE_CHANGES_KEY)), _strings(data.get(NEW_TASK_IDS_KEY)))
+            PlanChange(
+                _strings(data.get(SCOPE_CHANGES_KEY)),
+                tuple(
+                    (task_id, titles.get(task_id))
+                    for task_id in _strings(data.get(NEW_TASK_IDS_KEY))
+                ),
+            )
             for data in scope_events
         ),
         residual_risks=_strings(done_data.get(DONE_RISKS_KEY)) or tuple(verdict_risks),
