@@ -1572,7 +1572,18 @@ class DashboardApp(App[None]):
         elif route is TaskPaletteRoute.DIAGNOSTICS:
             await self._open_contextual_view(FOCUS_PROJECT_DIAGNOSTICS_VIEW)
         else:
-            await self.action_open_views()
+            panel = self._inline_task_panel(task_id)
+            if panel is not None:
+                await panel.focus_folds()
+            else:
+                self.push_screen(
+                    TaskDetailScreen(
+                        self._widget_context(),
+                        task_id,
+                        focus_folds_on_mount=True,
+                    ),
+                    callback=lambda _: self.refresh_task_detail_after_resume(),
+                )
 
     def _find_context_choice(self, choice_id: str) -> _ContextChoice | None:
         return next(

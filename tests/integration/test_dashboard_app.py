@@ -3804,21 +3804,6 @@ async def _exercise_task_secondary_menu_routes(
     await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
 
     await _open_task_context_menu(app, pilot, list_view)
-    await pilot.click("#palette-menu-more-actions")
-    await wait_until(
-        lambda: app.screen.query_one("#palette-menu-view-secondary").region.height > 0,
-        timeout=UI_WAIT_SECONDS,
-    )
-    app.screen.query_one("#palette-menu-view-secondary", Button).press()
-    await wait_until(
-        lambda: bool(app.screen.query("#focus-views-list")),
-        timeout=UI_WAIT_SECONDS,
-    )
-    assert queue.pending() == []
-    await pilot.press("escape")
-    await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
-
-    await _open_task_context_menu(app, pilot, list_view)
     await pilot.click("#palette-menu-diagnostics")
     await wait_until(
         lambda: bool(app.screen.query("#context-widget-frame")),

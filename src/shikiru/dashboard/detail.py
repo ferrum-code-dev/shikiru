@@ -974,12 +974,14 @@ class TaskDetailScreen(ModalScreen[None]):
         task_id: str,
         *,
         initial_view: str = TASK_VIEW_SUMMARY,
+        focus_folds_on_mount: bool = False,
     ) -> None:
         super().__init__()
         prepare_popup(self)
         self._widget_context = context
         self._task_id = task_id
         self._initial_view = initial_view
+        self._focus_folds_on_mount = focus_folds_on_mount
 
     def compose(self) -> ComposeResult:
         with PopupFrame(widget_id=TASK_DETAIL_POPUP_FRAME, classes=POPUP_FRAME_CLASS):
@@ -1004,13 +1006,15 @@ class TaskDetailScreen(ModalScreen[None]):
                 on_initial_content=self.mark_popup_content_ready,
             )
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         self._apply_layout(self.size.width, self.size.height)
         panel = self.query_one("#task-detail-panel", TaskDetailPanel)
         if self._initial_view == TASK_VIEW_SUMMARY:
             self.set_focus(panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button))
         else:
             panel.open_view(self._initial_view)
+        if self._focus_folds_on_mount:
+            await panel.focus_folds()
 
     def on_resize(self, event: events.Resize) -> None:
         self._apply_layout(event.size.width, event.size.height)
