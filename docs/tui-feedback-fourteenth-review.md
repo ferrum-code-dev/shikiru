@@ -1,6 +1,6 @@
 # Phase 11 fourteenth review: simpler keys, truthful stages and a quieter details area
 
-Status: planned (Tasks 209–220). This specification refines the [thirteenth](tui-feedback-thirteenth-review.md) and [twelfth](tui-feedback-twelfth-review.md) reviews where it differs. **The TUI is the source of truth**; the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 219).
+Status: delivered (Tasks 209–220, 2026-10-15), verified in the [fourteenth-review record](release-readiness-2026-10-15-phase11-fourteenth-review.md). This specification refines the [thirteenth](tui-feedback-thirteenth-review.md) and [twelfth](tui-feedback-twelfth-review.md) reviews where it differs. **The TUI is the source of truth**; the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 219).
 
 Analysis: four read-only static analyses (Sonnet 5.5 medium). Nothing was run; the implementing task reproduces first. The operator approved the layouts below on 2026-10-15.
 

@@ -81,6 +81,9 @@ The [2026-10-14 eleventh-review record](docs/release-readiness-2026-10-14-phase1
 The [2026-10-14 twelfth-review record](docs/release-readiness-2026-10-14-phase11-twelfth-review.md) verifies Tasks 186–195 (Up/Down select tasks from any bar, no `u`/`e` keys, a background-only highlight and an arrow-reachable `What was tried` digest in the resolution panel, answers that need Operator input, a wrapped `Now`, the nine task details as inline folds in place of the details list, and steel-blue key names everywhere) and the HTML reference.
 
 The [2026-10-15 thirteenth-review record](docs/release-readiness-2026-10-15-phase11-thirteenth-review.md) verifies Tasks 197–208 (an edit box under the editable escalation option with Ctrl+S, a Progress / Result so far / Problems briefing with a Cancel verb, nine readable folds, background-only selection and the `↑ later` / `↓ earlier` pager); the [specification](docs/tui-feedback-thirteenth-review.md) is delivered.
+
+The [2026-10-15 fourteenth-review record](docs/release-readiness-2026-10-15-phase11-fourteenth-review.md) verifies Tasks 209–220 (Enter and Esc only on the escalation answer box, `step · Role · what` turn lines, stage states from events by kind, Tab landing on the first verb, cyan briefing titles with sage and rose line counts, `Blocker` and `Pending`, Enter/Esc fold keys with one bottom hint line, the Decisions log, shaded Events and Agent activity blocks with a text filter bar, and a Workspace fold without buttons); the [specification](docs/tui-feedback-fourteenth-review.md) is delivered.
+
 The [Focus specification](docs/tui-focus.md) describes current routes and evidence rules; the
 [parity record](docs/tui-parity.md) preserves the measured Phase 10 audit and its historical artifacts.
 
