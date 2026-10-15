@@ -8,6 +8,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+from rich.cells import cell_len
 from rich.console import Group
 from rich.text import Text
 from textual import on
@@ -73,6 +74,7 @@ from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 if TYPE_CHECKING:
     from textual import events
     from textual.app import ComposeResult
+    from textual.geometry import Size
     from textual.widget import Widget
     from textual.worker import Worker
 
@@ -189,7 +191,16 @@ class TaskDetailBody(VerticalScroll, can_focus=False):
 
 
 class TaskDetailVerb(Button):
-    """A briefing verb button of the task detail."""
+    """A briefing verb button of the task detail, drawn without the stock line padding."""
+
+    def on_mount(self) -> None:
+        """Drop the one-cell line padding the stock button adds on each side of its label."""
+        self.styles.line_pad = 0
+
+    def get_content_width(self, container: Size, viewport: Size) -> int:
+        """Return the label's own width, without the stock two cells of line padding."""
+        del container, viewport
+        return cell_len(str(self.label))
 
 
 class TaskDetailPanel(Vertical):
@@ -210,7 +221,7 @@ class TaskDetailPanel(Vertical):
     }
     #task-detail-verbs { width: 100%; height: 1; }
     #task-detail-verbs Button, #task-detail-workspace-tools Button {
-        width: auto; min-width: 1; height: 1; margin: 0; padding: 0;
+        width: auto; min-width: 1; height: 1; margin: 0 2 0 0; padding: 0;
         border: none; background: $background; color: $steel-blue;
         content-align: left middle; text-align: left; text-style: none;
     }
