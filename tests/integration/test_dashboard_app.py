@@ -58,7 +58,6 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.dashboard.detail import (
     TASK_DETAIL_AGENT_LIST,
-    TASK_DETAIL_AGENT_ROLE,
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_DECISIONS,
@@ -70,7 +69,6 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_RESULTS,
     TASK_DETAIL_SESSIONS,
     TASK_DETAIL_TIMELINE_LIST,
-    TASK_DETAIL_TIMELINE_TITLE,
     TASK_DETAIL_WORKSPACE,
     TASK_VIEW_AGENT,
     TASK_VIEW_EVIDENCE,
@@ -80,6 +78,7 @@ from shikiru.dashboard.detail import (
     TaskDetailScreen,
 )
 from shikiru.dashboard.palette import PaletteScreen
+from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.domain.commands import (
     Prioritize,
     Say,
@@ -122,6 +121,7 @@ from tests.support.dashboard import (
     choose_details_entry,
     choose_inspector_details_entry,
     focus_inspector_details,
+    fold_headline,
     ignore_palette_action,
     list_rows,
     pick_details_entry,
@@ -2996,12 +2996,11 @@ async def _assert_list_paging(
 
 
 async def _assert_task_timeline_page_keys(app: DashboardApp, pilot: Pilot[None]) -> None:
-    title = app.screen.query_one(f"#{TASK_DETAIL_TIMELINE_TITLE}", Static)
     await _assert_list_paging(
         app,
         pilot,
         TASK_DETAIL_TIMELINE_LIST,
-        lambda: plain_text(title.content),
+        lambda: fold_headline(app.screen, TASK_VIEW_EVIDENCE),
         first="Recorded page route evidence 1",
         paused="paused",
         resumed="following",
@@ -4634,38 +4633,16 @@ async def test_home_help_opens_by_key_or_mouse_and_closing_leaves_home_unchanged
         await wait_until(lambda: app.screen is home, timeout=UI_WAIT_SECONDS)
 
 
-async def _assert_evidence_editor_shortcut_precedence(
+async def _assert_palette_opens_from_the_filter_bar(
     app: DashboardApp,
     pilot: Pilot[None],
     task_id: str,
     palette_requests: list[PaletteRequest],
 ) -> None:
     await choose_inspector_details_entry(pilot, TASK_VIEW_AGENT)
-    evidence_screen = app.screen
-    evidence_screen.query_one(f"#{TASK_DETAIL_AGENT_LIST}").focus()
+    app.screen.query_one(f"#{TASK_DETAIL_AGENT_LIST}").focus()
     await pilot.press("f")
-    role_select = cast(
-        "Select[str]", evidence_screen.query_one(f"#{TASK_DETAIL_AGENT_ROLE}", Select)
-    )
-    await wait_until(lambda: app.focused is role_select, timeout=UI_WAIT_SECONDS)
-    await pilot.press("enter")
-    await wait_until(lambda: role_select.expanded, timeout=UI_WAIT_SECONDS)
-    await pilot.press("escape")
-    await wait_until(lambda: not role_select.expanded, timeout=UI_WAIT_SECONDS)
-    native_select = role_select
-    await pilot.press("ctrl+p")
-    assert palette_requests == []
-    assert app.screen is evidence_screen
-    await pilot.press("enter")
-    await pilot.pause()
-    await pilot.press("ctrl+p")
-    assert palette_requests == []
-    assert native_select.expanded
-    assert app.screen is evidence_screen
-    await pilot.press("escape")
-    await wait_until(lambda: not native_select.expanded, timeout=UI_WAIT_SECONDS)
-    assert app.screen is evidence_screen
-    await focus_inspector_details(pilot)
+    await wait_until(lambda: isinstance(app.focused, TimelineFilterBar), timeout=UI_WAIT_SECONDS)
     await pilot.press("ctrl+p")
     assert palette_requests[-1].task_id == task_id
 
@@ -4720,7 +4697,7 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
             assert task_list.highlighted_child is not None
             assert task_list.highlighted_child.id == f"task-row-{task.id}"
 
-            await _assert_evidence_editor_shortcut_precedence(
+            await _assert_palette_opens_from_the_filter_bar(
                 app,
                 pilot,
                 task.id,

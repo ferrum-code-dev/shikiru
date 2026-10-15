@@ -41,6 +41,7 @@ from shikiru.dashboard.fold_bodies import (
 )
 from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.section_rows import RelatedRow, blocker_evidence, relation_rows
+from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.dashboard.timeline_section import (
     TimelineHost,
     TimelineIds,
@@ -119,11 +120,8 @@ TASK_DETAIL_RELATIONSHIPS = "task-detail-relationships"
 TASK_DETAIL_RELATED_LIST = "task-detail-related-list"
 EVENTS_TIMELINE_IDS = TimelineIds.with_prefix("task-detail-timeline")
 AGENT_TIMELINE_IDS = TimelineIds.with_prefix("task-detail-agent")
-TASK_DETAIL_AGENT_ROLE = AGENT_TIMELINE_IDS.role
-TASK_DETAIL_AGENT_TURN = AGENT_TIMELINE_IDS.turn
 TASK_DETAIL_AGENT_LIST = AGENT_TIMELINE_IDS.list
 TASK_DETAIL_AGENT_SELECTED = AGENT_TIMELINE_IDS.selected
-TASK_DETAIL_TIMELINE_TITLE = EVENTS_TIMELINE_IDS.title
 TASK_DETAIL_TIMELINE_LIST = EVENTS_TIMELINE_IDS.list
 TASK_DETAIL_TIMELINE_SELECTED = EVENTS_TIMELINE_IDS.selected
 TASK_VIEW_SUMMARY = "task-summary"
@@ -395,6 +393,8 @@ class TaskDetailPanel(Vertical):
             return None
         if focused is fold.header:
             return HintTarget.HEADER
+        if isinstance(focused, TimelineFilterBar):
+            return HintTarget.AGENT_FILTER
         return FOLD_HINT_TARGETS.get(fold.view_id)
 
     def _paint_hint(self) -> None:
@@ -657,6 +657,9 @@ class TaskDetailPanel(Vertical):
         fold = self._fold_of(focused)
         if focused is None or fold is None or focused is fold.header:
             return False
+        if isinstance(focused, TimelineFilterBar):
+            focused.action_close()
+            return True
         self._folds_list().focus_header(fold)
         return True
 
@@ -804,9 +807,17 @@ class TaskDetailPanel(Vertical):
 
     def _paint_headlines(self, view: TaskDetailView) -> None:
         for section in DetailsSection:
-            self._folds[DETAILS_SECTION_VIEWS[section]].set_headline(
-                section_headline(section, view)
-            )
+            view_id = DETAILS_SECTION_VIEWS[section]
+            if view_id not in self._timelines:
+                self._folds[view_id].set_headline(section_headline(section, view))
+
+    @on(TimelineSection.StatusChanged)
+    def _timeline_status_changed(self, message: TimelineSection.StatusChanged) -> None:
+        message.stop()
+        view_id = next(
+            view_id for view_id, timeline in self._timelines.items() if timeline is message.section
+        )
+        self._folds[view_id].set_headline(message.status)
 
     def _sync_timelines(self) -> None:
         for view_id, timeline in self._timelines.items():

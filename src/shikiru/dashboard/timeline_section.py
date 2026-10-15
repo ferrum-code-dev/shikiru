@@ -7,17 +7,15 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.text import Text
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
-from textual.widgets import Input, Select, Static
+from textual.containers import Vertical
+from textual.message import Message
+from textual.widgets import Static
 
 from shikiru.dashboard.row_list import RowList
-from shikiru.dashboard.section_rows import timeline_cells, timeline_meta
-from shikiru.domain.tasks import Role
+from shikiru.dashboard.section_rows import timeline_cells
+from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.errors import ShikiruError
-from shikiru.ui.keys import key_hint
 from shikiru.ui.screen import widget_is_current
-from shikiru.ui.section import grey
-from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
 if TYPE_CHECKING:
     import asyncio
@@ -28,21 +26,21 @@ if TYPE_CHECKING:
     from textual.binding import BindingType
     from textual.widget import Widget
 
-    from shikiru.dashboard.contract import TaskTimelineCategory, TaskTimelinePageView, WidgetContext
+    from shikiru.dashboard.contract import (
+        TaskTimelineCategory,
+        TaskTimelineEntryView,
+        TaskTimelinePageView,
+        WidgetContext,
+    )
 
-NO_VALUE = "\N{EN DASH}"
-HEADING_SEPARATOR = " · "
 NO_TIMELINE_ROWS = "No recorded entries match."
 FOLLOWING_LABEL = "following"
-PAUSED_LABEL = "paused · End to follow"
+PAUSED_LABEL = "paused"
 REFRESH_FAILED = "Evidence timeline refresh failed"
 FILTER_KEY = "f"
-TOGGLE_FILTERS_ACTION = "toggle_filters"
+OPEN_FILTER_ACTION = "open_filter"
 SELECTED_MAX_LINES = 4
 ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
-FILTER_NOTE_SEPARATOR = ", "
-ROLE_NOTE = "role {}"
-TURN_NOTE = "turn {}"
 
 
 @dataclass(frozen=True)
@@ -50,10 +48,7 @@ class TimelineIds:
     """The widget ids of one timeline section, derived from a shared prefix."""
 
     root: str
-    title: str
     filters: str
-    role: str
-    turn: str
     list: str
     selected: str
 
@@ -90,7 +85,6 @@ def screen_is_active(widget: Widget) -> bool:
 @dataclass(frozen=True)
 class _SelectedEntry:
     text: Text
-    meta: Text
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         lines = self.text.wrap(console, options.max_width)
@@ -101,25 +95,29 @@ class _SelectedEntry:
             last.truncate(max(options.max_width - 1, 1))
             last.append(ELLIPSIS)
         yield from shown
-        yield self.meta
 
 
 class TimelineSection(Vertical):
     """Own one timeline's rows, paging, filters and follow state; `shown` while open."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding(FILTER_KEY, TOGGLE_FILTERS_ACTION, "Filter", show=False)
+        Binding(FILTER_KEY, OPEN_FILTER_ACTION, "Filter", show=False)
     ]
     DEFAULT_CSS = """
     TimelineSection { height: auto; }
-    TimelineSection .timeline-heading { height: auto; padding: 0; }
-    TimelineSection .timeline-filters { width: 100%; height: auto; }
-    TimelineSection .timeline-filters Select, TimelineSection .timeline-filters Input {
-        height: 3;
+    TimelineSection .timeline-selected {
+        height: auto; padding: 0 1; margin: 1 0 0 0;
+        color: $primary-text; background: $detail-surface; text-style: italic;
     }
-    TimelineSection .timeline-role { width: 50%; min-width: 10; }
-    TimelineSection .timeline-turn { width: 50%; min-width: 8; }
     """
+
+    class StatusChanged(Message):
+        """The section's `following` or `paused` status changed; `None` clears it."""
+
+        def __init__(self, section: TimelineSection, status: str | None) -> None:
+            super().__init__()
+            self.section = section
+            self.status = status
 
     def __init__(
         self,
@@ -142,38 +140,33 @@ class TimelineSection(Vertical):
         self._reset_state()
 
     def compose(self) -> ComposeResult:
-        yield Static("", id=self.ids.title, classes="timeline-heading", markup=False)
+        yield RowList(widget_id=self.ids.list, edge_paging=True)
+        selected = Static("", id=self.ids.selected, classes="timeline-selected", markup=False)
+        selected.display = False
+        yield selected
         if self._filterable:
-            with Horizontal(id=self.ids.filters, classes="timeline-filters") as filters:
-                filters.display = False
-                yield Select(
-                    (
-                        ("Any role", ""),
-                        ("Leader", Role.LEADER.value),
-                        ("Implementer", Role.IMPLEMENTER.value),
-                        ("Helper", Role.HELPER.value),
-                    ),
-                    prompt="Any role",
-                    allow_blank=True,
-                    value=Select.BLANK,
-                    id=self.ids.role,
-                    classes="timeline-role",
-                )
-                yield Input(placeholder="Any turn", id=self.ids.turn, classes="timeline-turn")
-        yield RowList(widget_id=self.ids.list)
-        yield Static("", id=self.ids.selected, classes="task-detail-section", markup=False)
+            yield TimelineFilterBar(widget_id=self.ids.filters)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         del parameters
-        return self._filterable if action == TOGGLE_FILTERS_ACTION else True
+        return self._filterable if action == OPEN_FILTER_ACTION else True
 
-    def action_toggle_filters(self) -> None:
-        filters = self.query_one(f"#{self.ids.filters}", Horizontal)
-        filters.display = not filters.display
-        if filters.display:
-            self.query_one(f"#{self.ids.role}", Select).focus()
-        elif filters.has_focus_within:
-            self.query_one(f"#{self.ids.list}", RowList).focus()
+    def action_open_filter(self) -> None:
+        """Show the filter bar and move focus into it."""
+        bar = self.query_one(f"#{self.ids.filters}", TimelineFilterBar)
+        bar.display = True
+        bar.focus()
+
+    def close_filter(self) -> bool:
+        """Hide the focused filter bar and return focus to the list; False when it has none."""
+        if not self._filterable:
+            return False
+        bar = self.query_one(f"#{self.ids.filters}", TimelineFilterBar)
+        if not bar.has_focus:
+            return False
+        self.query_one(f"#{self.ids.list}", RowList).focus()
+        bar.display = bar.active
+        return True
 
     @property
     def request(self) -> TimelineRequest:
@@ -207,12 +200,14 @@ class TimelineSection(Vertical):
         self._generation += 1
         if not self.is_mounted:
             return
-        for static_id in (self.ids.title, self.ids.selected):
-            self.query_one(f"#{static_id}", Static).update("")
+        selected = self.query_one(f"#{self.ids.selected}", Static)
+        selected.update("")
+        selected.display = False
         if self._filterable:
-            self.query_one(f"#{self.ids.filters}", Horizontal).display = False
-            self.query_one(f"#{self.ids.role}", Select).value = Select.BLANK
-            self.query_one(f"#{self.ids.turn}", Input).value = ""
+            bar = self.query_one(f"#{self.ids.filters}", TimelineFilterBar)
+            bar.reset()
+            bar.display = False
+        self.post_message(self.StatusChanged(self, None))
         self.query_one(f"#{self.ids.list}", RowList).set_rows(
             (), selected=0, empty=NO_TIMELINE_ROWS
         )
@@ -221,18 +216,27 @@ class TimelineSection(Vertical):
         """Paint a page of rows, keeping the selected entry when it is still listed."""
         self._page = page
         entries = page.entries if page is not None else ()
-        selected = next(
-            (
-                index
-                for index, item in enumerate(entries)
-                if item.identity == self._selected_identity
-            ),
-            0,
+        selected = (
+            len(entries) - 1
+            if self._select_last
+            else next(
+                (
+                    index
+                    for index, item in enumerate(entries)
+                    if item.identity == self._selected_identity
+                ),
+                0,
+            )
         )
+        if self._select_last and selected > 0:
+            self._selected_identity = entries[selected].identity
+            self._following = False
+        self._select_last = False
+        self._remember_turns(entries)
         self.query_one(f"#{self.ids.list}", RowList).set_rows(
             [timeline_cells(item) for item in entries], selected=selected, empty=NO_TIMELINE_ROWS
         )
-        self._paint_heading()
+        self._announce_status()
         self._paint_selection()
 
     def pause_follow(self) -> None:
@@ -242,7 +246,7 @@ class TimelineSection(Vertical):
         self._following = False
         self._generation += 1
         if screen_is_active(self):
-            self._paint_heading()
+            self._announce_status()
 
     def restart(self) -> None:
         """Return to the latest page and follow it."""
@@ -282,13 +286,14 @@ class TimelineSection(Vertical):
             ):
                 self.show_page(page)
 
-    def on_select_changed(self, event: Select.Changed) -> None:
-        if event.select.id == self.ids.role:
-            self._apply_filters()
+    def on_timeline_filter_bar_changed(self, message: TimelineFilterBar.Changed) -> None:
+        message.stop()
+        self._role, self._turn = message.role, message.turn
+        self.restart()
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id == self.ids.turn:
-            self._apply_filters()
+    def on_timeline_filter_bar_closed(self, message: TimelineFilterBar.Closed) -> None:
+        message.stop()
+        self.close_filter()
 
     def on_row_list_moved(self, message: RowList.Moved) -> None:
         message.stop()
@@ -307,7 +312,7 @@ class TimelineSection(Vertical):
         if message.older:
             self._older_page()
         else:
-            self._newer_page()
+            self._newer_page(select_last=message.by_arrow)
 
     def on_row_list_scrolled(self, message: RowList.Scrolled) -> None:
         message.stop()
@@ -323,49 +328,47 @@ class TimelineSection(Vertical):
         self._role: str | None = None
         self._turn: str | None = None
         self._selected_identity: str | None = None
+        self._select_last = False
+        self._known_turns: set[str] = set()
 
     def _invalidate(self) -> None:
         self._generation += 1
         self._selected_identity = None
         self.run_worker(self.refresh_page(), exclusive=False)
 
-    def _apply_filters(self) -> None:
-        role_value = cast("Select[str]", self.query_one(f"#{self.ids.role}", Select)).value
-        turn_value = self.query_one(f"#{self.ids.turn}", Input).value.strip()
-        role = role_value or None if isinstance(role_value, str) else None
-        turn = turn_value or None
-        if (role, turn) == (self._role, self._turn):
-            return
-        self._role, self._turn = role, turn
-        self.restart()
-
     def _older_page(self) -> None:
         page = self._page
-        if page is None or not page.has_older or page.older_cursor is None:
+        if (
+            page is None
+            or not page.has_older
+            or page.older_cursor is None
+            or page.older_cursor == self._cursors[-1]
+        ):
             return
         self._cursors.append(page.older_cursor)
         self._following = False
         self._invalidate()
 
-    def _newer_page(self) -> None:
+    def _newer_page(self, *, select_last: bool) -> None:
         if len(self._cursors) <= 1:
             return
         self._cursors.pop()
         self._following = len(self._cursors) == 1
+        self._select_last = select_last
         self._invalidate()
 
-    def _paint_heading(self) -> None:
-        heading = key_hint(
-            FOLLOWING_LABEL if self._following else PAUSED_LABEL, SECONDARY_TEXT_COLOR
+    def _announce_status(self) -> None:
+        self.post_message(
+            self.StatusChanged(self, FOLLOWING_LABEL if self._following else PAUSED_LABEL)
         )
-        notes = [
-            note.format(value)
-            for note, value in ((ROLE_NOTE, self._role), (TURN_NOTE, self._turn))
-            if value
-        ]
-        if notes:
-            heading.append_text(grey(HEADING_SEPARATOR + FILTER_NOTE_SEPARATOR.join(notes)))
-        self.query_one(f"#{self.ids.title}", Static).update(heading)
+
+    def _remember_turns(self, entries: tuple[TaskTimelineEntryView, ...]) -> None:
+        if not self._filterable:
+            return
+        self._known_turns.update(item.turn for item in entries if item.turn)
+        self.query_one(f"#{self.ids.filters}", TimelineFilterBar).set_turns(
+            sorted(self._known_turns)
+        )
 
     def _paint_selection(self) -> None:
         page = self._page
@@ -375,4 +378,4 @@ class TimelineSection(Vertical):
         selected = entries[chosen] if chosen < len(entries) else None
         target.display = selected is not None
         if selected is not None:
-            target.update(_SelectedEntry(Text(selected.phrase), grey(timeline_meta(selected))))
+            target.update(_SelectedEntry(Text(selected.phrase)))

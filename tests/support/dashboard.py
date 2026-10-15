@@ -178,6 +178,12 @@ async def pick_details_entry(pilot: Pilot[None], entry_id: str) -> None:
     await pilot.press("enter")
 
 
+def fold_headline(root: DOMNode, view_id: str) -> str:
+    """Return the headline shown on the header of the fold `view_id` under `root`."""
+    fold = next(item for item in root.query(DetailFold) if item.view_id == view_id)
+    return fold.headline or ""
+
+
 def list_rows(root: DOMNode, list_id: str) -> list[str]:
     """Return the plain text of every row shown in the row list `list_id` under `root`."""
     return [

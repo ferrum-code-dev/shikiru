@@ -5,15 +5,14 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 from rich.text import Text
-from textual.widgets import Input, ListView, Select, Static
+from textual.widgets import Input, ListView, Static
 
 from shikiru.agents.contracts import QuotaWindow, Rung
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, TaskDetailScreen, TaskPaletteRoute
 from shikiru.dashboard.contract import ResourceView, TaskBrowserFilter
 from shikiru.dashboard.detail import (
-    TASK_DETAIL_AGENT_ROLE,
-    TASK_DETAIL_AGENT_TURN,
+    AGENT_TIMELINE_IDS,
     TASK_DETAIL_FEEDBACK,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_RELATED_LIST,
@@ -24,6 +23,7 @@ from shikiru.dashboard.detail import (
     TaskDetailPanel,
 )
 from shikiru.dashboard.row_list import RowList
+from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import NewTask, Verdict
 from shikiru.domain.scheduling import WaitReason
@@ -391,8 +391,7 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
             lambda: any(dependency.id in row for row in _related_rows(panel)),
             timeout=UI_WAIT_SECONDS,
         )
-        panel.query_one(f"#{TASK_DETAIL_AGENT_ROLE}", Select).value = Role.LEADER.value
-        panel.query_one(f"#{TASK_DETAIL_AGENT_TURN}", Input).value = "older turn"
+        panel.query_one(f"#{AGENT_TIMELINE_IDS.filters}", TimelineFilterBar).action_cycle_role()
         panel = await _open_detail_view(panel, pilot, TASK_VIEW_EVIDENCE)
         panel = await _open_detail_view(panel, pilot, TASK_VIEW_WORKSPACE)
         feedback = panel.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static)
@@ -418,9 +417,7 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
 
         panel = home_panel
         assert not any(dependency.title in row for row in _related_rows(panel))
-        timeline_role = cast("Select[str]", panel.query_one(f"#{TASK_DETAIL_AGENT_ROLE}", Select))
-        assert timeline_role.value is Select.BLANK
-        assert panel.query_one(f"#{TASK_DETAIL_AGENT_TURN}", Input).value == ""
+        assert not panel.query_one(f"#{AGENT_TIMELINE_IDS.filters}", TimelineFilterBar).active
         assert _static_text(feedback) == ""
 
 

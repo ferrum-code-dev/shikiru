@@ -121,11 +121,12 @@ class RowList(Vertical, can_focus=True):
             self.index = index
 
     class Paged(_Posted):
-        """The next (`older`) or previous page was asked for."""
+        """The next (`older`) or previous page was asked for, by an arrow past an end or by key."""
 
-        def __init__(self, row_list: RowList, *, older: bool) -> None:
+        def __init__(self, row_list: RowList, *, older: bool, by_arrow: bool = False) -> None:
             super().__init__(row_list)
             self.older = older
+            self.by_arrow = by_arrow
 
     class Latest(_Posted):
         """The latest rows were asked for."""
@@ -133,9 +134,13 @@ class RowList(Vertical, can_focus=True):
     class Scrolled(_Posted):
         """The operator scrolled the rows away from the first one."""
 
-    def __init__(self, *, widget_id: str) -> None:
-        """Create an empty list; rows arrive through `set_rows`."""
+    def __init__(self, *, widget_id: str, edge_paging: bool = False) -> None:
+        """Create an empty list; rows arrive through `set_rows`.
+
+        With `edge_paging`, moving past the last or first row asks for the older or newer page.
+        """
         super().__init__(id=widget_id)
+        self._edge_paging = edge_paging
         self._cells: tuple[RowCells, ...] = ()
         self._selected = 0
         self._empty = ""
@@ -157,9 +162,12 @@ class RowList(Vertical, can_focus=True):
             self._reveal()
 
     def action_move(self, step: int) -> None:
-        """Move the selection, stopping at both ends."""
-        if self._cells:
-            self._choose(min(max(self._selected + step, 0), len(self._cells) - 1))
+        """Move the selection; at an end, page instead when edge paging is on."""
+        target = self._selected + step
+        if 0 <= target < len(self._cells):
+            self._choose(target)
+        elif self._edge_paging:
+            self.post_message(self.Paged(self, older=step > 0, by_arrow=True))
 
     def action_page(self, older: int) -> None:
         """Ask for the older (PgDn) or newer (PgUp) page."""

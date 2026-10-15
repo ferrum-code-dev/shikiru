@@ -8,15 +8,10 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from rich.console import Console
 from textual.color import Color
-from textual.widgets import Input, ListItem, ListView, Select
+from textual.widgets import Input, ListItem, ListView
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
-from shikiru.dashboard.detail import (
-    TASK_DETAIL_AGENT_LIST,
-    TASK_DETAIL_AGENT_ROLE,
-    TASK_VIEW_AGENT,
-)
 from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Status, Step, Task
@@ -30,7 +25,6 @@ from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
-    choose_inspector_details_entry,
     ignore_palette_action,
     state_views,
 )
@@ -352,29 +346,6 @@ async def test_up_and_down_leave_the_task_selection_alone_in_the_search_input(ho
         await pilot.press("down", "up", "escape")
         await wait_until(lambda: home.app.focused is task_list, timeout=UI_WAIT_SECONDS)
         assert _selected_index(home) == selected
-
-
-async def test_arrows_move_an_expanded_select_in_task_detail_without_moving_the_task(
-    home: _Home,
-) -> None:
-    async with home.app.run_test(size=_WIDE) as pilot:
-        await _settled(home, pilot)
-        await _select(home, pilot, home.plain)
-        task_list = home.app.query_one(_TASK_LIST, ListView)
-        selected = task_list.highlighted_child
-        await choose_inspector_details_entry(pilot, TASK_VIEW_AGENT)
-        agent_list = home.app.query_one(f"#{TASK_DETAIL_AGENT_LIST}")
-        await wait_until(lambda: agent_list.region.height > 0, timeout=UI_WAIT_SECONDS)
-        agent_list.focus()
-        await pilot.press("f")
-        category = cast("Select[str]", home.app.query_one(f"#{TASK_DETAIL_AGENT_ROLE}", Select))
-        await wait_until(lambda: home.app.focused is category, timeout=UI_WAIT_SECONDS)
-        await pilot.press("enter")
-        await wait_until(lambda: category.expanded, timeout=UI_WAIT_SECONDS)
-        initial = category.value
-        await pilot.press("down", "enter")
-        await wait_until(lambda: category.value != initial, timeout=UI_WAIT_SECONDS)
-        assert task_list.highlighted_child is selected
 
 
 @pytest.mark.parametrize("key", ["left", "right"])

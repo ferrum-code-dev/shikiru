@@ -23,6 +23,7 @@ class HintTarget(StrEnum):
     HEADER = "header"
     EVENTS = "events"
     AGENT = "agent"
+    AGENT_FILTER = "agent_filter"
     DEPENDENCIES = "dependencies"
 
 
@@ -30,6 +31,7 @@ _HINTS: dict[HintTarget, tuple[tuple[str, str], ...]] = {
     HintTarget.HEADER: ((_ARROWS, "move"), ("Enter", "open/close")),
     HintTarget.EVENTS: (_SELECT, _FOLLOW, _BACK),
     HintTarget.AGENT: (_SELECT, _FOLLOW, ("f", "filter"), _BACK),
+    HintTarget.AGENT_FILTER: (("r", "role"), ("t", "turn"), ("x", "clear"), _BACK),
     HintTarget.DEPENDENCIES: (_SELECT, ("Enter", "open"), _BACK),
 }
 

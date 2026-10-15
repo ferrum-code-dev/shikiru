@@ -333,7 +333,7 @@ Fourteenth-review scope and evidence: [fourteenth review](../docs/tui-feedback-f
 - [x] Task 213: Briefing colours, labels and added tasks
 - [x] Task 214: Fold keys, click, blank line, cyan titles
 - [x] Task 215: Bottom hint line, Workspace, Settings, Usage
-- [ ] Task 216: Events and Agent activity
+- [x] Task 216: Events and Agent activity
 - [ ] Task 217: Task description and Results
 - [ ] Task 218: Decisions as a decision log
 - [x] Task 220: One-column scrollbar in the edit area

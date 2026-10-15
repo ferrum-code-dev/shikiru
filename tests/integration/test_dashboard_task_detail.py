@@ -34,9 +34,9 @@ from shikiru.dashboard.contract import (
     TaskTimelineCategory,
 )
 from shikiru.dashboard.detail import (
+    AGENT_TIMELINE_IDS,
     TASK_DETAIL_ACTION_PREFIX,
     TASK_DETAIL_AGENT_LIST,
-    TASK_DETAIL_AGENT_TURN,
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BODY,
     TASK_DETAIL_BRIEFING,
@@ -60,6 +60,7 @@ from shikiru.dashboard.details_list_view import DetailsSection
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.services import TaskNavigation
+from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.domain.briefing import (
     BriefingAction,
     ProducedNumbers,
@@ -2090,28 +2091,27 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
             detail_screen = app.screen
             detail_screen.query_one(f"#{TASK_DETAIL_AGENT_LIST}").focus()
             await pilot.press("f")
-            timeline_turn = detail_screen.query_one(f"#{TASK_DETAIL_AGENT_TURN}", Input)
+            bar = detail_screen.query_one(f"#{AGENT_TIMELINE_IDS.filters}", TimelineFilterBar)
             detail_body = detail_screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
 
             def filter_visible() -> bool:
                 return (
-                    timeline_turn.region.x >= 0
-                    and timeline_turn.region.right <= app.size.width
-                    and timeline_turn.region.y >= detail_body.region.y
-                    and timeline_turn.region.bottom <= detail_body.region.bottom
-                    and timeline_turn.region.y >= 0
-                    and timeline_turn.region.bottom <= app.size.height
+                    bar.region.x >= 0
+                    and bar.region.right <= app.size.width
+                    and bar.region.y >= detail_body.region.y
+                    and bar.region.bottom <= detail_body.region.bottom
+                    and bar.region.y >= 0
+                    and bar.region.bottom <= app.size.height
                 )
 
-            timeline_turn.value = "3"
-            timeline_turn.focus()
+            await wait_until(lambda: app.focused is bar, timeout=UI_WAIT_SECONDS)
+            await pilot.press("r")
             await pilot.wait_for_scheduled_animations()
             await wait_until(filter_visible, timeout=UI_WAIT_SECONDS)
             await pilot.resize_terminal(48, 14)
             await pilot.wait_for_scheduled_animations()
             await wait_until(filter_visible, timeout=UI_WAIT_SECONDS)
-            assert app.focused is timeline_turn
-            assert timeline_turn.value == "3"
+            assert app.focused is bar
 
             TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
             await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
@@ -2121,17 +2121,17 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
                 lambda: Hold.PAUSED.value in _text(ownership),
                 timeout=UI_WAIT_SECONDS,
             )
-            assert app.focused is timeline_turn
-            assert timeline_turn.value == "3"
+            assert app.focused is bar
+            assert bar.active
             await wait_until(filter_visible, timeout=UI_WAIT_SECONDS)
 
-            timeline_turn.focus()
+            bar.focus()
             await pilot.wait_for_scheduled_animations()
             await pilot.resize_terminal(36, 20)
             await pilot.wait_for_scheduled_animations()
             await wait_until(filter_visible, timeout=UI_WAIT_SECONDS)
-            assert app.focused is timeline_turn
-            assert timeline_turn.value == "3"
+            assert app.focused is bar
+            assert bar.active
     finally:
         reader.close()
 

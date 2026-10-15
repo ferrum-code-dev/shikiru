@@ -1951,7 +1951,8 @@ Refs: `detail.py` (`on_descendant_focus`, hint Statics, Workspace buttons, `_nav
 
 ### Task 216: Events and Agent activity
 Refs: `timeline_section.py`, `section_rows.py` (`timeline_cells`, `timeline_meta`), `row_list.py`, `queries.py` agent category paging.
-- [ ] Status right-aligned in the headline; shaded full-text block only; Agent activity columns time/role/turn/command and the text filter bar (`f`, `r`, `t`, `x`); Down on the last row loads older rows; selects and inputs removed.
+- [x] Status right-aligned in the headline; shaded full-text block only; Agent activity columns time/role/turn/command and the text filter bar (`f`, `r`, `t`, `x`); Down on the last row loads older rows; selects and inputs removed.
+  - Proof: before the change the selected row showed a grey meta line, the status sat on a title line, and rows older than the first 20 needed PgDn; native exports of a panel with 30 events and 60 signals over 3 turns at 100, 60, 48 and 40 columns (colour and NO_COLOR) now show `following` right-aligned on the fold header, rows `time role t3 command`, one italic block on `detail-surface` (#1c2530) with only the full text, the `role: lead · turn: t1` bar with `r`/`t`/`x`/`f` and Down past the last row loading the older page. `uv run poe check` exited 0 (1632 passed, 14 skipped, coverage 91.53%); collected cases 1653 before and after.
 
 ### Task 217: Task description and Results
 Refs: `dashboard/fold_bodies.py`, `briefing_view.py` `tests_groups`, `domain/results.py`, spec.

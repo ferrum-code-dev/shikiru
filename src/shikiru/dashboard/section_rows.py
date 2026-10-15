@@ -12,6 +12,7 @@ from shikiru.dashboard.contract import TaskTimelineSource
 from shikiru.dashboard.row_list import RowCells
 from shikiru.domain.tasks import Role, Status
 from shikiru.domain.timeline_phrases import Tone
+from shikiru.ui.section import grey
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
@@ -33,11 +34,11 @@ NO_TIME = "--:--:--"
 _CLOCK_FORMAT = "%H:%M:%S"
 _NO_GLYPH_SLOT = " "
 _GLYPH_GAP = " "
-_META_SEPARATOR = " · "
-_TURN_WORD = "turn"
+_TURN_PREFIX = "t"
+_TURN_WIDTH = 3
 _TURN_SEPARATOR = "-"
 _ROLE_LABEL_WIDTH = 4
-_ROLE_LABELS = {
+ROLE_LABELS = {
     Role.LEADER.value: "lead",
     Role.IMPLEMENTER.value: "impl",
     Role.HELPER.value: "help",
@@ -92,25 +93,21 @@ def _clock(entry: TaskTimelineEntryView) -> str:
     )
 
 
-def timeline_meta(entry: TaskTimelineEntryView) -> str:
-    """Return the selected entry's grey line: clock time, role and turn number when recorded."""
-    parts = [_clock(entry)]
-    if entry.role:
-        parts.append(entry.role)
-    if entry.turn:
-        number, _, _ = entry.turn.partition(_TURN_SEPARATOR)
-        parts.append(f"{_TURN_WORD} {int(number) if number.isdigit() else entry.turn}")
-    return _META_SEPARATOR.join(parts)
+def turn_label(turn: str | None) -> str:
+    """Return a turn directory as `t3` (its numeric prefix), the raw name when it has none."""
+    if not turn:
+        return ""
+    number, _, _ = turn.partition(_TURN_SEPARATOR)
+    return f"{_TURN_PREFIX}{int(number)}" if number.isdigit() else turn
 
 
 def timeline_cells(entry: TaskTimelineEntryView) -> RowCells:
-    """Return an entry's row: grey clock time, then who (agents) or its glyph and the phrase."""
+    """Return an entry's row: grey time, for agents role and turn, then its glyph and phrase."""
     text = Text()
-    if entry.source == TaskTimelineSource.AGENT.value and entry.role in _ROLE_LABELS:
-        text.append(
-            _ROLE_LABELS[entry.role].ljust(_ROLE_LABEL_WIDTH), style=_role_color(entry.role)
-        )
+    if entry.source == TaskTimelineSource.AGENT.value and entry.role in ROLE_LABELS:
+        text.append(ROLE_LABELS[entry.role].ljust(_ROLE_LABEL_WIDTH), style=_role_color(entry.role))
         text.append(_COLUMN_GAP)
+        text.append_text(grey(turn_label(entry.turn).ljust(_TURN_WIDTH)))
     text.append(f"{entry.glyph or _NO_GLYPH_SLOT}{_GLYPH_GAP}", style=_TONE_COLORS[entry.tone])
     text.append(entry.phrase, style=_TONE_COLORS[entry.tone])
     return RowCells(_clock(entry), text)

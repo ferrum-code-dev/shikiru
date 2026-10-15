@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import shutil
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -9,22 +10,22 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 import pytest
 from textual.containers import Vertical
-from textual.widgets import Input, Select, Static
+from textual.widgets import Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.detail import (
     AGENT_TIMELINE_IDS,
-    TASK_DETAIL_AGENT_ROLE,
     TASK_DETAIL_TIMELINE_LIST,
     TASK_DETAIL_TIMELINE_SELECTED,
-    TASK_DETAIL_TIMELINE_TITLE,
     TASK_VIEW_AGENT,
     TASK_VIEW_EVIDENCE,
     TIMELINE_SECTIONS,
     TaskDetailPanel,
 )
+from shikiru.dashboard.detail_fold import DetailFold
 from shikiru.dashboard.details_list_view import DetailsSection
 from shikiru.dashboard.row_list import RowList
+from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.dashboard.timeline_section import TimelineHost, TimelineSection
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
@@ -42,11 +43,15 @@ from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.ui.tokens import DETAIL_SURFACE_COLOR
+from tests.support.cells import painted_backgrounds
+from tests.support.cells import rendered_lines as painted_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
+    fold_headline,
     list_rows,
     pick_details_entry,
     state_views,
@@ -778,10 +783,10 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
             )
 
             filtered_gate = gated_views.gate_next_timeline()
-            panel.query_one(f"#{TASK_DETAIL_AGENT_ROLE}", Select).value = Role.IMPLEMENTER.value
+            panel.query_one(f"#{AGENT_TIMELINE_IDS.filters}", TimelineFilterBar).action_cycle_role()
             section = panel.query_one(f"#{AGENT_TIMELINE_IDS.root}", TimelineSection)
             await wait_until(
-                lambda: section.request.role == Role.IMPLEMENTER.value,
+                lambda: section.request.role == Role.LEADER.value,
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
             timeline_gate[1].set()
@@ -789,13 +794,13 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
                 filtered_gate[0].is_set,
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
-            assert gated_views.timeline_requests[-1][0] == Role.IMPLEMENTER.value
+            assert gated_views.timeline_requests[-1][0] == Role.LEADER.value
             filtered_gate[1].set()
             await wait_until(
-                lambda: _has_agent_row(panel, TIMELINE_CONCURRENT_IMPLEMENTER_MESSAGE),
+                lambda: _has_agent_row(panel, TIMELINE_CONCURRENT_LEADER_MESSAGE),
                 timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS,
             )
-            assert not _has_agent_row(panel, TIMELINE_CONCURRENT_LEADER_MESSAGE)
+            assert not _has_agent_row(panel, TIMELINE_CONCURRENT_IMPLEMENTER_MESSAGE)
     finally:
         if timeline_gate is not None:
             timeline_gate[1].set()
@@ -874,11 +879,9 @@ async def test_shown_timelines_keep_their_own_paging_filters_and_refresh(
         assert _identities(activity) == older_events
         assert _turns(signals)[0] == "signal-turn-fresh"
 
-        turn_input = app.query_one(f"#{signals.ids.turn}", Input)
-        turn_input.focus()
-        turn_input.value = "signal-turn-3"
-        await pilot.press("enter")
-        await wait_until(lambda: set(_turns(signals)) == {"signal-turn-3"}, timeout=UI_WAIT_SECONDS)
+        app.query_one(f"#{signals.ids.list}").focus()
+        await pilot.press("f", "t")
+        await wait_until(lambda: set(_turns(signals)) == {"signal-turn-0"}, timeout=UI_WAIT_SECONDS)
         assert _identities(activity) == older_events
         assert activity.request.turn is None
 
@@ -937,11 +940,115 @@ async def test_rows_are_one_line_human_phrases_and_the_selected_row_wraps_to_fou
             assert any("verdict · changes requested" in row for row in _rows(panel))
             selected = panel.query_one(f"#{AGENT_TIMELINE_IDS.selected}", Static)
             lines = rendered_lines(selected.content, width=SELECTED_WIDTH)
-            assert 1 < len(lines) <= SELECTED_MAX_LINES + 1
-            assert lines[-2].endswith("\N{HORIZONTAL ELLIPSIS}")
-            assert lines[-1].endswith("implementer · turn 3")
+            assert 1 < len(lines) <= SELECTED_MAX_LINES
+            assert lines[-1].endswith("\N{HORIZONTAL ELLIPSIS}")
     finally:
         reader.close()
+
+
+async def test_activity_tables_show_status_columns_full_text_block_filter_and_older_rows(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(TIMELINE_START)
+    task = seed_task(connection, clock, title="Activity tables")
+    _seed_activity(connection, clock, project_root, task)
+    reader = StateReader(database, clock)
+    panel = TaskDetailPanel(widget_context(reader, project_root, clock), task.id, fixed=True)
+
+    try:
+        async with WidgetHostApp(panel).run_test(size=(100, 60)) as pilot:
+            panel.open_view(TASK_VIEW_EVIDENCE)
+            panel.open_view(TASK_VIEW_AGENT)
+            await wait_until(
+                lambda: bool(_rows(panel)) and bool(_agent_rows(panel)), timeout=UI_WAIT_SECONDS
+            )
+            for view_id in (TASK_VIEW_EVIDENCE, TASK_VIEW_AGENT):
+                header = next(
+                    fold.header for fold in panel.query(DetailFold) if fold.view_id == view_id
+                )
+                painted = "".join(char for char, _ in painted_lines(header)[0])
+                assert painted.endswith("following")
+
+            newest = _agent_rows(panel)[0]
+            assert re.search(r"\d\d:\d\d:\d\d\s+impl\s+t3\s+", newest)
+            selected = panel.query_one(f"#{AGENT_TIMELINE_IDS.selected}", Static)
+            await wait_until(lambda: selected.region.height > 1, timeout=UI_WAIT_SECONDS)
+            assert painted_backgrounds(selected) == {DETAIL_SURFACE_COLOR}
+            shown = plain_text(selected.content)
+            assert shown.lstrip('\N{LEFT DOUBLE QUOTATION MARK}"').startswith("word0 word1")
+            assert "\N{MIDDLE DOT}" not in shown
+            assert not re.search(r"\d\d:\d\d:\d\d", shown)
+
+            agent_ids = AGENT_TIMELINE_IDS
+            section = panel.query_one(f"#{agent_ids.root}", TimelineSection)
+            panel.query_one(f"#{agent_ids.list}").focus()
+            await pilot.press("f", "r")
+            await wait_until(
+                lambda: (
+                    bool(_agent_rows(panel)) and all(" lead " in row for row in _agent_rows(panel))
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert section.request.role == Role.LEADER.value
+            await pilot.press("x")
+            await wait_until(
+                lambda: (
+                    section.request.role is None and len(_agent_rows(panel)) == TIMELINE_PAGE_LIMIT
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
+            await pilot.press("f")
+            await wait_until(
+                lambda: panel.screen.focused is panel.query_one(f"#{agent_ids.list}"),
+                timeout=UI_WAIT_SECONDS,
+            )
+
+            newest_page = _identities(section)
+            await pilot.press(*["down"] * TIMELINE_PAGE_LIMIT)
+            await wait_until(
+                lambda: _identities(section) != newest_page and not section.following,
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert fold_headline(panel, TASK_VIEW_AGENT) == "paused"
+    finally:
+        reader.close()
+
+
+def _seed_activity(
+    connection: Connection, clock: FakeClock, project_root: Path, task: Task
+) -> None:
+    runs = RunStore(connection, clock)
+    runs.start(task.id, Role.LEADER, LEADER_RUNG)
+    runs.start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
+    long_text = " ".join(f"word{index}" for index in range(LONG_MESSAGE_WORDS))
+    for index in range(TIMELINE_ROW_COUNT):
+        clock.advance(1)
+        EventLog(connection, clock).append(
+            EventKind.TURN_FAILED,
+            task_id=task.id,
+            message=f"event-{index}",
+            data={"role": Role.LEADER.value, "turn": f"turn-{index}"},
+        )
+    for role, turn, count in (
+        (Role.LEADER.value, "02-plan-i1", 2),
+        (Role.IMPLEMENTER.value, "03-implement-i1", TIMELINE_ROW_COUNT),
+    ):
+        log = run_dir(project_root, task.id) / role / "view.jsonl"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("w") as output:
+            for index in range(count):
+                clock.advance(1)
+                text = long_text if index == count - 1 else f"{role}-{index}"
+                row = {
+                    "ts": clock.now().isoformat(),
+                    "turn": turn,
+                    "signal": "Message",
+                    "text": text,
+                }
+                output.write(json.dumps(row) + "\n")
 
 
 def _raise_report(message: str) -> None:
@@ -989,7 +1096,7 @@ def _has_row(panel: TaskDetailPanel, content: str) -> bool:
 
 
 def _heading(panel: TaskDetailPanel) -> str:
-    return plain_text(panel.query_one(f"#{TASK_DETAIL_TIMELINE_TITLE}", Static).content)
+    return fold_headline(panel, TASK_VIEW_EVIDENCE)
 
 
 def _selected_text(panel: TaskDetailPanel) -> str:

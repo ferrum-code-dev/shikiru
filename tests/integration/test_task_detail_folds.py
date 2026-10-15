@@ -6,12 +6,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from textual.widgets import Input, Static
+from textual.widgets import Static
 
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.detail import (
-    TASK_DETAIL_AGENT_TURN,
+    AGENT_TIMELINE_IDS,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_TIMELINE_LIST,
@@ -24,6 +24,7 @@ from shikiru.dashboard.detail import (
 )
 from shikiru.dashboard.detail_fold import DetailFold
 from shikiru.dashboard.row_list import RowList
+from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import Role
 from shikiru.paths import run_dir
@@ -143,7 +144,7 @@ async def _wake(clock: FakeClock, seconds: float) -> None:
 
 def _focused_stop(pilot: Pilot[None]) -> str | None:
     focused = pilot.app.focused
-    if isinstance(focused, RowList):
+    if isinstance(focused, RowList | TimelineFilterBar):
         return focused.id
     parent = focused.parent if focused is not None else None
     return parent.view_id if isinstance(parent, DetailFold) else None
@@ -247,8 +248,8 @@ async def test_open_folds_survive_a_refresh_and_a_task_change_but_task_state_res
             await wait_until(lambda: panel.is_mounted, timeout=UI_WAIT_SECONDS)
             panel.open_view(EVENTS_FOLD)
             panel.open_view(TASK_VIEW_USAGE)
-            turn = panel.query_one(f"#{TASK_DETAIL_AGENT_TURN}", Input)
-            turn.value = "first-event"
+            bar = panel.query_one(f"#{AGENT_TIMELINE_IDS.filters}", TimelineFilterBar)
+            bar.action_cycle_role()
             opened = frozenset({EVENTS_FOLD, TASK_VIEW_USAGE})
             assert panel.open_views == opened
 
@@ -265,7 +266,7 @@ async def test_open_folds_survive_a_refresh_and_a_task_change_but_task_state_res
                 lambda: bool(list_rows(panel, TASK_DETAIL_TIMELINE_LIST)), timeout=UI_WAIT_SECONDS
             )
             assert panel.open_views == opened
-            assert turn.value == ""
+            assert not bar.active
     finally:
         reader.close()
 
@@ -305,7 +306,18 @@ async def test_escape_returns_from_an_open_list_to_its_header_before_leaving(
             assert panel.open_views == frozenset({EVENTS_FOLD})
             assert left_for_home == []
 
+            panel.open_view(TASK_VIEW_AGENT)
+            await wait_until(lambda: _focused_stop(pilot) == AGENT_LIST, timeout=UI_WAIT_SECONDS)
+            await pilot.press("f")
+            await wait_until(
+                lambda: _focused_stop(pilot) == AGENT_TIMELINE_IDS.filters,
+                timeout=UI_WAIT_SECONDS,
+            )
             await pilot.press("escape")
+            await wait_until(lambda: _focused_stop(pilot) == AGENT_LIST, timeout=UI_WAIT_SECONDS)
+            assert left_for_home == []
+
+            await pilot.press("escape", "escape")
             await wait_until(lambda: left_for_home == [task_id], timeout=UI_WAIT_SECONDS)
     finally:
         reader.close()
