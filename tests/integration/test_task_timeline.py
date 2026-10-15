@@ -946,6 +946,7 @@ async def test_rows_are_one_line_human_phrases_and_the_selected_row_wraps_to_fou
         reader.close()
 
 
+@pytest.mark.usefixtures("colour_terminal")
 async def test_activity_tables_show_status_columns_full_text_block_filter_and_older_rows(
     connection: Connection,
     database: Database,

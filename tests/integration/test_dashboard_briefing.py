@@ -601,6 +601,7 @@ async def test_every_offered_verb_stays_inside_the_actions_row_at_compact_width(
                     assert row.contains_region(button.region), (size, focus_task, button.id)
 
 
+@pytest.mark.usefixtures("colour_terminal")
 async def test_briefing_paints_group_titles_cyan_and_commit_lines_green_and_red(
     connection: Connection,
     reader: StateReader,

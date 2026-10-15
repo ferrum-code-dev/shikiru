@@ -138,6 +138,7 @@ async def test_header_preserves_stale_and_unavailable_checkout_facts(
             assert all(fact in rendered for fact in expected_facts)
 
 
+@pytest.mark.usefixtures("colour_terminal")
 async def test_header_colours_the_dirty_line_counts_green_and_red(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
