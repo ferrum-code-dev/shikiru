@@ -944,10 +944,10 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-colors { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:10px; }
 #shikiru-focus-steel .shk-color { display:inline-flex; align-items:center; gap:5px; }
 #shikiru-focus-steel .shk-chip { width:11px; height:11px; background:var(--swatch); }
-#shikiru-focus-steel .shk-terminal { --shk-bg:#11151b; --shk-surface:#171d25; --shk-edge:#3d4654; --shk-ink:#dce2e9; --shk-dim:#9aa5b5; --shk-accent:#83bddd; --shk-good:#90cba6; --shk-wait:#dfb16c; --shk-bad:#e3a0a0; --shk-selected:#233340; --shk-scroll-thumb:#344b5d; --shk-scroll-thumb-hover:#415e72; --shk-scroll-thumb-active:#83bddd; --shk-scroll-track:#000008; color:var(--shk-ink); background:var(--shk-bg); font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,&quot;Liberation Mono&quot;,monospace; padding:14px 16px 0; position:relative; color-scheme:dark; min-width:0; border:1px solid var(--shk-edge); }
+#shikiru-focus-steel .shk-terminal { --shk-bg:#11151b; --shk-detail:#1c2530; --shk-surface:#171d25; --shk-edge:#3d4654; --shk-ink:#dce2e9; --shk-dim:#9aa5b5; --shk-accent:#83bddd; --shk-good:#90cba6; --shk-wait:#dfb16c; --shk-bad:#e3a0a0; --shk-selected:#233340; --shk-scroll-thumb:#344b5d; --shk-scroll-thumb-hover:#415e72; --shk-scroll-thumb-active:#83bddd; --shk-scroll-track:#000008; color:var(--shk-ink); background:var(--shk-bg); font:12px/1.65 ui-monospace,SFMono-Regular,Menlo,Consolas,&quot;Liberation Mono&quot;,monospace; padding:14px 16px 0; position:relative; color-scheme:dark; min-width:0; border:1px solid var(--shk-edge); }
 #shikiru-focus-steel .shk-terminal[data-layout=&quot;stream&quot;] { --shk-bg:#151420; --shk-surface:#211f30; --shk-edge:#49435e; --shk-ink:#e5e1f0; --shk-dim:#afa8c4; --shk-accent:#b9a9f5; --shk-good:#a2d7ba; --shk-wait:#ecc08e; --shk-bad:#eea5b9; --shk-selected:#332b49; }
 #shikiru-focus-steel .shk-terminal[data-layout=&quot;board&quot;] { --shk-bg:#191816; --shk-surface:#23211d; --shk-edge:#4d493f; --shk-ink:#e8e2d6; --shk-dim:#b6ac99; --shk-accent:#deb97e; --shk-good:#b3ce99; --shk-wait:#edc789; --shk-bad:#e4a498; --shk-selected:#393125; }
-#shikiru-focus-steel .shk-terminal.shk-mono { --shk-bg:#141414; --shk-surface:#202020; --shk-edge:#747474; --shk-ink:#efefef; --shk-dim:#b8b8b8; --shk-accent:#efefef; --shk-good:#efefef; --shk-wait:#efefef; --shk-bad:#efefef; --shk-selected:#373737; --shk-scroll-thumb:#747474; --shk-scroll-thumb-hover:#9a9a9a; --shk-scroll-thumb-active:#efefef; --shk-scroll-track:#000000; }
+#shikiru-focus-steel .shk-terminal.shk-mono { --shk-bg:#141414; --shk-detail:#2a2a2a; --shk-surface:#202020; --shk-edge:#747474; --shk-ink:#efefef; --shk-dim:#b8b8b8; --shk-accent:#efefef; --shk-good:#efefef; --shk-wait:#efefef; --shk-bad:#efefef; --shk-selected:#373737; --shk-scroll-thumb:#747474; --shk-scroll-thumb-hover:#9a9a9a; --shk-scroll-thumb-active:#efefef; --shk-scroll-track:#000000; }
 #shikiru-focus-steel .shk-terminal * { box-sizing:border-box; }
 #shikiru-focus-steel .shk-terminal button { font:inherit; color:inherit; border:0; border-radius:0; background:transparent; cursor:pointer; text-align:left; padding:0; }
 #shikiru-focus-steel .shk-terminal button:hover { background:var(--shk-selected); }
@@ -1125,7 +1125,7 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-res-choice.is-selected { background:var(--shk-selected); }
 #shikiru-focus-steel .shk-res-mark { white-space:pre; }
 #shikiru-focus-steel .shk-res-choice &gt; span:last-child { overflow-wrap:anywhere; }
-#shikiru-focus-steel .shk-modal .shk-res-answer { display:block; margin:0 0 4px 3ch; width:calc(100% - 3ch); border:0; border-bottom:1px solid var(--shk-accent); border-radius:0; background:transparent; padding:2px 0; resize:none; }
+#shikiru-focus-steel .shk-modal .shk-res-answer { scrollbar-width:thin; display:block; margin:0 0 4px 3ch; width:calc(100% - 3ch); border:0; border-bottom:1px solid var(--shk-accent); border-radius:0; background:transparent; padding:2px 0; resize:none; }
 #shikiru-focus-steel .shk-modal .shk-res-answer:focus, #shikiru-focus-steel .shk-modal .shk-res-answer:focus-visible { background:var(--shk-selected); outline:0; }
 #shikiru-focus-steel .shk-terminal button.shk-res-tried { display:block; width:100%; color:var(--shk-dim); }
 #shikiru-focus-steel .shk-res-tried-block:focus-within { background:var(--shk-selected); }
@@ -1168,7 +1168,6 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-brief-head { color:var(--shk-wait); font-weight:700; }
 #shikiru-focus-steel .shk-brief-rule { border-top:1px solid var(--shk-edge); margin:6px 0; }
 #shikiru-focus-steel .shk-brief-actions { display:flex; flex-wrap:wrap; align-items:center; gap:2px 14px; }
-#shikiru-focus-steel .shk-terminal .shk-brief-actions .shk-brief-more { margin-left:auto; color:var(--shk-dim) !important; }
 #shikiru-focus-steel .shk-terminal .shk-brief-verb { color:var(--shk-accent) !important; padding:0; }
 #shikiru-focus-steel .shk-brief .shk-sep { color:var(--shk-dim); }
 #shikiru-focus-steel .shk-folds { display:grid; }
@@ -1180,12 +1179,22 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-pre { white-space:pre-wrap; }
 #shikiru-focus-steel .shk-kv { display:grid; grid-template-columns:9ch minmax(0,1fr); gap:0 1ch; }
 #shikiru-focus-steel .shk-kv &gt; span:nth-child(odd) { color:var(--shk-dim); }
-#shikiru-focus-steel .shk-fold-tools { display:flex; flex-wrap:wrap; gap:2px 14px; margin-top:4px; }
-#shikiru-focus-steel .shk-terminal .shk-fold-tools button { color:var(--shk-accent); padding:0; }
-#shikiru-focus-steel .shk-brief-group { color:var(--shk-dim); }
+#shikiru-focus-steel .shk-fold-block { background:var(--shk-detail); font-style:italic; color:var(--shk-ink); padding:0 1ch; white-space:pre-wrap; }
+#shikiru-focus-steel .shk-fold-hint { position:sticky; bottom:0; background:var(--shk-bg); color:var(--shk-dim); padding:2px 0 0 2ch; }
+#shikiru-focus-steel .shk-fold-filter { margin-top:1lh; color:var(--shk-dim); }
+#shikiru-focus-steel .shk-fold-filter.is-active .shk-key { font-weight:700; }
+#shikiru-focus-steel .shk-fold-gap { height:1lh; }
+#shikiru-focus-steel .shk-log { display:grid; grid-template-columns:5ch 8ch minmax(0,1fr); gap:0 1ch; }
+#shikiru-focus-steel .shk-log-detail { grid-column:3; color:var(--shk-dim); }
+#shikiru-focus-steel .shk-log-who-leader { color:var(--shk-accent); }
+#shikiru-focus-steel .shk-log-who-you { color:var(--shk-ink); font-weight:700; }
+#shikiru-focus-steel .shk-log-who-engine { color:var(--shk-dim); }
+#shikiru-focus-steel .shk-brief-group { color:var(--shk-accent); }
+#shikiru-focus-steel .shk-brief-row &gt; span.shk-summary-label { color:var(--shk-accent); }
+#shikiru-focus-steel .shk-brief-row &gt; span.shk-need-label { color:var(--shk-wait); font-weight:700; }
 #shikiru-focus-steel .shk-brief-body { display:grid; gap:2px; padding-left:2ch; }
 #shikiru-focus-steel .shk-det-row { display:flex; gap:12px; justify-content:space-between; width:100%; padding:2px 0 !important; text-align:left; }
-#shikiru-focus-steel .shk-det-row .shk-det-name { color:var(--shk-ink); }
+#shikiru-focus-steel .shk-det-row .shk-det-name { color:var(--shk-accent); }
 #shikiru-focus-steel .shk-det-row.is-selected { background:var(--shk-selected); }
 #shikiru-focus-steel .shk-det-row.is-selected .shk-det-name { font-weight:700; }
 #shikiru-focus-steel .shk-lead { white-space:pre; }
@@ -1258,7 +1267,7 @@ html&gt;body{padding:0}&lt;/style&gt;
   ];
   const tasks = [
     { id:&#x27;T-42&#x27;, title:&#x27;Add retry to parser&#x27;, state:&#x27;Decision needed&#x27;, tone:&#x27;wait&#x27;, step:&#x27;Verify&#x27;, role:&#x27;Leader&#x27;, age:&#x27;12m&#x27;, note:&#x27;Which failures should the parser retry?&#x27;, detail:&#x27;The Leader needs a product decision before verification can continue.&#x27;, evidence:&#x27;Leader verdict · turn 3 · decision_required. Engine git facts: 3 committed files; worktree clean.&#x27;, lane:&#x27;Review&#x27; },
-    { id:&#x27;T-43&#x27;, title:&#x27;Fix login redirect&#x27;, state:&#x27;Verifying&#x27;, tone:&#x27;accent&#x27;, step:&#x27;Verify&#x27;, role:&#x27;Leader&#x27;, age:&#x27;8m&#x27;, note:&#x27;Reviewing redirect edge cases&#x27;, detail:&#x27;Implementation is complete. The Leader is checking the acceptance criteria.&#x27;, evidence:&#x27;Implementer report · turn 2: 18 tests passed (agent-reported). Engine git facts: 2 commits; 4 changed files; worktree clean.&#x27;, lane:&#x27;Review&#x27; },
+    { id:&#x27;T-43&#x27;, title:&#x27;Fix login redirect&#x27;, state:&#x27;Verifying&#x27;, tone:&#x27;accent&#x27;, step:&#x27;Verify&#x27;, role:&#x27;Leader&#x27;, age:&#x27;8m&#x27;, note:&#x27;Reviewing redirect edge cases&#x27;, detail:&#x27;Implementation is complete. The Leader is checking the acceptance criteria.&#x27;, evidence:&#x27;Implementer report · turn 2: 18 tests passed (reported by the Implementer). Engine git facts: 2 commits; 4 changed files; worktree clean.&#x27;, lane:&#x27;Review&#x27; },
     { id:&#x27;T-44&#x27;, title:&#x27;Preserve work on cancel&#x27;, state:&#x27;Implementing&#x27;, tone:&#x27;accent&#x27;, step:&#x27;Implement&#x27;, role:&#x27;Implementer&#x27;, age:&#x27;5m&#x27;, note:&#x27;Updating cancellation handling&#x27;, detail:&#x27;The Implementer is preserving uncommitted work when cancellation is requested.&#x27;, evidence:&#x27;Recorded role signal · ToolStarted: edit cancellation.py. Latest engine event: implement turn started.&#x27;, lane:&#x27;Build&#x27; },
     { id:&#x27;T-45&#x27;, title:&#x27;Add parser edge cases&#x27;, state:&#x27;Waiting on T-42&#x27;, tone:&#x27;dim&#x27;, step:&#x27;Queued&#x27;, role:&#x27;—&#x27;, age:&#x27;4m&#x27;, note:&#x27;Dependency: T-42 must finish&#x27;, detail:&#x27;Queued. The stored scheduler reason is dependency T-42. It has no active turn.&#x27;, evidence:&#x27;Engine scheduler reason · dependency T-42. Waiting is informational; no operator decision is open for this task.&#x27;, lane:&#x27;Next&#x27; },
     { id:&#x27;T-46&#x27;, title:&#x27;Refresh operator docs&#x27;, state:&#x27;Queued · ready&#x27;, tone:&#x27;dim&#x27;, step:&#x27;Queued&#x27;, role:&#x27;—&#x27;, age:&#x27;3m&#x27;, note:&#x27;Next eligible task in dispatch order&#x27;, detail:&#x27;Queued. Dispatch order is shown without a promised start time.&#x27;, evidence:&#x27;Engine queue · eligible for the next scheduler dispatch. No agent report exists yet.&#x27;, lane:&#x27;Next&#x27; },
@@ -1347,7 +1356,7 @@ html&gt;body{padding:0}&lt;/style&gt;
   };
   const top = () =&gt; {
     const runtime = scene.value === &#x27;stopped&#x27; ? &#x27;&lt;span class=&quot;shk-bad&quot;&gt;○ Engine stopped&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;Last 1h 23m&lt;/span&gt;&#x27; : &#x27;&lt;span class=&quot;shk-good&quot;&gt;● Engine running&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;Uptime 1h 23m&lt;/span&gt;&#x27;;
-    const checkoutState = checkout.value === &#x27;clean&#x27; ? &#x27;&lt;span class=&quot;shk-clean&quot;&gt;(clean)&lt;/span&gt;&#x27; : &#x27;&lt;span class=&quot;shk-dirty&quot;&gt;(+24 -8)&lt;/span&gt;&#x27;;
+    const checkoutState = checkout.value === &#x27;clean&#x27; ? &#x27;&lt;span class=&quot;shk-clean&quot;&gt;(clean)&lt;/span&gt;&#x27; : &#x27;&lt;span class=&quot;shk-dirty&quot;&gt;(&lt;span class=&quot;shk-good&quot;&gt;+24&lt;/span&gt; &lt;span class=&quot;shk-bad&quot;&gt;-8&lt;/span&gt;)&lt;/span&gt;&#x27;;
     return `&lt;div class=&quot;shk-top&quot;&gt;&lt;div class=&quot;shk-top-title&quot;&gt;&lt;span class=&quot;shk-brand&quot;&gt;SHIKIRU&lt;/span&gt;&lt;span&gt;shikiru &lt;span class=&quot;shk-dim&quot;&gt;(/Users/pavel/Projects/ferrum-code-dev/shikiru)&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;&lt;span class=&quot;shk-top-runtime&quot;&gt;${runtime}&lt;/span&gt;&lt;div class=&quot;shk-top-branch&quot;&gt;&lt;span&gt;main ${checkoutState}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;· Local merge&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;`;
   };
   const statusBar = () =&gt; {
@@ -1439,7 +1448,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     if (task.step === &#x27;Queued&#x27;) return [[&#x27;Pause&#x27;,&#x27;menu&#x27;],cancel];
     return [[&#x27;Take over&#x27;,&#x27;takeover&#x27;],[&#x27;Message&#x27;,&#x27;message&#x27;],[&#x27;Pause&#x27;,&#x27;menu&#x27;],cancel];
   };
-  const briefActions = (task, compact) =&gt; `&lt;div class=&quot;shk-brief-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-brief-actions&quot;&gt;${verbsFor(task).map(([label,open])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-brief-verb&quot; data-task=&quot;${task.id}&quot; data-open=&quot;${open}&quot;&gt;${label}&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;button type=&quot;button&quot; class=&quot;shk-brief-more&quot; data-task=&quot;${task.id}&quot; data-open=&quot;details&quot;&gt;${compact?&#x27;&lt;span class=&quot;shk-key&quot;&gt;↓&lt;/span&gt;&#x27;:&#x27;&lt;span class=&quot;shk-key&quot;&gt;↓&lt;/span&gt; details&#x27;}&lt;/button&gt;&lt;/div&gt;`;
+  const briefActions = (task, compact) =&gt; `&lt;div class=&quot;shk-brief-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-brief-actions&quot;&gt;${verbsFor(task).map(([label,open])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-brief-verb&quot; data-task=&quot;${task.id}&quot; data-open=&quot;${open}&quot;&gt;${label}&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;`;
   const briefMilestones = (task, compact) =&gt; {
     if (!compact) return stages(task);
     if (task.state === &#x27;Cancelled&#x27;) return &#x27;&lt;div class=&quot;shk-stages shk-dim&quot;&gt;— — — —&lt;/div&gt;&#x27;;
@@ -1456,20 +1465,21 @@ html&gt;body{padding:0}&lt;/style&gt;
     const rework = data.rework ? (compact ? `rework ${data.rework[0]}/${data.rework[1]}` : `rework ${data.rework[0]} of ${data.rework[1]}`) : &#x27;&#x27;;
     const roleText = task.role === &#x27;—&#x27; ? &#x27;&#x27; : task.role;
     const stateLine = `&lt;div class=&quot;shk-brief-line&quot;&gt;&lt;span class=&quot;shk-bold shk-${stateClass(task)} ${activeStatusClass(task)}&quot;&gt;${markerMarkup(task)} ${esc(stateText(task))}&lt;/span&gt;&lt;span class=&quot;shk-dim shk-bold&quot;&gt;${compact ? &#x27;&#x27; : roleText ? &#x27; · &#x27; + esc(roleText) : &#x27;&#x27;}${rework ? &#x27; · &#x27; + rework : &#x27;&#x27;}&lt;/span&gt;&lt;/div&gt;`;
-    const total = !compact &amp;&amp; data.total ? `&lt;div class=&quot;shk-brief-line shk-dim shk-bold&quot;&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;${data.total} total&lt;/div&gt;` : &#x27;&#x27;;
+    const total = !compact &amp;&amp; data.total ? `&lt;div class=&quot;shk-brief-line shk-dim shk-bold&quot;&gt;${data.total} total&lt;/div&gt;` : &#x27;&#x27;;
     const hold = data.hold ? `&lt;div class=&quot;shk-brief-line shk-dim&quot;&gt;Holds · ${data.hold}&lt;/div&gt;` : &#x27;&#x27;;
     const rule = &#x27;&lt;div class=&quot;shk-brief-rule&quot;&gt;&lt;/div&gt;&#x27;;
     const decision = task.state.includes(&#x27;Decision&#x27;) &amp;&amp; data.needs;
     const needs = decision ? (compact ? `&lt;div class=&quot;shk-brief-line&quot;&gt;&lt;span class=&quot;shk-brief-head&quot;&gt;Needs you:&lt;/span&gt; &lt;span class=&quot;shk-strong&quot; style=&quot;font-weight:400&quot;&gt;${esc(data.needs)}&lt;/span&gt;&lt;/div&gt;` : `&lt;div class=&quot;shk-brief-head&quot;&gt;Needed from you&lt;/div&gt;&lt;div class=&quot;shk-brief-line&quot;&gt;&amp;nbsp;&amp;nbsp;${esc(data.needs)}&lt;/div&gt;${rule}`) : &#x27;&#x27;;
-    const produced = data.commits ? `${plural(data.commits,&#x27;commit&#x27;)}${compact ? &#x27; &#x27; : &#x27; · &#x27; + plural(data.files,&#x27;file&#x27;) + &#x27; · &#x27;}+${data.plus} −${data.minus}` : &#x27;&#x27;;
-    const tests = data.pass !== undefined ? (compact ? `${data.pass}✓${data.fail ? &#x27; &#x27; + data.fail + &#x27;✗&#x27; : &#x27;&#x27;}` : `tests ${data.pass} passed${data.fail ? &#x27; · &#x27; + data.fail + &#x27; failed&#x27; : &#x27;&#x27;} (agent-reported)`) : &#x27;&#x27;;
+    const lines = data.commits ? `&lt;span class=&quot;shk-good&quot;&gt;+${data.plus}&lt;/span&gt; &lt;span class=&quot;shk-bad&quot;&gt;−${data.minus}&lt;/span&gt;` : &#x27;&#x27;;
+    const produced = data.commits ? `${plural(data.commits,&#x27;commit&#x27;)}${compact ? &#x27; &#x27; : &#x27; · &#x27; + plural(data.files,&#x27;file&#x27;) + &#x27; · &#x27;}${lines}` : &#x27;&#x27;;
+    const tests = data.pass !== undefined ? (compact ? `${data.pass}✓${data.fail ? &#x27; &#x27; + data.fail + &#x27;✗&#x27; : &#x27;&#x27;}` : `tests ${data.pass} passed${data.fail ? &#x27; · &#x27; + data.fail + &#x27; failed&#x27; : &#x27;&#x27;} · reported by the Implementer`) : &#x27;&#x27;;
     const row = (label, value, extra=&#x27;&#x27;) =&gt; `&lt;div class=&quot;shk-brief-row&quot;&gt;&lt;span&gt;${label}&lt;/span&gt;&lt;span&gt;${value}&lt;/span&gt;${extra ? `&lt;span class=&quot;shk-brief-sub&quot;&gt;${extra}&lt;/span&gt;` : &#x27;&#x27;}&lt;/div&gt;`;
     let body = &#x27;&#x27;;
     if (compact) {
       if (working &amp;&amp; data.age) body += `&lt;div class=&quot;shk-brief-line&quot;&gt;&lt;span class=&quot;shk-strong shk-brief-quote&quot; style=&quot;font-weight:400&quot;&gt;“${esc(data.words || task.note)}”&lt;/span&gt; &lt;span class=&quot;shk-dim&quot;&gt;${data.age}s&lt;/span&gt;&lt;/div&gt;`;
-      if (produced) body += `&lt;div class=&quot;shk-brief-line&quot;&gt;${esc(produced)}${tests ? sep + tests : &#x27;&#x27;}&lt;/div&gt;`;
+      if (produced) body += `&lt;div class=&quot;shk-brief-line&quot;&gt;${produced}${tests ? sep + tests : &#x27;&#x27;}&lt;/div&gt;`;
       if (data.verdict) body += `&lt;div class=&quot;shk-brief-line&quot;&gt;${esc(data.verdict.replace(&#x27;Rejected · &#x27;, &#x27;Rejected &#x27;))}&lt;/div&gt;`;
-      if (data.waits) body += `&lt;div class=&quot;shk-brief-line&quot;&gt;&lt;span class=&quot;shk-brief-head&quot;&gt;Needs you:&lt;/span&gt; &lt;span class=&quot;shk-strong&quot; style=&quot;font-weight:400&quot;&gt;${esc(data.waits)}&lt;/span&gt;&lt;/div&gt;`;
+      if (data.waits) body += `&lt;div class=&quot;shk-brief-line&quot;&gt;&lt;span class=&quot;shk-brief-head&quot;&gt;Pending:&lt;/span&gt; &lt;span class=&quot;shk-strong&quot; style=&quot;font-weight:400&quot;&gt;${esc(data.waits)}&lt;/span&gt;&lt;/div&gt;`;
       if (data.cost) body += `&lt;div class=&quot;shk-brief-line shk-good&quot;&gt;${esc(data.bill)}&lt;/div&gt;`;
       return `&lt;div class=&quot;shk-brief&quot;&gt;&lt;div class=&quot;shk-brief-title&quot;&gt;${task.id} · ${esc(task.title)}&lt;/div&gt;${stateLine}${hold}${briefMilestones(task, true)}${needs}${body}${briefActions(task, true)}${foldsMarkup(task, id)}&lt;/div&gt;`;
     }
@@ -1486,15 +1496,16 @@ html&gt;body{padding:0}&lt;/style&gt;
     let result = &#x27;&#x27;;
     if (data.commits) {
       result += row(task.state === &#x27;Done&#x27; ? &#x27;Merged&#x27; : &#x27;Branch&#x27;, ink(`${branch} → main`));
-      result += row(&#x27;Commits&#x27;, ink(produced));
-      if (data.pass !== undefined) result += row(&#x27;Tests&#x27;, `&lt;span class=&quot;shk-good&quot;&gt;${data.pass} passed&lt;/span&gt;${data.fail ? sep + `&lt;span class=&quot;shk-bad&quot;&gt;${data.fail} failed&lt;/span&gt;` : &#x27;&#x27;}${sep}&lt;span class=&quot;shk-dim&quot;&gt;agent-reported&lt;/span&gt;`);
+      result += row(&#x27;Commits&#x27;, `&lt;span class=&quot;shk-ink&quot;&gt;${produced}&lt;/span&gt;`);
+      if (data.pass !== undefined) result += row(&#x27;Tests&#x27;, `&lt;span class=&quot;shk-good&quot;&gt;${data.pass} passed&lt;/span&gt;${data.fail ? sep + `&lt;span class=&quot;shk-bad&quot;&gt;${data.fail} failed&lt;/span&gt;` : &#x27;&#x27;}${sep}&lt;span class=&quot;shk-dim&quot;&gt;reported by the Implementer&lt;/span&gt;`);
     } else if (task.state === &#x27;Done&#x27;) result += row(&#x27;Merged&#x27;, ink(`${branch} → main`));
     if (data.pr) result += row(&#x27;PR&#x27;, ink(data.pr));
     let problems = &#x27;&#x27;;
     if (data.verdict) problems += row(&#x27;Verdict&#x27;, ink(data.verdict));
-    if (decision) problems += row(&#x27;Needed&#x27;, ink(data.needs));
-    if (data.waits) problems += row(&#x27;Needed&#x27;, ink(data.waits));
-    const summary = data.summary ? row(&#x27;Summary&#x27;, ink(data.summary)) : &#x27;&#x27;;
+    const need = (label, text) =&gt; `&lt;div class=&quot;shk-brief-row&quot;&gt;&lt;span class=&quot;shk-need-label&quot;&gt;${label}&lt;/span&gt;&lt;span&gt;${ink(text)}&lt;/span&gt;&lt;/div&gt;`;
+    if (decision) problems += need(&#x27;Blocker&#x27;, data.needs);
+    if (data.waits) problems += need(&#x27;Pending&#x27;, data.waits);
+    const summary = data.summary ? `&lt;div class=&quot;shk-brief-row&quot;&gt;&lt;span class=&quot;shk-summary-label&quot;&gt;Summary&lt;/span&gt;&lt;span&gt;${ink(data.summary)}&lt;/span&gt;&lt;/div&gt;` : &#x27;&#x27;;
     const cost = data.cost ? row(&#x27;Cost&#x27;, `&lt;span class=&quot;shk-good&quot;&gt;${esc(data.cost)}&lt;/span&gt;`) : &#x27;&#x27;;
     return `&lt;div class=&quot;shk-brief&quot;&gt;&lt;div class=&quot;shk-brief-title&quot;&gt;${task.id} · ${esc(task.title)}&lt;/div&gt;${stateLine}${total}${hold}${briefMilestones(task, false)}${summary}${grouped(&#x27;Progress&#x27;, progress)}${grouped(terminal ? &#x27;Result&#x27; : &#x27;Result so far&#x27;, result)}${grouped(&#x27;Problems&#x27;, problems)}${cost}${briefActions(task, false)}${foldsMarkup(task, id)}&lt;/div&gt;`;
   };
@@ -1583,7 +1594,7 @@ html&gt;body{padding:0}&lt;/style&gt;
   ].map(([label,action])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-menu-item&quot; data-open=&quot;${action}&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;${label}&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;div class=&quot;shk-dim&quot;&gt;Project views are not task folds: Command history, Usage details and Diagnostics open from here and the Home bars.&lt;/div&gt;&lt;/div&gt;`;
   const foldNames = [&#x27;Task description&#x27;, &#x27;Results&#x27;, &#x27;Decisions&#x27;, &#x27;Events&#x27;, &#x27;Agent activity&#x27;, &#x27;Usage&#x27;, &#x27;Dependencies&#x27;, &#x27;Workspace&#x27;, &#x27;Settings&#x27;];
   const foldState = {};
-  const foldOf = id =&gt; (foldState[id] ||= {open:new Set(), focus:null, last:0});
+  const foldOf = id =&gt; (foldState[id] ||= {open:new Set(), focus:null, last:0, list:false, filter:{open:false, role:null, turn:null}});
   const sampleCriteria = {
     &#x27;T-42&#x27;:[&#x27;Syntax errors fail at once&#x27;, &#x27;Transient I/O errors are retried up to the limit&#x27;],
     &#x27;T-43&#x27;:[&#x27;A redirect keeps its query string&#x27;, &#x27;Unknown targets fall back to the home page&#x27;, &#x27;Every edge case has a test&#x27;],
@@ -1591,28 +1602,34 @@ html&gt;body{padding:0}&lt;/style&gt;
   };
   const sampleCommits = [[&#x27;abc1234&#x27;, &#x27;Add bounded retry&#x27;], [&#x27;def5678&#x27;, &#x27;Fail fast on syntax errors&#x27;], [&#x27;0123456&#x27;, &#x27;Cover the I/O error path&#x27;]];
   const sampleDecisions = {
-    &#x27;T-43&#x27;:{rounds:[[&#x27;changes requested&#x27;, &#x27;1 major, 1 minor&#x27;]], you:[[&#x27;00:20&#x27;, &#x27;messaged&#x27;, &#x27;“Please keep the API stable”&#x27;]]},
-    &#x27;T-41&#x27;:{rounds:[[&#x27;changes requested&#x27;, &#x27;2 major&#x27;], [&#x27;accepted&#x27;, &#x27;&#x27;]], you:[[&#x27;00:15&#x27;, &#x27;answered&#x27;, &#x27;“Keep existing behavior”&#x27;]]}
+    &#x27;T-43&#x27;:[[&#x27;00:12&#x27;, &#x27;Leader&#x27;, &#x27;changes requested&#x27;, [&#x27;major · missing URL edge case&#x27;, &#x27;minor · rename the helper&#x27;]], [&#x27;00:20&#x27;, &#x27;You&#x27;, &#x27;messaged the Leader “Please keep the API stable”&#x27;, []]],
+    &#x27;T-41&#x27;:[[&#x27;00:09&#x27;, &#x27;Leader&#x27;, &#x27;changes requested&#x27;, [&#x27;major · syntax errors are retried&#x27;, &#x27;major · no test for the limit&#x27;]], [&#x27;00:15&#x27;, &#x27;You&#x27;, &#x27;answered “Keep existing behavior”&#x27;, []], [&#x27;00:18&#x27;, &#x27;Leader&#x27;, &#x27;accepted&#x27;, []], [&#x27;00:22&#x27;, &#x27;Engine&#x27;, &#x27;PR #41 merged&#x27;, []]]
   };
   const detailsEntries = task =&gt; {
     const data = briefs[task.id] || {};
     const decisions = sampleDecisions[task.id];
-    const last = decisions ? decisions.rounds[decisions.rounds.length - 1][0] : &#x27;&#x27;;
     return [
       [&#x27;Task description&#x27;, &#x27;&#x27;],
       [&#x27;Results&#x27;, task.state === &#x27;Done&#x27; ? (data.commits ? `${plural(data.commits, &#x27;commit&#x27;)}${data.pr ? &#x27; · PR &#x27; + data.pr.split(&#x27; &#x27;)[0] : &#x27;&#x27;}` : &#x27;&#x27;) : data.commits ? &#x27;so far&#x27; : &#x27;&#x27;],
-      [&#x27;Decisions&#x27;, task.state.includes(&#x27;Decision&#x27;) ? &#x27;decision open&#x27; : decisions ? `${plural(decisions.rounds.length, &#x27;round&#x27;)} · last ${last}` : &#x27;&#x27;],
-      [&#x27;Events&#x27;, &#x27;&#x27;],
-      [&#x27;Agent activity&#x27;, &#x27;&#x27;],
+      [&#x27;Decisions&#x27;, task.state.includes(&#x27;Decision&#x27;) ? &#x27;question open&#x27; : decisions ? plural(decisions.length, &#x27;decision&#x27;) : &#x27;&#x27;],
+      [&#x27;Events&#x27;, task.step === &#x27;Merged&#x27; ? &#x27;&#x27; : &#x27;following&#x27;],
+      [&#x27;Agent activity&#x27;, task.step === &#x27;Queued&#x27; ? &#x27;&#x27; : &#x27;following&#x27;],
       [&#x27;Usage&#x27;, data.bill || &#x27;&#x27;],
       [&#x27;Dependencies&#x27;, task.id === &#x27;T-45&#x27; ? &#x27;1 blocker&#x27; : &#x27;&#x27;],
       [&#x27;Workspace&#x27;, task.step === &#x27;Queued&#x27; ? &#x27;&#x27; : `branch ${branchOf(task)}`],
-      [&#x27;Settings&#x27;, &#x27;priority 0&#x27;]
+      [&#x27;Settings&#x27;, &#x27;implement · standard priority&#x27;]
     ];
   };
   const kv = rows =&gt; `&lt;div class=&quot;shk-kv&quot;&gt;${rows.map(([label, value]) =&gt; `&lt;span&gt;${label}&lt;/span&gt;&lt;span class=&quot;shk-ink&quot;&gt;${value}&lt;/span&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;`;
   const keyed = text =&gt; text.replace(/\[([^\]]+)\]/g, &#x27;&lt;span class=&quot;shk-key&quot;&gt;$1&lt;/span&gt;&#x27;);
-  const timeline = (hint, rows, detail) =&gt; `&lt;div class=&quot;shk-dim&quot;&gt;following&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${keyed(hint)}&lt;/div&gt;${rows.map(([time, glyph, tone, who, text], index) =&gt; `&lt;div class=&quot;shk-fold-row${index === 0 ? &#x27; is-selected&#x27; : &#x27;&#x27;}&quot;&gt;&lt;span class=&quot;shk-lead&quot;&gt;  &lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;${time}&lt;/span&gt;  ${who ? `&lt;span class=&quot;shk-accent&quot;&gt;${who}&lt;/span&gt;  ` : &#x27;&#x27;}&lt;span class=&quot;shk-${tone}&quot;&gt;${glyph ? glyph + &#x27; &#x27; : &#x27;&#x27;}${esc(text)}&lt;/span&gt;&lt;/div&gt;`).join(&#x27;&#x27;)}&lt;div class=&quot;shk-ink&quot;&gt;${esc(detail[0])}&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;${esc(detail[1])}&lt;/div&gt;`;
+  const timeline = (rows, detail, agent) =&gt; {
+    const state = foldOf(concepts[0].id);
+    const filter = state.filter;
+    const shown = rows.filter(([, , , who, turn]) =&gt; !agent || ((!filter.role || who === filter.role) &amp;&amp; (!filter.turn || turn === filter.turn)));
+    const table = shown.map(([time, glyph, tone, who, turn, text], index) =&gt; `&lt;div class=&quot;shk-fold-row${index === 0 ? &#x27; is-selected&#x27; : &#x27;&#x27;}&quot;&gt;&lt;span class=&quot;shk-lead&quot;&gt;  &lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;${time}&lt;/span&gt;  ${who ? `&lt;span class=&quot;shk-accent&quot;&gt;${who}&lt;/span&gt;  ` : &#x27;&#x27;}${agent ? `&lt;span class=&quot;shk-dim&quot;&gt;${turn}&lt;/span&gt;  ` : &#x27;&#x27;}&lt;span class=&quot;shk-${tone}&quot;&gt;${glyph ? glyph + &#x27; &#x27; : &#x27;&#x27;}${esc(text)}&lt;/span&gt;&lt;/div&gt;`).join(&#x27;&#x27;);
+    const bar = agent &amp;&amp; filter.open ? `&lt;div class=&quot;shk-fold-filter${state.list ? &#x27; is-active&#x27; : &#x27;&#x27;}&quot;&gt;&lt;span class=&quot;shk-dim&quot;&gt;role: &lt;/span&gt;&lt;span class=&quot;shk-ink&quot;&gt;${filter.role || &#x27;any&#x27;}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt; · turn: &lt;/span&gt;&lt;span class=&quot;shk-ink&quot;&gt;${filter.turn || &#x27;any&#x27;}&lt;/span&gt;&lt;/div&gt;` : &#x27;&#x27;;
+    return shown.length ? `${table}&lt;div class=&quot;shk-fold-block&quot;&gt;${esc(shown[0][5] || detail)}&lt;/div&gt;${bar}` : `&lt;div class=&quot;shk-dim&quot;&gt;No recorded entries match.&lt;/div&gt;${bar}`;
+  };
   const usageBody = (task, data) =&gt; {
     const usage = sampleUsage[task.id];
     if (!usage || !usage.sessions.length) return &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No usage is recorded yet.&lt;/div&gt;&#x27;;
@@ -1626,7 +1643,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     const table = rows.map(row =&gt; `&lt;div class=&quot;shk-pre&quot;&gt;  ${esc(line(row.slice(0, 4)))}  &lt;span class=&quot;${tone(row[4])}&quot;&gt;${esc(cell(row[4], 4))}&lt;/span&gt;&lt;/div&gt;`).join(&#x27;&#x27;);
     const quota = task.step === &#x27;Merged&#x27; ? &#x27;&#x27; : `&lt;div class=&quot;shk-strong&quot;&gt;Quota&lt;/div&gt;&lt;div class=&quot;shk-pre&quot;&gt;  claude  5-hour  &lt;span&gt;42%&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt; used  resets 2h 10m&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-pre&quot;&gt;  codex   weekly  &lt;span class=&quot;shk-bad&quot;&gt;91%&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt; used  resets 1d 4h&lt;/span&gt;&lt;/div&gt;`;
     const note = task.id === &#x27;T-44&#x27; ? &#x27;&lt;div class=&quot;shk-wait&quot;&gt;! billing unknown for 2 sessions&lt;/div&gt;&#x27; : &#x27;&#x27;;
-    return `&lt;div class=&quot;shk-ink&quot;&gt;${esc(data.bill || usage.cost)} · ${usage.tokens} tokens&lt;/div&gt;&lt;div class=&quot;shk-pre shk-dim&quot;&gt;  ${esc(line(headers))}&lt;/div&gt;${table}${quota ? &#x27;&lt;div&gt;&amp;nbsp;&lt;/div&gt;&#x27; + quota : &#x27;&#x27;}${note ? &#x27;&lt;div&gt;&amp;nbsp;&lt;/div&gt;&#x27; + note : &#x27;&#x27;}`;
+    return `&lt;div&gt;&lt;span class=&quot;shk-ink&quot;&gt;${esc(data.bill || usage.cost)}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt; · &lt;/span&gt;&lt;span class=&quot;shk-accent shk-bold&quot;&gt;${usage.tokens}&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt; tokens&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-pre shk-dim&quot;&gt;  ${esc(line(headers))}&lt;/div&gt;${table}${quota ? &#x27;&lt;div&gt;&amp;nbsp;&lt;/div&gt;&#x27; + quota : &#x27;&#x27;}${note ? &#x27;&lt;div&gt;&amp;nbsp;&lt;/div&gt;&#x27; + note : &#x27;&#x27;}`;
   };
   const foldBody = (index, task) =&gt; {
     const data = briefs[task.id] || {};
@@ -1635,43 +1652,50 @@ html&gt;body{padding:0}&lt;/style&gt;
     return [
       () =&gt; {
         const criteria = sampleCriteria[task.id] || [];
-        return `&lt;div class=&quot;shk-ink&quot;&gt;${esc(task.title)}&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Acceptance criteria&lt;/div&gt;` + (criteria.length ? criteria.map(item =&gt; `&lt;div&gt;&lt;span class=&quot;shk-dim&quot;&gt;• &lt;/span&gt;&lt;span class=&quot;shk-ink&quot;&gt;${esc(item)}&lt;/span&gt;&lt;/div&gt;`).join(&#x27;&#x27;) : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No validated acceptance criteria are recorded.&lt;/div&gt;&#x27;);
+        return `&lt;div class=&quot;shk-ink&quot;&gt;${esc(task.title)}&lt;/div&gt;&lt;div class=&quot;shk-accent shk-bold&quot;&gt;Acceptance criteria&lt;/div&gt;` + (criteria.length ? criteria.map(item =&gt; `&lt;div&gt;&lt;span class=&quot;shk-dim&quot;&gt;• &lt;/span&gt;&lt;span class=&quot;shk-ink&quot;&gt;${esc(item)}&lt;/span&gt;&lt;/div&gt;`).join(&#x27;&#x27;) : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No validated acceptance criteria are recorded.&lt;/div&gt;&#x27;);
       },
       () =&gt; {
         const done = task.state === &#x27;Done&#x27;;
         if (!data.commits &amp;&amp; !done) return &#x27;&lt;div class=&quot;shk-dim&quot;&gt;Nothing is recorded yet.&lt;/div&gt;&#x27;;
         const rows = [[done ? &#x27;Merged&#x27; : &#x27;Branch&#x27;, `${branch} → main`]];
         if (data.commits) {
-          rows.push([&#x27;Commits&#x27;, sampleCommits.slice(0, data.commits).map(([hash, subject]) =&gt; `&lt;span class=&quot;shk-dim&quot;&gt;${hash}&lt;/span&gt;  ${esc(subject)}`).join(&#x27;&lt;br&gt;&#x27;)]);
+          rows.push([&#x27;Commits&#x27;, sampleCommits.slice(0, data.commits).map(([hash, subject]) =&gt; `&lt;span class=&quot;shk-accent&quot;&gt;${hash}&lt;/span&gt;  ${esc(subject)}`).join(&#x27;&lt;br&gt;&#x27;)]);
           rows.push([&#x27;Changes&#x27;, `${plural(data.files, &#x27;file&#x27;)} &lt;span class=&quot;shk-good&quot;&gt;+${data.plus}&lt;/span&gt; &lt;span class=&quot;shk-bad&quot;&gt;−${data.minus}&lt;/span&gt;`]);
         }
-        if (data.pass !== undefined) rows.push([&#x27;Tests&#x27;, `&lt;span class=&quot;shk-good&quot;&gt;${data.pass} passed&lt;/span&gt;${data.fail ? sep + `&lt;span class=&quot;shk-bad&quot;&gt;${data.fail} failed&lt;/span&gt;` : &#x27;&#x27;}${sep}&lt;span class=&quot;shk-dim&quot;&gt;agent-reported&lt;/span&gt;`]);
+        if (data.pass !== undefined) rows.push([&#x27;Tests&#x27;, `&lt;span class=&quot;shk-good&quot;&gt;${data.pass} passed&lt;/span&gt;${data.fail ? sep + `&lt;span class=&quot;shk-bad&quot;&gt;${data.fail} failed&lt;/span&gt;` : &#x27;&#x27;}${sep}&lt;span class=&quot;shk-dim&quot;&gt;reported by the Implementer&lt;/span&gt;`]);
         if (data.pr) rows.push([&#x27;PR&#x27;, esc(data.pr)]);
         return (isTerminal(task) ? &#x27;&#x27; : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;so far&lt;/div&gt;&#x27;) + kv(rows);
       },
       () =&gt; {
-        const sample = sampleDecisions[task.id];
-        const open = task.state.includes(&#x27;Decision&#x27;) &amp;&amp; data.needs ? [[&#x27;Open&#x27;, esc(data.needs)]] : [];
-        const rounds = (sample ? sample.rounds : []).map(([verdict, counts], round) =&gt; [`Round ${round + 1}`, `&lt;span class=&quot;${verdict === &#x27;accepted&#x27; ? &#x27;shk-good&#x27; : &#x27;shk-bad&#x27;}&quot;&gt;${verdict === &#x27;accepted&#x27; ? &#x27;✓&#x27; : &#x27;✗&#x27;} ${verdict}&lt;/span&gt;${counts ? `&lt;span class=&quot;shk-dim&quot;&gt; (${counts})&lt;/span&gt;` : &#x27;&#x27;}`]);
-        const you = (sample ? sample.you : []).map(([time, action, text], position) =&gt; [position === 0 ? &#x27;You&#x27; : &#x27;&#x27;, `&lt;span class=&quot;shk-dim&quot;&gt;${time}&lt;/span&gt; ${action} ${esc(text)}`]);
-        const all = [...open, ...rounds, ...you];
-        return all.length ? kv(all) : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;Nothing is recorded yet.&lt;/div&gt;&#x27;;
+        const open = task.state.includes(&#x27;Decision&#x27;) &amp;&amp; data.needs ? `&lt;span class=&quot;shk-wait&quot;&gt;00:31&lt;/span&gt;&lt;span class=&quot;shk-log-who-you&quot;&gt;You&lt;/span&gt;&lt;span class=&quot;shk-wait&quot;&gt;question open · ${esc(data.needs)}&lt;/span&gt;` : &#x27;&#x27;;
+        const entries = (sampleDecisions[task.id] || []).map(([time, who, headline, details]) =&gt; `&lt;span class=&quot;shk-dim&quot;&gt;${time}&lt;/span&gt;&lt;span class=&quot;shk-log-who-${who.toLowerCase()}&quot;&gt;${who}&lt;/span&gt;&lt;span&gt;${esc(headline)}&lt;/span&gt;${details.map(line =&gt; `&lt;span class=&quot;shk-log-detail&quot;&gt;${esc(line)}&lt;/span&gt;`).join(&#x27;&#x27;)}`).join(&#x27;&#x27;);
+        return open || entries ? `&lt;div class=&quot;shk-log&quot;&gt;${open}${entries}&lt;/div&gt;` : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;Nothing is recorded yet.&lt;/div&gt;&#x27;;
       },
       () =&gt; queued
-        ? timeline(&#x27;[↑↓] select · [End] follow&#x27;, [[&#x27;00:04:00&#x27;, &#x27;&#x27;, &#x27;ink&#x27;, &#x27;&#x27;, &#x27;task queued&#x27;]], [&#x27;task queued&#x27;, &#x27;00:04:00&#x27;])
-        : timeline(&#x27;[↑↓] select · [End] follow&#x27;, [[&#x27;00:31:12&#x27;, &#x27;✓&#x27;, &#x27;good&#x27;, &#x27;&#x27;, &#x27;turn completed · implementer&#x27;], [&#x27;00:28:40&#x27;, &#x27;&#x27;, &#x27;ink&#x27;, &#x27;&#x27;, &#x27;step started · verify, round 2&#x27;], [&#x27;00:12:03&#x27;, &#x27;&#x27;, &#x27;ink&#x27;, &#x27;&#x27;, &#x27;task started&#x27;]], [&#x27;turn completed · implementer&#x27;, &#x27;00:31:12&#x27;]),
+        ? timeline([[&#x27;00:04:00&#x27;, &#x27;&#x27;, &#x27;ink&#x27;, &#x27;&#x27;, &#x27;&#x27;, &#x27;task queued&#x27;]], &#x27;task queued&#x27;, false)
+        : timeline([[&#x27;00:31:12&#x27;, &#x27;✓&#x27;, &#x27;good&#x27;, &#x27;&#x27;, &#x27;&#x27;, &#x27;turn completed · implementer&#x27;], [&#x27;00:28:40&#x27;, &#x27;&#x27;, &#x27;ink&#x27;, &#x27;&#x27;, &#x27;&#x27;, &#x27;step started · verify, round 2&#x27;], [&#x27;00:12:03&#x27;, &#x27;&#x27;, &#x27;ink&#x27;, &#x27;&#x27;, &#x27;&#x27;, &#x27;task started&#x27;]], &#x27;turn completed · implementer&#x27;, false),
       () =&gt; queued
         ? &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No recorded entries match.&lt;/div&gt;&#x27;
-        : timeline(&#x27;[↑↓] select · [End] follow · [f] filter&#x27;, [[&#x27;00:31:02&#x27;, &#x27;&#x27;, &#x27;ink&#x27;, &#x27;impl&#x27;, &#x27;“Parser retry now bounded”&#x27;], [&#x27;00:30:41&#x27;, &#x27;&#x27;, &#x27;ink&#x27;, &#x27;impl&#x27;, &#x27;edited parser.py&#x27;], [&#x27;00:30:02&#x27;, &#x27;&#x27;, &#x27;ink&#x27;, &#x27;lead&#x27;, &#x27;read parser.py&#x27;]], [&#x27;“Parser retry now bounded”&#x27;, &#x27;00:31:02 · implementer · turn 3&#x27;]),
+        : timeline([[&#x27;00:31:02&#x27;, &#x27;&#x27;, &#x27;ink&#x27;, &#x27;impl&#x27;, &#x27;t3&#x27;, &#x27;“Parser retry now bounded”&#x27;], [&#x27;00:30:41&#x27;, &#x27;&#x27;, &#x27;ink&#x27;, &#x27;impl&#x27;, &#x27;t3&#x27;, &#x27;edited parser.py&#x27;], [&#x27;00:30:02&#x27;, &#x27;&#x27;, &#x27;ink&#x27;, &#x27;lead&#x27;, &#x27;t2&#x27;, &#x27;read parser.py&#x27;]], &#x27;&#x27;, true),
       () =&gt; usageBody(task, data),
       () =&gt; task.id === &#x27;T-45&#x27;
-        ? `&lt;div class=&quot;shk-dim&quot;&gt;${keyed(&#x27;[↑↓] select · [Enter] open&#x27;)}&lt;/div&gt;&lt;div class=&quot;shk-fold-row is-selected shk-pre&quot;&gt;&lt;span class=&quot;shk-lead&quot;&gt;  &lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;Blocked by&lt;/span&gt;  &lt;span class=&quot;shk-ink&quot;&gt;T-42  Add retry to parser&lt;/span&gt;  &lt;span class=&quot;shk-wait&quot;&gt;! decision needed&lt;/span&gt;&lt;/div&gt;`
+        ? `&lt;div class=&quot;shk-fold-row is-selected shk-pre&quot;&gt;&lt;span class=&quot;shk-lead&quot;&gt;  &lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;Blocked by&lt;/span&gt;  &lt;span class=&quot;shk-ink&quot;&gt;T-42  Add retry to parser&lt;/span&gt;  &lt;span class=&quot;shk-wait&quot;&gt;! decision needed&lt;/span&gt;&lt;/div&gt;`
         : task.id === &#x27;T-42&#x27;
-          ? `&lt;div class=&quot;shk-dim&quot;&gt;${keyed(&#x27;[↑↓] select · [Enter] open&#x27;)}&lt;/div&gt;&lt;div class=&quot;shk-fold-row is-selected shk-pre&quot;&gt;&lt;span class=&quot;shk-lead&quot;&gt;  &lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;Blocks&lt;/span&gt;      &lt;span class=&quot;shk-ink&quot;&gt;T-45  Add parser edge cases&lt;/span&gt;  &lt;span class=&quot;shk-dim&quot;&gt;· queued&lt;/span&gt;&lt;/div&gt;`
+          ? `&lt;div class=&quot;shk-fold-row is-selected shk-pre&quot;&gt;&lt;span class=&quot;shk-lead&quot;&gt;  &lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt;Blocks&lt;/span&gt;      &lt;span class=&quot;shk-ink&quot;&gt;T-45  Add parser edge cases&lt;/span&gt;  &lt;span class=&quot;shk-dim&quot;&gt;· queued&lt;/span&gt;&lt;/div&gt;`
           : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No related tasks are recorded.&lt;/div&gt;&#x27;,
-      () =&gt; queued ? &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No worktree yet.&lt;/div&gt;&#x27; : kv([[&#x27;Branch&#x27;, `${branch} → main`], [&#x27;Path&#x27;, `.shikiru/worktrees/${task.id}`]]) + (isTerminal(task) ? &#x27;&#x27; : &#x27;&lt;div class=&quot;shk-fold-tools&quot;&gt;&lt;button type=&quot;button&quot; data-open=&quot;taskwindow&quot;&gt;Task window&lt;/button&gt;&lt;button type=&quot;button&quot; data-open=&quot;taskwindow&quot;&gt;Leader pane&lt;/button&gt;&lt;button type=&quot;button&quot; data-open=&quot;taskwindow&quot;&gt;Implementer pane&lt;/button&gt;&lt;/div&gt;&#x27;),
-      () =&gt; kv([[&#x27;Mode&#x27;, &#x27;implement&#x27;], [&#x27;Submitted&#x27;, esc(task.age.replace(&#x27; ago&#x27;, &#x27;&#x27;))], [&#x27;Priority&#x27;, &#x27;0&#x27;]])
+      () =&gt; queued ? &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No worktree yet.&lt;/div&gt;&#x27; : kv([[&#x27;Branch&#x27;, `${branch} → main`], [&#x27;Path&#x27;, `.shikiru/worktrees/${task.id}`]]),
+      () =&gt; kv([[&#x27;Mode&#x27;, &#x27;implement&#x27;], [&#x27;Submitted&#x27;, esc(task.age.replace(&#x27; ago&#x27;, &#x27;&#x27;))], [&#x27;Priority&#x27;, &#x27;standard (0)&#x27;]])
     ][index]();
+  };
+  const listFolds = {3:&#x27;events&#x27;, 4:&#x27;agent&#x27;, 6:&#x27;related&#x27;};
+  const hasList = (task, index) =&gt; index === 3 ? task.step !== &#x27;Merged&#x27; : index === 4 ? task.step !== &#x27;Queued&#x27; : index === 6 ? [&#x27;T-42&#x27;, &#x27;T-45&#x27;].includes(task.id) : false;
+  const hasWindow = task =&gt; !isTerminal(task) &amp;&amp; task.step !== &#x27;Queued&#x27;;
+  const foldHint = (task, state) =&gt; {
+    const hint = !state.list ? &#x27;[↑↓] move · [Enter] open/close&#x27;
+      : state.focus === 3 ? &#x27;[↑↓] select · [End] follow · [Esc] back&#x27;
+      : state.focus === 4 ? (state.filter.open ? &#x27;[r] role · [t] turn · [x] clear · [Esc] back&#x27; : &#x27;[↑↓] select · [End] follow · [f] filter · [Esc] back&#x27;)
+      : &#x27;[↑↓] select · [Enter] open · [Esc] back&#x27;;
+    return keyed(hint) + (state.focus === 7 &amp;&amp; hasWindow(task) ? &#x27; · [t] task window&#x27; : &#x27;&#x27;).replace(/\[([^\]]+)\]/g, &#x27;&lt;span class=&quot;shk-key&quot;&gt;$1&lt;/span&gt;&#x27;);
   };
   const foldsMarkup = (task, id) =&gt; {
     const state = foldOf(id);
@@ -1681,16 +1705,32 @@ html&gt;body{padding:0}&lt;/style&gt;
     };
     const rows = detailsEntries(task).map(([name, headline], index) =&gt; {
       const open = state.open.has(index);
-      return row(index, name, headline, open) + (open ? `&lt;div class=&quot;shk-fold-body&quot;&gt;${foldBody(index, task)}&lt;/div&gt;` : &#x27;&#x27;);
+      return row(index, name, headline, open) + (open ? `&lt;div class=&quot;shk-fold-body&quot;&gt;${foldBody(index, task)}&lt;/div&gt;&lt;div class=&quot;shk-fold-gap&quot;&gt;&lt;/div&gt;` : &#x27;&#x27;);
     }).join(&#x27;&#x27;);
-    return `&lt;div class=&quot;shk-brief-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-folds&quot; role=&quot;list&quot; aria-label=&quot;Task details&quot;&gt;${rows}&lt;/div&gt;`;
+    return `&lt;div class=&quot;shk-brief-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-folds&quot; role=&quot;list&quot; aria-label=&quot;Task details&quot;&gt;${rows}${state.focus === null ? &#x27;&#x27; : `&lt;div class=&quot;shk-fold-hint&quot;&gt;${foldHint(task, state)}&lt;/div&gt;`}&lt;/div&gt;`;
   };
   const foldKey = (event, id) =&gt; {
     const state = foldOf(id);
+    const task = getTask(selections[id]);
+    if (state.list) {
+      const filter = state.filter;
+      if (state.focus === 4 &amp;&amp; event.key === &#x27;f&#x27;) filter.open = !filter.open;
+      else if (state.focus === 4 &amp;&amp; filter.open &amp;&amp; event.key === &#x27;r&#x27;) filter.role = {null:&#x27;lead&#x27;, lead:&#x27;impl&#x27;, impl:null}[filter.role];
+      else if (state.focus === 4 &amp;&amp; filter.open &amp;&amp; event.key === &#x27;t&#x27;) filter.turn = {null:&#x27;t2&#x27;, t2:&#x27;t3&#x27;, t3:null}[filter.turn];
+      else if (state.focus === 4 &amp;&amp; filter.open &amp;&amp; event.key === &#x27;x&#x27;) { filter.role = null; filter.turn = null; }
+      else if (![&#x27;ArrowUp&#x27;, &#x27;ArrowDown&#x27;, &#x27;End&#x27;].includes(event.key)) return false;
+      return true;
+    }
     if (event.key === &#x27;ArrowDown&#x27;) state.focus = Math.min(state.focus + 1, foldNames.length - 1);
     else if (event.key === &#x27;ArrowUp&#x27;) state.focus = Math.max(state.focus - 1, 0);
-    else if ([&#x27;Enter&#x27;, &#x27; &#x27;, &#x27;ArrowRight&#x27;].includes(event.key)) state.open.add(state.focus);
-    else if (event.key === &#x27;ArrowLeft&#x27;) state.open.delete(state.focus);
+    else if (event.key === &#x27; &#x27;) { if (state.open.has(state.focus)) state.open.delete(state.focus); else state.open.add(state.focus); }
+    else if (event.key === &#x27;Enter&#x27;) {
+      if (state.open.has(state.focus)) state.open.delete(state.focus);
+      else {
+        state.open.add(state.focus);
+        state.list = Boolean(listFolds[state.focus]) &amp;&amp; hasList(task, state.focus);
+      }
+    } else if (event.key === &#x27;t&#x27; &amp;&amp; state.focus === 7 &amp;&amp; hasWindow(task)) { activeWindow = &#x27;task&#x27;; for (const key of Object.keys(overlays)) delete overlays[key]; }
     else return false;
     state.last = state.focus;
     return true;
@@ -1759,7 +1799,7 @@ html&gt;body{padding:0}&lt;/style&gt;
   const resolveDetails = [
     [&#x27;Reason&#x27;, &#x27;Implementer round 2 added the retry loop; the Leader verdict found no rule for syntax errors.&#x27;],
     [&#x27;Rounds&#x27;, &#x27;&lt;span class=&quot;shk-accent&quot;&gt;implement&lt;/span&gt; ×2 · &lt;span class=&quot;shk-accent&quot;&gt;verify&lt;/span&gt; ×1 · &lt;span class=&quot;shk-accent&quot;&gt;consult&lt;/span&gt; ×1 &lt;span class=&quot;shk-wait&quot;&gt;(iteration 2 of 5)&lt;/span&gt;&#x27;],
-    [&#x27;Turns&#x27;, &#x27;Implementer &lt;span class=&quot;shk-good&quot;&gt;2 commits&lt;/span&gt;, &lt;span class=&quot;shk-good&quot;&gt;12 tests passed&lt;/span&gt;&lt;br&gt;Leader &lt;span class=&quot;shk-wait&quot;&gt;changes requested&lt;/span&gt; (&lt;span class=&quot;shk-bad&quot;&gt;1 blocker&lt;/span&gt;)&#x27;],
+    [&#x27;Turns&#x27;, &#x27;&lt;span class=&quot;shk-accent&quot;&gt;triage&lt;/span&gt; · &lt;span class=&quot;shk-ink&quot;&gt;Leader&lt;/span&gt; · triaged as implement&lt;br&gt;&lt;span class=&quot;shk-accent&quot;&gt;implement&lt;/span&gt; · &lt;span class=&quot;shk-ink&quot;&gt;Implementer&lt;/span&gt; · &lt;span class=&quot;shk-good&quot;&gt;2 commits&lt;/span&gt;, &lt;span class=&quot;shk-good&quot;&gt;12 tests passed&lt;/span&gt;&lt;br&gt;&lt;span class=&quot;shk-accent&quot;&gt;verify&lt;/span&gt; · &lt;span class=&quot;shk-ink&quot;&gt;Leader&lt;/span&gt; · &lt;span class=&quot;shk-wait&quot;&gt;changes requested&lt;/span&gt; (&lt;span class=&quot;shk-bad&quot;&gt;1 blocker&lt;/span&gt;)&#x27;],
     [&#x27;Recovery&#x27;, &#x27;&lt;span class=&quot;shk-wait&quot;&gt;1 nudge&lt;/span&gt;&#x27;],
     [&#x27;Produced&#x27;, &#x27;2 commits, 3 files, &lt;span class=&quot;shk-good&quot;&gt;+64&lt;/span&gt; &lt;span class=&quot;shk-bad&quot;&gt;−12&lt;/span&gt;&#x27;],
     [&#x27;Operator&#x27;, &#x27;1 message&lt;br&gt;&lt;span class=&quot;shk-dim&quot;&gt;+4 earlier&lt;/span&gt;&#x27;]
@@ -1795,12 +1835,19 @@ html&gt;body{padding:0}&lt;/style&gt;
     }
     return resolveState[id];
   };
+  const resolveLeaveBox = id =&gt; {
+    const state = resolveOf(id);
+    state.focus = &#x27;list&#x27;;
+    const own = Boolean(modalDrafts[id]?.answer?.trim());
+    if (modalDrafts[id]) delete modalDrafts[id].details;
+    state.box = own ? resolveOwnIndex : null;
+  };
   const resolveKeyName = name =&gt; `&lt;span class=&quot;shk-key&quot;&gt;${name}&lt;/span&gt;`;
   const resolveHint = state =&gt; {
     const choice = resolveChoices[state.selected];
-    if (state.focus===&#x27;box&#x27;) return `${resolveKeyName(&#x27;Ctrl+S&#x27;)} send · ${resolveKeyName(&#x27;Enter&#x27;)} new line · ${resolveKeyName(&#x27;←&#x27;)} back`;
+    if (state.focus===&#x27;box&#x27;) return `${resolveKeyName(&#x27;Ctrl+S&#x27;)} send · ${resolveKeyName(&#x27;Enter&#x27;)} new line · ${resolveKeyName(&#x27;Esc&#x27;)} back`;
     if (state.focus===&#x27;tried&#x27;) return `${resolveKeyName(&#x27;Enter&#x27;)} ${state.tried ? &#x27;collapse&#x27; : &#x27;expand&#x27;} · ${resolveKeyName(&#x27;↑&#x27;)} choices`;
-    return `${resolveKeyName(&#x27;↑↓&#x27;)} select · ${resolveEditable(choice) ? `${resolveKeyName(&#x27;Enter&#x27;)} or ${resolveKeyName(&#x27;→&#x27;)} edit` : `${resolveKeyName(&#x27;Enter&#x27;)} send`}`;
+    return `${resolveKeyName(&#x27;↑↓&#x27;)} select · ${resolveEditable(choice) ? `${resolveKeyName(&#x27;Enter&#x27;)} edit` : `${resolveKeyName(&#x27;Enter&#x27;)} send`}`;
   };
   const resolveRow = (id, choice, index, state) =&gt; {
     const selected = index===state.selected;
@@ -2022,10 +2069,6 @@ html&gt;body{padding:0}&lt;/style&gt;
         resolveSend(id, target.value);
         return true;
       }
-      if (key===&#x27;ArrowLeft&#x27; &amp;&amp; target.selectionStart===0 &amp;&amp; target.selectionEnd===0) {
-        state.focus = &#x27;list&#x27;;
-        return true;
-      }
       return false;
     }
     if (target.closest(&#x27;.shk-res-tried-block&#x27;)) {
@@ -2034,10 +2077,9 @@ html&gt;body{padding:0}&lt;/style&gt;
       return true;
     }
     if (event.key===&#x27;Enter&#x27;) resolveActivate(id, state.selected);
-    else if (event.key===&#x27;ArrowRight&#x27; &amp;&amp; resolveEditable(resolveChoices[state.selected])) resolveBox(id, state.selected);
     else if ([&#x27;ArrowUp&#x27;,&#x27;ArrowDown&#x27;].includes(event.key)) {
       state.armed = false;
-      state.box = null;
+      state.box = Boolean(modalDrafts[id]?.answer?.trim()) ? resolveOwnIndex : null;
       state.selected = Math.min(Math.max(state.selected+(event.key===&#x27;ArrowDown&#x27;?1:-1), 0), resolveChoices.length-1);
     } else if (event.key.toLowerCase()===&#x27;t&#x27;) {
       state.armed = false;
@@ -2084,11 +2126,12 @@ html&gt;body{padding:0}&lt;/style&gt;
       taskTarget(root.querySelector(`[data-concept=&quot;${id}&quot;]`),id)?.focus();
       return;
     }
-    if (button.dataset.task) { selections[id]=button.dataset.task; foldOf(id).focus=null; }
+    if (button.dataset.task) { selections[id]=button.dataset.task; foldOf(id).focus=null; foldOf(id).list=false; }
     if (button.dataset.fold !== undefined) {
       const state = foldOf(id);
       state.focus = Number(button.dataset.fold);
       state.last = state.focus;
+      state.list = false;
       if (state.open.has(state.focus)) state.open.delete(state.focus);
       else state.open.add(state.focus);
     }
@@ -2147,8 +2190,9 @@ html&gt;body{padding:0}&lt;/style&gt;
     let handled=true;
     const stayOnBar=!overlays[id] &amp;&amp; [&#x27;ArrowUp&#x27;,&#x27;ArrowDown&#x27;].includes(event.key) ? [&#x27;.shk-attention&#x27;,&#x27;.shk-usage-bar&#x27;,&#x27;.shk-resources&#x27;,&#x27;.shk-footer&#x27;].find(selector=&gt;event.target.closest(selector)) : null;
     if (event.key===&#x27;Escape&#x27; &amp;&amp; event.target.tagName===&#x27;SELECT&#x27; &amp;&amp; overlays[id] &amp;&amp; event.target.matches(&#x27;:open&#x27;)) return;
-    if (event.key===&#x27;Escape&#x27; &amp;&amp; overlays[id]===&#x27;resolve&#x27; &amp;&amp; event.target.tagName===&#x27;TEXTAREA&#x27;) resolveOf(id).focus=&#x27;list&#x27;;
+    if (event.key===&#x27;Escape&#x27; &amp;&amp; overlays[id]===&#x27;resolve&#x27; &amp;&amp; event.target.tagName===&#x27;TEXTAREA&#x27;) resolveLeaveBox(id);
     else if (event.key===&#x27;Escape&#x27; &amp;&amp; overlays[id]) delete overlays[id];
+    else if (event.key===&#x27;Escape&#x27; &amp;&amp; foldOf(id).list) { if (foldOf(id).filter.open &amp;&amp; foldOf(id).focus===4) foldOf(id).filter.open=false; else foldOf(id).list=false; }
     else if (event.key===&#x27;Escape&#x27; &amp;&amp; foldOf(id).focus!==null) foldOf(id).focus=null;
     else if (event.key===&#x27;Escape&#x27; &amp;&amp; selections[id]) selections[id]=null;
     else if (overlays[id]===&#x27;history&#x27; &amp;&amp; [&#x27;ArrowLeft&#x27;,&#x27;ArrowRight&#x27;].includes(event.key) &amp;&amp; !(event.target.tagName===&#x27;SELECT&#x27; &amp;&amp; event.target.matches(&#x27;:open&#x27;))) {
