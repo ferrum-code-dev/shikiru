@@ -1752,6 +1752,7 @@ async def test_rework_and_truncated_workflow_history_keep_stage_outcomes_honest(
         Transition.stay(truncated_task, step=Step.VERIFY, status=Status.RUNNING),
     )
     _append_step_event(events, truncated.id, Step.TRIAGE, _OLD_ITERATION)
+    _append_step_event(events, truncated.id, Step.IMPLEMENT, _OLD_ITERATION)
     _append_step_event(events, truncated.id, Step.VERIFY, _OLD_ITERATION)
     for _ in range(TASK_DETAIL_EVENT_LIMIT + _HISTORY_OVERFLOW_EXTRA):
         events.append(EventKind.NUDGE, task_id=truncated.id, message="retained activity")
@@ -1761,9 +1762,17 @@ async def test_rework_and_truncated_workflow_history_keep_stage_outcomes_honest(
     )
 
     assert incomplete is not None
-    assert _milestone_state(incomplete, Step.TRIAGE) == "unknown"
-    assert _milestone_state(incomplete, Step.IMPLEMENT) == "unknown"
+    assert _milestone_state(incomplete, Step.TRIAGE) == "done"
+    assert _milestone_state(incomplete, Step.IMPLEMENT) == "done"
     assert _milestone_state(incomplete, Step.VERIFY) == "current"
+
+    queued = seed_task(connection, clock, title="Not started", mode=Mode.IMPLEMENT)
+    events.append(EventKind.TASK_QUEUED, task_id=queued.id, message="queued")
+
+    waiting = await state_views(reader, project_root, clock, StubServices()).task_detail(queued.id)
+
+    assert waiting is not None
+    assert {item.state for item in waiting.milestones} == {"later"}
 
 
 async def test_enter_keeps_inline_selection_and_popup_close_restores_browser_scroll(

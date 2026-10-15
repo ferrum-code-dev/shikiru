@@ -574,10 +574,23 @@ TERMINAL_ROWS = [
             Step.INTEGRATE: WorkflowMilestoneState.LATER,
         },
     ),
+    (
+        "queued-task-shows-every-stage-later",
+        Status.QUEUED,
+        None,
+        (),
+        True,
+        {
+            Step.TRIAGE: WorkflowMilestoneState.LATER,
+            Step.IMPLEMENT: WorkflowMilestoneState.LATER,
+            Step.VERIFY: WorkflowMilestoneState.LATER,
+            Step.INTEGRATE: WorkflowMilestoneState.LATER,
+        },
+    ),
 ]
 
 
-def test_terminal_tasks_never_show_unknown_stages() -> None:
+def test_stages_are_never_unknown_without_a_live_entered_stage() -> None:
     for name, status, step, events, complete, expected in TERMINAL_ROWS:
         task = make_task(mode=Mode.IMPLEMENT, step=step, status=status)
 

@@ -97,9 +97,10 @@ def project_workflow(
     stages = _workflow_stages(task, entered_steps, reported_steps, entries)
     if not stages:
         return WorkflowProgress((), history_complete)
-    if task.status in (Status.DONE, Status.CANCELLED):
-        recorded = entered_steps | reported_steps
-        return WorkflowProgress(_terminal_milestones(task, stages, recorded), history_complete)
+    recorded = entered_steps | reported_steps
+    settled = _settled_milestones(task, stages, recorded)
+    if settled is not None:
+        return WorkflowProgress(settled, history_complete)
     stage_positions = {step: index for index, step in enumerate(stages)}
     current_position = stage_positions.get(task.step) if task.step is not None else None
     last_entries = _last_step_entries(entries)
@@ -152,6 +153,16 @@ def project_workflow(
         for step in stages
     )
     return WorkflowProgress(milestones, history_complete)
+
+
+def _settled_milestones(
+    task: Task, stages: tuple[Step, ...], recorded: set[Step]
+) -> tuple[WorkflowMilestone, ...] | None:
+    if task.status in (Status.DONE, Status.CANCELLED):
+        return _terminal_milestones(task, stages, recorded)
+    if task.step is None and not recorded:
+        return tuple(WorkflowMilestone(step, WorkflowMilestoneState.LATER) for step in stages)
+    return None
 
 
 def _terminal_milestones(

@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import partial
+from operator import attrgetter
 from typing import TYPE_CHECKING, Protocol
 
 from shikiru.agents.contracts import (
@@ -89,7 +90,6 @@ from shikiru.domain.workflow import WorkflowProgress, WorkflowReport, project_wo
 from shikiru.errors import ShikiruError
 from shikiru.operator.queries import (
     AGENT_REPORT_SOURCE,
-    TASK_DETAIL_EVENT_LIMIT,
     aggregate_usage,
 )
 from shikiru.operator.strip_views import task_strip_data
@@ -136,6 +136,13 @@ ENGINE_LIFECYCLE_EVENT_LIMIT = 2
 TASK_MODEL_HISTORY_EVENT_LIMIT = 50
 RESULTS_PLAN_CHANGE_LIMIT = 20
 DECISION_EVENT_LIMIT = 20
+WORKFLOW_EVENT_LIMIT = 200
+WORKFLOW_EVENTS = (
+    EventKind.TASK_QUEUED,
+    EventKind.STEP_STARTED,
+    EventKind.TURN_STARTED,
+    EventKind.VERDICT,
+)
 TASK_MODEL_HISTORY_EVENTS = (
     EventKind.TURN_STARTED,
     EventKind.TURN_COMPLETED,
@@ -1006,7 +1013,7 @@ class StateDashboardViews:
             ),
             None,
         )
-        workflow = _task_workflow(task, detail.events, detail.reports)
+        workflow = self._task_workflow(task, detail.events, detail.reports)
         pull_request = self._pull_request_line(task.id, task_done=task.status is Status.DONE)
         reported = reported_tests(implementation.tests) if implementation is not None else None
         return TaskDetailView(
@@ -1388,6 +1395,30 @@ class StateDashboardViews:
             commit_cap=self._settings.dashboard.results_commits,
         )
 
+    def _task_workflow(
+        self,
+        task: Task,
+        window: Sequence[Event],
+        reports: Sequence[ReportRow],
+    ) -> WorkflowProgress:
+        recorded = self._state.latest_events(
+            WORKFLOW_EVENT_LIMIT, kinds=WORKFLOW_EVENTS, task_id=task.id
+        )
+        events = sorted(
+            {event.id: event for event in (*recorded, *window)}.values(), key=attrgetter("id")
+        )
+        agent_reports = tuple(
+            WorkflowReport(turn=report.turn, kind=report.kind, data=report.data)
+            for report in reports
+            if report.source == AGENT_REPORT_SOURCE
+        )
+        return project_workflow(
+            task,
+            events,
+            agent_reports,
+            event_window_complete=len(recorded) < WORKFLOW_EVENT_LIMIT,
+        )
+
     def _task_decisions(self, task_id: str) -> TaskDecisions:
         def recorded(kind: EventKind) -> list[Event]:
             return self._state.latest_events(DECISION_EVENT_LIMIT, kinds=(kind,), task_id=task_id)
@@ -1720,24 +1751,6 @@ def _timeline_timestamp(value: str | None) -> datetime | None:
     except ValueError:
         return None
     return timestamp if timestamp.tzinfo is not None else None
-
-
-def _task_workflow(
-    task: Task,
-    events: Sequence[Event],
-    reports: Sequence[ReportRow],
-) -> WorkflowProgress:
-    agent_reports = tuple(
-        WorkflowReport(turn=report.turn, kind=report.kind, data=report.data)
-        for report in reports
-        if report.source == AGENT_REPORT_SOURCE
-    )
-    return project_workflow(
-        task,
-        events,
-        agent_reports,
-        event_window_complete=len(events) < TASK_DETAIL_EVENT_LIMIT,
-    )
 
 
 def _task_milestone_views(workflow: WorkflowProgress) -> tuple[TaskMilestoneView, ...]:

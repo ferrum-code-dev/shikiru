@@ -1926,7 +1926,8 @@ Refs: `domain/attempts.py` (`_turn_item`, `_implementation`, `_verdict`, tones),
 
 ### Task 211: Stage states from the full step history
 Refs: `domain/workflow.py` (`project_workflow`, `milestone_state`), `dashboard/views.py` `_task_workflow`, `operator/queries.py` (`TASK_DETAIL_EVENT_LIMIT`, `latest_events(kinds=)`), tests pinning UNKNOWN.
-- [ ] Targeted bounded read of `TASK_QUEUED`, `STEP_STARTED`, `TURN_STARTED`, `VERDICT` events (named constant) feeds the projection; a not-started task shows all stages later; `?` only for a live task with an entered stage and no evidence.
+- [x] Targeted bounded read of `TASK_QUEUED`, `STEP_STARTED`, `TURN_STARTED`, `VERDICT` events (named constant) feeds the projection; a not-started task shows all stages later; `?` only for a live task with an entered stage and no evidence.
+  - Proof: a queued task showed `? ? ? ?` and a task whose early STEP_STARTED fell out of the 40-event window kept `?`, both pinned by tests that failed before the fix; the dashboard now merges a 200-event read of queued/step/turn/verdict events by id into the projection and `_settled_milestones` shows a not-started task as `· · · ·`. A real Briefing for queued, 60-event running, rework and plan tasks rendered correctly in colour and NO_COLOR at 100/60/48/40 columns (e.g. `✓ Triage  › Implement  ! Verify rework  · Merge`). `uv run poe check` exited 0; collected cases 1651 before and after.
 
 ### Task 212: Tab lands on the first verb; remove `↓ details`
 Refs: `dashboard/detail.py` (`TaskDetailBody.allow_focus`, details button, bindings, `TaskDetailScreen.on_mount`), `briefing_view.py` (`DETAILS_LABEL`, `details_label`), `app.py` (`_ARROW_KEY_OWNERS`), `tests/support/dashboard.py` helpers.
