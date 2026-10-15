@@ -323,3 +323,17 @@ Thirteenth-review scope and evidence: [thirteenth review](../docs/tui-feedback-t
 - [x] Task 206: Events and Agent activity
 - [x] Task 207: Usage
 - [x] Task 208: Verify the thirteenth review, reconcile the reference and docs
+
+Fourteenth-review scope and evidence: [fourteenth review](../docs/tui-feedback-fourteenth-review.md).
+
+- [ ] Task 209: Resolution panel — Enter/Esc only, hide the edit area
+- [ ] Task 210: Details turn lines
+- [ ] Task 211: Stage states from the full step history
+- [ ] Task 212: Tab lands on the first verb; remove `↓ details`
+- [ ] Task 213: Briefing colours, labels and added tasks
+- [ ] Task 214: Fold keys, click, blank line, cyan titles
+- [ ] Task 215: Bottom hint line, Workspace, Settings, Usage
+- [ ] Task 216: Events and Agent activity
+- [ ] Task 217: Task description and Results
+- [ ] Task 218: Decisions as a decision log
+- [ ] Task 219: Verify the fourteenth review, reconcile the reference and docs

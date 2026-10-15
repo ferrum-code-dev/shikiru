@@ -1908,3 +1908,52 @@ Refs: `detail.py` (`_sessions_text`, `_refresh_usage_observations`), `ui/compact
 Refs: Tasks 197–207; design 05/06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference.
 - [x] Native before/after of every item; plain and `TERM=dumb NO_COLOR=1` gates; HTML reference and docs match the TUI (exact srcdoc round-trip, Chrome check with a throwaway profile); spec marked delivered; record `docs/release-readiness-2026-10-15-phase11-thirteenth-review.md`; README links; plan and todo ticked.
   - Proof: every item was run natively against `9308546` and the final source in colour and `NO_COLOR` from 130x44 to 40x8; five small defects were fixed (Usage and Events titles, Up/Down in a scrolling panel, Dependencies hint, severity separator) and the Ctrl+P gap for four project views is parked. The test trim merged tables (1,681 to 1,651 cases, target 1,632 not reached); the HTML reference round-trips exactly (SHA-256 `b957346a...9c61`) and matched the native colours in headless Chrome; record `docs/release-readiness-2026-10-15-phase11-thirteenth-review.md`. Plain and `TERM=dumb NO_COLOR=1` gates are green (1630 passed each).
+
+## Simpler keys, truthful stages and a quieter details area (fourteenth review)
+
+Scope: [fourteenth review](../docs/tui-feedback-fourteenth-review.md); the operator approved the layouts. Execute Tasks 209–219 sequentially after Task 208, one fresh agent per task, root review by the orchestrator.
+
+### Task 209: Resolution panel — Enter/Esc only, hide the edit area
+Refs: `dashboard/resolution.py` (`_ACTION_EDIT`, `action_edit`, `_AnswerBox.Exited`, `action_cursor_left`, `_START_OF_TEXT`, `check_action`, `_answer_exited`, `_open_answer`, `_paint`, `_answer_for`, drafts), `resolution_view.py` (`_EDIT_HINT`, `_BOX_HINTS`), `test_dashboard_resolution.py`.
+- [ ] Right/Left bindings and everything only they used are removed; hints are `↑↓ select · Enter edit` and `Ctrl+S send · Enter new line · Esc back`; docs corrected.
+- [ ] Esc hides the edit area (alternative text discarded, own-answer draft kept and visible); moving to another row hides an unfocused area; focus always moves to the list first.
+
+### Task 210: Details turn lines
+Refs: `domain/attempts.py` (`_turn_item`, `_implementation`, `_verdict`, tones), `resolution_view.py`, `test_domain_attempts.py`.
+- [ ] Turn lines read `step · Role · what happened` per the spec table; step cyan, role white; old packets still parse; tones updated.
+
+### Task 211: Stage states from the full step history
+Refs: `domain/workflow.py` (`project_workflow`, `milestone_state`), `dashboard/views.py` `_task_workflow`, `operator/queries.py` (`TASK_DETAIL_EVENT_LIMIT`, `latest_events(kinds=)`), tests pinning UNKNOWN.
+- [ ] Targeted bounded read of `TASK_QUEUED`, `STEP_STARTED`, `TURN_STARTED`, `VERDICT` events (named constant) feeds the projection; a not-started task shows all stages later; `?` only for a live task with an entered stage and no evidence.
+
+### Task 212: Tab lands on the first verb; remove `↓ details`
+Refs: `dashboard/detail.py` (`TaskDetailBody.allow_focus`, details button, bindings, `TaskDetailScreen.on_mount`), `briefing_view.py` (`DETAILS_LABEL`, `details_label`), `app.py` (`_ARROW_KEY_OWNERS`), `tests/support/dashboard.py` helpers.
+- [ ] Body is not a Tab stop; Tab lands on the first verb (or the current fold header); the details button, labels, Enter/`v` panel bindings and CSS are gone; Up/Down on a verb do nothing; helpers and docs updated.
+
+### Task 213: Briefing colours, labels and added tasks
+Refs: `briefing_view.py` (`_group`, `_commit_groups`, `NEEDED_LABEL`, `_time_line`, `_result_rows`), `plugins/widgets/header.py` (`_checkout_text`), `domain/results.py` (`PlanChange`), `dashboard/views.py` `_task_results`.
+- [ ] Cyan group titles and `Summary`; sage `+n` / rose `−n` in Result and in the Header widget; `Blocker`/`Pending` labels; time line flush left; `PlanChange.new_tasks` (id, title) resolved by a bounded lookup and shown as sage `added T-15 title` rows in Result.
+
+### Task 214: Fold keys, click, blank line, cyan titles
+Refs: `dashboard/detail_fold.py` (`FoldHeader` bindings/`on_click`, `DetailFold.activate`/`toggle`, `.fold-body` padding), `details_list_view.py` (`_EntryLine`), `test_task_detail_folds.py`.
+- [ ] Left/Right removed; Enter opens and enters the list, Esc returns to the header, Enter on an open header folds, Space toggles; click toggles; blank row after an open fold only; cyan titles; headlines right-aligned.
+
+### Task 215: Bottom hint line, Workspace, Settings, Usage
+Refs: `detail.py` (`on_descendant_focus`, hint Statics, Workspace buttons, `_navigate_*`), `timeline_section.py` hint rows, `ui/keys.py`, `details_list_view.py` (`_settings_headline`), `usage_body.py` (`_heading`), dead `navigate_role_pane` plumbing.
+- [ ] One docked focus-driven hint line; per-section hint rows removed; `t` opens the task window with its hint; Workspace buttons and dead pane-navigation plumbing removed; Settings headline `<mode> · <word> priority`; Usage heading `123.4k tokens` styled as specified.
+
+### Task 216: Events and Agent activity
+Refs: `timeline_section.py`, `section_rows.py` (`timeline_cells`, `timeline_meta`), `row_list.py`, `queries.py` agent category paging.
+- [ ] Status right-aligned in the headline; shaded full-text block only; Agent activity columns time/role/turn/command and the text filter bar (`f`, `r`, `t`, `x`); Down on the last row loads older rows; selects and inputs removed.
+
+### Task 217: Task description and Results
+Refs: `dashboard/fold_bodies.py`, `briefing_view.py` `tests_groups`, `domain/results.py`, spec.
+- [ ] Cyan bold `Acceptance criteria`; cyan commit hashes; untruncated sage `Plan` rows; `reported by the Implementer`; planning task Result and Results show Summary, added tasks and plan commits.
+
+### Task 218: Decisions as a decision log
+Refs: `domain/decisions.py`, `fold_bodies.py` `DecisionsBody`, `views.py` `_task_decisions`, events ESCALATION, RUNG_CHANGED, SCOPE_CHANGE, TAKEN_OVER, HANDED_BACK, HOLD_SET/CLEARED, PR_OPENED, TASK_DONE.
+- [ ] Pure `derive_decisions` returns chronological entries with decider/headline/detail and pairs escalations with resolutions; open question first; unit table; fold renders wrapped rows with decider colours; headline `N open`/count.
+
+### Task 219: Verify the fourteenth review, reconcile the reference and docs
+Refs: Tasks 209–218; design 03/05/06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference.
+- [ ] Native before/after of every item; plain and `TERM=dumb NO_COLOR=1` gates; HTML reference and docs match the TUI (exact srcdoc round-trip, Chrome check); spec marked delivered; record; test-count trim at or below 1,651; plan and todo ticked.
