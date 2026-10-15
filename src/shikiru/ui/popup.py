@@ -222,6 +222,7 @@ POPUP_CONTROL_CSS = """
     border: solid $neutral-border; scrollbar-size-vertical: $scrollbar-width;
 }
 .popup-frame SelectOverlay:focus { border: solid $focus; }
+.popup-frame TextArea { scrollbar-size-vertical: $scrollbar-width; }
 .popup-frame Select:disabled > SelectCurrent { color: $secondary-text; }
 .popup-frame Button.popup-close-control {
     width: auto; min-width: 5; height: 1; margin: 0; padding: 0 1;

@@ -1961,7 +1961,8 @@ Refs: `domain/decisions.py`, `fold_bodies.py` `DecisionsBody`, `views.py` `_task
 
 ### Task 220: One-column scrollbar in the edit area
 Refs: `dashboard/resolution.py` (`#resolution-answer` CSS), `ui/theme.py` `SCROLLBAR_WIDTH`, other `TextArea`/`Input` uses.
-- [ ] The resolution panel's edit area scrollbar is one column wide like every other scrollbar (the shared `$scrollbar-width`); any other `TextArea` in the dashboard with the default two-column bar gets the same; one assertion on the widget's scrollbar size.
+- [x] The resolution panel's edit area scrollbar is one column wide like every other scrollbar (the shared `$scrollbar-width`); any other `TextArea` in the dashboard with the default two-column bar gets the same; one assertion on the widget's scrollbar size.
+  - Proof: before the change the scrolled answer box and the palette message field both reported a two-column scrollbar (`sb_vertical=2`) at 100x40 and 48 columns; one shared `.popup-frame TextArea` rule in `ui/popup.py` (both screens are popup frames) makes them `sb_vertical=1` with the thumb in the last column, and the one assertion sits in the existing answer-box test. `uv run poe check` exited 0 (1632 passed, 14 skipped, coverage 91.46%); collected cases 1653 before and after.
 
 ### Task 219: Verify the fourteenth review, reconcile the reference and docs
 Refs: Tasks 209–218; design 03/05/06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference.

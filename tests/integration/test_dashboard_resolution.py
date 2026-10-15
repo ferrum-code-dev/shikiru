@@ -23,6 +23,7 @@ from shikiru.domain.tasks import EscalationReason
 from shikiru.operator.commands import COMMAND_POLL_SECONDS
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
+from shikiru.ui.theme import SCROLLBAR_WIDTH
 from shikiru.ui.tokens import (
     AMBER,
     DUSTY_ROSE,
@@ -63,6 +64,7 @@ _START = datetime(2026, 1, 1, tzinfo=UTC)
 _SIZE = (100, 40)
 _HOME_SIZE = (160, 50)
 _OWN_ANSWER_ROW = 2
+_EXTRA_LINES = 6
 _ACCEPT_ROW = 3
 _CANCEL_ROW_AFTER_RETRY = 1
 _ALTERNATIVE = "Change behavior"
@@ -143,6 +145,12 @@ async def _focused_box_after(app: ResolutionHost, row: int) -> TextArea:
     await wait_until(lambda: app.focused is answer, timeout=UI_WAIT_SECONDS)
     assert _row_above_answer(screen) is _rows(screen)[row]
     return answer
+
+
+async def _scroll_box_and_assert_one_column_scrollbar(pilot: Pilot[None], answer: TextArea) -> None:
+    await pilot.press(*["enter"] * _EXTRA_LINES)
+    await wait_until(lambda: answer.max_scroll_y > 0, timeout=UI_WAIT_SECONDS)
+    assert answer.scrollbar_size_vertical == SCROLLBAR_WIDTH
 
 
 async def _back_in_list(app: ResolutionHost) -> None:
@@ -296,6 +304,7 @@ async def test_the_answer_box_follows_its_row_and_esc_hides_it_unless_the_own_dr
         await _type(pilot, _DETAILS)
         await pilot.press("enter")
         await wait_until(lambda: answer.document.line_count == 2, timeout=UI_WAIT_SECONDS)
+        await _scroll_box_and_assert_one_column_scrollbar(pilot, answer)
         await pilot.press("escape")
         await _back_in_list(app)
         await wait_until(lambda: not answer.display, timeout=UI_WAIT_SECONDS)
