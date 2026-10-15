@@ -58,6 +58,7 @@ from shikiru.dashboard.diagnostics import ProjectDiagnosticsPanel
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.tick import pinned_tick
+from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.domain.commands import command_rejection_cause
 from shikiru.errors import ConfigError
 from shikiru.ui.compact import ACTION_HINT, FocusAttentionStatus
@@ -210,7 +211,7 @@ EMPTY_CONTEXT_CHOICE = ""
 TASK_PALETTE_ROUTE_WORKER = "task-palette-route"
 _MAX_CONTEXTUAL_PALETTE_DRAFTS = 16
 _TASK_MOVE_STEPS = {"up": -1, "down": 1}
-_ARROW_KEY_OWNERS = (ListView, RowList, FoldHeader, TaskDetailVerb)
+_ARROW_KEY_OWNERS = (ListView, RowList, FoldHeader, TaskDetailVerb, TimelineFilterBar)
 
 
 @dataclass

@@ -14,11 +14,13 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_BODY,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_VERBS,
+    TASK_VIEW_AGENT,
     TASK_VIEW_REQUEST,
     TaskDetailBody,
     TaskDetailVerb,
 )
 from shikiru.dashboard.detail_fold import DetailFold, FoldHeader
+from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Status
@@ -33,6 +35,7 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     choose_focus_view,
+    choose_inspector_details_entry,
     ignore_palette_action,
     state_views,
 )
@@ -321,6 +324,22 @@ async def test_escape_clears_the_selection_and_the_list_that_held_focus_leaves_n
         stops = await _tab_cycle(recent_home, pilot)
         assert active not in stops
         assert recent not in stops
+
+
+async def test_up_and_down_in_the_activity_filter_bar_keep_the_selected_task(
+    recent_home: DashboardApp,
+) -> None:
+    async with recent_home.run_test(size=_WIDE) as pilot:
+        active, _ = await _settled_lists(recent_home, pilot)
+        selected = active.highlighted_child
+        await choose_inspector_details_entry(pilot, TASK_VIEW_AGENT)
+        await pilot.press("f")
+        await wait_until(
+            lambda: isinstance(recent_home.focused, TimelineFilterBar), timeout=UI_WAIT_SECONDS
+        )
+        await pilot.press("down", "up")
+        assert isinstance(recent_home.focused, TimelineFilterBar)
+        assert active.highlighted_child is selected
 
 
 async def test_tab_into_details_lands_on_the_first_verb_and_down_on_a_verb_keeps_the_task(
