@@ -5,11 +5,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import Button, DataTable, ListView
+from textual.widgets import Button, DataTable, ListView, Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.detail import TASK_DETAIL_BODY, TaskDetailBody
+from shikiru.dashboard.help_keys import HelpTab
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
@@ -25,7 +26,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.ui.popup import POPUP_CLOSE_CLASS
 from shikiru.ui.theme import SCROLLBAR_WIDTH
 from shikiru.ui.tokens import STEEL_BLUE
-from tests.support.cells import foregrounds
+from tests.support.cells import foregrounds, rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, choose_focus_view, state_views
@@ -125,7 +126,7 @@ async def _select_pane(pane: str) -> None:
     del pane
 
 
-def _seed(connection: Connection, clock: FakeClock) -> None:
+def _seed(connection: Connection, clock: FakeClock) -> str:
     task = seed_task(connection, clock, title="Popup focus task", mode=Mode.IMPLEMENT)
     TaskStore(connection, clock).apply_transition(
         task.id,
@@ -145,6 +146,7 @@ def _seed(connection: Connection, clock: FakeClock) -> None:
         message="Leader approves",
         data={"decision": "accept"},
     )
+    return task.id
 
 
 def _dashboard(
@@ -238,7 +240,7 @@ async def test_popup_starts_on_its_useful_control_and_closes_with_escape_or_its_
     [
         pytest.param(_open_help, f".{POPUP_CLOSE_CLASS}", "Esc", "\u00d7", id="help-close"),
         pytest.param(
-            _open_help, "#workspace-help-copy", "Up/Down", "select a task", id="help-copy"
+            _open_help, "#workspace-help-copy", "Up/Down", "Select a task", id="help-copy"
         ),
         pytest.param(_open_views, "#context-views-hint", "Enter", "open", id="views-hint"),
         pytest.param(_open_command_history, f".{POPUP_CLOSE_CLASS}", "Esc", "\u00d7", id="history"),
@@ -292,6 +294,68 @@ async def test_popup_bodies_and_task_lists_use_the_one_column_scrollbar(
         assert _scrollbar_width(popup_app.screen.query_one("#focus-views-list")) == (
             SCROLLBAR_WIDTH
         )
+
+
+def _copy_text(widget: Widget) -> str:
+    return "\n".join("".join(char for char, _ in cells) for cells in rendered_lines(widget))
+
+
+def _active_tabs(screen: Screen[Any]) -> list[str]:
+    labels = screen.query(".help-tab").results(Static)
+    return [
+        str(label.content)
+        for label in labels
+        if set(foregrounds(label, str(label.content))) == {STEEL_BLUE}
+    ]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param((False, HelpTab.HOME, HelpTab.TASK, "right", "left"), id="home"),
+        pytest.param((True, HelpTab.TASK, HelpTab.HOME, "left", "right"), id="task-details"),
+    ],
+)
+@pytest.mark.usefixtures("colour_terminal")
+async def test_help_opens_on_its_context_tab_and_left_right_switch_the_keys_from_the_top(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    case: tuple[bool, HelpTab, HelpTab, str, str],
+) -> None:
+    standalone, opening, neighbour, key, back = case
+    clock = FakeClock(_START)
+    task_id = _seed(connection, clock)
+    app = _dashboard(
+        connection,
+        reader,
+        write_minimal_project(tmp_path),
+        clock,
+        focus_task=task_id if standalone else None,
+    )
+    async with app.run_test(size=_OVERFLOWING_HELP_SIZE) as pilot:
+        await pilot.pause()
+        await pilot.press("?")
+        await wait_until(
+            lambda: bool(app.screen.query("#workspace-help-scroll")), timeout=UI_WAIT_SECONDS
+        )
+        screen = app.screen
+        body = screen.query_one("#workspace-help-scroll", VerticalScroll)
+        copy = screen.query_one("#workspace-help-copy")
+        await wait_until(lambda: _active_tabs(screen) == [opening.value], timeout=UI_WAIT_SECONDS)
+        opening_keys = _copy_text(copy)
+        await pilot.press("pagedown")
+        await wait_until(lambda: body.scroll_y > 0, timeout=UI_WAIT_SECONDS)
+
+        await pilot.press(key)
+        await wait_until(lambda: _active_tabs(screen) == [neighbour.value], timeout=UI_WAIT_SECONDS)
+        assert body.scroll_y == 0
+        assert _copy_text(copy) != opening_keys
+        assert set(foregrounds(copy, "Up/Down")) == {STEEL_BLUE}
+
+        await pilot.press(back)
+        await wait_until(lambda: _active_tabs(screen) == [opening.value], timeout=UI_WAIT_SECONDS)
+        assert _copy_text(copy) == opening_keys
 
 
 def _seed_overflowing_task(connection: Connection, clock: FakeClock) -> str:

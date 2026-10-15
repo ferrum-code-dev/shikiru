@@ -15,14 +15,6 @@ from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Label, ListItem, ListView, Rule, Select, Static
 
-from shikiru.agents.contracts import (
-    BILLING_MODE_API,
-    BILLING_MODE_SUBSCRIPTION,
-    BILLING_MODE_UNKNOWN,
-    BILLING_SOURCE_OPERATOR_CONFIG,
-    BILLING_SOURCE_PROVIDER_REPORTED,
-    BILLING_SOURCE_UNKNOWN,
-)
 from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import (
     DEFAULT_NOW_COMPACT_LINES,
@@ -55,6 +47,8 @@ from shikiru.dashboard.detail import (
 )
 from shikiru.dashboard.detail_fold import FoldHeader
 from shikiru.dashboard.diagnostics import ProjectDiagnosticsPanel
+from shikiru.dashboard.help_keys import HelpAvailability, HelpTab
+from shikiru.dashboard.help_screen import HelpContext, WorkspaceHelpScreen
 from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.tick import pinned_tick
@@ -129,8 +123,7 @@ _TASK_VIEW_OMITTED_PLACEMENTS = frozenset(
         WidgetPlacement.DIAGNOSTICS,
     }
 )
-_HELP_CLOSE_BUTTON = "workspace-help-close"
-_HELP_CONTEXT = "workspace-help-context"
+_HELP_HOME_HEADING = "Focus"
 _COMMAND_HISTORY_CLOSE = "command-history-close"
 _COMMAND_HISTORY_COPY = "command-history-copy"
 _COMMAND_HISTORY_WORKER = "command-history-updates"
@@ -563,130 +556,6 @@ def _truncate_command_summary(summary: Text, width: int) -> Text:
     truncated = summary.copy()
     truncated.truncate(max(0, width), overflow="ellipsis")
     return truncated
-
-
-class _WorkspaceHelpScreen(ModalScreen[None]):
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
-    DEFAULT_CSS = (
-        POPUP_CSS
-        + """
-    #workspace-help-scroll { max-height: 1fr; min-height: 0; }
-    #workspace-help-copy { height: auto; color: $primary-text; }
-    #workspace-help-frame.compact { margin: 0 1; padding: 0 1; }
-    """
-    )
-
-    def __init__(
-        self,
-        task_id: str | None,
-        widget_names: Sequence[str],
-        tmux_detach_hint: str | None,
-    ) -> None:
-        super().__init__()
-        prepare_popup(self)
-        self._task_id = task_id
-        self._widget_names = tuple(widget_names)
-        self._tmux_detach_hint = tmux_detach_hint
-
-    def compose(self) -> ComposeResult:
-        """Render help for Home or the selected task workspace."""
-        view = f"Task detail · {self._task_id}" if self._task_id else "Focus"
-        if self._task_id:
-            lines = [
-                "Escape: return to the compact task summary or Home",
-                "v: focus the section folds (reports, request, evidence, relationships, ...)",
-                "Ctrl+P: open applicable operator actions for this task",
-                "Events and relationships: Up/Down select · PgUp/PgDn page · End follows",
-                "Mouse: click a section header to fold it open; Views offers Actions and Help",
-                "Navigation to task and role windows is under Workspace and existing role targets",
-                "Command applied means queued/applied by the engine;",
-                "an agent may consume guidance later",
-            ]
-        else:
-            lines = [
-                "Up/Down: select a task",
-                "Escape: close popup, clear search, then clear task selection",
-                "Ctrl+P: open contextual operator actions",
-                "/: search task ID or title",
-                "v: open filters, history and configured secondary views",
-                "History: ← newer · → older",
-                "Mouse: select a task; use its detail controls for views and actions",
-                "?: show this help",
-            ]
-            if self._tmux_detach_hint is None:
-                lines.append("tmux detach is unavailable outside the project session")
-            else:
-                lines.append(f"{self._tmux_detach_hint} d: detach from tmux")
-        if _WIDGET_ESCALATIONS in self._widget_names:
-            lines.append(
-                "Escalations: Up/Down select, Left/Right choose a decision, "
-                "o: opens evidence, r: opens resolution"
-            )
-        if _WIDGET_DIALOGUE in self._widget_names:
-            lines.append("Dialogue: Enter opens full text")
-        if _WIDGET_QUEUE in self._widget_names and self._task_id is None:
-            lines.append(
-                "Task browser: /: search, Up/Down select, v: opens filters, "
-                "Escape clears search first"
-            )
-        lines.extend(
-            (
-                "Usage separates unknown billing modes from unreported API charges",
-                (
-                    f"{BILLING_SOURCE_OPERATOR_CONFIG} + {BILLING_MODE_UNKNOWN} means "
-                    f"explicitly set to {BILLING_MODE_UNKNOWN}"
-                ),
-                (
-                    f"{BILLING_SOURCE_PROVIDER_REPORTED} + {BILLING_MODE_UNKNOWN} means "
-                    f"a provider-reported {BILLING_MODE_UNKNOWN}"
-                ),
-                (
-                    f"{BILLING_SOURCE_UNKNOWN} + {BILLING_MODE_UNKNOWN} means "
-                    "unavailable/not recorded; historic cause unknown"
-                ),
-                (
-                    "Set [agents.<name>.options].billing_mode to "
-                    f"{BILLING_MODE_API}, {BILLING_MODE_SUBSCRIPTION} or "
-                    f"{BILLING_MODE_UNKNOWN} for new sessions"
-                ),
-                "Existing sessions keep the mode and source recorded when they started",
-            )
-        )
-        with PopupFrame(widget_id="workspace-help-frame", classes=POPUP_FRAME_CLASS):
-            with Horizontal(id="workspace-help-header", classes=POPUP_HEADER_CLASS):
-                yield Label(f"Help · {view}", id=_HELP_CONTEXT, classes=POPUP_TITLE_CLASS)
-                yield Button(popup_close_label(), id=_HELP_CLOSE_BUTTON, classes=POPUP_CLOSE_CLASS)
-            yield Rule(classes=POPUP_RULE_CLASS)
-            with VerticalScroll(id="workspace-help-scroll", classes=POPUP_BODY_CLASS):
-                yield Static(key_hint("\n".join(lines)), id="workspace-help-copy", markup=False)
-
-    def on_mount(self) -> None:
-        self._apply_compact_layout(self.size.width, self.size.height)
-        self.set_focus(self.query_one("#workspace-help-scroll", VerticalScroll))
-        self.call_after_refresh(self.query_one("#workspace-help-frame", PopupFrame).content_ready)
-
-    def on_resize(self, event: events.Resize) -> None:
-        self._apply_compact_layout(event.size.width, event.size.height)
-        self.call_after_refresh(
-            self.query_one("#workspace-help-frame", PopupFrame).update_preferred_size
-        )
-
-    def _apply_compact_layout(self, width: int, height: int) -> None:
-        frame = self.query_one("#workspace-help-frame", PopupFrame)
-        compact = (
-            width <= _CONTEXT_WIDGET_COMPACT_MAX_COLUMNS
-            or height <= _CONTEXT_WIDGET_COMPACT_MAX_ROWS
-        )
-        frame.set_class(compact, "compact")
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Close help when its button is activated."""
-        if event.button.id == _HELP_CLOSE_BUTTON:
-            self.dismiss()
-
-    async def action_close(self) -> None:
-        """Dismiss contextual help."""
-        self.dismiss()
 
 
 class _CommandHistoryScreen(ModalScreen[None]):
@@ -1972,33 +1841,25 @@ class DashboardApp(App[None]):
         if panel is not None:
             await panel.open_help()
             return
-        if self._focus_task is None:
-            await self.push_screen(
-                _WorkspaceHelpScreen(
-                    None,
-                    self._widget_names,
-                    self._tmux_detach_hint,
-                ),
-                callback=lambda _: self.refresh_task_detail_after_resume(),
-            )
-            return
-        await self.push_screen(
-            _WorkspaceHelpScreen(
-                self._focus_task,
-                self._widget_names,
-                self._tmux_detach_hint,
-            ),
-            callback=lambda _: self.refresh_task_detail_after_resume(),
-        )
+        await self._push_help(self._focus_task)
 
     async def open_task_detail_help(self, task_id: str) -> None:
         """Open help with the selected task and current detail context."""
+        await self._push_help(task_id)
+
+    async def _push_help(self, task_id: str | None) -> None:
+        availability = HelpAvailability(
+            queue=_WIDGET_QUEUE in self._widget_names,
+            escalations=_WIDGET_ESCALATIONS in self._widget_names,
+            detach_prefix=self._tmux_detach_hint,
+        )
+        context = (
+            HelpContext(f"{HelpTab.TASK.value} · {task_id}", HelpTab.TASK, availability)
+            if task_id is not None
+            else HelpContext(_HELP_HOME_HEADING, HelpTab.HOME, availability)
+        )
         await self.push_screen(
-            _WorkspaceHelpScreen(
-                task_id,
-                self._widget_names,
-                self._tmux_detach_hint,
-            ),
+            WorkspaceHelpScreen(context),
             callback=lambda _: self.refresh_task_detail_after_resume(),
         )
 

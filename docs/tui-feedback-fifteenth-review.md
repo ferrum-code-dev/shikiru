@@ -20,4 +20,10 @@ Applies to the shared `PaletteScreen` reached from task details (an action prese
 
 ## Help panel (Task 224)
 
-Help panel tabs; specified when Task 224 starts.
+The Help popup follows the common popup style and has one tab per context.
+
+- Header as the other popups: `Help · <where it was opened>` (`Focus` on Home, `Task details · T-123` from a task) and the `Esc ×` close control; there is no bottom `Esc close` line.
+- A tab row under the header: `Home  Task details  Resolution`. The active tab is cyan bold on the selected surface (no glyphs), the others grey. Left/Right (or a click) switch tabs and show the new tab from the top; the tab matching the opening context is preselected. Help cannot be opened from the Resolution popup, so that tab is a reference reached with Right. The Workspace window has only the `t` key, which is listed under Task details.
+- The body is a scrolling list (focus on it; Up/Down, PgUp/PgDn, one-column scrollbar) of cyan sentence-case group titles with `key | action` rows: keys cyan bold, actions in the primary text colour, stacked below 32 columns.
+- All rows come from one key table (`dashboard/help_keys.py`) built from the real bindings; the Home escalation and task-search rows appear only when their widgets are configured, and the tmux detach row only inside the project session.
+- Removed: the billing mode and source paragraph (a configuration reference; Usage shows the unknown-billing counts but not the source, which is parked), the `History` arrows line, and the vague Workspace and mouse lines.
