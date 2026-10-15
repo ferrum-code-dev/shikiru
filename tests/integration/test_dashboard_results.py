@@ -26,7 +26,7 @@ from shikiru.operator.queries import TASK_DETAIL_EVENT_LIMIT
 from shikiru.paths import turns_dir
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
-from shikiru.ui.tokens import SAGE, STEEL_BLUE
+from shikiru.ui.tokens import SAGE, SECONDARY_TEXT_COLOR, STEEL_BLUE
 from shikiru.workspace.facts import WorkspaceFacts, render_facts
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -36,6 +36,8 @@ from tests.support.store import seed_task
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from rich.console import RenderableType
 
     from shikiru.dashboard.views import StateDashboardViews
     from shikiru.domain.results import TaskResults
@@ -87,7 +89,7 @@ def _running(
     return task.id
 
 
-def _foregrounds(body: ResultsBody) -> dict[str, str | None]:
+def _foregrounds(body: RenderableType, needles: tuple[str, ...]) -> dict[str, str | None]:
     console = Console(width=RENDER_WIDTH, force_terminal=True, color_system="truecolor")
     cells = [
         (
@@ -100,7 +102,7 @@ def _foregrounds(body: ResultsBody) -> dict[str, str | None]:
         for char in segment.text
     ]
     text = "".join(char for char, _ in cells)
-    return {needle: cells[text.index(needle)][1] for needle in ("fedcba9", "added t-99")}
+    return {needle: cells[text.index(needle)][1] for needle in needles}
 
 
 async def _results(views: StateDashboardViews, task_id: str) -> TaskResults:
@@ -118,6 +120,9 @@ async def _assert_plan_results(views: StateDashboardViews, planned: str) -> None
     assert lines[1].startswith("Plan")
     assert "added t-90" in lines[1]
     assert flat.index("Summary") < flat.index("Commits") < flat.index("9999999 plan spec")
+    assert _foregrounds(ResultsBody(plan_detail.results), ("Summary",)) == {
+        "Summary": SECONDARY_TEXT_COLOR
+    }
     assert "and keep the parser untouched" in flat
     assert "added t-91" in flat
 
@@ -198,9 +203,11 @@ async def test_results_show_what_exists_so_far_and_what_a_done_task_merged(
     assert "reported by the Implementer" in plain_text(ResultsBody(await _results(views, running)))
     assert "end-marker" in results_text
     assert "\N{HORIZONTAL ELLIPSIS}" not in results_text
-    colours = _foregrounds(ResultsBody(detail.results))
+    colours = _foregrounds(ResultsBody(detail.results), ("fedcba9", "added t-99"))
     assert colours["fedcba9"] == STEEL_BLUE
     assert colours["added t-99"] == SAGE
+    deciders = ("Leader", "You", "Engine")
+    assert _foregrounds(DecisionsBody(detail), deciders) == dict.fromkeys(deciders, STEEL_BLUE)
     assert decisions_text.index("changes requested") < decisions_text.index("accepted")
     assert '00:00 You answered "Use mocked QA"' in decisions_text
     assert "so far" in plain_text(ResultsBody(await _results(views, running)))

@@ -30,8 +30,6 @@ from shikiru.ui.section import BOLD_STEEL, Row, grey, labelled_rows
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
-    PRIMARY_TEXT_COLOR,
-    SECONDARY_TEXT_COLOR,
     STEEL_BLUE,
     STYLE_BOLD,
     SUCCESS_COLOR,
@@ -66,11 +64,6 @@ CLOCK_FORMAT = "%H:%M"
 TIME_GAP = "  "
 _BOLD_AMBER = f"{STYLE_BOLD} {AMBER}"
 DECIDER_WIDTH = max(len(decider.value) for decider in Decider)
-DECIDER_STYLES = {
-    Decider.LEADER: STEEL_BLUE,
-    Decider.YOU: f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}",
-    Decider.ENGINE: SECONDARY_TEXT_COLOR,
-}
 
 
 def _counted(count: int, noun: str) -> str:
@@ -116,7 +109,7 @@ def _plan_lines(change: PlanChange) -> list[Text]:
 def _summary_rows(results: TaskResults) -> list[Row]:
     if results.plan_summary is None:
         return []
-    return [(Text(SUMMARY_LABEL, style=STEEL_BLUE), (Text(results.plan_summary),))]
+    return [(grey(SUMMARY_LABEL), (Text(results.plan_summary),))]
 
 
 def _results_rows(results: TaskResults) -> list[Row]:
@@ -164,7 +157,7 @@ class ResultsBody:
 
 
 def _decision_row(entry: DecisionEntry) -> Row:
-    decider = Text(entry.decider.value.ljust(DECIDER_WIDTH), style=DECIDER_STYLES[entry.decider])
+    decider = Text(entry.decider.value.ljust(DECIDER_WIDTH), style=STEEL_BLUE)
     label = Text.assemble(grey(entry.at.strftime(CLOCK_FORMAT)), TIME_GAP, decider)
     return label, (
         Text("\n").join([Text(entry.headline), *(grey(line) for line in entry.details)]),
