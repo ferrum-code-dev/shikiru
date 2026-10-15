@@ -323,7 +323,7 @@ def _completed_by_later_step(stage: Step, later_steps: set[Step]) -> bool:
         case Step.PLAN:
             return Step.INTEGRATE in later_steps
         case Step.IMPLEMENT:
-            return Step.VERIFY in later_steps
+            return bool(later_steps & {Step.VERIFY, Step.CONSULT})
         case Step.CONSULT:
             return bool(later_steps & {Step.IMPLEMENT, Step.INTEGRATE})
         case Step.VERIFY:

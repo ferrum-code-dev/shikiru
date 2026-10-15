@@ -101,13 +101,29 @@ def _stage_states(progress: WorkflowProgress) -> dict[Step, WorkflowMilestoneSta
                 _event(
                     _FIRST_EVENT_ID,
                     EventKind.STEP_STARTED,
+                    step=Step.IMPLEMENT,
+                    iteration=_CURRENT_ITERATION,
+                ),
+                _event(
+                    _SECOND_EVENT_ID,
+                    EventKind.TURN_STARTED,
+                    step=Step.IMPLEMENT,
+                    iteration=_CURRENT_ITERATION,
+                    turn="t1",
+                ),
+                _event(
+                    _THIRD_EVENT_ID,
+                    EventKind.STEP_STARTED,
                     step=Step.CONSULT,
-                    iteration=_PREVIOUS_ITERATION,
+                    iteration=_CURRENT_ITERATION,
                 ),
             ),
-            {Step.CONSULT: WorkflowMilestoneState.CURRENT},
+            {
+                Step.IMPLEMENT: WorkflowMilestoneState.DONE,
+                Step.CONSULT: WorkflowMilestoneState.CURRENT,
+            },
             ((Step.IMPLEMENT, Step.CONSULT),),
-            id="implementation-consult",
+            id="implement-ended-by-consult-is-done",
         ),
         pytest.param(
             Mode.PLAN,
@@ -453,7 +469,7 @@ def test_report_completion_is_bound_to_the_latest_same_iteration_stage_entry(
         _event(
             _SEVENTH_EVENT_ID,
             EventKind.STEP_STARTED,
-            step=Step.CONSULT,
+            step=Step.INTEGRATE,
             iteration=_CURRENT_ITERATION,
         )
     )
@@ -465,7 +481,7 @@ def test_report_completion_is_bound_to_the_latest_same_iteration_stage_entry(
         trackers_updated=True,
     )
     progress = project_workflow(
-        make_task(mode=Mode.IMPLEMENT, step=Step.CONSULT, iteration=_CURRENT_ITERATION),
+        make_task(mode=Mode.IMPLEMENT, step=Step.INTEGRATE, iteration=_CURRENT_ITERATION),
         tuple(events),
         (
             WorkflowReport(
@@ -478,7 +494,7 @@ def test_report_completion_is_bound_to_the_latest_same_iteration_stage_entry(
     )
 
     assert _stage_states(progress)[Step.IMPLEMENT] is expected
-    assert _stage_states(progress)[Step.CONSULT] is WorkflowMilestoneState.CURRENT
+    assert _stage_states(progress)[Step.INTEGRATE] is WorkflowMilestoneState.CURRENT
 
 
 def test_changes_requested_verdict_marks_verify_rework_after_its_entry() -> None:

@@ -1969,6 +1969,11 @@ Refs: `dashboard/resolution.py` (`#resolution-answer` CSS), `ui/theme.py` `SCROL
 - [x] The resolution panel's edit area scrollbar is one column wide like every other scrollbar (the shared `$scrollbar-width`); any other `TextArea` in the dashboard with the default two-column bar gets the same; one assertion on the widget's scrollbar size.
   - Proof: before the change the scrolled answer box and the palette message field both reported a two-column scrollbar (`sb_vertical=2`) at 100x40 and 48 columns; one shared `.popup-frame TextArea` rule in `ui/popup.py` (both screens are popup frames) makes them `sb_vertical=1` with the thumb in the last column, and the one assertion sits in the existing answer-box test. `uv run poe check` exited 0 (1632 passed, 14 skipped, coverage 91.46%); collected cases 1653 before and after.
 
+### Task 221: An implement turn ended by a consult is done
+Refs: `domain/workflow.py` `_completed_by_later_step`, `tests/unit/test_domain_workflow.py`, `tests/integration/test_dashboard_task_detail.py`.
+- [x] A consulting task whose implementer asked for the consult shows `✓ Implement`, not `? Implement`; `?` stays only for an entered stage with no evidence of completion.
+  - Proof: before the change an `IMPLEMENT` entry followed by a `CONSULT` entry projected `unknown` (unit row and dashboard detail failed); `_completed_by_later_step` now accepts a later `CONSULT` as well as `VERIFY` for `IMPLEMENT`, and a re-entered implement stays current. Native strip render of a seeded consulting task at 100 and 48 columns, colour and `NO_COLOR`, reads `✓ Triage  ✓ Implement  › Consult  · Verify  · Merge`; rows were merged into existing tables (collected cases unchanged); `uv run poe check` result in the commit.
+
 ### Task 219: Verify the fourteenth review, reconcile the reference and docs
 Refs: Tasks 209–218; design 03/05/06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference.
 - [x] Native before/after of every item; plain and `TERM=dumb NO_COLOR=1` gates; HTML reference and docs match the TUI (exact srcdoc round-trip, Chrome check); spec marked delivered; record; test-count trim at or below 1,651; plan and todo ticked.

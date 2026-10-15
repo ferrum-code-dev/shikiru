@@ -25,6 +25,10 @@ Analysis: four read-only static analyses (Sonnet 5.5 medium). Nothing was run; t
 - **Events**: its status (`following`/`paused`) is right-aligned on the fold's title line (all fold headlines are right-aligned); the table holds short phrases; below it only the selected row's full text appears, in a shaded block with its own text style (no time/role/turn meta line). **Agent activity** rows are time, role, turn, command; the block below shows only the full command; the filter is a one-line text bar `role: any · turn: any` opened with `f` and edited with `r` (cycle role), `t` (turn) and `x` (clear), with no dropdowns or bordered inputs; pressing Down on the last row loads older rows, so older turns are reachable.
 - **Usage** first row: `123.4k tokens` with the number cyan bold and the word grey (cost first, white). **Workspace**: no buttons; only `t` opens the task window (hint in the bottom line; the Leader/Implementer pane buttons and their dead plumbing go). **Settings** headline: `<mode> · <priority word> priority`, priority word `standard` (0), `high` (>0), `low` (<0), the exact number stays in the Priority row.
 
+## Follow-up findings
+
+- A consulting task showed `? Implement`: an `IMPLEMENT` entry followed by a `CONSULT` entry (the implementer asked for the consult) had no evidence of completion. A later `CONSULT` entry now ends the implement stage as done (Task 221); a re-entered implement is current again, and `?` still means an entered stage with no evidence.
+
 ## Superseded accepted behaviour
 
 | Accepted | Superseded by this review |

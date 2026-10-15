@@ -1765,6 +1765,25 @@ async def test_rework_and_truncated_workflow_history_keep_stage_outcomes_honest(
     assert _milestone_state(incomplete, Step.IMPLEMENT) == "done"
     assert _milestone_state(incomplete, Step.VERIFY) == "current"
 
+    consulting = seed_task(connection, clock, title="Consulting", mode=Mode.IMPLEMENT)
+    events.append(EventKind.TASK_QUEUED, task_id=consulting.id, message="queued")
+    consulting_task = TaskStore(connection, clock).require(consulting.id)
+    TaskStore(connection, clock).apply_transition(
+        consulting.id,
+        Transition.stay(consulting_task, step=Step.CONSULT, status=Status.RUNNING),
+    )
+    _append_step_event(events, consulting.id, Step.TRIAGE, _OLD_ITERATION)
+    _append_step_event(events, consulting.id, Step.IMPLEMENT, _OLD_ITERATION)
+    _append_step_event(events, consulting.id, Step.CONSULT, _OLD_ITERATION)
+
+    asking = await state_views(reader, project_root, clock, StubServices()).task_detail(
+        consulting.id
+    )
+
+    assert asking is not None
+    assert _milestone_state(asking, Step.IMPLEMENT) == "done"
+    assert _milestone_state(asking, Step.CONSULT) == "current"
+
     queued = seed_task(connection, clock, title="Not started", mode=Mode.IMPLEMENT)
     events.append(EventKind.TASK_QUEUED, task_id=queued.id, message="queued")
 
