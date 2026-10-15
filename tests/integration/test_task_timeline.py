@@ -969,8 +969,12 @@ async def test_activity_tables_show_status_columns_full_text_block_filter_and_ol
                 header = next(
                     fold.header for fold in panel.query(DetailFold) if fold.view_id == view_id
                 )
-                painted = "".join(char for char, _ in painted_lines(header)[0])
-                assert painted.endswith("following")
+                await wait_until(
+                    lambda header=header: "".join(
+                        char for char, _ in painted_lines(header)[0]
+                    ).endswith("following"),
+                    timeout=UI_WAIT_SECONDS,
+                )
 
             newest = _agent_rows(panel)[0]
             assert re.search(r"\d\d:\d\d:\d\d\s+impl\s+t3\s+", newest)
