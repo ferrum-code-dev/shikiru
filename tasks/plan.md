@@ -1959,6 +1959,10 @@ Refs: `dashboard/fold_bodies.py`, `briefing_view.py` `tests_groups`, `domain/res
 Refs: `domain/decisions.py`, `fold_bodies.py` `DecisionsBody`, `views.py` `_task_decisions`, events ESCALATION, RUNG_CHANGED, SCOPE_CHANGE, TAKEN_OVER, HANDED_BACK, HOLD_SET/CLEARED, PR_OPENED, TASK_DONE.
 - [ ] Pure `derive_decisions` returns chronological entries with decider/headline/detail and pairs escalations with resolutions; open question first; unit table; fold renders wrapped rows with decider colours; headline `N open`/count.
 
+### Task 220: One-column scrollbar in the edit area
+Refs: `dashboard/resolution.py` (`#resolution-answer` CSS), `ui/theme.py` `SCROLLBAR_WIDTH`, other `TextArea`/`Input` uses.
+- [ ] The resolution panel's edit area scrollbar is one column wide like every other scrollbar (the shared `$scrollbar-width`); any other `TextArea` in the dashboard with the default two-column bar gets the same; one assertion on the widget's scrollbar size.
+
 ### Task 219: Verify the fourteenth review, reconcile the reference and docs
 Refs: Tasks 209–218; design 03/05/06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference.
 - [ ] Native before/after of every item; plain and `TERM=dumb NO_COLOR=1` gates; HTML reference and docs match the TUI (exact srcdoc round-trip, Chrome check); spec marked delivered; record; test-count trim at or below 1,651; plan and todo ticked.

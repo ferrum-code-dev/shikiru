@@ -1,6 +1,6 @@
 # Phase 11 fourteenth review: simpler keys, truthful stages and a quieter details area
 
-Status: planned (Tasks 209–219). This specification refines the [thirteenth](tui-feedback-thirteenth-review.md) and [twelfth](tui-feedback-twelfth-review.md) reviews where it differs. **The TUI is the source of truth**; the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 219).
+Status: planned (Tasks 209–220). This specification refines the [thirteenth](tui-feedback-thirteenth-review.md) and [twelfth](tui-feedback-twelfth-review.md) reviews where it differs. **The TUI is the source of truth**; the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 219).
 
 Analysis: four read-only static analyses (Sonnet 5.5 medium). Nothing was run; the implementing task reproduces first. The operator approved the layouts below on 2026-10-15.
 
@@ -8,6 +8,7 @@ Analysis: four read-only static analyses (Sonnet 5.5 medium). Nothing was run; t
 
 ### Escalation resolution panel
 - On an editable row only **Enter** opens the edit area and **Esc** leaves it; the Left/Right bindings, their actions, the `Exited` arrow path and their hints go. Enter inside the area inserts a new line; Ctrl+S, Ctrl+Enter and Ctrl+J still send. Hints: list `↑↓ select · Enter edit`, area `Ctrl+S send · Enter new line · Esc back`.
+- The edit area's scrollbar is one column wide (the shared `$scrollbar-width`), like every other scrollbar (Task 220).
 - The edit area is hidden when edit mode ends (Esc, or moving to another row). Typed text of an alternative is discarded; the own-answer text stays as its draft, and while that draft is non-empty its area stays visible.
 - `Details` turn lines read `step · Role · what happened` in plain words (step cyan, role white): `triage · Leader · triaged as implement`, `plan · Leader · plan ready`, `implement · Implementer · 3 commits, 12 tests passed`, `… · no commits`, `… · needs a decision`, `… · blocked`, `consult · Leader · answered|escalated`, `verify · Leader · accepted|changes requested (1 blocker)|escalated|superseded`, `… · failed (message)`. Old packets keep parsing.
 
