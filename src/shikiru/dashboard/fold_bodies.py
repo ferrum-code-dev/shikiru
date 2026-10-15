@@ -21,16 +21,16 @@ from shikiru.dashboard.briefing_view import (
     branch_row,
     needed_from_you,
     pull_request_groups,
-    severity_groups,
     tests_groups,
 )
-from shikiru.domain.briefing import DECISION_ACCEPT, one_line
+from shikiru.domain.decisions import Decider
 from shikiru.domain.results import ResultOutcome
 from shikiru.domain.tasks import Status
 from shikiru.ui.section import BOLD_STEEL, Row, grey, labelled_rows
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
+    PRIMARY_TEXT_COLOR,
     SECONDARY_TEXT_COLOR,
     STEEL_BLUE,
     STYLE_BOLD,
@@ -42,15 +42,13 @@ if TYPE_CHECKING:
 
     from shikiru.dashboard.contract import TaskDetailView
     from shikiru.domain.briefing import ProducedNumbers
-    from shikiru.domain.decisions import OperatorEntry
+    from shikiru.domain.decisions import DecisionEntry
     from shikiru.domain.results import PlanChange, TaskResults
 
 PRIORITY_WORDS = {0: "standard", 1: "high", -1: "low"}
 CHANGES_LABEL = "Changes"
 PLAN_LABEL = "Plan"
 OPEN_LABEL = "Open"
-ROUND_LABEL = "Round"
-YOU_LABEL = "You"
 NOTHING_RECORDED = "Nothing is recorded yet."
 CRITERIA_LABEL = "Acceptance criteria"
 NO_CRITERIA = "No validated acceptance criteria are recorded."
@@ -64,13 +62,15 @@ STATUS_REASON_LABEL = "Status reason"
 PRIORITY_LABEL = "Priority"
 MORE_COMMITS = "+{count} more"
 ADDED_TASK = "added {id}"
-ACCEPTED_WORD = "accepted"
-ROUND_GLYPHS = {True: "\N{CHECK MARK}", False: "\N{BALLOT X}"}
 CLOCK_FORMAT = "%H:%M"
-QUOTE = '"'
-OPERATOR_TEXT_LIMIT = 60
 TIME_GAP = "  "
 _BOLD_AMBER = f"{STYLE_BOLD} {AMBER}"
+DECIDER_WIDTH = max(len(decider.value) for decider in Decider)
+DECIDER_STYLES = {
+    Decider.LEADER: STEEL_BLUE,
+    Decider.YOU: f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}",
+    Decider.ENGINE: SECONDARY_TEXT_COLOR,
+}
 
 
 def _counted(count: int, noun: str) -> str:
@@ -163,47 +163,28 @@ class ResultsBody:
         )
 
 
-def _round_row(index: int, decision: str, severities: tuple[Text, ...]) -> Row:
-    accepted = decision == DECISION_ACCEPT
-    word = ACCEPTED_WORD if accepted else decision.replace("_", " ")
-    line = Text(
-        f"{ROUND_GLYPHS[accepted]} {word}", style=SUCCESS_COLOR if accepted else ALERT_COLOR
+def _decision_row(entry: DecisionEntry) -> Row:
+    decider = Text(entry.decider.value.ljust(DECIDER_WIDTH), style=DECIDER_STYLES[entry.decider])
+    label = Text.assemble(grey(entry.at.strftime(CLOCK_FORMAT)), TIME_GAP, decider)
+    return label, (
+        Text("\n").join([Text(entry.headline), *(grey(line) for line in entry.details)]),
     )
-    if severities:
-        line.append(" (", style=SECONDARY_TEXT_COLOR)
-        line.append_text(Text(", ", style=SECONDARY_TEXT_COLOR).join(severities))
-        line.append(")", style=SECONDARY_TEXT_COLOR)
-    return grey(f"{ROUND_LABEL} {index}"), (line,)
-
-
-def _operator_line(entry: OperatorEntry) -> Text:
-    line = Text.assemble(grey(entry.at.strftime(CLOCK_FORMAT)), TIME_GAP, entry.action.value)
-    quoted = one_line(entry.text or "", OPERATOR_TEXT_LIMIT)
-    if quoted is not None:
-        line.append(f" {QUOTE}{quoted}{QUOTE}")
-    return line
 
 
 def _decision_rows(view: TaskDetailView) -> list[Row]:
-    decisions = view.decisions
     rows: list[Row] = []
     if view.status == Status.ESCALATED.value:
         question = needed_from_you(view)
         if question is not None:
             rows.append((Text(OPEN_LABEL, style=_BOLD_AMBER), (Text(question, style=AMBER),)))
-    if decisions is None:
-        return rows
-    rows.extend(
-        _round_row(index, counts.decision, severity_groups(counts))
-        for index, counts in enumerate(decisions.rounds, start=1)
-    )
-    rows.extend(_stacked(YOU_LABEL, [_operator_line(entry) for entry in decisions.operator]))
+    if view.decisions is not None:
+        rows.extend(_decision_row(entry) for entry in view.decisions.entries)
     return rows
 
 
 @dataclass(frozen=True)
 class DecisionsBody:
-    """The Decisions fold body: the open question, the verification rounds, the Operator's acts."""
+    """The Decisions fold body: the open question, then every decision oldest first."""
 
     view: TaskDetailView
 

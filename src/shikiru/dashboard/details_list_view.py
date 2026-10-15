@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from rich.cells import cell_len
 from rich.text import Text
 
-from shikiru.dashboard.briefing_view import VERDICT_LABELS, total_cost_text
+from shikiru.dashboard.briefing_view import total_cost_text
 from shikiru.dashboard.fold_bodies import priority_word
 from shikiru.domain.results import ResultOutcome
 from shikiru.domain.tasks import Status
@@ -25,10 +25,9 @@ if TYPE_CHECKING:
 
 ROW_LEAD = "  "
 _HEADLINE_GAP = "  "
-DECISION_OPEN = "decision open"
+DECISION_OPEN = "question open"
 _PR_WORD = "PR"
-_LAST_WORD = "last"
-_ROUND_NOUNS = "rounds"
+_DECISION_NOUNS = ("decision", "decisions")
 _COMMIT_NOUNS = {True: "commit", False: "commits"}
 _BRANCH_WORD = "branch"
 _PRIORITY_WORD = "priority"
@@ -125,13 +124,8 @@ def _results_headline(view: TaskDetailView) -> str | None:
 def _decisions_headline(view: TaskDetailView) -> str | None:
     if view.status == Status.ESCALATED.value:
         return DECISION_OPEN
-    rounds = view.decisions.rounds if view.decisions is not None else ()
-    if not rounds:
-        return None
-    last = VERDICT_LABELS.get(rounds[-1].decision, rounds[-1].decision).lower()
-    if len(rounds) == 1:
-        return last
-    return f"{len(rounds)} {_ROUND_NOUNS}{GROUP_SEPARATOR}{_LAST_WORD} {last}"
+    count = len(view.decisions.entries) if view.decisions is not None else 0
+    return f"{count} {_DECISION_NOUNS[count != 1]}" if count else None
 
 
 def _blockers_headline(view: TaskDetailView) -> str | None:

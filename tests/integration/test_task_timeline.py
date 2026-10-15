@@ -624,7 +624,7 @@ async def test_terminal_detail_keeps_results_and_decisions_after_workspace_clean
     assert detail.results is not None
     assert [commit.subject for commit in detail.results.commits] == ["first change"]
     assert detail.decisions is not None
-    assert [round_.decision for round_ in detail.decisions.rounds] == ["accept"]
+    assert [entry.headline for entry in detail.decisions.entries] == ["accepted", "merged"]
     timeline = await views.task_timeline(
         task.id,
         cursor=None,

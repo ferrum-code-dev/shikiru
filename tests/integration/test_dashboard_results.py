@@ -201,9 +201,8 @@ async def test_results_show_what_exists_so_far_and_what_a_done_task_merged(
     colours = _foregrounds(ResultsBody(detail.results))
     assert colours["fedcba9"] == STEEL_BLUE
     assert colours["added t-99"] == SAGE
-    assert "Round 1 \N{BALLOT X} changes requested (2 major)" in decisions_text
-    assert "Round 2 \N{CHECK MARK} accepted" in decisions_text
-    assert 'answered "Use mocked QA"' in decisions_text
+    assert decisions_text.index("changes requested") < decisions_text.index("accepted")
+    assert '00:00 You answered "Use mocked QA"' in decisions_text
     assert "so far" in plain_text(ResultsBody(await _results(views, running)))
 
     await _assert_plan_results(views, planned)

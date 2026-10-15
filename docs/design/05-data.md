@@ -383,4 +383,4 @@ class Verdict(BaseModel):
 
 Every "required iff" rule is a `model_validator`. `shikiru report` prints the violations and exits with code 2.
 
-Thirteenth review: `ESCALATION_RESOLVED` and `OPERATOR_MESSAGE` events carry the Operator's `text` in their data (read by the Decisions fold); the task timeline has an internal `agent` category that drops bookkeeping signals for Agent activity; the `Events` and `Agent activity` folds have fixed meanings ([spec](../tui-feedback-thirteenth-review.md)).
+Thirteenth review: `ESCALATION_RESOLVED` and `OPERATOR_MESSAGE` events carry the Operator's `text` in their data (read by the Decisions fold, which reads the latest 60 events of the verdict, escalation, resolution, scope, rung, message, take-over, hand-back, hold, retry, cancel and PR kinds); the task timeline has an internal `agent` category that drops bookkeeping signals for Agent activity; the `Events` and `Agent activity` folds have fixed meanings ([spec](../tui-feedback-thirteenth-review.md)).

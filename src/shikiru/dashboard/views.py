@@ -134,7 +134,24 @@ TASK_TIMELINE_READ_ERROR_SUMMARY = "Task evidence could not be read"
 ENGINE_LIFECYCLE_EVENT_LIMIT = 2
 TASK_MODEL_HISTORY_EVENT_LIMIT = 50
 RESULTS_PLAN_CHANGE_LIMIT = 20
-DECISION_EVENT_LIMIT = 20
+DECISION_EVENT_LIMIT = 60
+DECISION_EVENTS = (
+    EventKind.VERDICT,
+    EventKind.ESCALATION,
+    EventKind.ESCALATION_RESOLVED,
+    EventKind.SCOPE_CHANGE,
+    EventKind.RUNG_CHANGED,
+    EventKind.OPERATOR_MESSAGE,
+    EventKind.TAKEN_OVER,
+    EventKind.HANDED_BACK,
+    EventKind.HOLD_SET,
+    EventKind.HOLD_CLEARED,
+    EventKind.TASK_RETRIED,
+    EventKind.TASK_CANCELLED,
+    EventKind.PR_OPENED,
+    EventKind.PR_WITHDRAWN,
+    EventKind.TASK_DONE,
+)
 WORKFLOW_EVENT_LIMIT = 200
 WORKFLOW_EVENTS = (
     EventKind.TASK_QUEUED,
@@ -1421,12 +1438,8 @@ class StateDashboardViews:
         )
 
     def _task_decisions(self, task_id: str) -> TaskDecisions:
-        def recorded(kind: EventKind) -> list[Event]:
-            return self._state.latest_events(DECISION_EVENT_LIMIT, kinds=(kind,), task_id=task_id)
-
         return derive_decisions(
-            recorded(EventKind.VERDICT),
-            [*recorded(EventKind.ESCALATION_RESOLVED), *recorded(EventKind.OPERATOR_MESSAGE)],
+            self._state.latest_events(DECISION_EVENT_LIMIT, kinds=DECISION_EVENTS, task_id=task_id)
         )
 
     def _pull_request_line(self, task_id: str, *, task_done: bool) -> PullRequestLine | None:

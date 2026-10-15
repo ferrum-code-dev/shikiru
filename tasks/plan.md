@@ -1961,7 +1961,8 @@ Refs: `dashboard/fold_bodies.py`, `briefing_view.py` `tests_groups`, `domain/res
 
 ### Task 218: Decisions as a decision log
 Refs: `domain/decisions.py`, `fold_bodies.py` `DecisionsBody`, `views.py` `_task_decisions`, events ESCALATION, RUNG_CHANGED, SCOPE_CHANGE, TAKEN_OVER, HANDED_BACK, HOLD_SET/CLEARED, PR_OPENED, TASK_DONE.
-- [ ] Pure `derive_decisions` returns chronological entries with decider/headline/detail and pairs escalations with resolutions; open question first; unit table; fold renders wrapped rows with decider colours; headline `N open`/count.
+- [x] Pure `derive_decisions` returns chronological entries with decider/headline/detail and pairs escalations with resolutions; open question first; unit table; fold renders wrapped rows with decider colours; headline `N open`/count.
+  - Proof: before the change the fold listed `Round n` rows; now a seeded task with two verdicts, an answered escalation, a rung change, a two-task scope change, an operator message, take-over/hand-back and a merged PR renders one chronological log (grey time, steel Leader, white You, grey Engine, wrapped details under the headline) at 100, 60, 48 and 40 columns, colour and NO_COLOR, with the headline `question open`/`N decisions`. One unit table covers the derivation and the existing integration case renders it; `uv run poe check` exited 0 (1632 passed, 14 skipped, coverage 91.56%); collected cases 1653 before and after.
 
 ### Task 220: One-column scrollbar in the edit area
 Refs: `dashboard/resolution.py` (`#resolution-answer` CSS), `ui/theme.py` `SCROLLBAR_WIDTH`, other `TextArea`/`Input` uses.
