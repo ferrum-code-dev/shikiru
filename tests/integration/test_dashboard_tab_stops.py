@@ -35,8 +35,8 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     choose_focus_view,
-    choose_inspector_details_entry,
     ignore_palette_action,
+    pick_details_entry,
     state_views,
 )
 from tests.support.render import plain_text
@@ -326,23 +326,7 @@ async def test_escape_clears_the_selection_and_the_list_that_held_focus_leaves_n
         assert recent not in stops
 
 
-async def test_up_and_down_in_the_activity_filter_bar_keep_the_selected_task(
-    recent_home: DashboardApp,
-) -> None:
-    async with recent_home.run_test(size=_WIDE) as pilot:
-        active, _ = await _settled_lists(recent_home, pilot)
-        selected = active.highlighted_child
-        await choose_inspector_details_entry(pilot, TASK_VIEW_AGENT)
-        await pilot.press("f")
-        await wait_until(
-            lambda: isinstance(recent_home.focused, TimelineFilterBar), timeout=UI_WAIT_SECONDS
-        )
-        await pilot.press("down", "up")
-        assert isinstance(recent_home.focused, TimelineFilterBar)
-        assert active.highlighted_child is selected
-
-
-async def test_tab_into_details_lands_on_the_first_verb_and_down_on_a_verb_keeps_the_task(
+async def test_tab_lands_on_the_first_verb_and_arrows_on_a_verb_or_filter_bar_keep_the_task(
     recent_home: DashboardApp,
 ) -> None:
     async with recent_home.run_test(size=_SCROLLING_DETAIL) as pilot:
@@ -373,3 +357,12 @@ async def test_tab_into_details_lands_on_the_first_verb_and_down_on_a_verb_keeps
         assert isinstance(header.parent, DetailFold)
         assert header.parent.view_id == TASK_VIEW_REQUEST
         assert not recent_home.query_one(f"#{TASK_DETAIL_VERBS}").displayed_children
+
+        await pick_details_entry(pilot, TASK_VIEW_AGENT)
+        await pilot.press("f")
+        await wait_until(
+            lambda: isinstance(recent_home.focused, TimelineFilterBar), timeout=UI_WAIT_SECONDS
+        )
+        await pilot.press("down", "up")
+        assert isinstance(recent_home.focused, TimelineFilterBar)
+        assert recent.highlighted_child is done_row

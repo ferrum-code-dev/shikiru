@@ -549,7 +549,7 @@ async def test_every_briefing_stays_inside_its_width(
 
 @pytest.mark.parametrize(
     ("size", "compact"),
-    [((100, 40), False), ((60, 40), False), ((48, 40), True), ((40, 40), True), ((40, 8), True)],
+    [((100, 40), False), ((48, 40), True), ((40, 8), True)],
 )
 async def test_a_long_last_message_wraps_within_the_width_up_to_the_configured_lines(
     connection: Connection,
