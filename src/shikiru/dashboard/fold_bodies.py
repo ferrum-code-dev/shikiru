@@ -16,6 +16,7 @@ from shikiru.dashboard.briefing_view import (
     MINUS,
     PR_LABEL,
     RISKS_LABEL,
+    SUMMARY_LABEL,
     TESTS_LABEL,
     branch_row,
     needed_from_you,
@@ -26,8 +27,15 @@ from shikiru.dashboard.briefing_view import (
 from shikiru.domain.briefing import DECISION_ACCEPT, one_line
 from shikiru.domain.results import ResultOutcome
 from shikiru.domain.tasks import Status
-from shikiru.ui.section import GROUP_SEPARATOR, Row, grey, labelled_rows
-from shikiru.ui.tokens import ALERT_COLOR, AMBER, SECONDARY_TEXT_COLOR, STYLE_BOLD, SUCCESS_COLOR
+from shikiru.ui.section import BOLD_STEEL, Row, grey, labelled_rows
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    AMBER,
+    SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
+    STYLE_BOLD,
+    SUCCESS_COLOR,
+)
 
 if TYPE_CHECKING:
     from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
@@ -55,12 +63,11 @@ REQUEUED_LABEL = "Requeued"
 STATUS_REASON_LABEL = "Status reason"
 PRIORITY_LABEL = "Priority"
 MORE_COMMITS = "+{count} more"
-ADDED_TASKS = "added {ids}"
+ADDED_TASK = "added {id}"
 ACCEPTED_WORD = "accepted"
 ROUND_GLYPHS = {True: "\N{CHECK MARK}", False: "\N{BALLOT X}"}
 CLOCK_FORMAT = "%H:%M"
 QUOTE = '"'
-PLAN_TEXT_LIMIT = 80
 OPERATOR_TEXT_LIMIT = 60
 TIME_GAP = "  "
 _BOLD_AMBER = f"{STYLE_BOLD} {AMBER}"
@@ -76,7 +83,8 @@ def _stacked(label: str, lines: list[Text]) -> list[Row]:
 
 def _commit_rows(results: TaskResults) -> list[Row]:
     lines = [
-        Text.assemble(grey(commit.sha), TIME_GAP, commit.subject) for commit in results.commits
+        Text.assemble(Text(commit.sha, style=STEEL_BLUE), TIME_GAP, commit.subject)
+        for commit in results.commits
     ]
     if results.more_commits:
         lines.append(grey(MORE_COMMITS.format(count=results.more_commits)))
@@ -97,13 +105,18 @@ def _changes_groups(produced: ProducedNumbers | None) -> tuple[Text, ...]:
     )
 
 
-def _plan_line(change: PlanChange) -> Text:
-    parts = [Text(one_line(GROUP_SEPARATOR.join(change.scope_changes), PLAN_TEXT_LIMIT) or "")]
-    if change.new_tasks:
-        parts.append(
-            Text(ADDED_TASKS.format(ids=", ".join(task_id for task_id, _ in change.new_tasks)))
-        )
-    return Text(GROUP_SEPARATOR).join(part for part in parts if part.plain)
+def _plan_lines(change: PlanChange) -> list[Text]:
+    added = [
+        Text(ADDED_TASK.format(id=" ".join(filter(None, task))), style=SUCCESS_COLOR)
+        for task in change.new_tasks
+    ]
+    return [*added, *(Text(scope) for scope in change.scope_changes)]
+
+
+def _summary_rows(results: TaskResults) -> list[Row]:
+    if results.plan_summary is None:
+        return []
+    return [(Text(SUMMARY_LABEL, style=STEEL_BLUE), (Text(results.plan_summary),))]
 
 
 def _results_rows(results: TaskResults) -> list[Row]:
@@ -112,11 +125,16 @@ def _results_rows(results: TaskResults) -> list[Row]:
         (TESTS_LABEL, tests_groups(results.tests)),
         (PR_LABEL, pull_request_groups(results.pull_request)),
     )
+    plan = _stacked(
+        PLAN_LABEL, [line for change in results.plan_changes for line in _plan_lines(change)]
+    )
+    lead = [*plan, *_summary_rows(results)] if results.plan_summary is not None else []
     return [
+        *lead,
         *branch_row(results),
         *_commit_rows(results),
         *((grey(label), groups) for label, groups in optional if groups),
-        *_stacked(PLAN_LABEL, [_plan_line(change) for change in results.plan_changes]),
+        *([] if lead else plan),
         *_stacked(RISKS_LABEL, [Text(risk, style=AMBER) for risk in results.residual_risks]),
     ]
 
@@ -205,7 +223,7 @@ class DescriptionBody:
         """Yield the request text and the criteria list."""
         del console, options
         yield Text(self.view.request)
-        yield grey(CRITERIA_LABEL)
+        yield Text(CRITERIA_LABEL, style=BOLD_STEEL)
         criteria = self.view.acceptance_criteria
         if not criteria:
             yield grey(NO_CRITERIA)

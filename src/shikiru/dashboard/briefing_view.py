@@ -118,7 +118,7 @@ QUOTE = '"'
 MINUS = "\N{MINUS SIGN}"
 PASSED_MARK = "\N{CHECK MARK}"
 FAILED_MARK = "\N{BALLOT X}"
-AGENT_REPORTED = "agent-reported"
+REPORTED_BY_IMPLEMENTER = "reported by the Implementer"
 WAITING_ON = "Waiting on"
 NO_QUESTION = "Escalation open; no validated decision question is recorded."
 ESCALATION_NEAR = "escalates after {count} more {noun}"
@@ -609,7 +609,7 @@ def tests_groups(tests: ReportedTests | None) -> tuple[Text, ...]:
         (tests.skipped, "skipped", SECONDARY_TEXT_COLOR),
     )
     groups = tuple(Text(f"{count} {word}", style=color) for count, word, color in counts if count)
-    return (*groups, grey(AGENT_REPORTED)) if groups else ()
+    return (*groups, grey(REPORTED_BY_IMPLEMENTER)) if groups else ()
 
 
 def _compact_tests(tests: ReportedTests | None) -> tuple[Text, ...]:

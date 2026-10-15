@@ -3,14 +3,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from rich.console import Console
+
 from shikiru.dashboard.fold_bodies import DecisionsBody, ResultsBody
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
     FACTS_FILENAME,
     REPORT_FILENAME,
     REPORT_KIND_FILENAME,
+    Commit,
     ImplementationReport,
     Issue,
+    PlanReport,
     Verdict,
 )
 from shikiru.domain.reports import TestRun as AgentTestRun
@@ -22,11 +26,12 @@ from shikiru.operator.queries import TASK_DETAIL_EVENT_LIMIT
 from shikiru.paths import turns_dir
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
+from shikiru.ui.tokens import SAGE, STEEL_BLUE
 from shikiru.workspace.facts import WorkspaceFacts, render_facts
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, state_views
-from tests.support.render import plain_text
+from tests.support.render import RENDER_WIDTH, plain_text, rendered_lines
 from tests.support.store import seed_task
 
 if TYPE_CHECKING:
@@ -38,11 +43,17 @@ if TYPE_CHECKING:
     from tests.support.store import Connection
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
+PLAN_SUMMARY = "Split the admin work into two tasks " + "and keep the parser untouched " * 3
+LONG_SCOPE = "drop the legacy CLI flag and rewrite the parser " * 3 + "end-marker"
 
 
-def _running(connection: Connection, clock: FakeClock, project_root: Path) -> str:
+def _running(
+    connection: Connection, clock: FakeClock, project_root: Path, *, plan: bool = False
+) -> str:
     tasks = TaskStore(connection, clock)
-    task = seed_task(connection, clock, title="Add retry", mode=Mode.IMPLEMENT)
+    task = seed_task(
+        connection, clock, title="Add retry", mode=Mode.PLAN if plan else Mode.IMPLEMENT
+    )
     tasks.set_slot(task.id, task.seq)
     tasks.apply_transition(task.id, first_step(task))
     current = tasks.get(task.id)
@@ -60,16 +71,36 @@ def _running(connection: Connection, clock: FakeClock, project_root: Path) -> st
             )
         )
     )
-    report = ImplementationReport(
-        status="completed",
-        summary="s",
-        commits=[],
-        tests=[AgentTestRun(name="a", result="passed")],
-        trackers_updated=False,
+    report: ImplementationReport | PlanReport = (
+        PlanReport(summary=PLAN_SUMMARY, commits=[Commit(sha="9999999abc", subject="plan spec")])
+        if plan
+        else ImplementationReport(
+            status="completed",
+            summary="s",
+            commits=[],
+            tests=[AgentTestRun(name="a", result="passed")],
+            trackers_updated=False,
+        )
     )
-    (turn / REPORT_KIND_FILENAME).write_text("implementation")
+    (turn / REPORT_KIND_FILENAME).write_text("plan" if plan else "implementation")
     (turn / REPORT_FILENAME).write_text(report.model_dump_json())
     return task.id
+
+
+def _foregrounds(body: ResultsBody) -> dict[str, str | None]:
+    console = Console(width=RENDER_WIDTH, force_terminal=True, color_system="truecolor")
+    cells = [
+        (
+            char,
+            segment.style.color.get_truecolor().hex
+            if segment.style and segment.style.color
+            else None,
+        )
+        for segment in console.render(body)
+        for char in segment.text
+    ]
+    text = "".join(char for char, _ in cells)
+    return {needle: cells[text.index(needle)][1] for needle in ("fedcba9", "added t-99")}
 
 
 async def _results(views: StateDashboardViews, task_id: str) -> TaskResults:
@@ -79,12 +110,25 @@ async def _results(views: StateDashboardViews, task_id: str) -> TaskResults:
     return detail.results
 
 
+async def _assert_plan_results(views: StateDashboardViews, planned: str) -> None:
+    plan_detail = await views.task_detail(planned)
+    assert plan_detail is not None
+    lines = rendered_lines(ResultsBody(plan_detail.results), width=60)
+    flat = " ".join(" ".join(lines).split())
+    assert lines[1].startswith("Plan")
+    assert "added t-90" in lines[1]
+    assert flat.index("Summary") < flat.index("Commits") < flat.index("9999999 plan spec")
+    assert "and keep the parser untouched" in flat
+    assert "added t-91" in flat
+
+
 async def test_results_show_what_exists_so_far_and_what_a_done_task_merged(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     running = _running(connection, clock, project_root)
+    planned = _running(connection, clock, project_root, plan=True)
     finished = _running(connection, clock, project_root)
     log = EventLog(connection, clock)
     rejected = Verdict(
@@ -109,7 +153,13 @@ async def test_results_show_what_exists_so_far_and_what_a_done_task_merged(
         EventKind.SCOPE_CHANGE,
         task_id=finished,
         message="scope",
-        data={"new_task_ids": ["t-99"], "scope_changes": ["split the parser"]},
+        data={"new_task_ids": ["t-99"], "scope_changes": [LONG_SCOPE]},
+    )
+    log.append(
+        EventKind.SCOPE_CHANGE,
+        task_id=planned,
+        message="scope",
+        data={"new_task_ids": ["t-90", "t-91"], "scope_changes": ["added two tasks"]},
     )
     for _ in range(TASK_DETAIL_EVENT_LIMIT + 1):
         log.append(EventKind.NUDGE, task_id=finished, message="nudged", data={})
@@ -145,7 +195,15 @@ async def test_results_show_what_exists_so_far_and_what_a_done_task_merged(
     assert "2 files +12 \N{MINUS SIGN}3" in results_text
     assert "fedcba9 merged work" in results_text
     assert "added t-99" in results_text
+    assert "reported by the Implementer" in plain_text(ResultsBody(await _results(views, running)))
+    assert "end-marker" in results_text
+    assert "\N{HORIZONTAL ELLIPSIS}" not in results_text
+    colours = _foregrounds(ResultsBody(detail.results))
+    assert colours["fedcba9"] == STEEL_BLUE
+    assert colours["added t-99"] == SAGE
     assert "Round 1 \N{BALLOT X} changes requested (2 major)" in decisions_text
     assert "Round 2 \N{CHECK MARK} accepted" in decisions_text
     assert 'answered "Use mocked QA"' in decisions_text
     assert "so far" in plain_text(ResultsBody(await _results(views, running)))
+
+    await _assert_plan_results(views, planned)

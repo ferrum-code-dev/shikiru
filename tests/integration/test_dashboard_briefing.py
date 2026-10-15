@@ -373,7 +373,7 @@ CASES = {
             "active 0s ago",
             LAST_WORDS,
             f"{BRANCH} \N{RIGHTWARDS ARROW} main",
-            "1 passed · 1 failed · agent-reported",
+            "1 passed · 1 failed · reported by the Implementer",
             "Leader $0.42 · Impl $1.10 billed",
         ),
         TAKE_OVER_VERBS,

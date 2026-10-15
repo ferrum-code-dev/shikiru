@@ -58,6 +58,7 @@ def _derive(
         scope_events=scope,
         titles=titles or {},
         verdict_risks=verdict_risks,
+        plan_summary=None,
         commit_cap=CAP,
     )
 

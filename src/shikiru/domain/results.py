@@ -59,6 +59,7 @@ class TaskResults:
     tests: ReportedTests | None
     pull_request: PullRequestLine | None
     plan_changes: tuple[PlanChange, ...]
+    plan_summary: str | None
     residual_risks: tuple[str, ...]
 
 
@@ -100,6 +101,7 @@ def derive_task_results(
     scope_events: Sequence[Mapping[str, object]],
     titles: Mapping[str, str],
     verdict_risks: Sequence[str],
+    plan_summary: str | None,
     commit_cap: int,
 ) -> TaskResults:
     """Derive the Results of a task from its recorded events, reports and facts snapshot.
@@ -136,5 +138,6 @@ def derive_task_results(
             )
             for data in scope_events
         ),
+        plan_summary=plan_summary,
         residual_risks=_strings(done_data.get(DONE_RISKS_KEY)) or tuple(verdict_risks),
     )

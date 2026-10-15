@@ -1392,6 +1392,7 @@ class StateDashboardViews:
             scope_events=[event.data for event in scope],
             titles=self._new_task_titles(scope),
             verdict_risks=latest_verdict.residual_risks if latest_verdict is not None else (),
+            plan_summary=_latest_plan_summary(detail.reports),
             commit_cap=self._settings.dashboard.results_commits,
         )
 
@@ -1805,6 +1806,17 @@ def _latest_report_commits(reports: Sequence[ReportRow]) -> list[Commit]:
             and isinstance(item.data, ImplementationReport | PlanReport)
         ),
         empty,
+    )
+
+
+def _latest_plan_summary(reports: Sequence[ReportRow]) -> str | None:
+    return next(
+        (
+            item.data.summary
+            for item in reversed(reports)
+            if item.source == AGENT_REPORT_SOURCE and isinstance(item.data, PlanReport)
+        ),
+        None,
     )
 
 

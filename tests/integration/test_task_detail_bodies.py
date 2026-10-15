@@ -23,6 +23,7 @@ from shikiru.dashboard.detail import (
 from shikiru.dashboard.detail_fold import DetailFold
 from shikiru.dashboard.detail_hint import HintTarget, hint_for
 from shikiru.dashboard.details_list_view import DetailsSection, section_headline
+from shikiru.dashboard.fold_bodies import CRITERIA_LABEL
 from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, TriageReport
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
@@ -30,7 +31,7 @@ from shikiru.domain.tasks import Mode, Status
 from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.tokens import ALERT_COLOR
-from tests.support.cells import foregrounds
+from tests.support.cells import CYAN_BOLD, Cell, foregrounds
 from tests.support.cells import rendered_lines as painted_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -69,6 +70,19 @@ def _body_lines(panel: TaskDetailPanel, widget_id: str) -> list[str]:
     return rendered_lines(panel.query_one(f"#{widget_id}", Static).content, width=PANEL_WIDTH)
 
 
+def _criteria_heading(body: Static) -> list[Cell]:
+    none: list[Cell] = []
+    return next(
+        (
+            row[: len(CRITERIA_LABEL)]
+            for row in painted_lines(body)
+            if "".join(char for char, _ in row).startswith(CRITERIA_LABEL)
+        ),
+        none,
+    )
+
+
+@pytest.mark.usefixtures("colour_terminal")
 async def test_task_description_comes_first_with_criteria_as_a_list_and_no_project_folds(
     connection: Connection, database: Database, tmp_path: Path
 ) -> None:
@@ -114,6 +128,9 @@ async def test_task_description_comes_first_with_criteria_as_a_list_and_no_proje
                 "\N{BULLET} rejects bad input",
                 "\N{BULLET} keeps good input",
             ]
+            request = panel.query_one("#task-detail-request", Static)
+            await wait_until(lambda: bool(_criteria_heading(request)), timeout=UI_WAIT_SECONDS)
+            assert {style for _, style in _criteria_heading(request)} == {CYAN_BOLD}
     finally:
         reader.close()
 

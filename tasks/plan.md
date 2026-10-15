@@ -1956,7 +1956,8 @@ Refs: `timeline_section.py`, `section_rows.py` (`timeline_cells`, `timeline_meta
 
 ### Task 217: Task description and Results
 Refs: `dashboard/fold_bodies.py`, `briefing_view.py` `tests_groups`, `domain/results.py`, spec.
-- [ ] Cyan bold `Acceptance criteria`; cyan commit hashes; untruncated sage `Plan` rows; `reported by the Implementer`; planning task Result and Results show Summary, added tasks and plan commits.
+- [x] Cyan bold `Acceptance criteria`; cyan commit hashes; untruncated sage `Plan` rows; `reported by the Implementer`; planning task Result and Results show Summary, added tasks and plan commits.
+  - Proof: before the change the criteria heading and hashes were grey, Plan rows were cut at 80 characters and tests ended `agent-reported`; natively at 100, 60, 48 and 40 columns the heading and hashes are cyan, `added t-90` is sage, a 150-character scope change wraps in full, and a plan-mode task shows Plan, a cyan Summary and its plan commits (its briefing Result group keeps Commits and Added). Results integration table, briefing and description tests cover it; collected cases are unchanged; `uv run poe check` exited 0 (1632 passed, 14 skipped, coverage 91.54%).
 
 ### Task 218: Decisions as a decision log
 Refs: `domain/decisions.py`, `fold_bodies.py` `DecisionsBody`, `views.py` `_task_decisions`, events ESCALATION, RUNG_CHANGED, SCOPE_CHANGE, TAKEN_OVER, HANDED_BACK, HOLD_SET/CLEARED, PR_OPENED, TASK_DONE.
