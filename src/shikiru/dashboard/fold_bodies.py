@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from shikiru.domain.decisions import OperatorEntry
     from shikiru.domain.results import PlanChange, TaskResults
 
+PRIORITY_WORDS = {0: "standard", 1: "high", -1: "low"}
 CHANGES_LABEL = "Changes"
 PLAN_LABEL = "Plan"
 OPEN_LABEL = "Open"
@@ -243,6 +244,11 @@ class WorkspaceBody:
         yield _body(options.max_width, _workspace_rows(self.view, self.home), [])
 
 
+def priority_word(priority: int) -> str:
+    """Name a dispatch priority: `standard` at 0, `high` above it and `low` below it."""
+    return PRIORITY_WORDS[(priority > 0) - (priority < 0)]
+
+
 def _present(value: str | None, style: str = "") -> Text | None:
     return Text(value, style=style) if value else None
 
@@ -253,7 +259,12 @@ def _settings_rows(view: TaskDetailView) -> list[Row]:
         (SUBMITTED_LABEL, _present(view.submitted_age)),
         (REQUEUED_LABEL, _present(view.requeued_age)),
         (STATUS_REASON_LABEL, _present(view.status_reason, AMBER)),
-        (PRIORITY_LABEL, None if view.priority is None else Text(str(view.priority))),
+        (
+            PRIORITY_LABEL,
+            None
+            if view.priority is None
+            else Text(f"{priority_word(view.priority)} ({view.priority})"),
+        ),
     )
     return [(grey(label), (value,)) for label, value in entries if value is not None]
 

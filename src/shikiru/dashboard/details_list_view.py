@@ -10,6 +10,7 @@ from rich.cells import cell_len
 from rich.text import Text
 
 from shikiru.dashboard.briefing_view import VERDICT_LABELS, total_cost_text
+from shikiru.dashboard.fold_bodies import priority_word
 from shikiru.domain.results import ResultOutcome
 from shikiru.domain.tasks import Status
 from shikiru.ui.section import BOLD_STEEL, GROUP_SEPARATOR, grey
@@ -22,9 +23,6 @@ if TYPE_CHECKING:
 
     from shikiru.dashboard.contract import TaskDetailView
 
-_ARROWS = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW}"
-EVENTS_HINT = f"{_ARROWS} select · End follow"
-RELATIONSHIPS_HINT = f"{_ARROWS} select · Enter open"
 ROW_LEAD = "  "
 _HEADLINE_GAP = "  "
 DECISION_OPEN = "decision open"
@@ -100,7 +98,11 @@ def _workspace_headline(view: TaskDetailView) -> str | None:
 
 
 def _settings_headline(view: TaskDetailView) -> str | None:
-    return f"{_PRIORITY_WORD} {view.priority}" if view.priority is not None else None
+    parts = [
+        view.mode or "",
+        f"{priority_word(view.priority)} {_PRIORITY_WORD}" if view.priority is not None else "",
+    ]
+    return GROUP_SEPARATOR.join(part for part in parts if part) or None
 
 
 def _results_headline(view: TaskDetailView) -> str | None:

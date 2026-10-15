@@ -106,7 +106,6 @@ if TYPE_CHECKING:
         DashboardViews,
         DashboardWidget,
         NavigateHome,
-        NavigateRolePane,
         NavigateTaskWindow,
         OnChange,
         OnChangeRegistration,
@@ -347,7 +346,7 @@ class _ContextViewsScreen(ModalScreen[str]):
             ]
             yield ListView(*items, id=FOCUS_VIEWS_LIST, classes=POPUP_BODY_CLASS)
             yield Static(
-                key_hint("↑↓ select · Enter open · Esc back", SECONDARY_TEXT_COLOR),
+                key_hint("↑↓ select · Enter open", SECONDARY_TEXT_COLOR),
                 id="context-views-hint",
                 classes=POPUP_SECONDARY_CLASS,
             )
@@ -1176,7 +1175,6 @@ class DashboardApp(App[None]):
         open_palette_context: OpenPaletteContext | None = None,
         resolution_screen: ResolutionScreenFactory | None = None,
         navigate_task_window: NavigateTaskWindow | None = None,
-        navigate_role_pane: NavigateRolePane | None = None,
         navigate_home: NavigateHome | None = None,
         timeline_refresh_seconds: float = DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
         now_max_lines: int = DEFAULT_NOW_MAX_LINES,
@@ -1207,7 +1205,6 @@ class DashboardApp(App[None]):
         self._palette_drafts: dict[tuple[str, str, str | None], PaletteDraft] = {}
         self._selected_task_id = focus_task
         self._navigate_task_window = navigate_task_window
-        self._navigate_role_pane = navigate_role_pane
         self._navigate_home = navigate_home
         self._tmux_detach_hint = tmux_detach_hint
         self._detach_tmux_client = detach_tmux_client
@@ -1347,7 +1344,6 @@ class DashboardApp(App[None]):
             open_task_detail=open_task_detail,
             open_task_detail_view=open_task_detail_view,
             navigate_task_window=self._navigate_task_window,
-            navigate_role_pane=self._navigate_role_pane,
             navigate_home=self._navigate_home,
             on_task_selected=self._select_task_context,
             activate_home_summary=self._activate_home_summary,

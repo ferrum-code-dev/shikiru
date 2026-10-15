@@ -14,7 +14,7 @@ from shikiru.agents.contracts import BILLING_MODE_SUBSCRIPTION, BILLING_MODE_UNK
 from shikiru.dashboard.briefing_view import counted, total_cost_text
 from shikiru.domain.levels import UsageLevel, displayed_pct, usage_level
 from shikiru.ui.compact import ROLE_LABELS, compact_count
-from shikiru.ui.section import BOLD_PRIMARY, GROUP_SEPARATOR, grey
+from shikiru.ui.section import BOLD_PRIMARY, BOLD_STEEL, GROUP_SEPARATOR, grey
 from shikiru.ui.tokens import AMBER, SECONDARY_TEXT_COLOR, USAGE_LEVEL_COLORS
 
 if TYPE_CHECKING:
@@ -29,6 +29,7 @@ QUOTA_TITLE = "Quota"
 NO_USAGE = "No usage is recorded yet."
 COVERAGE_UNAVAILABLE = "Task usage coverage unavailable"
 OLD_TAG = "old"
+TOKENS_WORD = " tokens"
 NOTE_LEAD = "! "
 LEAD = "  "
 GAP = "  "
@@ -174,7 +175,7 @@ def _heading(sessions: Sequence[TaskSessionView]) -> Text | None:
         parts.append(Text(cost))
     known = [_session_tokens(session) for session in sessions if _tokens_known(session)]
     if known:
-        parts.append(Text(f"{compact_count(sum(known))} tokens"))
+        parts.append(Text.assemble((compact_count(sum(known)), BOLD_STEEL), grey(TOKENS_WORD)))
     return Text(GROUP_SEPARATOR).join(parts) if parts else None
 
 

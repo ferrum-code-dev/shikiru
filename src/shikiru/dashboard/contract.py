@@ -122,7 +122,6 @@ SelectTaskContext = Callable[[str | None], None]
 OpenTaskDetail = Callable[[str], Awaitable[None]]
 OpenTaskDetailView = Callable[[str, str], Awaitable[None]]
 NavigateTaskWindow = Callable[[str], Awaitable[str]]
-NavigateRolePane = Callable[[str, str], Awaitable[str]]
 NavigateHome = Callable[[], Awaitable[str]]
 OpenContextualView = Callable[[str], Awaitable[None]]
 ActivateAttentionDecision = Callable[[], Awaitable[bool]]
@@ -493,14 +492,6 @@ class CommandHistoryView:
 
 
 @dataclass(frozen=True)
-class TaskRolePaneView:
-    """A task role and its recorded tmux pane target, if any."""
-
-    role: str
-    recorded_target: str | None
-
-
-@dataclass(frozen=True)
 class TaskDetailView:
     """Ready-to-render task state, evidence and existing target metadata."""
 
@@ -523,7 +514,6 @@ class TaskDetailView:
     branch: str | None
     worktree_path: str
     window_id: str | None
-    role_panes: tuple[TaskRolePaneView, ...]
     sessions: tuple[TaskSessionView, ...]
     relationships: TaskRelationshipsView | None = None
     blocker: TaskBlockerView | None = None
@@ -941,7 +931,6 @@ class WidgetContext:
     open_task_detail: OpenTaskDetail | None = None
     open_task_detail_view: OpenTaskDetailView | None = None
     navigate_task_window: NavigateTaskWindow | None = None
-    navigate_role_pane: NavigateRolePane | None = None
     navigate_home: NavigateHome | None = None
     on_task_selected: SelectTaskContext | None = None
     activate_home_summary: Callable[[str], Awaitable[None]] | None = None

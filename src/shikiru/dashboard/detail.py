@@ -6,13 +6,14 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.cells import cell_len
 from rich.console import Group
 from rich.text import Text
 from textual import on
-from textual.containers import Horizontal, HorizontalScroll, Vertical, VerticalScroll
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Rule, Static
 
@@ -29,11 +30,8 @@ from shikiru.dashboard.contract import (
     TaskTimelineCategory,
 )
 from shikiru.dashboard.detail_fold import DetailFold, DetailFolds
-from shikiru.dashboard.details_list_view import (
-    RELATIONSHIPS_HINT,
-    DetailsSection,
-    section_headline,
-)
+from shikiru.dashboard.detail_hint import DetailHintBar, HintTarget, hint_for
+from shikiru.dashboard.details_list_view import DetailsSection, section_headline
 from shikiru.dashboard.fold_bodies import (
     DecisionsBody,
     DescriptionBody,
@@ -44,7 +42,6 @@ from shikiru.dashboard.fold_bodies import (
 from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.section_rows import RelatedRow, blocker_evidence, relation_rows
 from shikiru.dashboard.timeline_section import (
-    HEADING_SEPARATOR,
     TimelineHost,
     TimelineIds,
     TimelineSection,
@@ -55,7 +52,6 @@ from shikiru.domain.briefing import BriefingAction
 from shikiru.domain.tasks import Role, Status, StatusReason
 from shikiru.errors import ShikiruError
 from shikiru.ui.gated_static import GatedStatic
-from shikiru.ui.keys import key_hint
 from shikiru.ui.popup import (
     POPUP_CLOSE_CLASS,
     POPUP_CSS,
@@ -69,11 +65,11 @@ from shikiru.ui.popup import (
 )
 from shikiru.ui.screen import widget_is_attached
 from shikiru.ui.section import BOLD_PRIMARY, grey
-from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
 if TYPE_CHECKING:
     from textual import events
     from textual.app import ComposeResult
+    from textual.binding import BindingType
     from textual.geometry import Size
     from textual.widget import Widget
     from textual.worker import Worker
@@ -89,9 +85,6 @@ TASK_DETAIL_WORKER_GROUP = "task-detail-updates"
 TASK_DETAIL_ESCAPE = "escape"
 SESSION_STATE_CURRENT = "Current"
 SESSION_STATE_USED = "Used"
-TASK_DETAIL_WINDOW_BUTTON = "task-detail-window"
-TASK_DETAIL_LEADER_BUTTON = "task-detail-leader"
-TASK_DETAIL_IMPLEMENTER_BUTTON = "task-detail-implementer"
 TASK_DETAIL_IDENTITY = "task-detail-identity"
 TASK_DETAIL_OWNERSHIP = "task-detail-ownership"
 TASK_DETAIL_BRIEFING = "task-detail-briefing"
@@ -118,7 +111,9 @@ _TASK_DETAIL_COMPACT_MAX_COLUMNS = 48
 _TASK_DETAIL_COMPACT_MAX_ROWS = 20
 TASK_DETAIL_VIEWS_KEY = "v"
 TASK_DETAIL_HELP_KEY = "question_mark"
-TASK_DETAIL_WORKSPACE_TOOLS = "task-detail-workspace-tools"
+TASK_DETAIL_HINT = "task-detail-hint"
+TASK_WINDOW_KEY = "t"
+TASK_WINDOW_ACTION = "task_window"
 TASK_DETAIL_BLOCKER = "task-detail-blocker"
 TASK_DETAIL_RELATIONSHIPS = "task-detail-relationships"
 TASK_DETAIL_RELATED_LIST = "task-detail-related-list"
@@ -165,12 +160,17 @@ FOLD_STATICS = {
     TASK_VIEW_RELATIONSHIPS: (TASK_DETAIL_BLOCKER, TASK_DETAIL_RELATIONSHIPS),
     TASK_VIEW_WORKSPACE: (TASK_DETAIL_WORKSPACE,),
 }
+FOLD_HINT_TARGETS = {
+    TASK_VIEW_EVIDENCE: HintTarget.EVENTS,
+    TASK_VIEW_AGENT: HintTarget.AGENT,
+    TASK_VIEW_RELATIONSHIPS: HintTarget.DEPENDENCIES,
+}
 NO_DECISION_TO_ANSWER = "No open decision to answer for this task."
 NO_RELATED_ROWS = "No related tasks are recorded."
 RELATIONSHIPS_UNAVAILABLE = "Relationship evidence is unavailable."
 NO_REPLACEMENT_TASKS = "No replacement task IDs are present in the recorded scope-change event."
-PAGE_LABEL = "page"
 CLOSED_RUN_STATUS = "closed"
+PAGE_LABEL = "page"
 COST_VALUE_FORMAT = ".2f"
 AGE_NOW = "now"
 COMPACT_INSPECTOR_CLASS = "compact-inspector"
@@ -206,6 +206,9 @@ class TaskDetailVerb(Button):
 class TaskDetailPanel(Vertical):
     """Render shared task detail from the injected dashboard view contract."""
 
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding(TASK_WINDOW_KEY, TASK_WINDOW_ACTION, "Task window", show=False)
+    ]
     DEFAULT_CSS = """
     #task-detail-panel { width: 100%; height: auto; }
     #task-detail-identity { height: auto; padding: 0; color: $steel-blue; }
@@ -220,14 +223,14 @@ class TaskDetailPanel(Vertical):
         width: 100%; height: auto; border-top: solid $neutral-border;
     }
     #task-detail-verbs { width: 100%; height: 1; }
-    #task-detail-verbs Button, #task-detail-workspace-tools Button {
+    #task-detail-verbs Button {
         width: auto; min-width: 1; height: 1; margin: 0 2 0 0; padding: 0;
         border: none; background: $background; color: $steel-blue;
         content-align: left middle; text-align: left; text-style: none;
     }
     #task-detail-actions Button:focus { text-style: reverse; }
     #task-detail-actions Button:hover { color: $primary-text; }
-    #task-detail-workspace-tools { width: 100%; height: auto; }
+    #task-detail-hint { height: 1; padding: 0 1; }
     .task-detail-section { height: auto; padding: 0; color: $primary-text; }
     TaskDetailPanel RowList { max-height: 10; overflow-y: auto; scrollbar-size-vertical: 1; }
     TaskDetailPanel.folds-compact RowList { max-height: 6; }
@@ -300,6 +303,7 @@ class TaskDetailPanel(Vertical):
                     )
                     self._folds[view_id] = fold
                     yield fold
+        yield DetailHintBar(widget_id=TASK_DETAIL_HINT)
 
     def _section_widgets(self, view_id: str) -> list[Widget]:
         timeline = self._timelines.get(view_id)
@@ -311,15 +315,6 @@ class TaskDetailPanel(Vertical):
         ]
         if view_id == TASK_VIEW_RELATIONSHIPS:
             widgets.append(RowList(widget_id=TASK_DETAIL_RELATED_LIST))
-        if view_id == TASK_VIEW_WORKSPACE:
-            widgets.append(
-                HorizontalScroll(
-                    Button("Task window", id=TASK_DETAIL_WINDOW_BUTTON),
-                    Button("Leader pane", id=TASK_DETAIL_LEADER_BUTTON),
-                    Button("Implementer pane", id=TASK_DETAIL_IMPLEMENTER_BUTTON),
-                    id=TASK_DETAIL_WORKSPACE_TOOLS,
-                )
-            )
         return widgets
 
     async def on_mount(self) -> None:
@@ -359,6 +354,7 @@ class TaskDetailPanel(Vertical):
         fold = self._fold_of(event.widget)
         if fold is not None:
             self._folds_list().make_current(fold)
+        self._paint_hint()
         body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         if body in event.widget.ancestors:
             self._body_focus_generation += 1
@@ -369,6 +365,52 @@ class TaskDetailPanel(Vertical):
                     animate=False,
                 )
                 return
+
+    def on_descendant_blur(self, event: events.DescendantBlur) -> None:
+        del event
+        self.call_after_refresh(self._paint_hint)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        del parameters
+        return self._task_window_available() if action == TASK_WINDOW_ACTION else True
+
+    async def action_task_window(self) -> None:
+        await self._navigate_task_window()
+
+    def _task_window_available(self) -> bool:
+        view = self._view
+        fold = self._fold_of(self.screen.focused)
+        return (
+            view is not None
+            and fold is not None
+            and fold.view_id == TASK_VIEW_WORKSPACE
+            and view.status not in TERMINAL_STATUSES
+            and view.window_id is not None
+        )
+
+    def _hint_target(self) -> HintTarget | None:
+        focused = self.screen.focused
+        fold = self._fold_of(focused)
+        if fold is None:
+            return None
+        if focused is fold.header:
+            return HintTarget.HEADER
+        return FOLD_HINT_TARGETS.get(fold.view_id)
+
+    def _paint_hint(self) -> None:
+        bars = self.query(DetailHintBar)
+        if not widget_is_attached(self) or not bars:
+            return
+        target = self._hint_target()
+        bars.first().show(
+            None
+            if target is None
+            else hint_for(
+                target,
+                task_window=self._task_window_available(),
+                keys_only=self._briefing_layout().tiny,
+            )
+        )
 
     def select_task(self, task_id: str | None) -> None:
         if task_id == self._task_id:
@@ -424,15 +466,6 @@ class TaskDetailPanel(Vertical):
             await self._run_briefing_action(
                 BriefingAction(button_id.removeprefix(TASK_DETAIL_ACTION_PREFIX))
             )
-            return
-        handlers = {
-            TASK_DETAIL_WINDOW_BUTTON: self._navigate_task_window,
-            TASK_DETAIL_LEADER_BUTTON: lambda: self._navigate_role_pane(Role.LEADER),
-            TASK_DETAIL_IMPLEMENTER_BUTTON: lambda: self._navigate_role_pane(Role.IMPLEMENTER),
-        }
-        handler = handlers.get(button_id)
-        if handler is not None:
-            await handler()
 
     @on(RowList.Paged, f"#{TASK_DETAIL_RELATED_LIST}")
     async def _related_paged(self, message: RowList.Paged) -> None:
@@ -544,6 +577,7 @@ class TaskDetailPanel(Vertical):
         del event
         if self._view is not None and self.is_mounted:
             self._render_activity(self._view)
+            self._paint_hint()
 
     def _screen_is_active(self) -> bool:
         return screen_is_active(self)
@@ -645,17 +679,6 @@ class TaskDetailPanel(Vertical):
             await callback(self._task_id)
             if callback is not None
             else "Task window navigation is unavailable."
-        )
-
-    async def _navigate_role_pane(self, role: Role) -> None:
-        if self._task_id is None:
-            await self._show_navigation_result("Select a task before opening a role pane.")
-            return
-        callback = self._widget_context.navigate_role_pane
-        await self._show_navigation_result(
-            await callback(self._task_id, role.value)
-            if callback is not None
-            else f"{role.value} pane navigation is unavailable."
         )
 
     async def _navigate_home(self) -> None:
@@ -762,21 +785,11 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_RESULTS}", Static).update(ResultsBody(view.results))
         self.query_one(f"#{TASK_DETAIL_DECISIONS}", Static).update(DecisionsBody(view))
         self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(WorkspaceBody(view, Path.home()))
-        self.query_one(f"#{TASK_DETAIL_WORKSPACE_TOOLS}").display = (
-            view.status not in TERMINAL_STATUSES
-        )
-        self.query_one(f"#{TASK_DETAIL_WINDOW_BUTTON}", Button).disabled = view.window_id is None
-        recorded_panes = {pane.role: pane.recorded_target for pane in view.role_panes}
-        self.query_one(f"#{TASK_DETAIL_LEADER_BUTTON}", Button).disabled = (
-            recorded_panes.get(Role.LEADER.value) is None
-        )
-        self.query_one(f"#{TASK_DETAIL_IMPLEMENTER_BUTTON}", Button).disabled = (
-            recorded_panes.get(Role.IMPLEMENTER.value) is None
-        )
         if self._folds[TASK_VIEW_USAGE].is_open:
             self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(self._usage_body(view))
         blocker.display = evidence is not None
         self._paint_headlines(view)
+        self._paint_hint()
         if self._on_initial_content is not None and not self._initial_content_reported:
             self._initial_content_reported = True
             self.call_after_refresh(self._on_initial_content)
@@ -878,21 +891,20 @@ class TaskDetailPanel(Vertical):
             if relationships is not None and relationships.has_more
             else None
         )
-        hint = key_hint(RELATIONSHIPS_HINT, SECONDARY_TEXT_COLOR)
         notes: list[str] = []
         if relationships is None:
             notes.append(RELATIONSHIPS_UNAVAILABLE)
         else:
             if relationships.page_offset > 0 or relationships.has_more:
                 page = relationships.page_offset // relationships.page_size + 1
-                hint.append_text(grey(f"{HEADING_SEPARATOR}{PAGE_LABEL} {page}"))
+                notes.append(f"{PAGE_LABEL} {page}")
             if (
                 view.status_reason == StatusReason.SUPERSEDED.value
                 and relationships.replacement_count == 0
             ):
                 notes.append(NO_REPLACEMENT_TASKS)
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update(
-            Group(*([hint] if self._related_rows else []), *(grey(note) for note in notes))
+            Group(*(grey(note) for note in notes))
         )
 
     def _render_ownership(self, view: TaskDetailView) -> None:

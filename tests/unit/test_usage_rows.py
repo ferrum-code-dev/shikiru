@@ -1,11 +1,17 @@
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from rich.console import Console
 
 from shikiru.dashboard.contract import TaskSessionView
 from shikiru.dashboard.usage_body import Column, UsageBody, usage_rows
 from shikiru.domain.levels import UsageLevel
+from shikiru.ui.section import BOLD_STEEL
+from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
+
+if TYPE_CHECKING:
+    from rich.console import Group
+    from rich.text import Text
 
 DASH = "\N{EM DASH}"
 
@@ -88,6 +94,13 @@ def test_usage_table_orders_current_first_humanises_values_and_drops_columns_by_
     assert usage_rows(SESSIONS, 60).widths[Column.MODEL] < len(SESSIONS[0].model)
 
 
+def _heading_text(view: Any) -> Text:
+    console = Console(width=100)
+    body = UsageBody(view, quota_warn_pct=80, quota_alert_pct=95)
+    group = cast("Group", next(iter(body.__rich_console__(console, console.options))))
+    return cast("Text", group.renderables[0])
+
+
 def test_usage_body_starts_with_the_totals_not_its_fold_title() -> None:
     view: Any = SimpleNamespace(usage=object(), sessions=SESSIONS, quota_observations=())
     console = Console(width=100, record=True, color_system=None)
@@ -97,3 +110,7 @@ def test_usage_body_starts_with_the_totals_not_its_fold_title() -> None:
     first = console.export_text().splitlines()[0]
     assert first.startswith("$")
     assert first.endswith("tokens")
+    heading = _heading_text(view)
+    painted = {(heading.plain[span.start : span.end], str(span.style)) for span in heading.spans}
+    assert (first.split(" · ")[-1].removesuffix(" tokens"), BOLD_STEEL) in painted
+    assert (" tokens", SECONDARY_TEXT_COLOR) in painted

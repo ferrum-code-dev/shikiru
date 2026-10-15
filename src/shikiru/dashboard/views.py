@@ -47,7 +47,6 @@ from shikiru.dashboard.contract import (
     TaskReferenceView,
     TaskRelationshipsView,
     TaskReportView,
-    TaskRolePaneView,
     TaskSessionView,
     TaskTestView,
     TaskTimelineCategory,
@@ -1036,13 +1035,6 @@ class StateDashboardViews:
             branch=task.repo.branch if task.repo is not None else None,
             worktree_path=str(self._queries.task_worktree_path(task.id)),
             window_id=task.window_id,
-            role_panes=tuple(
-                TaskRolePaneView(
-                    role=role.value,
-                    recorded_target=task.panes.get(role),
-                )
-                for role in TASK_ROLES
-            ),
             sessions=self._with_context_levels(
                 project_task_sessions(
                     detail.sessions,

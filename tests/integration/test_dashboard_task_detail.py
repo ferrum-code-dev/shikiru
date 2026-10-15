@@ -222,7 +222,6 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import (
         NavigateHome,
-        NavigateRolePane,
         NavigateTaskWindow,
         OpenPaletteContext,
         TaskDetailView,
@@ -291,7 +290,6 @@ def _dashboard_app(
     focus_task: str | None,
     widget_names: list[str],
     navigate_task_window: NavigateTaskWindow | None = None,
-    navigate_role_pane: NavigateRolePane | None = None,
     navigate_home: NavigateHome | None = None,
     open_palette_context: OpenPaletteContext | None = None,
     clock: Clock | None = None,
@@ -319,7 +317,6 @@ def _dashboard_app(
         widget_names=widget_names,
         open_palette_context=open_palette_context,
         navigate_task_window=navigate_task_window,
-        navigate_role_pane=navigate_role_pane,
         navigate_home=navigate_home,
     )
 
@@ -1967,7 +1964,10 @@ async def _assert_responsive_task_actions(
 async def _assert_task_context_keeps_priority(app: DashboardApp, pilot: Pilot[None]) -> None:
     await choose_details_entry(pilot, TASK_VIEW_CONTEXT)
     await wait_until(
-        lambda: "Priority 5" in _text(app.screen.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)),
+        lambda: (
+            "Priority high (5)"
+            in _text(app.screen.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static))
+        ),
         timeout=UI_WAIT_SECONDS,
     )
 
@@ -2380,7 +2380,7 @@ async def test_fixed_task_view_shows_no_project_widgets_and_keeps_workspace_reac
             )
             await pilot.press("escape")
             await _open_task_view(app, pilot, TASK_VIEW_WORKSPACE)
-            assert app.screen.query_one("#task-detail-window", Button).region.width > 0
+            assert app.screen.query_one("#task-detail-workspace", Static).region.width > 0
     finally:
         reader.close()
 
@@ -2405,23 +2405,9 @@ async def test_navigation_uses_activation_time_targets_and_terminal_cleanup_crea
             TMUX_ACTIVE_WINDOW_FORMAT,
         )
         assert f"{context.window_current} 1" in active_window_rows.stdout.splitlines()
-        assert await context.navigation.role_pane(task.id, Role.LEADER) == (
-            f"{task.id} leader: opened existing role pane"
-        )
-        active_pane_rows = await tmux_server.run(
-            "list-panes",
-            "-t",
-            context.window_current,
-            "-F",
-            TMUX_ACTIVE_PANE_FORMAT,
-        )
-        assert f"{context.pane_current} 1" in active_pane_rows.stdout.splitlines()
         assert CommandQueue(connection, context.clock).pending() == context.pending_before
         await context.tmux.kill_window(context.window_current)
         assert await context.navigation.task_window(task.id) == (
-            f"{task.id}: {TASK_WINDOW_MISSING}"
-        )
-        assert await context.navigation.role_pane(task.id, Role.LEADER) == (
             f"{task.id}: {TASK_WINDOW_MISSING}"
         )
 
@@ -2443,9 +2429,6 @@ async def test_navigation_uses_activation_time_targets_and_terminal_cleanup_crea
         )
 
         assert await context.navigation.task_window(task.id) == (f"{task.id}: {TASK_TERMINAL}")
-        assert await context.navigation.role_pane(task.id, Role.LEADER) == (
-            f"{task.id}: {TASK_TERMINAL}"
-        )
         windows_after = await tmux_server.run(
             "list-windows",
             "-t",
@@ -2454,98 +2437,8 @@ async def test_navigation_uses_activation_time_targets_and_terminal_cleanup_crea
             TMUX_WINDOW_ID_FORMAT,
         )
         assert windows_after.stdout == windows_before.stdout
-
-        app = _dashboard_app(
-            reader,
-            context.project_root,
-            focus_task=task.id,
-            widget_names=TASK_DETAIL_WIDGETS,
-            navigate_task_window=context.navigation.task_window,
-        )
-        async with app.run_test(size=(36, 24)) as pilot:
-            identity = app.query_one("#task-detail-identity", Static)
-            await wait_until(lambda: task.title in _text(identity), timeout=UI_WAIT_SECONDS)
-            assert "done" in _text(identity).casefold()
-            workspace = _text(app.query_one("#task-detail-workspace", Static))
-            assert str(task_root(context.project_root, task.id)) in workspace
-            button = app.query_one("#task-detail-window", Button)
-            button.focus()
-            await pilot.press("enter")
-            feedback = app.query_one("#task-detail-feedback", Static)
-            await wait_until(lambda: TASK_TERMINAL in _text(feedback), timeout=UI_WAIT_SECONDS)
-            final_windows = await tmux_server.run(
-                "list-windows",
-                "-t",
-                context.session_target,
-                "-F",
-                TMUX_WINDOW_ID_FORMAT,
-            )
-            assert final_windows.stdout == windows_before.stdout
     finally:
         reader.close()
-
-
-async def test_role_navigation_rejects_a_recorded_pane_moved_to_another_window(
-    connection: Connection,
-    database: Database,
-    tmp_path: Path,
-    tmux_server: TmuxServer,
-) -> None:
-    context = await _navigation_context(connection, database, tmp_path, tmux_server)
-    try:
-        spare_pane = await context.tmux.split_window(
-            context.window_current,
-            axis="v",
-            size_pct=50,
-        )
-        await tmux_server.run(
-            "join-pane",
-            "-s",
-            context.pane_current,
-            "-t",
-            context.window_old,
-        )
-        assert await context.tmux.window_id(context.pane_current) == context.window_old
-        await context.tmux.select_window(context.window_current)
-        await context.tmux.select_pane(spare_pane)
-        windows_before = await tmux_server.run(
-            "list-windows",
-            "-t",
-            context.session_target,
-            "-F",
-            TMUX_WINDOW_ID_FORMAT,
-        )
-
-        result = await context.navigation.role_pane(context.task.id, Role.LEADER)
-
-        assert result == f"{context.task.id} leader: {TASK_ROLE_PANE_MISMATCH}"
-        windows_after = await tmux_server.run(
-            "list-windows",
-            "-t",
-            context.session_target,
-            "-F",
-            TMUX_WINDOW_ID_FORMAT,
-        )
-        assert windows_after.stdout == windows_before.stdout
-        active_window_rows = await tmux_server.run(
-            "list-windows",
-            "-t",
-            context.session_target,
-            "-F",
-            TMUX_ACTIVE_WINDOW_FORMAT,
-        )
-        assert f"{context.window_current} 1" in active_window_rows.stdout.splitlines()
-        active_pane_rows = await tmux_server.run(
-            "list-panes",
-            "-t",
-            context.window_current,
-            "-F",
-            TMUX_ACTIVE_PANE_FORMAT,
-        )
-        assert f"{spare_pane} 1" in active_pane_rows.stdout.splitlines()
-        assert CommandQueue(connection, context.clock).pending() == context.pending_before
-    finally:
-        context.reader.close()
 
 
 @dataclass(frozen=True)

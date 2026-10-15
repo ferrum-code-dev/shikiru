@@ -411,36 +411,6 @@ class TaskNavigation:
             return f"{task_id}: {TASK_WINDOW_MISSING}: {error}"
         return f"{task_id}: {TASK_TARGET_OPENED}"
 
-    async def role_pane(self, task_id: str, role: Role) -> str:
-        """Select the task's current recorded role pane or explain why it is unavailable."""
-        task = self._queries.get_task_state(task_id)
-        if task is None:
-            return f"{task_id}: {TASK_MISSING}"
-        if task.status in (Status.DONE, Status.CANCELLED):
-            return f"{task_id}: {TERMINAL_TASK_TARGET}"
-        if task.window_id is None or not await self._tmux.target_exists(task.window_id):
-            return f"{task_id}: {TASK_WINDOW_MISSING}"
-        pane_id = task.panes.get(role)
-        return await self._select_role_pane(task_id, role, pane_id, task.window_id)
-
-    async def _select_role_pane(
-        self,
-        task_id: str,
-        role: Role,
-        pane_id: str | None,
-        window_id: str,
-    ) -> str:
-        if pane_id is None or not await self._tmux.pane_exists(pane_id):
-            reason = TASK_ROLE_PANE_UNRECORDED if pane_id is None else TASK_ROLE_PANE_MISSING
-            return f"{task_id} {role.value}: {reason}"
-        try:
-            if await self._tmux.window_id(pane_id) != window_id:
-                return f"{task_id} {role.value}: {TASK_ROLE_PANE_WINDOW_MISMATCH}"
-            await self._tmux.select_pane(pane_id)
-        except ShikiruError as error:
-            return f"{task_id} {role.value}: {TASK_ROLE_PANE_MISSING}: {error}"
-        return f"{task_id} {role.value}: {ROLE_TARGET_OPENED}"
-
     async def home(self) -> str:
         """Select the existing home window or report that it is unavailable."""
         target = await home_window_target(self._tmux, self._session_target)

@@ -10,14 +10,13 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Input, Select, Static
 
-from shikiru.dashboard.details_list_view import EVENTS_HINT
 from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.section_rows import timeline_cells, timeline_meta
 from shikiru.domain.tasks import Role
 from shikiru.errors import ShikiruError
 from shikiru.ui.keys import key_hint
 from shikiru.ui.screen import widget_is_current
-from shikiru.ui.section import BOLD_STEEL, grey
+from shikiru.ui.section import grey
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
 if TYPE_CHECKING:
@@ -39,7 +38,6 @@ PAUSED_LABEL = "paused · End to follow"
 REFRESH_FAILED = "Evidence timeline refresh failed"
 FILTER_KEY = "f"
 TOGGLE_FILTERS_ACTION = "toggle_filters"
-FILTER_LABEL = " filter"
 SELECTED_MAX_LINES = 4
 ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 FILTER_NOTE_SEPARATOR = ", "
@@ -53,7 +51,6 @@ class TimelineIds:
 
     root: str
     title: str
-    hint: str
     filters: str
     role: str
     turn: str
@@ -146,7 +143,6 @@ class TimelineSection(Vertical):
 
     def compose(self) -> ComposeResult:
         yield Static("", id=self.ids.title, classes="timeline-heading", markup=False)
-        yield Static("", id=self.ids.hint, classes="timeline-heading", markup=False)
         if self._filterable:
             with Horizontal(id=self.ids.filters, classes="timeline-filters") as filters:
                 filters.display = False
@@ -211,7 +207,7 @@ class TimelineSection(Vertical):
         self._generation += 1
         if not self.is_mounted:
             return
-        for static_id in (self.ids.title, self.ids.hint, self.ids.selected):
+        for static_id in (self.ids.title, self.ids.selected):
             self.query_one(f"#{static_id}", Static).update("")
         if self._filterable:
             self.query_one(f"#{self.ids.filters}", Horizontal).display = False
@@ -370,12 +366,6 @@ class TimelineSection(Vertical):
         if notes:
             heading.append_text(grey(HEADING_SEPARATOR + FILTER_NOTE_SEPARATOR.join(notes)))
         self.query_one(f"#{self.ids.title}", Static).update(heading)
-        hint = key_hint(EVENTS_HINT, SECONDARY_TEXT_COLOR)
-        if self._filterable:
-            hint.append(HEADING_SEPARATOR, style=SECONDARY_TEXT_COLOR)
-            hint.append(FILTER_KEY, style=BOLD_STEEL)
-            hint.append(FILTER_LABEL, style=SECONDARY_TEXT_COLOR)
-        self.query_one(f"#{self.ids.hint}", Static).update(hint)
 
     def _paint_selection(self) -> None:
         page = self._page

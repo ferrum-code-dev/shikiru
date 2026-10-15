@@ -1946,7 +1946,8 @@ Refs: `dashboard/detail_fold.py` (`FoldHeader` bindings/`on_click`, `DetailFold.
 
 ### Task 215: Bottom hint line, Workspace, Settings, Usage
 Refs: `detail.py` (`on_descendant_focus`, hint Statics, Workspace buttons, `_navigate_*`), `timeline_section.py` hint rows, `ui/keys.py`, `details_list_view.py` (`_settings_headline`), `usage_body.py` (`_heading`), dead `navigate_role_pane` plumbing.
-- [ ] One docked focus-driven hint line; per-section hint rows removed; `t` opens the task window with its hint; Workspace buttons and dead pane-navigation plumbing removed; Settings headline `<mode> · <word> priority`; Usage heading `123.4k tokens` styled as specified.
+- [x] One docked focus-driven hint line; per-section hint rows removed; `t` opens the task window with its hint; Workspace buttons and dead pane-navigation plumbing removed; Settings headline `<mode> · <word> priority`; Usage heading `123.4k tokens` styled as specified.
+  - Proof: at 100x40 a header shows `↑↓ move · Enter open/close`, the Events, Agent activity and Dependencies lists add their keys and `Esc back`, the Workspace header adds `t task window` only for a live task with a window, and `t` opened the window through the navigation callback only there; Settings reads `plan · high priority` and the Usage number is cyan bold. Esc on Home already stepped list to header to cleared selection (reproduced with real keys, not a bug). `uv run poe check` exited 0 (1632 passed, 14 skipped); collected cases 1653 before and after.
 
 ### Task 216: Events and Agent activity
 Refs: `timeline_section.py`, `section_rows.py` (`timeline_cells`, `timeline_meta`), `row_list.py`, `queries.py` agent category paging.

@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 from rich.text import Text
-from textual.widgets import Button, Input, ListView, Select, Static
+from textual.widgets import Input, ListView, Select, Static
 
 from shikiru.agents.contracts import QuotaWindow, Rung
 from shikiru.config.loader import load_settings
@@ -18,7 +18,6 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_RELATED_LIST,
     TASK_DETAIL_RELATIONSHIPS,
-    TASK_DETAIL_WINDOW_BUTTON,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_RELATIONSHIPS,
     TASK_VIEW_WORKSPACE,
@@ -395,9 +394,7 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
         panel.query_one(f"#{TASK_DETAIL_AGENT_ROLE}", Select).value = Role.LEADER.value
         panel.query_one(f"#{TASK_DETAIL_AGENT_TURN}", Input).value = "older turn"
         panel = await _open_detail_view(panel, pilot, TASK_VIEW_EVIDENCE)
-        window_button = panel.query_one(f"#{TASK_DETAIL_WINDOW_BUTTON}", Button)
         panel = await _open_detail_view(panel, pilot, TASK_VIEW_WORKSPACE)
-        assert window_button.disabled
         feedback = panel.query_one(f"#{TASK_DETAIL_FEEDBACK}", Static)
         assert _static_text(feedback) == ""
 

@@ -2,23 +2,27 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from textual.widgets import Static
 
 from shikiru.clock import SystemClock
 from shikiru.dashboard.detail import (
+    TASK_DETAIL_HINT,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_RELATED_LIST,
-    TASK_DETAIL_WORKSPACE_TOOLS,
+    TASK_VIEW_AGENT,
+    TASK_VIEW_EVIDENCE,
     TASK_VIEW_RELATIONSHIPS,
     TASK_VIEW_REQUEST,
     TASK_VIEW_WORKSPACE,
     TaskDetailPanel,
 )
 from shikiru.dashboard.detail_fold import DetailFold
-from shikiru.dashboard.details_list_view import DetailsSection
+from shikiru.dashboard.detail_hint import HintTarget, hint_for
+from shikiru.dashboard.details_list_view import DetailsSection, section_headline
 from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, TriageReport
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
@@ -161,7 +165,17 @@ async def test_dependencies_align_colour_a_cancelled_blocker_and_open_on_enter(
         reader.close()
 
 
-async def test_workspace_tools_show_only_for_live_tasks_and_tables_repeat_no_title(
+SETTINGS_HEADLINES = (
+    ("implement", 0, "implement · standard priority"),
+    ("plan", 5, "plan · high priority"),
+    ("implement", -2, "implement · low priority"),
+    (None, 1, "high priority"),
+    ("plan", None, "plan"),
+    (None, None, None),
+)
+
+
+async def test_workspace_and_settings_tables_repeat_no_title(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -170,7 +184,7 @@ async def test_workspace_tools_show_only_for_live_tasks_and_tables_repeat_no_tit
     clock = FakeClock(START)
     reader = StateReader(database, SystemClock())
     try:
-        for status, tools_shown in ((Status.RUNNING, True), (Status.DONE, False)):
+        for status in (Status.RUNNING, Status.DONE):
             task = seed_task(connection, clock, title="Workspace target", priority=3)
             TaskStore(connection, clock).apply_transition(
                 task.id, Transition.stay(task, step=None, status=status)
@@ -183,11 +197,8 @@ async def test_workspace_tools_show_only_for_live_tasks_and_tables_repeat_no_tit
             )
             async with WidgetHostApp(panel).run_test(size=(PANEL_WIDTH, 40)):
                 await _loaded(panel, task.id)
-                tools = panel.query_one(f"#{TASK_DETAIL_WORKSPACE_TOOLS}")
                 await wait_until(
-                    lambda tools=tools, shown=tools_shown, panel=panel: (
-                        tools.display is shown and bool(_body_lines(panel, "task-detail-workspace"))
-                    ),
+                    lambda panel=panel: bool(_body_lines(panel, "task-detail-workspace")),
                     timeout=UI_WAIT_SECONDS,
                 )
                 await wait_until(
@@ -198,6 +209,71 @@ async def test_workspace_tools_show_only_for_live_tasks_and_tables_repeat_no_tit
                 settings = _body_lines(panel, "task-detail-context-info")
                 assert workspace[0].startswith("Path"), status
                 assert settings[0].startswith("Submitted"), status
-                assert any(line.startswith("Priority") and line.endswith("3") for line in settings)
+                assert any(
+                    line.startswith("Priority") and line.endswith("high (3)") for line in settings
+                )
     finally:
         reader.close()
+    for mode, priority, headline in SETTINGS_HEADLINES:
+        view: Any = SimpleNamespace(mode=mode, priority=priority)
+        assert section_headline(DetailsSection.SETTINGS, view) == headline
+
+
+async def _shows_hint(panel: TaskDetailPanel, expected: str) -> None:
+    await wait_until(
+        lambda: plain_text(panel.query_one(f"#{TASK_DETAIL_HINT}", Static).content) == expected,
+        timeout=UI_WAIT_SECONDS,
+    )
+
+
+ARROWS = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW}"
+HEADER_HINT = f"{ARROWS} move · Enter open/close"
+FOCUS_HINTS = (
+    (TASK_VIEW_EVIDENCE, f"{ARROWS} select · End follow · Esc back"),
+    (TASK_VIEW_AGENT, f"{ARROWS} select · End follow · f filter · Esc back"),
+    (TASK_VIEW_RELATIONSHIPS, f"{ARROWS} select · Enter open · Esc back"),
+    (TASK_VIEW_WORKSPACE, f"{ARROWS} move · Enter open/close · t task window"),
+)
+
+
+async def test_bottom_hint_follows_focus_and_t_opens_the_task_window_only_from_a_live_workspace(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    store = TaskStore(connection, clock)
+    live = seed_task(connection, clock, title="Live")
+    done = seed_task(connection, clock, title="Done")
+    store.set_window(live.id, "@1")
+    store.set_window(done.id, "@2")
+    store.apply_transition(done.id, Transition.stay(done, step=None, status=Status.DONE))
+    store.apply_transition(live.id, Transition.stay(live, step=None, status=Status.RUNNING))
+    reader = StateReader(database, SystemClock())
+    opened: list[str] = []
+
+    async def open_window(task_id: str) -> str:
+        opened.append(task_id)
+        return task_id
+
+    context = replace(widget_context(reader, project_root, clock), navigate_task_window=open_window)
+
+    try:
+        for task in (live, done):
+            opened.clear()
+            panel = TaskDetailPanel(context, task.id, fixed=True, initial_view=TASK_VIEW_REQUEST)
+            async with WidgetHostApp(panel).run_test(size=(PANEL_WIDTH, 40)) as pilot:
+                await _loaded(panel, task.id)
+                panel.focus_folds()
+                await _shows_hint(panel, HEADER_HINT)
+                for view_id, hint in FOCUS_HINTS:
+                    panel.open_view(view_id)
+                    no_window = task is done and view_id == TASK_VIEW_WORKSPACE
+                    await _shows_hint(panel, HEADER_HINT if no_window else hint)
+                    await pilot.press("t")
+                if task is live:
+                    await wait_until(lambda: opened == [live.id], timeout=UI_WAIT_SECONDS)
+                assert opened == ([live.id] if task is live else [])
+    finally:
+        reader.close()
+    tiny = hint_for(HintTarget.EVENTS, task_window=False, keys_only=True)
+    assert tiny.plain == f"{ARROWS} · End · Esc"

@@ -12,7 +12,6 @@ from shikiru.agents.registry import AgentRegistry
 from shikiru.clock import Clock, SystemClock
 from shikiru.config.loader import load_default_orchestration, load_session_settings, load_settings
 from shikiru.config.settings import DOCKER_SCOPE_ALL, PULL_REQUEST_INTEGRATION
-from shikiru.domain.tasks import Role
 from shikiru.engine.acceptance import AcceptanceGuard
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.cosmetic_decorator import CosmeticDecorator
@@ -399,9 +398,6 @@ async def run_dashboard(
             session_target,
         )
 
-        async def navigate_role_pane(task_id: str, role_name: str) -> str:
-            return await navigation.role_pane(task_id, Role(role_name))
-
         app_instance = None
         resolution_drafts = dashboard_resolution_module.ResolutionDrafts()
 
@@ -466,7 +462,6 @@ async def run_dashboard(
             open_palette_context=open_palette_context,
             resolution_screen=resolution_screen,
             navigate_task_window=navigation.task_window,
-            navigate_role_pane=navigate_role_pane,
             navigate_home=navigation.home,
             tmux_detach_hint=tmux_detach_hint,
             detach_tmux_client=detach_tmux_client,
