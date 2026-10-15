@@ -54,6 +54,7 @@ if TYPE_CHECKING:
 
     from shikiru.dashboard.app import DashboardApp
     from shikiru.dashboard.contract import PaletteRequest
+    from shikiru.store.commands import CommandQueue
     from shikiru.store.database import Database
     from tests.support.store import Connection
 
@@ -102,6 +103,53 @@ async def _opened(app: ResolutionHost) -> ResolutionScreen:
 
 async def _type(pilot: Pilot[None], text: str) -> None:
     await pilot.press(*text)
+
+
+def _row_above_answer(screen: ResolutionScreen) -> Widget:
+    answer = screen.query_one("#resolution-answer", TextArea)
+    assert answer.parent is not None
+    siblings = list(answer.parent.children)
+    return siblings[siblings.index(answer) - 1]
+
+
+def _needs_input_host(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+) -> tuple[ResolutionHost, CommandQueue]:
+    clock = FakeClock(_START)
+    reader = StateReader(database, clock)
+    request.addfinalizer(reader.close)
+    task = seed_task(connection, clock, title="Box follows row")
+    escalation, _ = seed_escalation(
+        connection,
+        clock,
+        task.id,
+        tmp_path,
+        EscalationReason.DECISION_REQUIRED,
+        needs_input=True,
+    )
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
+    host = ResolutionHost(resolution_factory(commands, queries, clock, reader), escalation.id)
+    return host, queue
+
+
+async def _focused_box_after(app: ResolutionHost, row: int) -> TextArea:
+    screen = app.screen
+    assert isinstance(screen, ResolutionScreen)
+    answer = screen.query_one("#resolution-answer", TextArea)
+    await wait_until(lambda: app.focused is answer, timeout=UI_WAIT_SECONDS)
+    assert _row_above_answer(screen) is _rows(screen)[row]
+    return answer
+
+
+async def _back_in_list(app: ResolutionHost) -> None:
+    await wait_until(
+        lambda: app.focused is not None and app.focused.id == "resolution-choices",
+        timeout=UI_WAIT_SECONDS,
+    )
+    assert isinstance(app.screen, ResolutionScreen)
 
 
 @pytest.mark.parametrize(
@@ -226,70 +274,61 @@ async def test_each_send_route_queues_one_resolution_the_engine_applies(
     )
 
 
-async def test_the_answer_box_follows_its_row_and_the_keys_move_between_box_and_list(
+async def test_the_answer_box_follows_its_row_and_esc_hides_it_unless_the_own_draft_remains(
     connection: Connection,
     database: Database,
     tmp_path: Path,
     request: pytest.FixtureRequest,
 ) -> None:
-    clock = FakeClock(_START)
-    reader = StateReader(database, clock)
-    request.addfinalizer(reader.close)
-    task = seed_task(connection, clock, title="Box follows row")
-    escalation, _ = seed_escalation(
-        connection,
-        clock,
-        task.id,
-        tmp_path,
-        EscalationReason.DECISION_REQUIRED,
-        needs_input=True,
-    )
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = ResolutionHost(resolution_factory(commands, queries, clock, reader), escalation.id)
-
-    async def focused_box_after(row: int) -> TextArea:
-        screen = app.screen
-        assert isinstance(screen, ResolutionScreen)
-        answer = screen.query_one("#resolution-answer", TextArea)
-        await wait_until(lambda: app.focused is answer, timeout=UI_WAIT_SECONDS)
-        assert answer.parent is not None
-        siblings = list(answer.parent.children)
-        assert siblings[siblings.index(answer) - 1] is _rows(screen)[row]
-        return answer
-
-    async def back_in_list() -> None:
-        await wait_until(
-            lambda: app.focused is not None and app.focused.id == "resolution-choices",
-            timeout=UI_WAIT_SECONDS,
-        )
-        assert isinstance(app.screen, ResolutionScreen)
+    app, queue = _needs_input_host(connection, database, tmp_path, request)
 
     async with app.run_test(size=_SIZE) as pilot:
-        await _opened(app)
-        await pilot.press("down", "right")
-        answer = await focused_box_after(1)
+        screen = await _opened(app)
+        await pilot.press("right", "left", "down")
+        await wait_until(
+            lambda: _rows(screen)[1].has_class(_SELECTED_CLASS), timeout=UI_WAIT_SECONDS
+        )
+        await _back_in_list(app)
+        assert not screen.query_one("#resolution-answer", TextArea).display
+        await pilot.press("enter")
+        answer = await _focused_box_after(app, 1)
         await _type(pilot, _DETAILS)
         await pilot.press("enter")
         await wait_until(lambda: answer.document.line_count == 2, timeout=UI_WAIT_SECONDS)
-        await pilot.press("left")
-        assert app.focused is answer
-        await pilot.press("up", "home")
-        await wait_until(lambda: answer.cursor_location == (0, 0), timeout=UI_WAIT_SECONDS)
-        await pilot.press("left")
-        await back_in_list()
-        await pilot.press("right")
-        await focused_box_after(1)
         await pilot.press("escape")
-        await back_in_list()
-        await pilot.press("down", "enter")
-        answer = await focused_box_after(2)
+        await _back_in_list(app)
+        await wait_until(lambda: not answer.display, timeout=UI_WAIT_SECONDS)
+        await pilot.press("enter")
+        answer = await _focused_box_after(app, 1)
+        assert answer.text == ""
+        await pilot.press("shift+tab")
+        await _back_in_list(app)
+        assert answer.display
+        await pilot.press("down")
+        await wait_until(lambda: not answer.display, timeout=UI_WAIT_SECONDS)
+        await pilot.press("enter")
+        answer = await _focused_box_after(app, 2)
         assert answer.text == ""
         await _type(pilot, _OWN_TEXT)
         await pilot.press("escape")
-        await back_in_list()
-        await pilot.press("up", "enter")
-        answer = await focused_box_after(1)
+        await _back_in_list(app)
+        assert answer.display
+        assert answer.text == _OWN_TEXT
+        await pilot.press("up")
+        await wait_until(
+            lambda: _rows(screen)[1].has_class(_SELECTED_CLASS), timeout=UI_WAIT_SECONDS
+        )
+        assert answer.display
+        await pilot.press("enter")
+        answer = await _focused_box_after(app, 1)
         assert answer.text == ""
+        await _type(pilot, _DETAILS)
+        await pilot.press("escape")
+        await _back_in_list(app)
+        assert _row_above_answer(screen) is _rows(screen)[2]
+        assert answer.text == _OWN_TEXT
+        await pilot.press("enter")
+        answer = await _focused_box_after(app, 1)
         await pilot.press("ctrl+s")
         await wait_until(lambda: app.results == [True], timeout=UI_WAIT_SECONDS)
 

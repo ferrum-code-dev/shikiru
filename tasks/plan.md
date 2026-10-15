@@ -1915,8 +1915,9 @@ Scope: [fourteenth review](../docs/tui-feedback-fourteenth-review.md); the opera
 
 ### Task 209: Resolution panel — Enter/Esc only, hide the edit area
 Refs: `dashboard/resolution.py` (`_ACTION_EDIT`, `action_edit`, `_AnswerBox.Exited`, `action_cursor_left`, `_START_OF_TEXT`, `check_action`, `_answer_exited`, `_open_answer`, `_paint`, `_answer_for`, drafts), `resolution_view.py` (`_EDIT_HINT`, `_BOX_HINTS`), `test_dashboard_resolution.py`.
-- [ ] Right/Left bindings and everything only they used are removed; hints are `↑↓ select · Enter edit` and `Ctrl+S send · Enter new line · Esc back`; docs corrected.
-- [ ] Esc hides the edit area (alternative text discarded, own-answer draft kept and visible); moving to another row hides an unfocused area; focus always moves to the list first.
+- [x] Right/Left bindings and everything only they used are removed; hints are `↑↓ select · Enter edit` and `Ctrl+S send · Enter new line · Esc back`; docs corrected.
+- [x] Esc hides the edit area (alternative text discarded, own-answer draft kept and visible); moving to another row hides an unfocused area; focus always moves to the list first.
+  - Proof: the box test reproduced the bug first (Esc left the area displayed) and passes now, with Right/Left removed and a stale-draft step that fails when the Esc handler keeps the box under the alternative. A probe on the real ResolutionScreen at 100x40 and 48 columns, colour and NO_COLOR showed Enter opening the box, Esc hiding it with focus on the list and the list hint `↑↓ select · Enter edit`, the own-answer draft kept under its row through row moves, and Shift+Tab then a row move hiding an unfocused box. `uv run poe check` exited 0 (1630 passed, 14 skipped, 91.44% coverage); collected cases 1651 before and after.
 
 ### Task 210: Details turn lines
 Refs: `domain/attempts.py` (`_turn_item`, `_implementation`, `_verdict`, tones), `resolution_view.py`, `test_domain_attempts.py`.

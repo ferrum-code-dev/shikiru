@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, cast, override
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.text import Text
 from textual import on
@@ -62,11 +62,9 @@ _LEAVE_KEY = "escape"
 _ACTION_MOVE = "move"
 _ACTION_ACTIVATE = "activate"
 _ACTION_TOGGLE_TRIED = "toggle_tried"
-_ACTION_EDIT = "edit"
-_SELECTION_ACTIONS = frozenset({_ACTION_MOVE, _ACTION_ACTIVATE, _ACTION_TOGGLE_TRIED, _ACTION_EDIT})
+_SELECTION_ACTIONS = frozenset({_ACTION_MOVE, _ACTION_ACTIVATE, _ACTION_TOGGLE_TRIED})
 _PREFILL_SEPARATOR = " \N{EM DASH} "
 _SUBMIT_KEY = "enter"
-_START_OF_TEXT = (0, 0)
 _MOVE_STEPS = {"up": -1, "down": 1}
 
 
@@ -145,13 +143,6 @@ class _AnswerBox(TextArea):
             event.prevent_default()
             self.post_message(self.Exited())
 
-    @override
-    def action_cursor_left(self, select: bool = False) -> None:
-        if not select and self.selection.end == _START_OF_TEXT and self.selection.is_empty:
-            self.post_message(self.Exited())
-        else:
-            super().action_cursor_left(select)
-
 
 class ResolutionScreen(ModalScreen[bool]):
     """Resolve one escalation from a choice list; dismisses `True` once a resolution is queued."""
@@ -163,7 +154,6 @@ class ResolutionScreen(ModalScreen[bool]):
         Binding("down", f"{_ACTION_MOVE}(1)", "Next choice", show=False, priority=True),
         Binding(_SUBMIT_KEY, _ACTION_ACTIVATE, "Send", show=False),
         Binding("t", _ACTION_TOGGLE_TRIED, "Details", show=False),
-        Binding("right", _ACTION_EDIT, "Edit", show=False),
     ]
     DEFAULT_CSS = (
         POPUP_CSS
@@ -276,8 +266,6 @@ class ResolutionScreen(ModalScreen[bool]):
                 return False
             if isinstance(self.focused, _TriedSection) and action != _ACTION_TOGGLE_TRIED:
                 return False
-            if action == _ACTION_EDIT:
-                return self._editable(self._selected)
         return True
 
     def action_close(self) -> None:
@@ -294,10 +282,6 @@ class ResolutionScreen(ModalScreen[bool]):
         """Send the selected choice; Cancel asks for a second Enter."""
         if self._panel is not None:
             self._activate(self._selected)
-
-    def action_edit(self) -> None:
-        """Enter the answer box under the selected editable row."""
-        self._open_answer(self._selected)
 
     def action_toggle_tried(self) -> None:
         """Expand or collapse `Details`."""
@@ -346,6 +330,7 @@ class ResolutionScreen(ModalScreen[bool]):
     def _answer_exited(self, message: _AnswerBox.Exited) -> None:
         message.stop()
         self.set_focus(self.query_one("#resolution-choices", _ChoiceList), scroll_visible=False)
+        self._show_answer(self._resting_answer_row())
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         del event
@@ -392,6 +377,9 @@ class ResolutionScreen(ModalScreen[bool]):
             self._selected,
         )
 
+    def _resting_answer_row(self) -> int | None:
+        return self._own_answer_index() if self._draft() else None
+
     async def _refresh(self) -> None:
         if not self.is_mounted:
             return
@@ -400,7 +388,7 @@ class ResolutionScreen(ModalScreen[bool]):
         self._panel = panel
         if panel is not None and previous is not None and panel.choices != previous.choices:
             self._selected = min(self._selected, len(panel.choices) - 1)
-            self._answer_for = self._own_answer_index() if self._draft() else None
+            self._answer_for = self._resting_answer_row()
             await self.recompose()
             self.call_after_refresh(self._after_recompose)
             return
@@ -474,6 +462,8 @@ class ResolutionScreen(ModalScreen[bool]):
         self.call_after_refresh(frame.content_ready)
 
     def _select(self, index: int) -> None:
+        if index != self._selected and not isinstance(self.focused, _AnswerBox):
+            self._show_answer(self._resting_answer_row())
         self._selected = index
         self._cancel_armed = False
         self._send_error = None
@@ -511,17 +501,22 @@ class ResolutionScreen(ModalScreen[bool]):
     def _open_answer(self, index: int) -> None:
         if not self._editable(index):
             return
+        self._show_answer(index)
         box = self.query_one("#resolution-answer", _AnswerBox)
-        if self._answer_for != index:
-            self._answer_for = index
-            self.query_one("#resolution-choices", _ChoiceList).move_child(
-                box, after=list(self.query(_ChoiceRow))[index]
-            )
-            box.load_text(self._draft() if index == self._own_answer_index() else "")
-        self._paint()
-        self._relayout()
         box.move_cursor(box.document.end)
         self.set_focus(box)
+
+    def _show_answer(self, index: int | None) -> None:
+        if index != self._answer_for:
+            self._answer_for = index
+            box = self.query_one("#resolution-answer", _AnswerBox)
+            if index is not None:
+                self.query_one("#resolution-choices", _ChoiceList).move_child(
+                    box, after=list(self.query(_ChoiceRow))[index]
+                )
+                box.load_text(self._draft() if index == self._own_answer_index() else "")
+            self._relayout()
+        self._paint()
 
     def _send_choice(self, choice: PanelChoice) -> None:
         if choice.kind is ChoiceKind.ANSWER_OPTION:
