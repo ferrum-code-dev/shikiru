@@ -340,3 +340,8 @@ Fourteenth-review scope and evidence: [fourteenth review](../docs/tui-feedback-f
 - [x] Task 221: An implement turn ended by a consult is done
 - [x] Task 222: Fold headlines, Summary and deciders
 - [x] Task 219: Verify the fourteenth review, reconcile the reference and docs
+
+Fifteenth-review scope: [fifteenth review](../docs/tui-feedback-fifteenth-review.md).
+
+- [ ] Task 223: Message, Pause and Cancel action popups
+- [ ] Task 224: Help panel tabs

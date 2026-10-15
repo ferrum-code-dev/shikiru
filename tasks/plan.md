@@ -1983,3 +1983,16 @@ Refs: `dashboard/timeline_section.py` (`StatusChanged`, `on_mount`, `reset`), `d
 Refs: Tasks 209–218; design 03/05/06, `tui-focus.md`, `tui-workspace.md`, `tui-parity.md`, the HTML reference.
 - [x] Native before/after of every item; plain and `TERM=dumb NO_COLOR=1` gates; HTML reference and docs match the TUI (exact srcdoc round-trip, Chrome check); spec marked delivered; record; test-count trim at or below 1,651; plan and todo ticked.
   - Proof: every item was run natively against the real Home, panel and resolution screen in colour and `NO_COLOR` from 130x44 to 40x8; the flaky activity-table test (unwaited headline), the Agent activity filter bar switching Home tasks on Up/Down and three colour tests run without a colour terminal were fixed, and tiny-pane limits are parked. The test trim returned the collected cases to 1,651 (1,654 before); the HTML reference round-trips exactly (SHA-256 `f3b11659...f2f0`) and matched the native colours in headless Chrome; record `docs/release-readiness-2026-10-15-phase11-fourteenth-review.md`. Plain and `TERM=dumb NO_COLOR=1` gates are green (1630 passed each).
+
+## Action popups and help (fifteenth review)
+
+Scope: [fifteenth review](../docs/tui-feedback-fifteenth-review.md); the operator approved the decisions.
+
+### Task 223: Message, Pause and Cancel action popups
+Refs: `dashboard/palette.py` `PaletteScreen`, `dashboard/detail.py` `_open_palette`, `ui/popup.py`, `dashboard/resolution.py` edit-area CSS, `ui/keys.py` `key_hint`, `tests/integration/test_dashboard_palette.py`.
+- [ ] Message title is `Message agent · T-123` (other actions keep the role); popups opened from task details have no `Back to actions` and Esc closes them, Ctrl+P popups keep it.
+- [ ] Message shows the hint `Ctrl+S queue message · Enter new line` instead of a button, Enter inserts a newline and Ctrl+S queues; the Role drop-down has no blank entry; the Message area uses the shared edit-area style hoisted into `ui/popup.py`.
+- [ ] Pause shows `Enter pause task` activated by Enter; Cancel shows `Enter cancel task`, then `Enter again to cancel task` after the first Enter (Esc or another key backs out); no scrollbar for short static text at 100, 60, 48 and 40 columns; test count does not grow.
+
+### Task 224: Help panel tabs
+- [ ] Help panel tabs (title and acceptance written by the operator before the task starts).
