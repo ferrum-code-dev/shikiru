@@ -112,9 +112,9 @@ class TimelineSection(Vertical):
     """
 
     class StatusChanged(Message):
-        """The section's `following` or `paused` status changed; `None` clears it."""
+        """The section's `following` or `paused` status, announced on mount and on every change."""
 
-        def __init__(self, section: TimelineSection, status: str | None) -> None:
+        def __init__(self, section: TimelineSection, status: str) -> None:
             super().__init__()
             self.section = section
             self.status = status
@@ -146,6 +146,10 @@ class TimelineSection(Vertical):
         yield selected
         if self._filterable:
             yield TimelineFilterBar(widget_id=self.ids.filters)
+
+    def on_mount(self) -> None:
+        """Announce the initial status so its fold header shows it before it is ever opened."""
+        self._announce_status()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         del parameters
@@ -207,7 +211,7 @@ class TimelineSection(Vertical):
             bar = self.query_one(f"#{self.ids.filters}", TimelineFilterBar)
             bar.reset()
             bar.display = False
-        self.post_message(self.StatusChanged(self, None))
+        self._announce_status()
         self.query_one(f"#{self.ids.list}", RowList).set_rows(
             (), selected=0, empty=NO_TIMELINE_ROWS
         )

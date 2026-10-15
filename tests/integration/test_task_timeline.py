@@ -961,11 +961,6 @@ async def test_activity_tables_show_status_columns_full_text_block_filter_and_ol
 
     try:
         async with WidgetHostApp(panel).run_test(size=(100, 60)) as pilot:
-            panel.open_view(TASK_VIEW_EVIDENCE)
-            panel.open_view(TASK_VIEW_AGENT)
-            await wait_until(
-                lambda: bool(_rows(panel)) and bool(_agent_rows(panel)), timeout=UI_WAIT_SECONDS
-            )
             for view_id in (TASK_VIEW_EVIDENCE, TASK_VIEW_AGENT):
                 header = next(
                     fold.header for fold in panel.query(DetailFold) if fold.view_id == view_id
@@ -976,6 +971,11 @@ async def test_activity_tables_show_status_columns_full_text_block_filter_and_ol
                     ).endswith("following"),
                     timeout=UI_WAIT_SECONDS,
                 )
+            panel.open_view(TASK_VIEW_EVIDENCE)
+            panel.open_view(TASK_VIEW_AGENT)
+            await wait_until(
+                lambda: bool(_rows(panel)) and bool(_agent_rows(panel)), timeout=UI_WAIT_SECONDS
+            )
 
             newest = _agent_rows(panel)[0]
             assert re.search(r"\d\d:\d\d:\d\d\s+impl\s+t3\s+", newest)
@@ -1018,6 +1018,14 @@ async def test_activity_tables_show_status_columns_full_text_block_filter_and_ol
                 timeout=UI_WAIT_SECONDS,
             )
             assert fold_headline(panel, TASK_VIEW_AGENT) == "paused"
+            panel.select_task(seed_task(connection, clock, title="Next task").id)
+            await wait_until(
+                lambda: all(
+                    fold_headline(panel, view_id) == "following"
+                    for view_id in (TASK_VIEW_EVIDENCE, TASK_VIEW_AGENT)
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
     finally:
         reader.close()
 
