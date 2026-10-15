@@ -107,6 +107,7 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     choose_details_entry,
+    focus_inspector_details,
     ignore_palette_action,
     state_views,
 )
@@ -1884,8 +1885,8 @@ async def test_detail_ctrl_p_carries_the_task_and_its_current_role(
             ).focus()
             await pilot.press("enter")
             await wait_until(lambda: len(opened) == 3, timeout=UI_WAIT_SECONDS)
-            app.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll).focus()
-            await pilot.press("enter")
+            await focus_inspector_details(pilot)
+            await pilot.press("v")
             await wait_until(lambda: isinstance(app.focused, FoldHeader), timeout=UI_WAIT_SECONDS)
 
         assert opened == [
@@ -2633,7 +2634,7 @@ async def test_escape_steps_from_home_inspector_fold_list_to_header_to_cleared_s
             reader, project_root, focus_task=None, widget_names=TASK_DETAIL_WIDGETS
         )
         async with app.run_test(size=(120, 40)) as pilot:
-            base = await _open_escape_base(app, task.id)
+            base = await _open_escape_base(app, pilot, task.id)
             panel = app.query_one("#task-detail-panel", TaskDetailPanel)
             await choose_details_entry(pilot, TASK_VIEW_EVIDENCE)
             await wait_until(
@@ -2655,7 +2656,7 @@ async def test_escape_steps_from_home_inspector_fold_list_to_header_to_cleared_s
         reader.close()
 
 
-async def _open_escape_base(app: DashboardApp, task_id: str) -> Screen[object]:
+async def _open_escape_base(app: DashboardApp, pilot: Pilot[None], task_id: str) -> Screen[object]:
     row = f"#task-row-{task_id}"
     await wait_until(lambda: bool(app.query(row)), timeout=UI_WAIT_SECONDS)
     task_list = cast("ListView", app.query_one(row).parent)
@@ -2665,5 +2666,5 @@ async def _open_escape_base(app: DashboardApp, task_id: str) -> Screen[object]:
         lambda: task_id in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
         timeout=UI_WAIT_SECONDS,
     )
-    app.query_one("#task-detail-details", Button).focus()
+    await focus_inspector_details(pilot)
     return app.screen

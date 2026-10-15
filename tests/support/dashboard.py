@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from textual.app import App, ComposeResult
-from textual.widgets import Button, Label, ListItem, ListView, Static
+from textual.widgets import Label, ListItem, ListView, Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.activity import RoleViewTail
@@ -18,11 +18,12 @@ from shikiru.dashboard.contract import (
     ResourceView,
     WidgetContext,
 )
-from shikiru.dashboard.detail import TASK_DETAIL_DETAILS_BUTTON
+from shikiru.dashboard.detail import TASK_DETAIL_BRIEFING, TaskDetailPanel
 from shikiru.dashboard.detail_fold import DetailFold, FoldHeader
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.operator.queries import OperatorQueries
+from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.theme import install_theme
 from tests.support.render import plain_text
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
@@ -135,9 +136,16 @@ async def choose_details_entry(pilot: Pilot[None], entry_id: str) -> None:
 
 
 async def focus_inspector_details(pilot: Pilot[None]) -> None:
-    details = pilot.app.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button)
-    details.focus()
-    await wait_until(lambda: pilot.app.focused is details, timeout=UI_WAIT_SECONDS)
+    panel = pilot.app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+    await wait_until(
+        lambda: bool(panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).content),
+        timeout=UI_WAIT_SECONDS,
+    )
+    panel.focus_summary()
+    await wait_until(
+        lambda: pilot.app.focused is not None and panel in pilot.app.focused.ancestors,
+        timeout=UI_WAIT_SECONDS,
+    )
 
 
 async def choose_inspector_details_entry(pilot: Pilot[None], entry_id: str) -> None:

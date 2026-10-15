@@ -10,7 +10,15 @@ from textual.widgets import ListView, Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
-from shikiru.dashboard.detail import TASK_DETAIL_IDENTITY
+from shikiru.dashboard.detail import (
+    TASK_DETAIL_BODY,
+    TASK_DETAIL_IDENTITY,
+    TASK_DETAIL_VERBS,
+    TASK_VIEW_REQUEST,
+    TaskDetailBody,
+    TaskDetailVerb,
+)
+from shikiru.dashboard.detail_fold import DetailFold, FoldHeader
 from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Status
@@ -44,6 +52,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("colour_terminal")
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _WIDE = (120, 40)
+_SCROLLING_DETAIL = (80, 30)
 _COMPACT = (48, 20)
 _TINY = (20, 8)
 _SIZES = (_WIDE, _COMPACT, _TINY)
@@ -312,3 +321,36 @@ async def test_escape_clears_the_selection_and_the_list_that_held_focus_leaves_n
         stops = await _tab_cycle(recent_home, pilot)
         assert active not in stops
         assert recent not in stops
+
+
+async def test_tab_into_details_lands_on_the_first_verb_and_down_on_a_verb_keeps_the_task(
+    recent_home: DashboardApp,
+) -> None:
+    async with recent_home.run_test(size=_SCROLLING_DETAIL) as pilot:
+        body = recent_home.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
+        await wait_until(lambda: body.max_scroll_y > 0, timeout=UI_WAIT_SECONDS)
+        active, recent = await _settled_lists(recent_home, pilot)
+        await pilot.press("tab")
+        await wait_until(
+            lambda: isinstance(recent_home.focused, TaskDetailVerb), timeout=UI_WAIT_SECONDS
+        )
+        verbs = recent_home.query_one(f"#{TASK_DETAIL_VERBS}").displayed_children
+        assert recent_home.focused is verbs[0]
+        assert body not in recent_home.screen.focus_chain
+        selected = active.highlighted_child
+        await pilot.press("down", "shift+tab")
+        await wait_until(lambda: recent_home.focused is active, timeout=UI_WAIT_SECONDS)
+        assert active.highlighted_child is selected
+
+        done_row = recent.children[0]
+        await pilot.click(f"#{done_row.id}")
+        await wait_until(lambda: recent.highlighted_child is done_row, timeout=UI_WAIT_SECONDS)
+        await pilot.press("tab")
+        await wait_until(
+            lambda: isinstance(recent_home.focused, FoldHeader), timeout=UI_WAIT_SECONDS
+        )
+        header = recent_home.focused
+        assert isinstance(header, FoldHeader)
+        assert isinstance(header.parent, DetailFold)
+        assert header.parent.view_id == TASK_VIEW_REQUEST
+        assert not recent_home.query_one(f"#{TASK_DETAIL_VERBS}").displayed_children

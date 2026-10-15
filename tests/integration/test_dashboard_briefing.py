@@ -17,7 +17,6 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_ACTION_PREFIX,
     TASK_DETAIL_ACTIONS,
     TASK_DETAIL_BRIEFING,
-    TASK_DETAIL_DETAILS_BUTTON,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_VERBS,
 )
@@ -76,7 +75,6 @@ WIDE_SIZE = (100, 40)
 COMPACT_SIZE = (40, 40)
 TINY_SIZE = (40, 8)
 BRIEFING_SIZES = (WIDE_SIZE, (60, 40), (48, 40), COMPACT_SIZE, TINY_SIZE)
-BUTTON_LINE_PAD = 1
 BRANCH = "task/t-12"
 QUESTION = "Which failures should the parser retry?"
 LAST_WORDS = "Running the parser tests after the retry change."
@@ -562,8 +560,6 @@ async def test_every_offered_verb_stays_inside_the_actions_row_at_compact_width(
                 timeout=UI_WAIT_SECONDS,
             )
             row = app.query_one(f"#{TASK_DETAIL_ACTIONS}").region
-            details = app.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}").region
             for button in app.query(f"#{TASK_DETAIL_VERBS} Button"):
                 if button.display:
                     assert row.contains_region(button.region), (size, button.id)
-                    assert button.region.right - BUTTON_LINE_PAD <= details.x, (size, button.id)

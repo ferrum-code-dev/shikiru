@@ -51,6 +51,7 @@ from shikiru.dashboard.detail import (
     TASK_VIEW_USAGE,
     TaskDetailPanel,
     TaskDetailScreen,
+    TaskDetailVerb,
 )
 from shikiru.dashboard.detail_fold import FoldHeader
 from shikiru.dashboard.diagnostics import ProjectDiagnosticsPanel
@@ -210,7 +211,7 @@ EMPTY_CONTEXT_CHOICE = ""
 TASK_PALETTE_ROUTE_WORKER = "task-palette-route"
 _MAX_CONTEXTUAL_PALETTE_DRAFTS = 16
 _TASK_MOVE_STEPS = {"up": -1, "down": 1}
-_ARROW_KEY_OWNERS = (ListView, RowList, FoldHeader)
+_ARROW_KEY_OWNERS = (ListView, RowList, FoldHeader, TaskDetailVerb)
 
 
 @dataclass
@@ -1099,8 +1100,7 @@ class DashboardApp(App[None]):
         width: 100%; height: auto; max-height: 3; padding: 0 1; margin-bottom: 1;
         background: $surface;
     }
-    #usage:focus, #resources:focus, #escalations:focus, #escalations.armed,
-    #focus-main #task-detail-body:focus {
+    #usage:focus, #resources:focus, #escalations:focus, #escalations.armed {
         background: $selected-surface;
     }
     #focus-main { height: 1fr; min-height: 3; }
@@ -1574,7 +1574,7 @@ class DashboardApp(App[None]):
         else:
             panel = self._inline_task_panel(task_id)
             if panel is not None:
-                await panel.focus_folds()
+                panel.focus_folds()
             else:
                 self.push_screen(
                     TaskDetailScreen(
@@ -1702,7 +1702,7 @@ class DashboardApp(App[None]):
             else:
                 self.set_focus(self.query_one(f"#{_HOME_FOOTER_ACTIONS}", Button))
         else:
-            self.set_focus(self.query_one("#task-detail-body"))
+            self.query_one("#task-detail-panel", TaskDetailPanel).focus_summary()
         if self._motion_interval_seconds is not None:
             self.run_worker(self._motion_loop(), group="dashboard-motion", exclusive=True)
 
@@ -1808,7 +1808,7 @@ class DashboardApp(App[None]):
         elif event.key == TASK_DETAIL_VIEWS_KEY:
             panel = self._context_task_detail_panel()
             if panel is not None:
-                await panel.focus_folds()
+                panel.focus_folds()
             else:
                 await self.action_open_views()
         else:
@@ -2008,7 +2008,7 @@ class DashboardApp(App[None]):
     async def action_open_views(self) -> None:
         """Open configured filters, history and secondary dashboard widgets."""
         if self._focus_task is not None:
-            await self.query_one("#task-detail-panel", TaskDetailPanel).focus_folds()
+            self.query_one("#task-detail-panel", TaskDetailPanel).focus_folds()
             return
         self.push_screen(
             _ContextViewsScreen(self._context_choices()),

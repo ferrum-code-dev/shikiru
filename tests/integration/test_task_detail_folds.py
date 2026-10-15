@@ -6,13 +6,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from textual.widgets import Button, Input, Static
+from textual.widgets import Input, Static
 
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.detail import (
     TASK_DETAIL_AGENT_TURN,
-    TASK_DETAIL_DETAILS_BUTTON,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_TIMELINE_LIST,
     TASK_VIEW_AGENT,
@@ -30,8 +29,8 @@ from shikiru.paths import run_dir
 from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
-from shikiru.ui.tokens import SELECTED_SURFACE_COLOR, STEEL_BLUE
-from tests.support.cells import foregrounds, painted_backgrounds, rendered_lines
+from shikiru.ui.tokens import SELECTED_SURFACE_COLOR
+from tests.support.cells import painted_backgrounds, rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import WidgetHostApp, dashboard_app, list_rows, widget_context
@@ -165,7 +164,7 @@ async def test_header_keys_move_between_folds_and_open_or_close_them(
                     ),
                     timeout=UI_WAIT_SECONDS,
                 )
-                panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).press()
+                panel.focus_folds()
                 await wait_until(
                     lambda pilot=pilot: _focused_stop(pilot) == FIRST_FOLD,
                     timeout=UI_WAIT_SECONDS,
@@ -307,43 +306,6 @@ async def test_escape_returns_from_an_open_list_to_its_header_before_leaving(
         reader.close()
 
 
-@pytest.mark.usefixtures("colour_terminal")
-async def test_the_details_hint_and_a_paused_timeline_paint_their_key_names_steel_blue(
-    connection: Connection, database: Database, tmp_path: Path
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    task_id, _ = _seed(connection, project_root, clock, "Key names")
-    for index in range(3):
-        append_event(connection, clock, task_id, f"event-{index}")
-    reader = StateReader(database, SystemClock())
-    panel = TaskDetailPanel(widget_context(reader, project_root, clock), task_id, fixed=True)
-    try:
-        async with WidgetHostApp(panel).run_test(size=(100, 40)) as pilot:
-            await wait_until(
-                lambda: (
-                    task_id
-                    in plain_text(panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
-            hint = panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button)
-            assert set(foregrounds(hint, "\N{DOWNWARDS ARROW}")) == {STEEL_BLUE}
-            assert STEEL_BLUE not in foregrounds(hint, "details")
-            hint.press()
-            await wait_until(lambda: _focused_stop(pilot) == FIRST_FOLD, timeout=UI_WAIT_SECONDS)
-            await pilot.press("down", "down", "down", "enter")
-            await wait_until(
-                lambda: _focused_stop(pilot) == TASK_DETAIL_TIMELINE_LIST, timeout=UI_WAIT_SECONDS
-            )
-            await pilot.press("down", "down")
-            title = panel.query_one("#task-detail-timeline-title", Static)
-            await wait_until(lambda: "paused" in plain_text(title.content), timeout=UI_WAIT_SECONDS)
-            assert set(foregrounds(title, "End")) == {STEEL_BLUE}
-    finally:
-        reader.close()
-
-
 def _painted_text(widget: Widget) -> str:
     return "\n".join("".join(char for char, _ in cells) for cells in rendered_lines(widget))
 
@@ -375,11 +337,14 @@ async def test_selection_is_the_selected_background_with_no_bar_glyph(
                 ),
                 timeout=UI_WAIT_SECONDS,
             )
-            panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).press()
+            panel.focus_folds()
             await wait_until(lambda: _focused_stop(pilot) == FIRST_FOLD, timeout=UI_WAIT_SECONDS)
             focused_header = _fold_header(panel, FIRST_FOLD)
+            await wait_until(
+                lambda: painted_backgrounds(focused_header) == {SELECTED_SURFACE_COLOR},
+                timeout=UI_WAIT_SECONDS,
+            )
             assert LEFT_HALF_BLOCK not in _painted_text(focused_header)
-            assert painted_backgrounds(focused_header) == {SELECTED_SURFACE_COLOR}
 
             await pilot.press("down", "down", "down", "enter")
             await wait_until(

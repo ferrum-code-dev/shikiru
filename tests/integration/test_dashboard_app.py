@@ -62,7 +62,6 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_DECISIONS,
-    TASK_DETAIL_DETAILS_BUTTON,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
     TASK_DETAIL_RELATED_LIST,
@@ -3706,7 +3705,7 @@ async def _exercise_inspector_mouse_and_native_escape(
     search = app.query_one("#task-browser-search", Input)
     await _select_home_task(app, task.id)
     assert task.id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
-    app.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button).focus()
+    await focus_inspector_details(pilot)
     await pilot.press("ctrl+p")
     await wait_until(
         lambda: isinstance(app.screen, PaletteScreen),
@@ -4666,7 +4665,7 @@ async def _assert_evidence_editor_shortcut_precedence(
     await pilot.press("escape")
     await wait_until(lambda: not native_select.expanded, timeout=UI_WAIT_SECONDS)
     assert app.screen is evidence_screen
-    app.query_one("#task-detail-body").focus()
+    await focus_inspector_details(pilot)
     await pilot.press("ctrl+p")
     assert palette_requests[-1].task_id == task_id
 

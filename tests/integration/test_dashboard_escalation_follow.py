@@ -15,9 +15,8 @@ from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.detail import (
     TASK_DETAIL_AGENT_LIST,
     TASK_DETAIL_AGENT_ROLE,
-    TASK_DETAIL_DETAILS_BUTTON,
+    TASK_VIEW_AGENT,
 )
-from shikiru.dashboard.details_list_view import DetailsSection
 from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Status, Step, Task
@@ -29,7 +28,12 @@ from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.tokens import AMBER, SECONDARY_TEXT_COLOR
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices, ignore_palette_action, state_views
+from tests.support.dashboard import (
+    StubServices,
+    choose_inspector_details_entry,
+    ignore_palette_action,
+    state_views,
+)
 from tests.support.escalations import (
     operator_services,
     resolution_factory,
@@ -358,10 +362,7 @@ async def test_arrows_move_an_expanded_select_in_task_detail_without_moving_the_
         await _select(home, pilot, home.plain)
         task_list = home.app.query_one(_TASK_LIST, ListView)
         selected = task_list.highlighted_child
-        await _tab_to(home, pilot, f"#{TASK_DETAIL_DETAILS_BUTTON}")
-        await pilot.press("enter")
-        agent = list(DetailsSection).index(DetailsSection.AGENT_ACTIVITY)
-        await pilot.press(*["down"] * agent, "enter")
+        await choose_inspector_details_entry(pilot, TASK_VIEW_AGENT)
         agent_list = home.app.query_one(f"#{TASK_DETAIL_AGENT_LIST}")
         await wait_until(lambda: agent_list.region.height > 0, timeout=UI_WAIT_SECONDS)
         agent_list.focus()

@@ -1931,7 +1931,8 @@ Refs: `domain/workflow.py` (`project_workflow`, `milestone_state`), `dashboard/v
 
 ### Task 212: Tab lands on the first verb; remove `↓ details`
 Refs: `dashboard/detail.py` (`TaskDetailBody.allow_focus`, details button, bindings, `TaskDetailScreen.on_mount`), `briefing_view.py` (`DETAILS_LABEL`, `details_label`), `app.py` (`_ARROW_KEY_OWNERS`), `tests/support/dashboard.py` helpers.
-- [ ] Body is not a Tab stop; Tab lands on the first verb (or the current fold header); the details button, labels, Enter/`v` panel bindings and CSS are gone; Up/Down on a verb do nothing; helpers and docs updated.
+- [x] Body is not a Tab stop; Tab lands on the first verb (or the current fold header); the details button, labels, Enter/`v` panel bindings and CSS are gone; Up/Down on a verb do nothing; helpers and docs updated.
+  - Proof: before the change, at 80x30 and 48x40 the task body took the first Tab stop and Down on the Done task's details button moved T-1 to T-2; now Tab from the Home list lands on the first verb (take over, message, pause, cancel) or on the fold header for a Done task, the body is never in the focus chain, and Up/Down on a verb keep the selection, verified natively in colour and NO_COLOR at 100x40, 48x40 and 40x40. The 40-column Home inspector still clips `Cancel` (verb row 33 cells, the four running-task verbs need 35). `uv run poe check` exited 0 (1630 passed, 14 skipped, coverage 91.43%), collected cases 1651 before and after; the load flake `test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions[size1]` failed once under load and passed alone three of three.
 
 ### Task 213: Briefing colours, labels and added tasks
 Refs: `briefing_view.py` (`_group`, `_commit_groups`, `NEEDED_LABEL`, `_time_line`, `_result_rows`), `plugins/widgets/header.py` (`_checkout_text`), `domain/results.py` (`PlanChange`), `dashboard/views.py` `_task_results`.

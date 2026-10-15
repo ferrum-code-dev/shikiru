@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, cast
 
 from rich.console import Group
 from rich.text import Text
@@ -21,7 +21,6 @@ from shikiru.dashboard.briefing_view import (
     Briefing,
     BriefingLayout,
     briefing_verbs,
-    details_label,
     header_text,
 )
 from shikiru.dashboard.contract import (
@@ -41,7 +40,6 @@ from shikiru.dashboard.fold_bodies import (
     SettingsBody,
     WorkspaceBody,
 )
-from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.section_rows import RelatedRow, blocker_evidence, relation_rows
 from shikiru.dashboard.timeline_section import (
@@ -74,8 +72,7 @@ from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
 if TYPE_CHECKING:
     from textual import events
-    from textual.app import App, ComposeResult
-    from textual.binding import BindingType
+    from textual.app import ComposeResult
     from textual.widget import Widget
     from textual.worker import Worker
 
@@ -99,7 +96,6 @@ TASK_DETAIL_BRIEFING = "task-detail-briefing"
 TASK_DETAIL_ACTIONS = "task-detail-actions"
 TASK_DETAIL_VERBS = "task-detail-verbs"
 TASK_DETAIL_ACTION_PREFIX = "task-detail-action-"
-TASK_DETAIL_DETAILS_BUTTON = "task-detail-details"
 TASK_DETAIL_POPUP_FRAME = "task-detail-popup-frame"
 TASK_DETAIL_POPUP_HEADER = "task-detail-popup-header"
 TASK_DETAIL_POPUP_TITLE = "task-detail-popup-title"
@@ -119,9 +115,6 @@ TASK_DETAIL_TINY_MAX_ROWS = 8
 _TASK_DETAIL_COMPACT_MAX_COLUMNS = 48
 _TASK_DETAIL_COMPACT_MAX_ROWS = 20
 TASK_DETAIL_VIEWS_KEY = "v"
-TASK_DETAIL_VIEWS_ACTION = "open_details"
-TASK_DETAIL_ENTER_KEY = "enter"
-TASK_DETAIL_ENTER_ACTION = "open_details"
 TASK_DETAIL_HELP_KEY = "question_mark"
 TASK_DETAIL_WORKSPACE_TOOLS = "task-detail-workspace-tools"
 TASK_DETAIL_BLOCKER = "task-detail-blocker"
@@ -181,14 +174,8 @@ AGE_NOW = "now"
 COMPACT_INSPECTOR_CLASS = "compact-inspector"
 
 
-class TaskDetailBody(VerticalScroll):
-    def __init__(self, *, always_focusable: bool) -> None:
-        super().__init__(id="task-detail-body")
-        self._always_focusable = always_focusable
-
-    def allow_focus(self) -> bool:
-        """Join the Tab chain when it is the whole task view or has content to scroll."""
-        return self._always_focusable or self.max_scroll_y > 0
+class TaskDetailBody(VerticalScroll, can_focus=False):
+    """Scrolls the detail to its focused child; it is never a Tab stop itself."""
 
     def on_resize(self, event: events.Resize) -> None:
         del event
@@ -201,13 +188,12 @@ class TaskDetailBody(VerticalScroll):
             )
 
 
+class TaskDetailVerb(Button):
+    """A briefing verb button of the task detail."""
+
+
 class TaskDetailPanel(Vertical):
     """Render shared task detail from the injected dashboard view contract."""
-
-    BINDINGS: ClassVar[list[BindingType]] = [
-        (TASK_DETAIL_VIEWS_KEY, TASK_DETAIL_VIEWS_ACTION, "Views"),
-        (TASK_DETAIL_ENTER_KEY, TASK_DETAIL_ENTER_ACTION, "Details"),
-    ]
 
     DEFAULT_CSS = """
     #task-detail-panel { width: 100%; height: auto; }
@@ -222,13 +208,12 @@ class TaskDetailPanel(Vertical):
     #task-detail-actions {
         width: 100%; height: auto; border-top: solid $neutral-border;
     }
-    #task-detail-verbs { width: 1fr; height: 1; }
-    #task-detail-verbs Button, #task-detail-details, #task-detail-workspace-tools Button {
+    #task-detail-verbs { width: 100%; height: 1; }
+    #task-detail-verbs Button, #task-detail-workspace-tools Button {
         width: auto; min-width: 1; height: 1; margin: 0; padding: 0;
         border: none; background: $background; color: $steel-blue;
         content-align: left middle; text-align: left; text-style: none;
     }
-    #task-detail-details { margin: 0; color: $secondary-text; }
     #task-detail-actions Button:focus { text-style: reverse; }
     #task-detail-actions Button:hover { color: $primary-text; }
     #task-detail-workspace-tools { width: 100%; height: auto; }
@@ -283,18 +268,16 @@ class TaskDetailPanel(Vertical):
         self._initial_content_reported = False
 
     def compose(self) -> ComposeResult:
-        with TaskDetailBody(always_focusable=self._fixed):
+        with TaskDetailBody(id=TASK_DETAIL_BODY):
             yield GatedStatic("Loading task detail…", id=TASK_DETAIL_IDENTITY, markup=False)
             yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
             yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
             yield GatedStatic("", id=TASK_DETAIL_BRIEFING, markup=False)
-            with Horizontal(id=TASK_DETAIL_ACTIONS):
-                with Horizontal(id=TASK_DETAIL_VERBS):
-                    for action in BriefingAction:
-                        yield Button(
-                            ACTION_LABELS[action], id=f"{TASK_DETAIL_ACTION_PREFIX}{action.value}"
-                        )
-                yield Button(details_label(compact=False), id=TASK_DETAIL_DETAILS_BUTTON)
+            with Horizontal(id=TASK_DETAIL_ACTIONS), Horizontal(id=TASK_DETAIL_VERBS):
+                for action in BriefingAction:
+                    yield TaskDetailVerb(
+                        ACTION_LABELS[action], id=f"{TASK_DETAIL_ACTION_PREFIX}{action.value}"
+                    )
             with DetailFolds(widget_id=TASK_DETAIL_FOLDS):
                 for section in DetailsSection:
                     view_id = DETAILS_SECTION_VIEWS[section]
@@ -432,7 +415,6 @@ class TaskDetailPanel(Vertical):
             )
             return
         handlers = {
-            TASK_DETAIL_DETAILS_BUTTON: self.focus_folds,
             TASK_DETAIL_WINDOW_BUTTON: self._navigate_task_window,
             TASK_DETAIL_LEADER_BUTTON: lambda: self._navigate_role_pane(Role.LEADER),
             TASK_DETAIL_IMPLEMENTER_BUTTON: lambda: self._navigate_role_pane(Role.IMPLEMENTER),
@@ -524,7 +506,7 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).update_if_changed(
             Briefing(view, now, layout)
         )
-        self._render_verbs(view, compact=layout.compact)
+        self._render_verbs(view)
 
     def _briefing_layout(self) -> BriefingLayout:
         compact = self.size.width <= _TASK_DETAIL_COMPACT_MAX_COLUMNS or self.has_class(
@@ -537,15 +519,15 @@ class TaskDetailPanel(Vertical):
             tiny=self.screen.size.height <= TASK_DETAIL_TINY_MAX_ROWS,
         )
 
-    def _render_verbs(self, view: TaskDetailView, *, compact: bool) -> None:
+    def _render_verbs(self, view: TaskDetailView) -> None:
         verbs = briefing_verbs(view)
         for action in BriefingAction:
             self.query_one(f"#{TASK_DETAIL_ACTION_PREFIX}{action.value}", Button).display = (
                 action in verbs
             )
-        details = self.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button)
-        details.label = details_label(compact=compact)
-        details.refresh(layout=True)
+        focused = self.screen.focused
+        if isinstance(focused, TaskDetailVerb) and not focused.display:
+            self.focus_summary()
 
     def on_resize(self, event: events.Resize) -> None:
         del event
@@ -603,21 +585,18 @@ class TaskDetailPanel(Vertical):
         """The view ids of the folds that are open."""
         return frozenset(view_id for view_id, fold in self._folds.items() if fold.is_open)
 
-    async def action_open_details(self) -> None:
-        await self.focus_folds()
-
-    async def focus_folds(self) -> None:
+    def focus_folds(self) -> None:
         """Move focus down to the section headers."""
         folds = self._folds_list()
         folds.focus_header(folds.current_fold)
 
-    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        del parameters
-        if action == TASK_DETAIL_VIEWS_ACTION and native_editor_has_focus(
-            cast("App[None]", self.app).focused
-        ):
-            return None
-        return True
+    def focus_summary(self) -> None:
+        """Focus the first verb the task offers, or the current fold header when it offers none."""
+        first_verb = next(iter(self.query_one(f"#{TASK_DETAIL_VERBS}").displayed_children), None)
+        if first_verb is not None:
+            first_verb.focus()
+            return
+        self.focus_folds()
 
     def open_view(self, view_id: str) -> None:
         """Open the fold for `view_id`, bring it into view and focus it."""
@@ -1006,15 +985,15 @@ class TaskDetailScreen(ModalScreen[None]):
                 on_initial_content=self.mark_popup_content_ready,
             )
 
-    async def on_mount(self) -> None:
+    def on_mount(self) -> None:
         self._apply_layout(self.size.width, self.size.height)
         panel = self.query_one("#task-detail-panel", TaskDetailPanel)
         if self._initial_view == TASK_VIEW_SUMMARY:
-            self.set_focus(panel.query_one(f"#{TASK_DETAIL_DETAILS_BUTTON}", Button))
+            panel.focus_summary()
         else:
             panel.open_view(self._initial_view)
         if self._focus_folds_on_mount:
-            await panel.focus_folds()
+            panel.focus_folds()
 
     def on_resize(self, event: events.Resize) -> None:
         self._apply_layout(event.size.width, event.size.height)

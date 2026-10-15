@@ -42,6 +42,7 @@ from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
     choose_details_entry,
+    focus_inspector_details,
     ignore_palette_action,
     list_rows,
     state_views,
@@ -300,7 +301,7 @@ async def _open_detail_view(
     pilot: Pilot[None],
     view_id: str,
 ) -> TaskDetailPanel:
-    panel.query_one("#task-detail-details", Button).focus()
+    await focus_inspector_details(pilot)
     await choose_details_entry(pilot, view_id)
     await wait_until(
         lambda: (

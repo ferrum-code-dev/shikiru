@@ -15,14 +15,12 @@ from shikiru.config.loader import load_settings
 from shikiru.dashboard.detail import (
     AGENT_TIMELINE_IDS,
     TASK_DETAIL_AGENT_ROLE,
-    TASK_DETAIL_BODY,
     TASK_DETAIL_TIMELINE_LIST,
     TASK_DETAIL_TIMELINE_SELECTED,
     TASK_DETAIL_TIMELINE_TITLE,
     TASK_VIEW_AGENT,
     TASK_VIEW_EVIDENCE,
     TIMELINE_SECTIONS,
-    TaskDetailBody,
     TaskDetailPanel,
 )
 from shikiru.dashboard.details_list_view import DetailsSection
@@ -49,8 +47,8 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
-    choose_details_entry,
     list_rows,
+    pick_details_entry,
     state_views,
     widget_context,
 )
@@ -97,8 +95,8 @@ FAILED_COMMAND_EXIT_CODE = 2
 async def _open_timeline_view(
     panel: TaskDetailPanel, pilot: Pilot[None], view: str = TASK_VIEW_EVIDENCE
 ) -> None:
-    panel.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody).focus()
-    await choose_details_entry(pilot, view)
+    panel.focus_folds()
+    await pick_details_entry(pilot, view)
     await wait_until(lambda: view in panel.open_views, timeout=UI_WAIT_SECONDS)
 
 
