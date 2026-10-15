@@ -28,6 +28,7 @@ Analysis: four read-only static analyses (Sonnet 5.5 medium). Nothing was run; t
 ## Follow-up findings
 
 - A consulting task showed `? Implement`: an `IMPLEMENT` entry followed by a `CONSULT` entry (the implementer asked for the consult) had no evidence of completion. A later `CONSULT` entry now ends the implement stage as done (Task 221); a re-entered implement is current again, and `?` still means an entered stage with no evidence.
+- Three operator findings in the task details folds (Task 222): the Results `Summary` label was cyan (only the briefing's `Summary` is cyan), the Decisions deciders had three styles, and the Events and Agent activity headlines (`following`/`paused`) appeared only after the fold had been opened and closed once. The label is grey, all three deciders are steel blue with their text labels kept, and each timeline section announces its status on mount and on reset, so the header shows it from the first render and after a task switch. The HTML reference's decider rules match (SHA-256 `b2a3175d767ca0bfd43f4cf1dd91ea0ee4b502c77e872cc2bc9bb64f45926b65`).
 
 ## Superseded accepted behaviour
 
