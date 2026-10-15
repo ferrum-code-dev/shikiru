@@ -1,6 +1,6 @@
 # Phase 11 thirteenth review: answering escalations, a readable task panel and lighter detail lists
 
-Status: planned (Tasks 197–208). This specification refines the [twelfth](tui-feedback-twelfth-review.md), [eleventh](tui-feedback-eleventh-review.md) and [tenth](tui-feedback-tenth-review.md) reviews where it differs. **The TUI is the source of truth**; the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 208).
+Status: delivered (Tasks 197–208, 2026-10-15), verified in the [thirteenth-review record](release-readiness-2026-10-15-phase11-thirteenth-review.md). This specification refines the [twelfth](tui-feedback-twelfth-review.md), [eleventh](tui-feedback-eleventh-review.md) and [tenth](tui-feedback-tenth-review.md) reviews where it differs. **The TUI is the source of truth**; the [HTML reference](design/references/focus-steel-approved.html) follows the product (Task 208).
 
 Analysis: four read-only static analyses (Sonnet 5.5 medium for the resolution panel, the task status data and the detail sections; Haiku 5.5 xhigh for selection bars and the Recent pager). Nothing was run; claims marked *unconfirmed* are reproduced by the implementing task first. The operator approved the layouts below on 2026-10-14.
 
