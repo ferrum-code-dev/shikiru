@@ -21,6 +21,7 @@ POPUP_CLOSE_CLASS = "popup-close-control"
 POPUP_RULE_CLASS = "popup-rule"
 POPUP_BODY_CLASS = "popup-body"
 POPUP_SECONDARY_CLASS = "popup-secondary"
+POPUP_EDIT_CLASS = "popup-edit"
 POPUP_CLOSE_LABEL = "Esc \N{MULTIPLICATION SIGN}"
 
 
@@ -223,6 +224,14 @@ POPUP_CONTROL_CSS = """
 }
 .popup-frame SelectOverlay:focus { border: solid $focus; }
 .popup-frame TextArea { scrollbar-size-vertical: $scrollbar-width; }
+.popup-frame TextArea.popup-edit {
+    height: auto; min-height: 2; max-height: 6; padding: 0;
+    border: none; border-bottom: solid $neutral-border; background: $background;
+}
+.popup-frame TextArea.popup-edit > .text-area--cursor-line { background: transparent; }
+.popup-frame TextArea.popup-edit:focus {
+    border: none; border-bottom: solid $focus; background: $selected-surface;
+}
 .popup-frame Select:disabled > SelectCurrent { color: $secondary-text; }
 .popup-frame Button.popup-close-control {
     width: auto; min-width: 5; height: 1; margin: 0; padding: 0 1;

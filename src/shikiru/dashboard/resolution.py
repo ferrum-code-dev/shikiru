@@ -32,6 +32,7 @@ from shikiru.ui.popup import (
     POPUP_BODY_CLASS,
     POPUP_CLOSE_CLASS,
     POPUP_CSS,
+    POPUP_EDIT_CLASS,
     POPUP_FRAME_CLASS,
     POPUP_HEADER_CLASS,
     POPUP_RULE_CLASS,
@@ -168,12 +169,7 @@ class ResolutionScreen(ModalScreen[bool]):
     #resolution-choices:focus { background-tint: transparent; }
     .resolution-choice { height: auto; width: 100%; }
     .resolution-choice.-selected { background: $selected-surface; }
-    #resolution-answer {
-        height: auto; min-height: 2; max-height: 6; margin: 0 0 0 3; padding: 0;
-        border: none; border-bottom: solid $neutral-border; background: $background;
-    }
-    #resolution-answer > .text-area--cursor-line { background: transparent; }
-    #resolution-answer:focus { border-bottom: solid $focus; background: $selected-surface; }
+    #resolution-answer { margin: 0 0 0 3; }
     """
     )
 
@@ -230,7 +226,11 @@ class ResolutionScreen(ModalScreen[bool]):
                         for index, choice in enumerate(panel.choices):
                             yield _ChoiceRow(index)
                             if choice.kind is ChoiceKind.OWN_ANSWER:
-                                yield _AnswerBox(id="resolution-answer", text=self._draft())
+                                yield _AnswerBox(
+                                    id="resolution-answer",
+                                    text=self._draft(),
+                                    classes=POPUP_EDIT_CLASS,
+                                )
                     if panel.details:
                         yield Rule(classes=POPUP_RULE_CLASS)
                         yield _TriedSection("", id="resolution-tried", markup=False)
