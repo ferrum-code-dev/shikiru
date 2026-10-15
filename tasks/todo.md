@@ -343,5 +343,5 @@ Fourteenth-review scope and evidence: [fourteenth review](../docs/tui-feedback-f
 
 Fifteenth-review scope: [fifteenth review](../docs/tui-feedback-fifteenth-review.md).
 
-- [ ] Task 223: Message, Pause and Cancel action popups
+- [x] Task 223: Message, Pause and Cancel action popups
 - [ ] Task 224: Help panel tabs

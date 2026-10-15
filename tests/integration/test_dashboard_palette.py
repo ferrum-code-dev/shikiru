@@ -6,11 +6,13 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, Select, Static, TextArea
+from textual.widgets._select import SelectOverlay
 
 from shikiru.agents.contracts import Rung
 from shikiru.dashboard.contract import PaletteRequest
 from shikiru.dashboard.palette import PaletteApp, PaletteScreen
 from shikiru.domain.commands import (
+    Cancel,
     CommandStatus,
     Pause,
     Prioritize,
@@ -24,6 +26,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Mode, Role, Status, Step
 from shikiru.errors import ConfigError
 from shikiru.operator.commands import COMMAND_ACK_WAIT_SECONDS, OperatorCommands
+from shikiru.operator.queries import TASK_ACTION_ROLES
 from shikiru.store.commands import CommandQueue
 from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.store.runs import RunStore
@@ -235,7 +238,7 @@ async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
         assert not menu.display
         assert screen.query_one("#field-role").display
         assert screen.query_one("#field-message").display
-        _assert_fixed_task_context_title(screen, task.id, "Leader")
+        _assert_fixed_task_context_title(screen, task.id)
         message = screen.query_one("#message", TextArea)
         await wait_until(lambda: app.focused is message, timeout=UI_WAIT_SECONDS)
         guidance = "Keep the new parser branch behind the existing validation."
@@ -418,10 +421,24 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(app)
-        screen.query_one("#message", TextArea).text = "Review the updated evidence."
-        await pilot.click("#palette-submit")
+        _assert_fixed_task_context_title(screen, task.id)
+        assert not screen.query_one("#palette-back-to-menu").display
+        role = cast("Select[str]", screen.query_one("#role", Select))
+        assert role.value == Role.IMPLEMENTER.value
+        assert role.query_one(SelectOverlay).option_count == len(TASK_ACTION_ROLES)
+        message = screen.query_one("#message", TextArea)
+        await wait_until(lambda: app.focused is message, timeout=UI_WAIT_SECONDS)
+        await pilot.press(*"Review", "enter", *"evidence")
+        assert message.text == "Review\nevidence"
+        await pilot.press("ctrl+s")
         await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         queued = queue.pending()[0]
+        assert queued.command == Say(
+            task_id=task.id,
+            role=Role.IMPLEMENTER,
+            text="Review\nevidence",
+            command_id=queued.id,
+        )
         returned = {"queued_for_next_turn": True}
         queue.mark_done(queued.id, returned)
         clock.advance(_POLL_SECONDS)
@@ -431,6 +448,56 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
         assert f"command {queued.id}" in feedback
         assert f"{task.id} · implementer" in feedback
         assert "guidance queued for the selected role's next turn" in feedback
+
+
+async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    task = seed_task(connection, clock, title="Enter confirmations")
+    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
+
+    def open_action(action: str) -> PaletteApp:
+        return _palette_app(
+            reader,
+            commands,
+            queries,
+            _selection_must_not_run,
+            initial_context=PaletteRequest(action=action, task_id=task.id),
+        )
+
+    app = open_action("cancel")
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(app)
+        submit = screen.query_one("#palette-submit", Button)
+        assert not screen.query_one("#palette-back-to-menu").display
+        assert not any(
+            screen.query_one(selector).show_vertical_scrollbar
+            for selector in ("#palette-form", "#palette-result-scroll")
+        )
+        await pilot.press("enter")
+        await wait_until(lambda: "again" in str(submit.label), timeout=UI_WAIT_SECONDS)
+        assert queue.pending() == []
+        await pilot.press("escape")
+        await wait_until(lambda: "again" not in str(submit.label), timeout=UI_WAIT_SECONDS)
+        assert app.screen is screen
+        await pilot.press("enter", "enter")
+        await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
+        assert queue.pending()[0].command == Cancel(
+            task_id=task.id, command_id=queue.pending()[0].id
+        )
+
+    app = open_action("pause")
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        await pilot.press("enter")
+        await wait_until(lambda: len(queue.pending()) == 2, timeout=UI_WAIT_SECONDS)
+        assert queue.pending()[1].command == Pause(task_id=task.id)
+        await pilot.press("escape")
+        await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
 
 
 async def test_palette_target_follows_search_choice_and_stays_manually_editable(
@@ -933,13 +1000,11 @@ def _static_text(screen: PaletteScreen, selector: str) -> str:
     return rendered.plain
 
 
-def _assert_fixed_task_context_title(screen: PaletteScreen, task_id: str, role_name: str) -> None:
+def _assert_fixed_task_context_title(screen: PaletteScreen, task_id: str) -> None:
     assert not screen.query_one("#field-task-search").display
     assert not screen.query_one("#field-task-choice").display
     assert not screen.query_one("#field-task-id").display
-    title = _static_text(screen, "#palette-title")
-    assert task_id in title
-    assert role_name in title
+    assert _static_text(screen, "#palette-title") == f"Message agent · {task_id}"
 
 
 async def _fill_submit(pilot: Pilot[None], screen: PaletteScreen, task: Task) -> None:
