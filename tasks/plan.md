@@ -1941,7 +1941,8 @@ Refs: `briefing_view.py` (`_group`, `_commit_groups`, `NEEDED_LABEL`, `_time_lin
 
 ### Task 214: Fold keys, click, blank line, cyan titles
 Refs: `dashboard/detail_fold.py` (`FoldHeader` bindings/`on_click`, `DetailFold.activate`/`toggle`, `.fold-body` padding), `details_list_view.py` (`_EntryLine`), `test_task_detail_folds.py`.
-- [ ] Left/Right removed; Enter opens and enters the list, Esc returns to the header, Enter on an open header folds, Space toggles; click toggles; blank row after an open fold only; cyan titles; headlines right-aligned.
+- [x] Left/Right removed; Enter opens and enters the list, Esc returns to the header, Enter on an open header folds, Space toggles; click toggles; blank row after an open fold only; cyan titles; headlines right-aligned.
+  - Proof: before the change the second click left the fold open (open-only `activate`); `DetailFold.toggle` now folds on a second click and Enter, Space toggles, Left/Right are gone, titles are steel blue (bold when focused) and headlines end at the header's right edge at 100, 48 and 40 columns, with the open fold's body ending in one blank row (padding) that vanishes when folded. Enter on Events lands in its list and Esc returns to the header without folding. `uv run poe check` exited 0 (1632 passed, 14 skipped, coverage 91.46%); collected cases 1653 before and after.
 
 ### Task 215: Bottom hint line, Workspace, Settings, Usage
 Refs: `detail.py` (`on_descendant_focus`, hint Statics, Workspace buttons, `_navigate_*`), `timeline_section.py` hint rows, `ui/keys.py`, `details_list_view.py` (`_settings_headline`), `usage_body.py` (`_heading`), dead `navigate_role_pane` plumbing.

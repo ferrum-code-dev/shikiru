@@ -27,15 +27,13 @@ _STEP_DOWN = 1
 
 
 class FoldHeader(Static):
-    """One focusable header row; ↑↓ move between headers, Enter/Space/→ open, ← close."""
+    """One focusable header row; ↑↓ move, Enter opens and enters or folds, Space toggles."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("up", f"move({_STEP_UP})", "Previous section", show=False),
         Binding("down", f"move({_STEP_DOWN})", "Next section", show=False),
-        Binding("enter", "open", "Open", show=False),
-        Binding("space", "open", "Open", show=False),
-        Binding("right", "open", "Open", show=False),
-        Binding("left", "close", "Close", show=False),
+        Binding("enter", "enter", "Open or close", show=False),
+        Binding("space", "toggle_open", "Open or close", show=False),
     ]
     DEFAULT_CSS = """
     FoldHeader { height: 1; width: 100%; }
@@ -59,19 +57,19 @@ class FoldHeader(Static):
     def on_click(self, event: events.Click) -> None:
         event.stop()
         self._fold.folds.focus_header(self._fold)
-        self._fold.activate()
+        self._fold.toggle()
 
     def action_move(self, step: int) -> None:
         """Focus the neighbouring header."""
         self._fold.folds.move(self._fold, step)
 
-    def action_open(self) -> None:
-        """Open the fold, or enter its list when it is already open."""
-        self._fold.activate()
+    def action_enter(self) -> None:
+        """Fold an open fold; open a closed one and enter its list."""
+        self._fold.toggle()
 
-    def action_close(self) -> None:
-        """Fold the body away."""
-        self._fold.set_open(False)
+    def action_toggle_open(self) -> None:
+        """Open or fold the body without leaving the header."""
+        self._fold.set_open(not self._fold.is_open)
 
 
 class DetailFold(Vertical):
@@ -79,7 +77,7 @@ class DetailFold(Vertical):
 
     DEFAULT_CSS = """
     DetailFold { height: auto; }
-    DetailFold .fold-body { height: auto; padding: 0 0 0 2; }
+    DetailFold .fold-body { height: auto; padding: 0 0 1 2; }
     """
 
     class Toggled(Message):
@@ -159,9 +157,17 @@ class DetailFold(Vertical):
             self.paint()
 
     def activate(self) -> None:
-        """Open a closed fold, or move into the list of an open one."""
+        """Open the fold and move into its list when it has one."""
         self.set_open(True)
         self.call_after_refresh(self.folds.focus_fold, self)
+
+    def toggle(self) -> None:
+        """Fold an open fold back to its header; open a closed one and enter its list."""
+        if self._open:
+            self.set_open(False)
+            self.folds.focus_header(self)
+        else:
+            self.activate()
 
     def paint(self) -> None:
         """Draw the header: mark, name and headline, highlighted while it has focus."""

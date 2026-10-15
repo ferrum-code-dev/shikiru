@@ -12,8 +12,8 @@ from rich.text import Text
 from shikiru.dashboard.briefing_view import VERDICT_LABELS, total_cost_text
 from shikiru.domain.results import ResultOutcome
 from shikiru.domain.tasks import Status
-from shikiru.ui.section import BOLD_PRIMARY, GROUP_SEPARATOR, grey
-from shikiru.ui.tokens import PRIMARY_TEXT_COLOR
+from shikiru.ui.section import BOLD_STEEL, GROUP_SEPARATOR, grey
+from shikiru.ui.tokens import STEEL_BLUE
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -75,10 +75,10 @@ class _EntryLine:
         del console
         entry = self.entry
         room = max(options.max_width - len(ROW_LEAD), 1)
-        headline = f"{_HEADLINE_GAP}{entry.headline}" if entry.headline else ""
-        if cell_len(entry.name) + cell_len(headline) > room:
+        headline = entry.headline or ""
+        if headline and cell_len(entry.name) + cell_len(_HEADLINE_GAP) + cell_len(headline) > room:
             headline = ""
-        name = Text(entry.name, style=BOLD_PRIMARY if self.selected else PRIMARY_TEXT_COLOR)
+        name = Text(entry.name, style=BOLD_STEEL if self.selected else STEEL_BLUE)
         name.truncate(room - cell_len(headline), overflow="ellipsis", pad=True)
         line = Text(ROW_LEAD)
         line.append_text(name)
@@ -87,7 +87,7 @@ class _EntryLine:
 
 
 def entry_renderable(entry: DetailsEntry, *, selected: bool) -> RenderableType:
-    """Return one row: the name in bold when selected, and the headline in grey on the right."""
+    """Return one row: steel-blue name (bold when selected), grey headline at the right."""
     return _EntryLine(entry, selected)
 
 

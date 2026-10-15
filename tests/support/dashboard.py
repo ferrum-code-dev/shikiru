@@ -171,6 +171,10 @@ async def pick_details_entry(pilot: Pilot[None], entry_id: str) -> None:
             lambda expected=expected: getattr(_focused_fold(pilot), "view_id", None) == expected,
             timeout=UI_WAIT_SECONDS,
         )
+    target = cast("DetailFold", _focused_fold(pilot))
+    if target.is_open:
+        await pilot.press("enter")
+        await wait_until(lambda: not target.is_open, timeout=UI_WAIT_SECONDS)
     await pilot.press("enter")
 
 

@@ -331,7 +331,7 @@ Fourteenth-review scope and evidence: [fourteenth review](../docs/tui-feedback-f
 - [x] Task 211: Stage states from the full step history
 - [x] Task 212: Tab lands on the first verb; remove `↓ details`
 - [x] Task 213: Briefing colours, labels and added tasks
-- [ ] Task 214: Fold keys, click, blank line, cyan titles
+- [x] Task 214: Fold keys, click, blank line, cyan titles
 - [ ] Task 215: Bottom hint line, Workspace, Settings, Usage
 - [ ] Task 216: Events and Agent activity
 - [ ] Task 217: Task description and Results
