@@ -63,7 +63,7 @@ _NEEDS_INPUT_MARK = "\N{LOWER RIGHT PENCIL}"
 _NEEDS_INPUT_TEXT = "needs your input"
 _DETAILS_TITLE = "Details"
 _TURNS_LABEL = "Turns"
-_ROLE_GAP = 1
+_PART_SEPARATOR = " \N{MIDDLE DOT} "
 _TURN_KINDS = frozenset({AttemptKind.TURN_OK, AttemptKind.TURN_FAILED, AttemptKind.VERDICT})
 _DETAIL_LABELS = {
     AttemptKind.REASON: "Reason",
@@ -202,13 +202,13 @@ def _toned(item: AttemptItem) -> Text:
     return Text.assemble(*((part.text, _TONE_STYLES[part.tone]) for part in item.parts))
 
 
-def _turn_rows(turns: list[AttemptItem]) -> RenderableType:
-    grid = Table.grid()
-    grid.add_column(no_wrap=True, width=max(len(item.label) for item in turns) + _ROLE_GAP)
-    grid.add_column(ratio=1)
-    for item in turns:
-        grid.add_row(Text(item.label, style=PRIMARY_TEXT_COLOR), _toned(item))
-    return grid
+def _turn_row(item: AttemptItem) -> Text:
+    styled = [(part.text, _TONE_STYLES[part.tone]) for part in item.parts]
+    role = (item.label, PRIMARY_TEXT_COLOR)
+    step = item.parts[0]
+    if step.tone is AttemptTone.STEP and item.text.startswith(step.text + _PART_SEPARATOR):
+        return Text.assemble(styled[0], _PART_SEPARATOR, role, *styled[1:])
+    return Text.assemble(role, _PART_SEPARATOR, *styled)
 
 
 def _detail_rows(items: tuple[AttemptItem, ...]) -> RenderableType:
@@ -219,7 +219,7 @@ def _detail_rows(items: tuple[AttemptItem, ...]) -> RenderableType:
     for item in items:
         if item.kind in _TURN_KINDS:
             if item is turns[0]:
-                grid.add_row(grey(_TURNS_LABEL), _turn_rows(turns))
+                grid.add_row(grey(_TURNS_LABEL), Group(*map(_turn_row, turns)))
         elif item.kind is not AttemptKind.EARLIER:
             grid.add_row(grey(_DETAIL_LABELS[item.kind]), _toned(item))
     for item in items:

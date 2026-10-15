@@ -130,7 +130,7 @@ async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
     assert tried[0] == "Implement and verify cycled to the iteration limit."
     assert len(tried) > 1
     assert any("implement" in line and "verify" in line for line in tried)
-    assert any(line.startswith("Leader verdict") for line in tried)
+    assert any(line.startswith("Leader: verify") for line in tried)
     assert "abc123 do the thing" in packet_text
     assert "turn ended" in packet_text
     assert "sess-123" in packet_text

@@ -26,6 +26,7 @@ from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.ui.tokens import (
     AMBER,
     DUSTY_ROSE,
+    PRIMARY_TEXT_COLOR,
     SAGE,
     SECONDARY_TEXT_COLOR,
     SELECTED_SURFACE_COLOR,
@@ -72,8 +73,8 @@ _ARMED_TEXT = "Press Enter again to cancel"
 _ATTEMPTED = (
     "The Leader escalated.\n"
     "Rounds: implement \N{MULTIPLICATION SIGN}3 \N{MIDDLE DOT} verify \N{MULTIPLICATION SIGN}2\n"
-    "Implementer: 3 commits, 1 failed\n"
-    "Leader verdict: changes requested (1 blocker)"
+    "Implementer: implement \N{MIDDLE DOT} 3 commits, 1 failed\n"
+    "Leader: verify \N{MIDDLE DOT} changes requested (1 blocker)"
 )
 _SELECTED_CLASS = "-selected"
 
@@ -445,6 +446,8 @@ async def test_details_is_its_own_tab_stop_whose_highlight_excludes_the_rule(
         assert set(foregrounds(details, "implement")) == {STEEL_BLUE}
         assert set(foregrounds(details, "3 commits")) == {SAGE}
         assert set(foregrounds(details, "1 failed")) == {DUSTY_ROSE}
+        assert set(foregrounds(details, "verify")) == {STEEL_BLUE}
+        assert set(foregrounds(details, "Leader")) == {PRIMARY_TEXT_COLOR}
         assert set(foregrounds(details, "changes requested")) == {AMBER}
         await pilot.press("space")
         await wait_until(lambda: "Reason" not in _text_of(details), timeout=UI_WAIT_SECONDS)

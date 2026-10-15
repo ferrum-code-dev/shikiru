@@ -1921,7 +1921,8 @@ Refs: `dashboard/resolution.py` (`_ACTION_EDIT`, `action_edit`, `_AnswerBox.Exit
 
 ### Task 210: Details turn lines
 Refs: `domain/attempts.py` (`_turn_item`, `_implementation`, `_verdict`, tones), `resolution_view.py`, `test_domain_attempts.py`.
-- [ ] Turn lines read `step · Role · what happened` per the spec table; step cyan, role white; old packets still parse; tones updated.
+- [x] Turn lines read `step · Role · what happened` per the spec table; step cyan, role white; old packets still parse; tones updated.
+  - Proof: the old code produced `Leader: triage implement` and `Implementer: 0 commits`; one table over (step, outcome, report) now pins the new lines and tones, the old-format packet table is unchanged, and the real ResolutionScreen at 100x40 and 48 columns showed `triage · Leader · triaged as implement`, `implement · Implementer · blocked`, `consult · Leader · escalated`, `verify · Leader · changes requested (1 blocker)` with step cyan and role white asserted by cell colours. `uv run poe check` exited 0; collected cases 1651 before and after.
 
 ### Task 211: Stage states from the full step history
 Refs: `domain/workflow.py` (`project_workflow`, `milestone_state`), `dashboard/views.py` `_task_workflow`, `operator/queries.py` (`TASK_DETAIL_EVENT_LIMIT`, `latest_events(kinds=)`), tests pinning UNKNOWN.

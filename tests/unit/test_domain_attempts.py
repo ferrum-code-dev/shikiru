@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from shikiru.domain.attempts import (
     AttemptItem,
@@ -48,6 +48,19 @@ def _implementation() -> ImplementationReport:
         tests=[AgentTestRun(name=str(i), result="passed") for i in range(12)]
         + [AgentTestRun(name="x", result="failed")],
         trackers_updated=True,
+    )
+
+
+def _report(
+    status: Literal["completed", "needs_decision", "blocked"], *, commits: int = 0
+) -> ImplementationReport:
+    return ImplementationReport(
+        status=status,
+        summary="s",
+        commits=[Commit(sha="a1", subject="s")] * commits,
+        tests=[],
+        trackers_updated=True,
+        question="" if status == "completed" else "q",
     )
 
 
@@ -109,19 +122,15 @@ def test_recorded_work_reads_chronologically_and_omits_rows_without_data() -> No
         (AttemptKind.REASON, ""),
         (AttemptKind.ROUNDS, "Rounds"),
         (AttemptKind.TURN_OK, "Implementer"),
-        (AttemptKind.VERDICT, "Leader"),
+        (AttemptKind.TURN_OK, "Leader"),
         (AttemptKind.RECOVERY, "Recovery"),
         (AttemptKind.PRODUCED, "Produced"),
         (AttemptKind.OPERATOR, "Operator"),
     ]
-    rounds, implementer, verdict, recovery, produced, operator = items[1:]
+    rounds, implementer, _verdict, recovery, produced, operator = items[1:]
     assert _toned(rounds, AttemptTone.STEP) == ["implement", "verify", "consult"]
     assert _toned(rounds, AttemptTone.REWORK) == ["(iteration 2 of 4)"]
-    assert _toned(implementer, AttemptTone.SUCCESS) == ["3 commits", "12 tests passed"]
-    assert _toned(implementer, AttemptTone.FAILURE) == ["1 failed"]
-    assert verdict.text == "changes requested (1 blocker)"
-    assert _toned(verdict, AttemptTone.REWORK) == ["changes requested"]
-    assert _toned(verdict, AttemptTone.FAILURE) == ["1 blocker"]
+    assert implementer.text == "verify \N{MIDDLE DOT} 3 commits, 12 tests passed, 1 failed"
     assert recovery.text == "2 nudges, 1 rung change"
     assert _toned(recovery, AttemptTone.REWORK) == [recovery.text]
     assert produced.text == "2 commits, 2 files, +12 \N{MINUS SIGN}4"
@@ -130,14 +139,93 @@ def test_recorded_work_reads_chronologically_and_omits_rows_without_data() -> No
     assert operator.text == "1 message"
 
 
-def test_turns_without_reports_and_failed_turns_still_get_a_row() -> None:
-    items = _digest([_completed("gone"), _event(EventKind.TURN_FAILED, role="implementer")])
+TURN_ROWS: list[tuple[str, dict[str, object], Report | None, str, dict[AttemptTone, list[str]]]] = [
+    ("triage", {"outcome": "implement"}, None, "triage \u00b7 triaged as implement", {}),
+    ("plan", {"outcome": "completed"}, None, "plan \u00b7 plan ready", {}),
+    (
+        "implement-with-tests",
+        {"step": "implement", "outcome": "completed"},
+        _implementation(),
+        "implement \u00b7 3 commits, 12 tests passed, 1 failed",
+        {AttemptTone.SUCCESS: ["3 commits", "12 tests passed"], AttemptTone.FAILURE: ["1 failed"]},
+    ),
+    (
+        "implement-blocked-without-commits",
+        {"step": "implement", "outcome": "blocked"},
+        _report("blocked"),
+        "implement \u00b7 blocked",
+        {AttemptTone.FAILURE: ["blocked"]},
+    ),
+    (
+        "implement-nothing-committed",
+        {"step": "implement", "outcome": "completed"},
+        _report("completed"),
+        "implement \u00b7 no commits",
+        {AttemptTone.FAILURE: ["no commits"]},
+    ),
+    (
+        "implement-needs-decision-with-commit",
+        {"step": "implement", "outcome": "needs_decision"},
+        _report("needs_decision", commits=1),
+        "implement \u00b7 needs a decision, 1 commit",
+        {AttemptTone.REWORK: ["needs a decision"], AttemptTone.SUCCESS: ["1 commit"]},
+    ),
+    (
+        "consult-escalated",
+        {"step": "consult", "outcome": "escalate"},
+        None,
+        "consult \u00b7 escalated",
+        {AttemptTone.REWORK: ["escalated"]},
+    ),
+    (
+        "consult-answered",
+        {"step": "consult", "outcome": "answer"},
+        None,
+        "consult \u00b7 answered",
+        {},
+    ),
+    (
+        "verify-accepted",
+        {"outcome": "accept"},
+        None,
+        "verify \u00b7 accepted",
+        {AttemptTone.SUCCESS: ["accepted"]},
+    ),
+    (
+        "verify-changes-requested",
+        {"outcome": "changes_requested"},
+        Verdict(
+            decision="changes_requested",
+            summary="s",
+            issues=[Issue(severity="blocker", description="d")],
+        ),
+        "verify \u00b7 changes requested (1 blocker)",
+        {AttemptTone.REWORK: ["changes requested"], AttemptTone.FAILURE: ["1 blocker"]},
+    ),
+    (
+        "stepless",
+        {"step": None, "outcome": "supersede"},
+        None,
+        "superseded",
+        {AttemptTone.REWORK: ["superseded"]},
+    ),
+]
 
-    assert [(item.kind, item.line) for item in items[1:]] == [
-        (AttemptKind.TURN_OK, "Leader: verify accept"),
-        (AttemptKind.TURN_FAILED, "Implementer: turn failed (boom)"),
-    ]
-    assert _toned(items[2], AttemptTone.FAILURE) == ["turn failed (boom)"]
+
+def test_turn_rows_read_step_then_plain_outcome_with_its_tone() -> None:
+    for name, data, report, text, tones in TURN_ROWS:
+        step = data.get("step", name.split("-")[0])
+        event = _event(
+            EventKind.TURN_COMPLETED, **{"role": "leader", "step": step, **data}, turn="t"
+        )
+        (item,) = _digest([event], {"t": report} if report else None)[1:]
+        assert item.line == f"Leader: {text}", name
+        expected_tones = {AttemptTone.STEP: [step] if step else [], **tones}
+        for tone, expected in expected_tones.items():
+            assert _toned(item, tone) == expected, name
+    (failed,) = _digest([_event(EventKind.TURN_FAILED, role="implementer")])[1:]
+    assert (failed.kind, failed.line) == (AttemptKind.TURN_FAILED, "Implementer: failed (boom)")
+    assert _toned(failed, AttemptTone.FAILURE) == ["failed (boom)"]
 
 
 def test_the_cap_holds_and_older_turns_collapse_into_an_earlier_count() -> None:
@@ -171,12 +259,15 @@ PACKET_ROWS: list[tuple[str, str, list[AttemptKind]]] = [
         "digest-with-hyphen-minus",
         (
             "Stuck: it looped.\nRounds: implement \N{MULTIPLICATION SIGN}2\n"
-            "Leader verdict: accept\nProduced: 1 commit, 1 file, +3 -1\n+2 earlier"
+            "Leader verdict: accept\nLeader: verify accept\nImplementer: turn failed (x)\n"
+            "Produced: 1 commit, 1 file, +3 -1\n+2 earlier"
         ),
         [
             AttemptKind.REASON,
             AttemptKind.ROUNDS,
             AttemptKind.VERDICT,
+            AttemptKind.TURN_OK,
+            AttemptKind.TURN_FAILED,
             AttemptKind.PRODUCED,
             AttemptKind.EARLIER,
         ],

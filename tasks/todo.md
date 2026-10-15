@@ -327,7 +327,7 @@ Thirteenth-review scope and evidence: [thirteenth review](../docs/tui-feedback-t
 Fourteenth-review scope and evidence: [fourteenth review](../docs/tui-feedback-fourteenth-review.md).
 
 - [x] Task 209: Resolution panel — Enter/Esc only, hide the edit area
-- [ ] Task 210: Details turn lines
+- [x] Task 210: Details turn lines
 - [ ] Task 211: Stage states from the full step history
 - [ ] Task 212: Tab lands on the first verb; remove `↓ details`
 - [ ] Task 213: Briefing colours, labels and added tasks

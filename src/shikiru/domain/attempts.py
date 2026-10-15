@@ -25,18 +25,31 @@ ROLE_FIELD = "role"
 STEP_FIELD = "step"
 OUTCOME_FIELD = "outcome"
 TIMES = "\N{MULTIPLICATION SIGN}"
-ROUNDS_SEPARATOR = " \N{MIDDLE DOT} "
+PART_SEPARATOR = " \N{MIDDLE DOT} "
 MINUS = "\N{MINUS SIGN}"
 EARLIER_TEMPLATE = "+{count} earlier"
 LABEL_SEPARATOR = ": "
 VERDICT_SUFFIX = " verdict"
-TURN_FAILED_PREFIX = "turn failed"
+TURN_FAILED_PREFIXES = ("failed", "turn failed")
+TRIAGE_TEXT = "triaged as"
+PLAN_READY = "plan ready"
+NO_COMMITS = "no commits"
+COMPLETED = "completed"
+NEEDS_DECISION = "needs_decision"
+BLOCKED = "blocked"
 LABEL_ROUNDS = "Rounds"
 LABEL_RECOVERY = "Recovery"
 LABEL_PRODUCED = "Produced"
 LABEL_OPERATOR = "Operator"
 FAILURE_MESSAGE_LIMIT = 80
-_DECISION_WORDS = {"changes_requested": "changes requested"}
+_OUTCOME_WORDS = {
+    "answer": "answered",
+    "accept": "accepted",
+    "changes_requested": "changes requested",
+    "escalate": "escalated",
+    "supersede": "superseded",
+    NEEDS_DECISION: "needs a decision",
+}
 _RECOVERY_NOUNS = (
     (EventKind.NUDGE, "nudge"),
     (EventKind.HELPER_ACTION, "helper action"),
@@ -117,9 +130,13 @@ _TONES: dict[AttemptKind, tuple[tuple[re.Pattern[str], AttemptTone], ...]] = {
         (re.compile(r"\(?iteration \d+ of \d+\)?"), AttemptTone.REWORK),
     ),
     AttemptKind.TURN_OK: (
-        (re.compile(r"\d+ commits?|\d+ tests? passed|\baccept\b"), AttemptTone.SUCCESS),
-        (re.compile(r"\d+ failed"), AttemptTone.FAILURE),
-        (re.compile(rf"\b(?:{_STEP_NAME})\b"), AttemptTone.STEP),
+        (re.compile(r"\d+ commits?|\d+ tests? passed|\baccepted?\b"), AttemptTone.SUCCESS),
+        (re.compile(r"\d+ failed|no commits|\bblocked\b|\d+ blockers?"), AttemptTone.FAILURE),
+        (
+            re.compile(r"needs a decision|changes requested|\bescalated?\b|\bsuperseded\b"),
+            AttemptTone.REWORK,
+        ),
+        (re.compile(rf"^(?:{_STEP_NAME})\b"), AttemptTone.STEP),
     ),
     AttemptKind.TURN_FAILED: ((re.compile(r".+"), AttemptTone.FAILURE),),
     AttemptKind.VERDICT: (
@@ -180,7 +197,7 @@ def _parse_line(line: str) -> AttemptItem:
         return _item(_SECTION_KINDS[label], label, text)
     if label.endswith(VERDICT_SUFFIX):
         return _item(AttemptKind.VERDICT, label.removesuffix(VERDICT_SUFFIX), text)
-    failed = text.startswith(TURN_FAILED_PREFIX)
+    failed = text.startswith(TURN_FAILED_PREFIXES)
     return _item(AttemptKind.TURN_FAILED if failed else AttemptKind.TURN_OK, label, text)
 
 
@@ -198,42 +215,56 @@ def _rounds(events: Sequence[Event], task: Task, max_iterations: int) -> Attempt
     )
     if not steps:
         return None
-    text = ROUNDS_SEPARATOR.join(f"{step} {TIMES}{count}" for step, count in steps.items())
+    text = PART_SEPARATOR.join(f"{step} {TIMES}{count}" for step, count in steps.items())
     if task.iteration > 0:
         text += f" (iteration {task.iteration} of {max_iterations})"
     return _item(AttemptKind.ROUNDS, LABEL_ROUNDS, text)
 
 
-def _implementation(role: str, report: ImplementationReport) -> AttemptItem:
+def _implementation_phrase(outcome: str, report: ImplementationReport) -> str:
     tests = reported_tests(report.tests)
-    parts = [_count(len(report.commits), "commit")]
+    if outcome == BLOCKED:
+        return BLOCKED
+    commits = [_count(len(report.commits), "commit")] if report.commits else []
+    parts = list(commits)
     if tests.passed:
         parts.append(f"{_count(tests.passed, 'test')} passed")
     if tests.failed:
         parts.append(f"{tests.failed} failed")
-    return _item(AttemptKind.TURN_OK, role, ", ".join(parts))
+    if outcome == NEEDS_DECISION:
+        return ", ".join([_OUTCOME_WORDS[NEEDS_DECISION], *commits])
+    return ", ".join(parts) or NO_COMMITS
 
 
-def _verdict(role: str, report: Verdict) -> AttemptItem:
+def _verdict_phrase(report: Verdict) -> str:
     counts = verdict_counts(report)
-    text = _DECISION_WORDS.get(counts.decision, counts.decision)
+    text = _OUTCOME_WORDS.get(counts.decision, counts.decision)
     if counts.blocker:
         text += f" ({_count(counts.blocker, 'blocker')})"
-    return _item(AttemptKind.VERDICT, role, text)
+    return text
+
+
+def _outcome_phrase(step: object, outcome: str, report: Report | None) -> str:
+    if isinstance(report, ImplementationReport):
+        return _implementation_phrase(outcome, report)
+    if isinstance(report, Verdict):
+        return _verdict_phrase(report)
+    if step == Step.TRIAGE:
+        return f"{TRIAGE_TEXT} {outcome}"
+    if step == Step.PLAN and outcome == COMPLETED:
+        return PLAN_READY
+    return _OUTCOME_WORDS.get(outcome, outcome)
 
 
 def _turn_item(event: Event, reports: Mapping[str, Report]) -> AttemptItem:
     role = str(event.data.get(ROLE_FIELD, "agent")).capitalize()
     if event.kind is EventKind.TURN_FAILED:
         message = one_line(event.message, FAILURE_MESSAGE_LIMIT) or "no message"
-        return _item(AttemptKind.TURN_FAILED, role, f"{TURN_FAILED_PREFIX} ({message})")
-    report = reports.get(str(event.data.get(TURN_FIELD)))
-    if isinstance(report, ImplementationReport):
-        return _implementation(role, report)
-    if isinstance(report, Verdict):
-        return _verdict(role, report)
+        return _item(AttemptKind.TURN_FAILED, role, f"{TURN_FAILED_PREFIXES[0]} ({message})")
     step = event.data.get(STEP_FIELD)
-    return _item(AttemptKind.TURN_OK, role, f"{step} {event.data.get(OUTCOME_FIELD)}")
+    report = reports.get(str(event.data.get(TURN_FIELD)))
+    phrase = _outcome_phrase(step, str(event.data.get(OUTCOME_FIELD)), report)
+    return _item(AttemptKind.TURN_OK, role, f"{step}{PART_SEPARATOR}{phrase}" if step else phrase)
 
 
 def _turn_items(
