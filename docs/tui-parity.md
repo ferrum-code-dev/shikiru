@@ -115,7 +115,7 @@ The `Recent` list uses the existing task browser/history queries and retains the
 | Click actionable attention row | Select the affected task and open its resolution screen directly. A fault or engine-stop row opens the corresponding evidence/action route. | None until submitted. |
 | Click project token, billing or subscription summary | Open Project totals and recorded subscription/quota details. | None. |
 | Click Host/Shikiru resource summary | Open Diagnostics with the same cached observation. | None. |
-| Click a briefing verb | Open that palette action (Answer opens the resolution screen). | None until submitted. |
+| Click a briefing action | Open that palette action (Answer opens the resolution screen). | None until submitted. |
 | Click a fold header | Toggle that fold (a second click folds it). Enter opens and enters its list, Esc steps back, Enter on an open header folds it. | None. |
 | Click contextual action or form control | Select/open that action or submit only when the explicit submit control/key is activated. Inputs retain native editing keys. | Only explicit submission queues the typed operation. |
 

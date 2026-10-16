@@ -18,9 +18,11 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_ACTION_PREFIX,
     TASK_DETAIL_ACTIONS,
     TASK_DETAIL_BRIEFING,
+    TASK_DETAIL_DETAILS_HINT,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_VERBS,
 )
+from shikiru.dashboard.detail_fold import FoldHeader
 from shikiru.domain.briefing import BriefingAction
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
@@ -54,7 +56,7 @@ from shikiru.view_log import (
 )
 from shikiru.workspace.facts import WorkspaceFacts, render_facts
 from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME
-from tests.support.cells import CYAN, foregrounds
+from tests.support.cells import CYAN, CYAN_BOLD, foregrounds, styles
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, ignore_palette_action, state_views
@@ -596,9 +598,12 @@ async def test_every_offered_verb_stays_inside_the_actions_row_at_compact_width(
                 timeout=UI_WAIT_SECONDS,
             )
             row = app.query_one(f"#{TASK_DETAIL_ACTIONS}").region
+            hint = app.query_one(f"#{TASK_DETAIL_DETAILS_HINT}")
             for button in app.query(f"#{TASK_DETAIL_VERBS} Button"):
                 if button.display:
                     assert row.contains_region(button.region), (size, focus_task, button.id)
+                    assert not hint.display or not hint.region.overlaps(button.region)
+            assert not hint.display or row.contains_region(hint.region)
 
 
 @pytest.mark.usefixtures("colour_terminal")
@@ -611,10 +616,16 @@ async def test_briefing_paints_group_titles_cyan_and_commit_lines_green_and_red(
     clock = FakeClock(START)
     task = _seed_running(connection, clock, project_root)
     app = _app(reader, project_root, clock, focus_task=task.id)
-    async with app.run_test(size=WIDE_SIZE):
+    async with app.run_test(size=WIDE_SIZE) as pilot:
         briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
         await wait_until(lambda: "+120" in plain_text(briefing.content), timeout=UI_WAIT_SECONDS)
         for title in ("Progress", "Result so far"):
             assert set(foregrounds(briefing, title)) == {CYAN[1]}, title
         assert set(foregrounds(briefing, "+120")) == {SAGE}
         assert set(foregrounds(briefing, f"{MINUS}34")) == {ALERT_COLOR}
+        hint = app.query_one(f"#{TASK_DETAIL_DETAILS_HINT}", Static)
+        assert plain_text(hint.content) == "v details"
+        assert styles(hint, "v") == [CYAN_BOLD]
+        assert hint.region.right == app.query_one(f"#{TASK_DETAIL_ACTIONS}").region.right
+        await pilot.click(f"#{TASK_DETAIL_DETAILS_HINT}")
+        await wait_until(lambda: isinstance(app.focused, FoldHeader), timeout=UI_WAIT_SECONDS)

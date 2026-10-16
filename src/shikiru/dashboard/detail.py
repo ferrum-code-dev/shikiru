@@ -65,7 +65,7 @@ from shikiru.ui.popup import (
     prepare_popup,
 )
 from shikiru.ui.screen import widget_is_attached
-from shikiru.ui.section import BOLD_PRIMARY, grey
+from shikiru.ui.section import BOLD_PRIMARY, grey, key_label
 
 if TYPE_CHECKING:
     from textual import events
@@ -111,6 +111,10 @@ TASK_DETAIL_TINY_MAX_ROWS = 8
 _TASK_DETAIL_COMPACT_MAX_COLUMNS = 48
 _TASK_DETAIL_COMPACT_MAX_ROWS = 20
 TASK_DETAIL_VIEWS_KEY = "v"
+DETAILS_HINT_LABEL = "details"
+DETAILS_HINT_TEXT = f"{TASK_DETAIL_VIEWS_KEY} {DETAILS_HINT_LABEL}"
+TASK_DETAIL_DETAILS_HINT = "task-detail-details-hint"
+VERB_MARGIN = 2
 TASK_DETAIL_HELP_KEY = "question_mark"
 TASK_DETAIL_HINT = "task-detail-hint"
 TASK_WINDOW_KEY = "t"
@@ -188,8 +192,19 @@ class TaskDetailBody(VerticalScroll, can_focus=False):
             )
 
 
+class TaskDetailHint(Static):
+    """The right-aligned `v details` hint of the actions row; clicking it focuses the sections."""
+
+    def __init__(self, hint: Text) -> None:
+        super().__init__(hint, id=TASK_DETAIL_DETAILS_HINT, markup=False)
+
+    def on_click(self) -> None:
+        """Focus the section headers, like pressing the key."""
+        self.query_ancestor(TaskDetailPanel).focus_folds()
+
+
 class TaskDetailVerb(Button):
-    """A briefing verb button of the task detail, drawn without the stock line padding."""
+    """A briefing action button of the task detail, drawn without the stock line padding."""
 
     def on_mount(self) -> None:
         """Drop the one-cell line padding the stock button adds on each side of its label."""
@@ -220,7 +235,8 @@ class TaskDetailPanel(Vertical):
     #task-detail-actions {
         width: 100%; height: auto; border-top: solid $neutral-border;
     }
-    #task-detail-verbs { width: 100%; height: 1; }
+    #task-detail-verbs { width: 1fr; height: 1; }
+    #task-detail-details-hint { width: auto; height: 1; }
     #task-detail-verbs Button {
         width: auto; min-width: 1; height: 1; margin: 0 2 0 0; padding: 0;
         border: none; background: $background; color: $steel-blue;
@@ -285,11 +301,13 @@ class TaskDetailPanel(Vertical):
             yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
             yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
             yield GatedStatic("", id=TASK_DETAIL_BRIEFING, markup=False)
-            with Horizontal(id=TASK_DETAIL_ACTIONS), Horizontal(id=TASK_DETAIL_VERBS):
-                for action in BriefingAction:
-                    yield TaskDetailVerb(
-                        ACTION_LABELS[action], id=f"{TASK_DETAIL_ACTION_PREFIX}{action.value}"
-                    )
+            with Horizontal(id=TASK_DETAIL_ACTIONS):
+                with Horizontal(id=TASK_DETAIL_VERBS):
+                    for action in BriefingAction:
+                        yield TaskDetailVerb(
+                            ACTION_LABELS[action], id=f"{TASK_DETAIL_ACTION_PREFIX}{action.value}"
+                        )
+                yield TaskDetailHint(key_label(TASK_DETAIL_VIEWS_KEY, DETAILS_HINT_LABEL))
             with DetailFolds(widget_id=TASK_DETAIL_FOLDS):
                 for section in DetailsSection:
                     view_id = DETAILS_SECTION_VIEWS[section]
@@ -569,6 +587,10 @@ class TaskDetailPanel(Vertical):
             self.query_one(f"#{TASK_DETAIL_ACTION_PREFIX}{action.value}", Button).display = (
                 action in verbs
             )
+        used = sum(cell_len(ACTION_LABELS[action]) + VERB_MARGIN for action in verbs)
+        free = self.query_one(f"#{TASK_DETAIL_ACTIONS}").size.width - used
+        hint = self.query_one(f"#{TASK_DETAIL_DETAILS_HINT}", TaskDetailHint)
+        hint.display = free >= cell_len(DETAILS_HINT_TEXT)
         focused = self.screen.focused
         if isinstance(focused, TaskDetailVerb) and not focused.display:
             self.focus_summary()

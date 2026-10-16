@@ -1168,6 +1168,7 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-brief-head { color:var(--shk-wait); font-weight:700; }
 #shikiru-focus-steel .shk-brief-rule { border-top:1px solid var(--shk-edge); margin:6px 0; }
 #shikiru-focus-steel .shk-brief-actions { display:flex; flex-wrap:wrap; align-items:center; gap:2px 14px; }
+#shikiru-focus-steel .shk-brief-hint { margin-left:auto; }
 #shikiru-focus-steel .shk-terminal .shk-brief-verb { color:var(--shk-accent) !important; padding:0; }
 #shikiru-focus-steel .shk-brief .shk-sep { color:var(--shk-dim); }
 #shikiru-focus-steel .shk-folds { display:grid; }
@@ -1448,7 +1449,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     if (task.step === &#x27;Queued&#x27;) return [[&#x27;Pause&#x27;,&#x27;menu&#x27;],cancel];
     return [[&#x27;Take over&#x27;,&#x27;takeover&#x27;],[&#x27;Message&#x27;,&#x27;message&#x27;],[&#x27;Pause&#x27;,&#x27;menu&#x27;],cancel];
   };
-  const briefActions = (task, compact) =&gt; `&lt;div class=&quot;shk-brief-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-brief-actions&quot;&gt;${verbsFor(task).map(([label,open])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-brief-verb&quot; data-task=&quot;${task.id}&quot; data-open=&quot;${open}&quot;&gt;${label}&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;`;
+  const briefActions = (task, compact) =&gt; `&lt;div class=&quot;shk-brief-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-brief-actions&quot;&gt;${verbsFor(task).map(([label,open])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-brief-verb&quot; data-task=&quot;${task.id}&quot; data-open=&quot;${open}&quot;&gt;${label}&lt;/button&gt;`).join(&#x27;&#x27;)}${compact &amp;&amp; verbsFor(task).length &gt; 2 ? &#x27;&#x27; : `&lt;span class=&quot;shk-brief-hint&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;v&lt;/span&gt;&lt;span class=&quot;shk-dim&quot;&gt; details&lt;/span&gt;&lt;/span&gt;`}&lt;/div&gt;`;
   const briefMilestones = (task, compact) =&gt; {
     if (!compact) return stages(task);
     if (task.state === &#x27;Cancelled&#x27;) return &#x27;&lt;div class=&quot;shk-stages shk-dim&quot;&gt;— — — —&lt;/div&gt;&#x27;;
