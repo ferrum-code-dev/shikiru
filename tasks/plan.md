@@ -2024,3 +2024,23 @@ Refs: `dashboard/palette.py` `PaletteScreen` (`_confirm_submitted`, `_show_confi
 - [x] The hint keeps bold cyan keys and grey labels after clearing, a rejected send, focus changes and the armed Cancel reset.
 - [x] The palette tests assert these rules; no new test function, and collected cases stay 1654.
   - Proof: reproduced on the Task 226 code, where Ctrl+P Pause clicked twice queued two Pauses, the Message text stayed after a send, and the hint keys rendered plain grey after a send because the disabled branch built the hint as plain text, so no key was styled. After the change, at 100 and 48 columns, a successful Message send clears and focuses the box and shows `✓` (on its own row at 48 columns, where the hint is 38 cells and the mark needs 40), Ctrl+P Pause queues one command and shows `Pause task  ✓` in the menu, a rejected send keeps its text with `Rejected · command N`, a real 5 s timer clears the mark after 5.04 s, and the hint keys read bold `#83bddd` with labels `#9aa5b5` in every state dumped. The updated tests fail on the old code and pass now, and `uv run poe check` plus `TERM=dumb NO_COLOR=1 uv run poe check` exited 0 (1633 passed, 14 skipped each; collected 1654).
+
+## Help, escalations and views clean-up (sixteenth review)
+
+Scope: [sixteenth review](../docs/tui-feedback-sixteenth-review.md); the operator approved the decisions. Tasks run in order 228, 229, 230, 231.
+
+### Task 228: Escalations screen: send keys and Details hint
+Refs: `dashboard/resolution.py` (`_SEND_KEYS`, `_AnswerBox`, `_TriedSection`), `dashboard/resolution_view.py` `tried_renderable`, `dashboard/help_keys.py`, `dashboard/detail_hint.py`, `tests/integration/test_dashboard_resolution.py`, `docs/design/06-operator.md`.
+- [ ] Ctrl+S is the only send key on the Escalations answer box (Ctrl+J and Ctrl+Enter removed from code, help, tests and current docs), and the Details line shows a right-aligned `t show/hide` that stays one row at 100, 60, 48 and 40 columns.
+
+### Task 229: Help wording and the `v details` action hint
+Refs: `dashboard/help_screen.py`, `dashboard/help_keys.py`, `dashboard/app.py` (`_HELP_HOME_HEADING`), `dashboard/detail.py` (task actions bar), `tests/integration/test_dashboard_app.py`, `tests/integration/test_dashboard_briefing.py`, `docs/design/06-operator.md`.
+- [ ] The help titles drop `Focus`, the Home group reads `Escalations`, the `v` row reads `Focus task details sections`, `Space / click` is one row, the tab reads `Escalations`, the operator-facing `verb` wording reads `action`, and the task actions bar shows a right-aligned `v details` hint that focuses the folds on click.
+
+### Task 230: Escalation bar clean-up and the extra details panel
+Refs: `plugins/widgets/escalations.py` (`_DECISION_MOVE_STEPS`, `_OPEN_KEY`, `_RESOLVE_KEY`, `PacketScreen`, `_open_evidence`, `_open_fault_evidence`), `dashboard/resolution.py`, `dashboard/resolution_view.py`, `tests/integration/test_dashboard_app.py`, `tests/integration/test_dashboard_popup_focus.py`, `tests/integration/test_dashboard_resolution.py`, `docs/design/06-operator.md`.
+- [ ] The Home escalation bar shows only the first open escalation of the followed task and keeps Enter, click and Ctrl+P, with Left/Right, `r` and `o` removed and the engine's per-task escalation count reported; `o extra details` on the Escalations screen opens the redesigned Extra details page (one scrolling popup, `Esc ×`) while Details is unfolded, Esc returns to the Escalations screen, and an unreadable packet shows as one amber line.
+
+### Task 231: Remove the Views panel and the Home `v`, remove the Workflow and Activity Home entries, group extensions in Ctrl+P
+Refs: `dashboard/app.py` (`_ContextViewsScreen`, `action_open_views`, `_open_task_palette_route`), `dashboard/palette.py` (`_PALETTE_ROUTE_VIEWS`, `_PALETTE_MENU_TASK_VIEWS`), `dashboard/contract.py` (`TaskPaletteRoute.VIEWS`), `tests/support/dashboard.py` (`choose_focus_view`), `docs/design/02-architecture.md`, `docs/design/06-operator.md`, `docs/tui-workspace.md`.
+- [ ] No Views panel, Home `v` or Views palette route remains (`v` stays in task details), the Workflow strips and Activity dialogue leave the Home entry point only (their code, config and tests stay unless only the Views panel reached them), extension widgets are listed under one `Extensions` group in Ctrl+P, tests reach Usage, Resources, Escalations and Help by clicking or Enter, and the collected cases do not grow.

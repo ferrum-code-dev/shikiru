@@ -348,3 +348,10 @@ Fifteenth-review scope: [fifteenth review](../docs/tui-feedback-fifteenth-review
 - [x] Task 225: Resume action popup
 - [x] Task 226: Close hint popups after queueing
 - [x] Task 227: Ctrl+P and Message after sending
+
+Sixteenth-review scope: [sixteenth review](../docs/tui-feedback-sixteenth-review.md).
+
+- [ ] Task 228: Escalations screen: send keys and Details hint
+- [ ] Task 229: Help wording and the `v details` action hint
+- [ ] Task 230: Escalation bar clean-up and the extra details panel
+- [ ] Task 231: Remove the Views panel and the Home `v`, remove the Workflow and Activity Home entries, group extensions in Ctrl+P
