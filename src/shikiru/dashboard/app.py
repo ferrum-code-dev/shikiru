@@ -123,7 +123,7 @@ _TASK_VIEW_OMITTED_PLACEMENTS = frozenset(
         WidgetPlacement.DIAGNOSTICS,
     }
 )
-_HELP_HOME_HEADING = "Focus"
+_HELP_HOME_HEADING = HelpTab.HOME.value
 _COMMAND_HISTORY_CLOSE = "command-history-close"
 _COMMAND_HISTORY_COPY = "command-history-copy"
 _COMMAND_HISTORY_WORKER = "command-history-updates"

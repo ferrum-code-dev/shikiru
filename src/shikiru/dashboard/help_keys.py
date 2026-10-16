@@ -21,7 +21,7 @@ class HelpTab(StrEnum):
 
     HOME = "Home"
     TASK = "Task details"
-    RESOLUTION = "Resolution"
+    ESCALATIONS = "Escalations"
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ def help_groups(tab: HelpTab, availability: HelpAvailability) -> tuple[HelpGroup
         return _home_groups(availability)
     if tab is HelpTab.TASK:
         return _task_groups()
-    return _resolution_groups()
+    return _escalation_groups()
 
 
 def _home_groups(availability: HelpAvailability) -> tuple[HelpGroup, ...]:
@@ -70,7 +70,7 @@ def _home_groups(availability: HelpAvailability) -> tuple[HelpGroup, ...]:
     if availability.escalations:
         groups.append(
             HelpGroup(
-                "Decisions",
+                "Escalations",
                 (
                     HelpRow("Left/Right", "Choose between decisions when there are two or more"),
                     HelpRow(_ENTER, "Open the decision"),
@@ -97,9 +97,9 @@ def _task_groups() -> tuple[HelpGroup, ...]:
         HelpGroup(
             "Task",
             (
-                HelpRow("Tab", "Move between the task's verbs and its sections"),
-                HelpRow(_ENTER, "Run the focused verb"),
-                HelpRow(TASK_DETAIL_VIEWS_KEY, "Focus the sections"),
+                HelpRow("Tab", "Move between the task's actions and its sections"),
+                HelpRow(_ENTER, "Run the focused action"),
+                HelpRow(TASK_DETAIL_VIEWS_KEY, "Focus task details sections"),
                 HelpRow(_PALETTE, "Open the actions for this task"),
                 HelpRow(_ESC, "Step back, then return to Home"),
             ),
@@ -109,8 +109,7 @@ def _task_groups() -> tuple[HelpGroup, ...]:
             (
                 HelpRow(_ARROWS, "Move between section headers"),
                 HelpRow(_ENTER, "Open the section, or enter its list"),
-                HelpRow("Space", "Open or close the section"),
-                HelpRow("Click", "Open or close a section"),
+                HelpRow("Space / click", "Open or close a section"),
             ),
         ),
         HelpGroup(
@@ -140,7 +139,7 @@ def _task_groups() -> tuple[HelpGroup, ...]:
     )
 
 
-def _resolution_groups() -> tuple[HelpGroup, ...]:
+def _escalation_groups() -> tuple[HelpGroup, ...]:
     return (
         HelpGroup(
             "Choose",

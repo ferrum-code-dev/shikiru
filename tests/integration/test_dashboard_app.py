@@ -4602,7 +4602,7 @@ async def test_home_help_opens_by_key_or_mouse_and_closing_leaves_home_unchanged
         await _assert_popup_close_reachable(help_screen, **popup)
         if gesture == _HELP_GESTURE_VIEWS:
             context = help_screen.query_one("#workspace-help-context", Static)
-            assert task.id in _rendered_text(context)
+            assert _rendered_text(context) == f"Help · Task details · {task.id}"
         if size == _TINY_HOME_SIZE:
             frame = help_screen.query_one("#workspace-help-frame")
             await pilot.resize_terminal(*_WIDE_HOME_SIZE)
@@ -5068,9 +5068,16 @@ async def test_dashboard_activity_widget_is_openable_by_keyboard_and_back(
             await pilot.pause()
             assert app.screen is not home_screen
             assert app.screen.query_one("#workspace-help-copy", Static).region.height > 0
-            assert "Focus" in _rendered_text(
+            assert "Help · Home" in _rendered_text(
                 app.screen.query_one("#workspace-help-context", Static)
             )
+            assert [
+                _rendered_text(tab) for tab in app.screen.query(".help-tab").results(Static)
+            ] == [
+                "Home",
+                "Task details",
+                "Escalations",
+            ]
             await pilot.press("escape")
             await pilot.pause()
             assert app.screen is home_screen

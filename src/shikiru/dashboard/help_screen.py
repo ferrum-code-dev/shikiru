@@ -117,9 +117,7 @@ class WorkspaceHelpScreen(ModalScreen[None]):
         """Render the header, the tab row and the key table of the opening tab."""
         with PopupFrame(widget_id=HELP_FRAME, classes=POPUP_FRAME_CLASS):
             with Horizontal(classes=POPUP_HEADER_CLASS):
-                yield Label(
-                    f"Help · {self._help.heading}", id=HELP_CONTEXT, classes=POPUP_TITLE_CLASS
-                )
+                yield Label(self._title(), id=HELP_CONTEXT, classes=POPUP_TITLE_CLASS)
                 yield Button(popup_close_label(), id=HELP_CLOSE_BUTTON, classes=POPUP_CLOSE_CLASS)
             yield Rule(classes=POPUP_RULE_CLASS)
             with Horizontal(id=HELP_TABS):
@@ -127,6 +125,9 @@ class WorkspaceHelpScreen(ModalScreen[None]):
                     yield _TabLabel(index, tab)
             with VerticalScroll(id=HELP_SCROLL, classes=POPUP_BODY_CLASS):
                 yield Static(self._table(), id=HELP_COPY, markup=False)
+
+    def _title(self) -> str:
+        return f"Help · {self._help.heading}"
 
     def on_mount(self) -> None:
         self._apply_compact_layout(self.size.width, self.size.height)
