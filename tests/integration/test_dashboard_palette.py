@@ -43,7 +43,12 @@ from tests.support.escalations import (
     operator_services,
 )
 from tests.support.store import seed_task
-from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import (
+    ACTION_CONFIRMATION_EXPIRY_SECONDS,
+    ACTION_CONFIRMATION_SECONDS,
+    UI_WAIT_SECONDS,
+    wait_until,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -124,12 +129,13 @@ def _palette_app(
     pane_selector: Callable[[str], Awaitable[None]],
     *,
     initial_context: PaletteRequest | None = None,
+    action_confirmation_seconds: float = ACTION_CONFIRMATION_SECONDS,
 ) -> PaletteApp:
     return PaletteApp(
         commands,
         queries,
         pane_selector,
-        action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
+        action_confirmation_seconds=action_confirmation_seconds,
         on_change=reader.watch,
         initial_context=initial_context,
     )
@@ -443,6 +449,7 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
             task_id=task.id,
             role=Role.IMPLEMENTER.value,
         ),
+        action_confirmation_seconds=ACTION_CONFIRMATION_EXPIRY_SECONDS,
     )
 
     async with app.run_test(size=_APP_SIZE) as pilot:
@@ -573,6 +580,7 @@ async def _assert_menu_action_returns_to_menu_after_one_command(
         queries,
         _selection_must_not_run,
         initial_context=PaletteRequest(task_id=task_id),
+        action_confirmation_seconds=ACTION_CONFIRMATION_EXPIRY_SECONDS,
     )
     async with app.run_test(size=_APP_SIZE) as pilot:
         screen = await _mounted_palette(app)
