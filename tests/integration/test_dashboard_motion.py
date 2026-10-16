@@ -1872,7 +1872,9 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
             assert first.id in resolution_title(await wait_for_resolution(app))
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home, timeout=UI_WAIT_SECONDS)
-            await pilot.press("right")
+            store = EscalationStore(connection, clock)
+            store.resolve(first.id, "retry")
+            clock.advance(0.5)
             await wait_until(
                 lambda: (
                     "E-2 ·" in plain_text(scroll.query(Static)[0].content)
@@ -1883,8 +1885,6 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
             assert pilot.app.focused is panel
             assert len(list(scroll.query(Static))) == 1
 
-            store = EscalationStore(connection, clock)
-            store.resolve(first.id, "retry")
             store.resolve(second.id, "retry")
             store.resolve(third.id, "retry")
             clock.advance(0.5)

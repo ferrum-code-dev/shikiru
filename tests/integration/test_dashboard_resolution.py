@@ -10,6 +10,7 @@ from textual.geometry import Region, Size
 from textual.widgets import Button, Select, Static, TextArea
 
 from shikiru.clock import SystemClock
+from shikiru.dashboard.extra_details import ExtraDetailsScreen
 from shikiru.dashboard.palette import PaletteApp, PaletteScreen
 from shikiru.dashboard.resolution import ResolutionDrafts, ResolutionScreen
 from shikiru.domain.commands import (
@@ -82,6 +83,10 @@ _SELECTED_CLASS = "-selected"
 _INERT_KEY_ACTS = frozenset({"flagged-ctrl+j", "flagged-ctrl+enter"})
 _DETAILS_SIZES = (_SIZE, (60, 40), (48, 40), (40, 40), (40, 8))
 _DETAILS_HINT = "t show/hide"
+_EXTRA_HINT = "o extra details"
+_EXTRA_SIZES = ((100, 40), (60, 40), (48, 30), (40, 30), (40, 8))
+_STAMPED_TIMELINE = "- 2026-01-01T10:20:00+00:00 verdict: accepted"
+_SESSION_LINE = "- leader: claude session `s-1` \N{EM DASH} claude --resume s-1"
 
 
 def _text_of(widget: Widget) -> str:
@@ -171,6 +176,21 @@ async def _assert_collapsed_details_hint_on_one_row(
     await wait_until(lambda: screen.size == Size(*size), timeout=UI_WAIT_SECONDS)
     assert details.size.height == 1
     assert _DETAILS_HINT in _text_of(details)
+
+
+async def _assert_extra_details_inert(
+    app: ResolutionHost, pilot: Pilot[None], screen: ResolutionScreen, details: Widget
+) -> None:
+    await pilot.press("o")
+    await pilot.pause()
+    assert app.screen is screen
+    assert _EXTRA_HINT not in _text_of(details)
+
+
+def _assert_extra_hint_styles(details: Widget) -> None:
+    hint = styles(details, _EXTRA_HINT)
+    assert hint[0] == CYAN_BOLD
+    assert set(hint[1:]) == {GREY}
 
 
 @pytest.mark.parametrize(
@@ -454,6 +474,7 @@ async def test_details_is_its_own_tab_stop_whose_highlight_excludes_the_rule(
         details = screen.query_one("#resolution-tried")
         siblings = screen.query_one("#resolution-body").children
         rule = siblings[siblings.index(details) - 1]
+        await _assert_extra_details_inert(app, pilot, screen, details)
         choose = screen.query_one("#resolution-choose")
         assert set(foregrounds(choose, "Enter")) == {STEEL_BLUE}
         hint = styles(details, _DETAILS_HINT)
@@ -478,8 +499,10 @@ async def test_details_is_its_own_tab_stop_whose_highlight_excludes_the_rule(
         assert set(foregrounds(details, "verify")) == {STEEL_BLUE}
         assert set(foregrounds(details, "Leader")) == {PRIMARY_TEXT_COLOR}
         assert set(foregrounds(details, "changes requested")) == {AMBER}
+        _assert_extra_hint_styles(details)
         await pilot.press("space")
         await wait_until(lambda: "Reason" not in _text_of(details), timeout=UI_WAIT_SECONDS)
+        assert _EXTRA_HINT not in _text_of(details)
         await pilot.press("up")
         await wait_until(
             lambda: app.focused is not None and app.focused.id == "resolution-choices",
@@ -493,6 +516,80 @@ async def test_details_is_its_own_tab_stop_whose_highlight_excludes_the_rule(
         assert queue.pending() == []
         for size in _DETAILS_SIZES:
             await _assert_collapsed_details_hint_on_one_row(pilot, screen, details, size)
+
+
+@pytest.mark.usefixtures("colour_terminal")
+@pytest.mark.parametrize("readable", [True, False], ids=["sections", "unreadable-packet"])
+async def test_extra_details_opens_from_open_details_and_esc_returns_to_the_screen(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    *,
+    readable: bool,
+) -> None:
+    clock = FakeClock(_START)
+    reader = StateReader(database, clock)
+    request.addfinalizer(reader.close)
+    task = seed_task(connection, clock, title="Extra details")
+    escalation, packet = seed_escalation(
+        connection,
+        clock,
+        task.id,
+        tmp_path,
+        EscalationReason.DECISION_REQUIRED,
+        attempted=_ATTEMPTED,
+    )
+    text = packet.replace("- turn completed: implementation", _STAMPED_TIMELINE)
+    text = text.replace("Leader session evidence.", _SESSION_LINE)
+    await asyncio.to_thread(
+        Path(escalation.packet_path).write_text,
+        text if readable else text.replace("## Options", "## Opts"),
+    )
+    commands, queries, _ = operator_services(connection, reader, clock, tmp_path)
+    app = ResolutionHost(resolution_factory(commands, queries, clock, reader), escalation.id)
+
+    async with app.run_test(size=_SIZE) as pilot:
+        screen = await _opened(app)
+        await pilot.press("t", "o")
+        await wait_until(
+            lambda: isinstance(app.screen, ExtraDetailsScreen), timeout=UI_WAIT_SECONDS
+        )
+        popup = app.screen
+        body = popup.query_one("#extra-details-body")
+        title = popup.query_one("#extra-details-title")
+        await wait_until(lambda: body.size.height > 0, timeout=UI_WAIT_SECONDS)
+        assert f"Extra details \N{MIDDLE DOT} {task.id}" in _text_of(title)
+        close = popup.query_one(".popup-close-control")
+        for size in _EXTRA_SIZES:
+            await pilot.resize_terminal(*size)
+            await wait_until(lambda size=size: popup.size == Size(*size), timeout=UI_WAIT_SECONDS)
+            await wait_until(lambda: body.size.height > 0, timeout=UI_WAIT_SECONDS)
+            await wait_until(
+                lambda: popup.region.contains_region(close.region), timeout=UI_WAIT_SECONDS
+            )
+            assert body.virtual_size.width <= popup.query_one("#extra-details-scroll").size.width
+        await pilot.resize_terminal(*_SIZE)
+        await wait_until(lambda: popup.size == Size(*_SIZE), timeout=UI_WAIT_SECONDS)
+        if readable:
+            for heading in (
+                "Question",
+                "Timeline",
+                "Reports",
+                "Facts",
+                "Recent signals",
+                "Sessions",
+            ):
+                assert set(styles(body, heading)) == {CYAN_BOLD}
+            assert set(foregrounds(body, "01-01 10:20")) == {SECONDARY_TEXT_COLOR}
+            assert set(foregrounds(body, "verdict: accepted")) == {PRIMARY_TEXT_COLOR}
+            assert set(foregrounds(body, "leader")) == {SECONDARY_TEXT_COLOR}
+        else:
+            assert set(foregrounds(body, "Evidence error")) == {AMBER}
+            assert "## Opts" in _text_of(body)
+        await pilot.press("escape")
+        await wait_until(lambda: app.screen is screen, timeout=UI_WAIT_SECONDS)
+        assert app.results == []
 
 
 async def test_cancel_needs_a_second_enter_and_any_other_key_resets_it(

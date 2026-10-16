@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, cast
 
 from rich.console import Group, RenderableType
 from rich.text import Text
-from textual.containers import Horizontal, VerticalScroll
-from textual.geometry import Region
-from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Rule, Static
+from textual.containers import VerticalScroll
+from textual.widgets import Static
 
 from shikiru.dashboard.contract import (
     FOCUS_FAULTS_VIEW,
@@ -28,18 +26,6 @@ from shikiru.ui.compact import (
 )
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.keys import key_hint
-from shikiru.ui.popup import (
-    POPUP_BODY_CLASS,
-    POPUP_CLOSE_CLASS,
-    POPUP_CSS,
-    POPUP_FRAME_CLASS,
-    POPUP_HEADER_CLASS,
-    POPUP_RULE_CLASS,
-    POPUP_TITLE_CLASS,
-    PopupFrame,
-    popup_close_label,
-    prepare_popup,
-)
 from shikiru.ui.screen import widget_is_attached, widget_is_current
 from shikiru.ui.tokens import SECONDARY_TEXT_COLOR
 
@@ -54,68 +40,9 @@ if TYPE_CHECKING:
 
 _SELECTED_MARKER = "▶ "
 _MOVE_STEPS = {"up": -1, "down": 1}
-_DECISION_MOVE_STEPS = {"left": -1, "right": 1}
 _OPEN_TASK_KEY = "enter"
-_OPEN_KEY = "o"
-_RESOLVE_KEY = "r"
 MAX_ESCALATION_PANEL_HEIGHT = 12
-MINIMUM_GROUPED_DECISIONS = 2
 ARMED_CLASS = "armed"
-PACKET_CLOSE_BUTTON = "escalation-packet-close"
-
-
-class PacketScreen(ModalScreen[None]):
-    """Show the complete escalation packet until the Operator dismisses it."""
-
-    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [("escape", "close", "Close")]
-    DEFAULT_CSS = (
-        POPUP_CSS
-        + """
-    #escalation-packet-scroll { max-height: 1fr; min-height: 0; }
-    #escalation-packet {
-        background: $surface;
-        color: $foreground;
-    }
-    """
-    )
-
-    def __init__(self, packet: str) -> None:
-        """Hold the packet text to display in the modal."""
-        super().__init__()
-        prepare_popup(self)
-        self._packet = packet
-
-    def compose(self) -> ComposeResult:
-        """Render the full packet in a scrollable view."""
-        with PopupFrame(widget_id="escalation-packet-frame", classes=POPUP_FRAME_CLASS):
-            with Horizontal(id="escalation-packet-header", classes=POPUP_HEADER_CLASS):
-                yield Label(
-                    "Decision evidence",
-                    id="escalation-packet-title",
-                    classes=POPUP_TITLE_CLASS,
-                )
-                yield Button(
-                    popup_close_label(),
-                    id=PACKET_CLOSE_BUTTON,
-                    classes=POPUP_CLOSE_CLASS,
-                )
-            yield Rule(classes=POPUP_RULE_CLASS)
-            with VerticalScroll(id="escalation-packet-scroll", classes=POPUP_BODY_CLASS):
-                yield Static(self._packet, markup=False, id="escalation-packet")
-
-    def on_mount(self) -> None:
-        self.set_focus(self.query_one("#escalation-packet-scroll", VerticalScroll))
-        self.call_after_refresh(
-            self.query_one("#escalation-packet-frame", PopupFrame).content_ready
-        )
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == PACKET_CLOSE_BUTTON:
-            self.dismiss()
-
-    async def action_close(self) -> None:
-        """Close the packet modal."""
-        self.dismiss()
 
 
 class EscalationsPanel(Static):
@@ -141,7 +68,6 @@ class EscalationsPanel(Static):
         self._attention = AttentionView((), decisions=0, stalls=0, faults=0)
         self._summary: WorkspaceSummaryView | None = None
         self._selected = 0
-        self._selected_escalation_id: str | None = None
         self._followed_task_id: str | None = None
         self._rendered_selection: tuple[object, ...] | None = None
         self._has_rendered = False
@@ -156,7 +82,6 @@ class EscalationsPanel(Static):
         self._followed_task_id = task_id
         if task_id is None:
             self._selected = 0
-            self._selected_escalation_id = None
         if widget_is_attached(self):
             self.call_later(self._refresh)
 
@@ -214,24 +139,17 @@ class EscalationsPanel(Static):
         return True
 
     async def on_key(self, event: events.Key) -> None:
-        """Choose a decision with Left and Right; open its task, evidence or resolution."""
+        """Open the selected task or its resolution."""
         if event.key in _MOVE_STEPS and not self._attention.groups:
             self._handle_vertical_key(event)
             return
         if not self._attention.groups:
             return
-        if event.key in _DECISION_MOVE_STEPS:
-            if await self._move_decision(_DECISION_MOVE_STEPS[event.key]):
-                event.stop()
-        elif event.key == _OPEN_TASK_KEY:
+        if event.key == _OPEN_TASK_KEY:
             if self._focus_row:
                 await self._activate_focus_task(event)
             else:
                 await self._open_task_detail(event)
-        elif event.key == _OPEN_KEY:
-            self._open_evidence(event)
-        elif event.key == _RESOLVE_KEY:
-            await self._resolve_decision(event)
 
     async def on_click(self, event: events.Click) -> None:
         if not self._focus_row or not self._attention.groups:
@@ -244,8 +162,7 @@ class EscalationsPanel(Static):
         if group.task_id is not None and self._widget_context.on_task_selected is not None:
             self._widget_context.on_task_selected(group.task_id)
         if group.escalations:
-            decision = self._selected_decision() or group.escalations[0]
-            await self._open_resolution(decision)
+            await self._open_resolution(self._selected_decision() or group.escalations[0])
         elif self._focus_row and group.task_id is not None:
             event.stop()
         elif group.task_id is not None and self._widget_context.open_task_detail is not None:
@@ -264,23 +181,6 @@ class EscalationsPanel(Static):
             )
         event.stop()
 
-    async def _move_decision(self, step: int) -> bool:
-        decisions = self._attention.groups[self._selected].escalations
-        if len(decisions) < MINIMUM_GROUPED_DECISIONS:
-            return False
-        current = next(
-            (
-                index
-                for index, item in enumerate(decisions)
-                if item.escalation_id == self._selected_escalation_id
-            ),
-            0,
-        )
-        current = (current + step) % len(decisions)
-        self._selected_escalation_id = decisions[current].escalation_id
-        await self._render_panels(reveal_selection=True)
-        return True
-
     async def _open_task_detail(self, event: events.Key) -> None:
         group = self._attention.groups[self._selected]
         if group.task_id is not None and self._widget_context.open_task_detail is not None:
@@ -296,25 +196,12 @@ class EscalationsPanel(Static):
             return
         decision = self._selected_decision()
         if decision is not None:
-            await self._resolve_decision(event)
+            await self._open_resolution(decision)
+            event.stop()
             return
         group = self._attention.groups[self._selected]
         if group.task_id is not None and self._widget_context.on_task_selected is not None:
             self._widget_context.on_task_selected(group.task_id)
-        event.stop()
-
-    def _open_evidence(self, event: events.Key) -> None:
-        decision = self._selected_decision()
-        if decision is None:
-            return
-        cast("App[None]", self.app).push_screen(PacketScreen(_packet_copy(decision)))
-        event.stop()
-
-    async def _resolve_decision(self, event: events.Key) -> None:
-        decision = self._selected_decision()
-        if decision is None:
-            return
-        await self._open_resolution(decision)
         event.stop()
 
     async def _open_resolution(self, decision: EscalationPanelView) -> None:
@@ -327,10 +214,6 @@ class EscalationsPanel(Static):
         open_view = self._widget_context.open_contextual_view
         if open_view is not None:
             await open_view(FOCUS_FAULTS_VIEW)
-            return
-        decision = self._selected_decision()
-        if decision is not None:
-            cast("App[None]", self.app).push_screen(PacketScreen(_packet_copy(decision)))
 
     async def _refresh(self) -> None:
         if not widget_is_attached(self):
@@ -346,7 +229,6 @@ class EscalationsPanel(Static):
         groups_unchanged = attention == self._attention
         had_selection = bool(self._attention.groups)
         selected_id = self._selected_group_id()
-        selected_escalation_id = self._selected_escalation_id
         self._attention = attention
         self._summary = summary
         self.display = self._focus_row or bool(attention.groups) or self._keep_empty_visible
@@ -364,24 +246,6 @@ class EscalationsPanel(Static):
             self._selected = selected_index if selected_index is not None else 0
         else:
             self._selected = min(self._selected, len(attention.groups) - 1)
-        decision_group_index = next(
-            (
-                index
-                for index, group in enumerate(attention.groups)
-                if any(item.escalation_id == selected_escalation_id for item in group.escalations)
-            ),
-            None,
-        )
-        if decision_group_index is not None:
-            self._selected = decision_group_index
-            self._selected_escalation_id = selected_escalation_id
-        elif attention.groups:
-            selected_group = attention.groups[self._selected]
-            self._selected_escalation_id = (
-                selected_group.escalations[0].escalation_id if selected_group.escalations else None
-            )
-        else:
-            self._selected_escalation_id = None
         self._follow_selected_task()
         unchanged = groups_unchanged and current_status == previous_status
         if unchanged and self._has_rendered and self._rendered_selection == self._selection_state():
@@ -399,12 +263,6 @@ class EscalationsPanel(Static):
         ]
         if candidates:
             self._selected = candidates[0]
-            self._selected_escalation_id = self._escalation_for(groups[candidates[0]])
-
-    def _escalation_for(self, group: AttentionGroupView) -> str | None:
-        if any(item.escalation_id == self._selected_escalation_id for item in group.escalations):
-            return self._selected_escalation_id
-        return group.escalations[0].escalation_id if group.escalations else None
 
     def _not_escalated_task_id(self) -> str | None:
         followed = self._followed_task_id
@@ -416,7 +274,7 @@ class EscalationsPanel(Static):
         return None if has_row else followed
 
     def _selection_state(self) -> tuple[object, ...]:
-        return (self._selected, self._selected_escalation_id, self._not_escalated_task_id())
+        return (self._selected, self._selected_escalation_id(), self._not_escalated_task_id())
 
     def _selected_group_id(self) -> str | None:
         if not self._attention.groups or self._selected >= len(self._attention.groups):
@@ -428,17 +286,14 @@ class EscalationsPanel(Static):
             return None
         if not self._attention.groups or self._selected >= len(self._attention.groups):
             return None
-        group = self._attention.groups[self._selected]
-        return next(
-            (
-                item
-                for item in group.escalations
-                if item.escalation_id == self._selected_escalation_id
-            ),
-            group.escalations[0] if group.escalations else None,
-        )
+        escalations = self._attention.groups[self._selected].escalations
+        return escalations[0] if escalations else None
 
-    async def _render_panels(self, *, reveal_selection: bool = False) -> None:
+    def _selected_escalation_id(self) -> str | None:
+        decision = self._selected_decision()
+        return decision.escalation_id if decision is not None else None
+
+    async def _render_panels(self) -> None:
         self._rendered_selection = self._selection_state()
         self.set_class(self._focus_row and self._selected_decision() is not None, ARMED_CLASS)
         panels = self.query_one("#escalation-panels", VerticalScroll)
@@ -461,20 +316,14 @@ class EscalationsPanel(Static):
                 zip(children, self._attention.groups, strict=True)
             ):
                 card.update_if_changed(self._render_group(index, group))
-            if reveal_selection:
-                self._reveal_selection(panels, children[self._selected])
-            else:
-                panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
+            panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
             return
         cards = [
             GatedStatic(self._render_group(index, group), markup=False)
             for index, group in enumerate(self._attention.groups)
         ]
         if await self._replace_panels(panels, cards):
-            if reveal_selection:
-                self._reveal_selection(panels, cards[self._selected])
-            else:
-                panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
+            panels.scroll_to(x=scroll_x, y=scroll_y, animate=False)
 
     async def _replace_panels(self, panels: VerticalScroll, cards: list[GatedStatic]) -> bool:
         await panels.remove_children()
@@ -495,26 +344,8 @@ class EscalationsPanel(Static):
             self._summary,
             action_hint=action_hint,
             selected_group_index=self._selected,
-            selected_escalation_id=self._selected_escalation_id,
+            selected_escalation_id=self._selected_escalation_id(),
             not_escalated_task_id=self._not_escalated_task_id(),
-        )
-
-    def _reveal_selection(self, panels: VerticalScroll, card: GatedStatic) -> None:
-        decision_id = self._selected_escalation_id
-        if decision_id is None:
-            panels.scroll_to_widget(card, top=True, animate=False)
-            return
-        lines = card.render_lines(Region(0, 0, card.size.width, card.size.height))
-        decision_line = next(
-            (index for index, line in enumerate(lines) if decision_id in line.text),
-            0,
-        )
-        card_top = card.region.y - panels.region.y + panels.scroll_y
-        decision_top = card_top + decision_line
-        panels.scroll_to(
-            x=panels.scroll_x,
-            y=max(decision_top - panels.size.height + 1, 0),
-            animate=False,
         )
 
     def _render_group(self, index: int, group: AttentionGroupView) -> Group:
@@ -523,10 +354,11 @@ class EscalationsPanel(Static):
         lines = [f"{marker}{identity}"]
         lines.extend(f"  {reason}" for reason in group.reasons)
         content: list[RenderableType] = ["\n".join(lines)]
+        selected_id = self._selected_escalation_id()
         for item in group.escalations:
             shown = display_escalation_headline(item.task_id, item.headline, item.reason)
             headline = f"{item.escalation_id} · {shown} · {item.age}"
-            if index == self._selected and item.escalation_id == self._selected_escalation_id:
+            if index == self._selected and item.escalation_id == selected_id:
                 headline = f"{_SELECTED_MARKER}{headline}"
             content.append(
                 SplashPanel(
@@ -542,8 +374,6 @@ class EscalationsPanel(Static):
                 content.append(f"  Evidence error: {item.evidence_error}")
         if group.task_id is not None:
             content.append(key_hint("  Enter: task detail"))
-        if group.escalations:
-            content.append(key_hint("  o: evidence   r: resolve"))
         return Group(*content)
 
 
@@ -559,21 +389,6 @@ def _attention_status_state(
         summary.operator_owned,
         summary.held_task_states,
     )
-
-
-def _packet_copy(item: EscalationPanelView) -> str:
-    if item.evidence_error is None:
-        return item.packet
-    actions = ", ".join(item.resolution_actions) or "none recorded"
-    headline = display_escalation_headline(item.task_id, item.headline)
-    lines = [
-        f"{item.escalation_id} · {item.task_id} · {headline}",
-        f"Allowed actions: {actions}",
-        f"Evidence error: {item.evidence_error}",
-    ]
-    if item.packet:
-        lines.extend(("", "Original packet:", item.packet))
-    return "\n".join(lines)
 
 
 class EscalationsWidget:

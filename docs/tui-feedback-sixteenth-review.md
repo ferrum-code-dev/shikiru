@@ -41,3 +41,8 @@ Execution order: Task 228, then 229, 230 and 231, one task at a time.
 
 ## Tests
 - The collected cases (1654) must not grow. Tests of removed features are deleted, and new behaviour extends existing tables.
+
+### Task 230 outcome
+- The store has no uniqueness rule, so a task can hold several open escalations (`EscalationStore.open` only inserts; `ensure_actionable` tolerates several; `settle_open` resolves all of a task's open escalations). The engine raises one per escalation and a retry or cancel settles them together. The bar shows the first open one; the next appears once it is resolved.
+- `PacketScreen` and its widget copy are gone. `dashboard/extra_details.py` holds `ExtraDetailsScreen`, opened by `ResolutionScreen`. Fault evidence never used the packet screen (it opens `FOCUS_FAULTS_VIEW` through `open_contextual_view`); the dead fallback that pushed the packet screen is removed.
+- A packet without text or a task without a Details section shows no hint and `o` is inert.

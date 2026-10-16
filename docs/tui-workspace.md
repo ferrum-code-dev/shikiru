@@ -170,7 +170,7 @@ Current Home selection updates shared inline detail; Escape clears that selectio
 | Workspace | `/` | Focus task search. |
 | Workspace | `?` | Show context-aware help and all available bindings. |
 | Task detail | `v`, `?` | Focus the task detail folds, or help. |
-| Escalation entry | `r`, `o` | Open resolution or the full packet. |
+| Escalation entry | Enter, click | Open resolution; `o` on the Escalations screen opens Extra details while Details is open. |
 | Dialogue or timeline entry | `Enter` | Show its complete text and source. |
 | Scrollable list or evidence | `PageUp`, `PageDown`, `Home`, `End` | Navigate the current content. |
 

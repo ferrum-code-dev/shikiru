@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from shikiru.dashboard.detail import TASK_DETAIL_VIEWS_KEY, TASK_WINDOW_KEY
+from shikiru.dashboard.resolution_view import EXTRA_DETAILS_KEY
 from shikiru.dashboard.timeline_filter import CLEAR_KEY, CYCLE_ROLE_KEY, CYCLE_TURN_KEY
 from shikiru.dashboard.timeline_section import FILTER_KEY
 
@@ -71,12 +72,7 @@ def _home_groups(availability: HelpAvailability) -> tuple[HelpGroup, ...]:
         groups.append(
             HelpGroup(
                 "Escalations",
-                (
-                    HelpRow("Left/Right", "Choose between decisions when there are two or more"),
-                    HelpRow(_ENTER, "Open the decision"),
-                    HelpRow("r", "Open the resolution"),
-                    HelpRow("o", "Open the evidence"),
-                ),
+                (HelpRow(_ENTER, "Open the decision"),),
             )
         )
     everywhere = [
@@ -147,6 +143,7 @@ def _escalation_groups() -> tuple[HelpGroup, ...]:
                 HelpRow(_ARROWS, "Choose an answer"),
                 HelpRow(_ENTER, "Send it, or edit or expand the chosen row"),
                 HelpRow("t", "Show or hide what was tried"),
+                HelpRow(EXTRA_DETAILS_KEY, "Open extra details (when Details is open)"),
                 HelpRow(_ESC, "Close without sending"),
             ),
         ),

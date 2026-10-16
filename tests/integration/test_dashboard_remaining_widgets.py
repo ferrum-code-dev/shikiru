@@ -431,7 +431,7 @@ async def _assert_diagnostics_refresh_after_commit(
     _assert_resource_sample_retained(sources, initial)
 
 
-async def test_escalations_open_full_packet_and_route_resolution_action(
+async def test_escalations_list_every_open_decision_of_a_task_and_flag_unreadable_evidence(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -473,12 +473,7 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
         packet_path=str(empty_packet_path),
         options=options_for(EscalationReason.AGENT_ERROR),
     )
-    resolutions: list[str] = []
-
-    async def open_resolution(escalation_id: str) -> None:
-        resolutions.append(escalation_id)
-
-    context = widget_context(reader, project_dir, clock, open_resolution=open_resolution)
+    context = widget_context(reader, project_dir, clock)
     views = context.views.escalations()
     assert views[0].question == (
         "Which parser should we use?\n\n### Trade-offs\n\n- Strict validation\n- Flexible recovery"
@@ -488,42 +483,11 @@ async def test_escalations_open_full_packet_and_route_resolution_action(
     widget = cast("EscalationsPanel", EscalationsWidget().create(context))
     async with WidgetHostApp(widget).run_test() as pilot:
         await pilot.pause()
-        home = pilot.app.screen
         group_text = plain_text(widget.query_one("#escalation-panels").query(Static)[0].content)
         assert group_text.count(task.id) == 1
         assert related.id in group_text
         assert "E-1 · Reuse the parser from" in group_text
-        widget.focus()
-        assert pilot.app.focused is widget
-        await pilot.press("o")
-        await wait_until(
-            lambda: bool(pilot.app.screen.query("#escalation-packet-close")),
-            timeout=UI_WAIT_SECONDS,
-        )
-        packet_screen = pilot.app.screen
-        packet_close = packet_screen.query_one("#escalation-packet-close", Button)
-        packet_frame = packet_screen.query_one("#escalation-packet-frame", Vertical)
-        packet_scroll = packet_screen.query_one("#escalation-packet-scroll", VerticalScroll)
-        await wait_until(
-            lambda: (
-                packet_close.region.width > 0
-                and packet_close.region.height > 0
-                and packet_frame.region.contains_region(packet_close.region)
-                and packet_screen.region.contains_region(packet_close.region)
-                and not packet_scroll.scrollable_content_region.contains_region(packet_close.region)
-            ),
-            timeout=UI_WAIT_SECONDS,
-        )
-        packet_view = cast("Static", packet_screen.query_one("#escalation-packet"))
-        packet_copy = cast("str", packet_view.content)
-        assert f"E-1 · {task.id} · Reuse the parser from {related.id}." in packet_copy
-        assert "Evidence error:" in packet_copy
-        assert f"Original packet:\n{packet}" in packet_copy
-        await pilot.click("#escalation-packet-close")
-        await wait_until(lambda: pilot.app.screen is home, timeout=UI_WAIT_SECONDS)
-        widget.focus()
-        await pilot.press("r")
-        assert resolutions == ["E-1"]
+        assert "E-2" in group_text
 
 
 async def test_attention_keeps_unreadable_decision_and_does_not_create_its_packet(
@@ -578,7 +542,7 @@ async def test_attention_keeps_unreadable_decision_and_does_not_create_its_packe
     assert "missing-packet.md" in decision.evidence_error
 
     panel = cast("EscalationsPanel", EscalationsWidget().create(context))
-    async with WidgetHostApp(panel).run_test() as pilot:
+    async with WidgetHostApp(panel).run_test():
         await wait_until(
             lambda: (
                 escalation.id
@@ -590,16 +554,8 @@ async def test_attention_keeps_unreadable_decision_and_does_not_create_its_packe
         assert group_text.count(task.id) == 1
         assert related.id in group_text
         assert "E-1 · Choose whether to retry like" in group_text
-        panel.focus()
-        await pilot.press("o")
-        await pilot.pause()
-        evidence = cast("Static", pilot.app.screen.query_one("#escalation-packet"))
-        evidence_text = plain_text(evidence.render())
-        assert escalation.id in evidence_text
-        assert evidence_text.count(task.id) == 1
-        assert related.id in evidence_text
-        assert "answer, cancel" in evidence_text
-        assert "Evidence error" in evidence_text
+        assert "answer, cancel" in group_text
+        assert "Evidence error" in group_text
         current = EscalationStore(connection, clock).get(escalation.id)
         assert current is not None
         assert current.status is EscalationStatus.OPEN

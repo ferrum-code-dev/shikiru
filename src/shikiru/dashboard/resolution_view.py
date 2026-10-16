@@ -64,6 +64,8 @@ _NEEDS_INPUT_MARK = "\N{LOWER RIGHT PENCIL}"
 _NEEDS_INPUT_TEXT = "needs your input"
 _DETAILS_TITLE = "Details"
 TRIED_TOGGLE_KEY = "t"
+EXTRA_DETAILS_KEY = "o"
+_EXTRA_DETAILS_LABEL = "extra details"
 _TRIED_TOGGLE_LABEL = "show/hide"
 _TURNS_LABEL = "Turns"
 _PART_SEPARATOR = " \N{MIDDLE DOT} "
@@ -231,10 +233,22 @@ def _detail_rows(items: tuple[AttemptItem, ...]) -> RenderableType:
     return grid
 
 
-def tried_renderable(items: tuple[AttemptItem, ...], *, expanded: bool) -> RenderableType:
-    """Return the collapsible `Details` section with its toggle hint, without its rule."""
+def tried_renderable(
+    items: tuple[AttemptItem, ...], *, expanded: bool, extra_details: bool = False
+) -> RenderableType:
+    """Return the collapsible `Details` section with its toggle hint, without its rule.
+
+    An expanded section ends with the `extra details` hint when `extra_details` is set.
+    """
     arrow = _EXPANDED_ARROW if expanded else _COLLAPSED_ARROW
-    body = _detail_rows(items) if expanded else Group()
+    body: RenderableType = Group()
+    if expanded:
+        rows = _detail_rows(items)
+        body = (
+            Group(rows, key_label(EXTRA_DETAILS_KEY, _EXTRA_DETAILS_LABEL))
+            if extra_details
+            else rows
+        )
     return Section(
         f"{_DETAILS_TITLE} {arrow}",
         body,

@@ -273,25 +273,6 @@ async def test_clicking_a_task_row_and_clearing_the_selection_move_the_bar(
         assert home.app.focused is home.app.query_one(_TASK_LIST)
 
 
-async def test_a_choice_made_with_left_and_right_survives_refreshes(
-    connection: Connection,
-    home: _Home,
-) -> None:
-    clock = FakeClock(_START)
-    extra = _escalate(connection, clock, home.first, EscalationReason.AGENT_ERROR)
-    async with home.app.run_test(size=_WIDE) as pilot:
-        await _settled(home, pilot)
-        await _select(home, pilot, home.first)
-        await wait_until(
-            lambda: home.decisions[home.first.id] in home.text(), timeout=UI_WAIT_SECONDS
-        )
-        home.bar.focus()
-        await pilot.press("right")
-        await wait_until(lambda: extra in home.text(), timeout=UI_WAIT_SECONDS)
-        await pilot.pause()
-        assert extra in home.text()
-
-
 def _task_rows(home: _Home) -> list[ListItem]:
     children = home.app.query_one(_TASK_LIST, ListView).children
     return [child for child in children if isinstance(child, ListItem)]
@@ -348,20 +329,25 @@ async def test_up_and_down_leave_the_task_selection_alone_in_the_search_input(ho
         assert _selected_index(home) == selected
 
 
-@pytest.mark.parametrize("key", ["left", "right"])
-async def test_left_and_right_do_nothing_when_the_followed_task_has_one_decision(
+async def test_the_bar_ignores_keys_that_once_switched_or_opened_decisions(
+    connection: Connection,
     home: _Home,
-    key: str,
 ) -> None:
+    clock = FakeClock(_START)
+    extra = _escalate(connection, clock, home.second, EscalationReason.AGENT_ERROR)
     async with home.app.run_test(size=_WIDE) as pilot:
         await _settled(home, pilot)
         await _select(home, pilot, home.second)
         await wait_until(
             lambda: home.decisions[home.second.id] in home.text(), timeout=UI_WAIT_SECONDS
         )
+        screen = home.app.screen
         shown = home.text()
         home.bar.focus()
-        await pilot.press(key)
-        await pilot.pause()
-        assert home.app.focused is home.bar
-        assert home.text() == shown
+        for key in ("left", "right", "r", "o"):
+            await pilot.press(key)
+            await pilot.pause()
+            assert home.app.screen is screen
+            assert home.app.focused is home.bar
+            assert home.text() == shown
+        assert extra not in shown

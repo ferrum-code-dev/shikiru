@@ -81,10 +81,11 @@ from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.domain.commands import (
     Prioritize,
+    ResolutionKind,
     Say,
     Stop,
 )
-from shikiru.domain.escalation import EscalationStatus, options_for
+from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
     REPORT_FILENAME,
@@ -1863,7 +1864,7 @@ async def test_focus_operational_counts_and_contextual_task_filters(
 
 @pytest.mark.usefixtures("colour_terminal")
 @pytest.mark.parametrize("size", _HOME_REVIEW_SIZES)
-async def test_focus_attention_opens_durable_decision_evidence(
+async def test_focus_attention_shows_the_decision_status_row(
     database: Database, connection: Connection, tmp_path: Path, size: tuple[int, int]
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
@@ -1886,7 +1887,7 @@ async def test_focus_attention_opens_durable_decision_evidence(
     reader = StateReader(database, clock)
     try:
         app = _app(reader, project_dir, widget_names=["escalations"])
-        async with app.run_test(size=size) as pilot:
+        async with app.run_test(size=size):
             attention = app.query_one("#escalations", EscalationsPanel)
             await wait_until(lambda: attention.display, timeout=UI_WAIT_SECONDS)
             row = attention.query_one("#escalation-panels", VerticalScroll).query_one(Static)
@@ -1899,26 +1900,11 @@ async def test_focus_attention_opens_durable_decision_evidence(
             status_lines = _rendered_widget_lines(row)
             assert "paused" not in status_lines[0]
             assert any(unrelated_held.id in line and "paused" in line for line in status_lines)
-
-            await _choose_focus_view(app, pilot, "Attention · decisions, stalls and faults")
-            await wait_until(lambda: app.focused is attention, timeout=UI_WAIT_SECONDS)
-            await pilot.press("o")
-            await wait_until(
-                lambda: bool(app.screen.query("#escalation-packet")), timeout=UI_WAIT_SECONDS
-            )
-            packet = app.screen.query_one("#escalation-packet", Static)
-            packet_text = _rendered_text(packet)
-            assert escalation.id in packet_text
-            assert "Choose whether to retry" in packet_text
-            assert "Evidence error" in packet_text
-            opened = EscalationStore(connection, clock).get(escalation.id)
-            assert opened is not None
-            assert opened.status is EscalationStatus.OPEN
     finally:
         reader.close()
 
 
-async def test_home_list_enter_uses_the_selected_decision_when_one_task_has_several(
+async def test_home_bar_shows_the_first_decision_of_a_task_and_the_next_once_it_is_resolved(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -1964,8 +1950,21 @@ async def test_home_list_enter_uses_the_selected_decision_when_one_task_has_seve
                 lambda: app.focused is task_list and decisions[0].id in _rendered_text(row),
                 timeout=UI_WAIT_SECONDS,
             )
-            attention.focus()
-            await pilot.press("right")
+            assert decisions[1].id not in _rendered_text(row)
+            await pilot.press("enter")
+            title = resolution_title(await wait_for_resolution(app))
+            assert decisions[0].id in title
+            assert queue.pending() == []
+
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
+            await pilot.click(row)
+            assert decisions[0].id in resolution_title(await wait_for_resolution(app))
+            assert queue.pending() == []
+
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
+            escalations.resolve(decisions[0].id, ResolutionKind.CANCEL.value)
             await wait_until(
                 lambda: (
                     decisions[1].id in _rendered_text(row)
@@ -1973,18 +1972,6 @@ async def test_home_list_enter_uses_the_selected_decision_when_one_task_has_seve
                 ),
                 timeout=UI_WAIT_SECONDS,
             )
-            task_list.focus()
-            await pilot.press("enter")
-            title = resolution_title(await wait_for_resolution(app))
-            assert decisions[1].id in title
-            assert decisions[0].id not in title
-            assert queue.pending() == []
-
-            await pilot.press("escape")
-            await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
-            await pilot.click(row)
-            assert decisions[1].id in resolution_title(await wait_for_resolution(app))
-            assert queue.pending() == []
     finally:
         reader.close()
 

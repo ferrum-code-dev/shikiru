@@ -18,7 +18,6 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Status
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
-from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
@@ -53,7 +52,6 @@ _PROJECT_NAME = "popup-focus"
 _COMMAND_HISTORY_LABEL = "Command history · pending, applied and rejected"
 _USAGE_DETAILS_LABEL = "Usage details"
 _DIALOGUE_LABEL = "Activity · dialogue"
-_ATTENTION_LABEL = "Attention · decisions, stalls and faults"
 
 
 async def _await_popup(app: DashboardApp, pilot: Pilot[None], origin: Screen[Any]) -> Screen[Any]:
@@ -92,15 +90,6 @@ async def _open_standalone_palette(app: DashboardApp, pilot: Pilot[None]) -> Scr
     return await _await_popup(app, pilot, origin)
 
 
-async def _open_decision_packet(app: DashboardApp, pilot: Pilot[None]) -> Screen[Any]:
-    await choose_focus_view(pilot, _ATTENTION_LABEL)
-    attention = app.query_one("#escalations", EscalationsPanel)
-    await wait_until(lambda: app.focused is attention, timeout=UI_WAIT_SECONDS)
-    origin = app.screen
-    await pilot.press("o")
-    return await _await_popup(app, pilot, origin)
-
-
 async def _open_dialogue_text(app: DashboardApp, pilot: Pilot[None]) -> Screen[Any]:
     if not app.screen.query("#dialogue-table"):
         await choose_focus_view(pilot, _DIALOGUE_LABEL)
@@ -117,7 +106,6 @@ _ROUTES = (
     pytest.param(_open_command_history, "#command-history-filter", id="command-history"),
     pytest.param(_open_usage_details, "#context-widget-content", id="usage-details"),
     pytest.param(_open_standalone_palette, "#action-search", id="standalone-palette"),
-    pytest.param(_open_decision_packet, "#escalation-packet-scroll", id="decision-packet"),
     pytest.param(_open_dialogue_text, "#dialogue-text-scroll", id="dialogue-text"),
 )
 
@@ -250,7 +238,6 @@ async def test_popup_starts_on_its_useful_control_and_closes_with_escape_or_its_
         ),
         pytest.param(_open_views, "#context-views-hint", "Enter", "open", id="views-hint"),
         pytest.param(_open_command_history, f".{POPUP_CLOSE_CLASS}", "Esc", "\u00d7", id="history"),
-        pytest.param(_open_decision_packet, f".{POPUP_CLOSE_CLASS}", "Esc", "\u00d7", id="packet"),
     ],
 )
 @pytest.mark.usefixtures("colour_terminal")

@@ -12,7 +12,9 @@ from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Rule, Static, TextArea
 
+from shikiru.dashboard.extra_details import ExtraDetailsScreen
 from shikiru.dashboard.resolution_view import (
+    EXTRA_DETAILS_KEY,
     TRIED_TOGGLE_KEY,
     ResolutionLayout,
     choice_renderable,
@@ -46,7 +48,7 @@ from shikiru.ui.tokens import AMBER, DUSTY_ROSE
 
 if TYPE_CHECKING:
     from textual import events
-    from textual.app import ComposeResult
+    from textual.app import App, ComposeResult
     from textual.binding import BindingType
     from textual.worker import Worker
 
@@ -64,6 +66,7 @@ _LEAVE_KEY = "escape"
 _ACTION_MOVE = "move"
 _ACTION_ACTIVATE = "activate"
 _ACTION_TOGGLE_TRIED = "toggle_tried"
+_ACTION_EXTRA_DETAILS = "extra_details"
 _SELECTION_ACTIONS = frozenset({_ACTION_MOVE, _ACTION_ACTIVATE, _ACTION_TOGGLE_TRIED})
 _PREFILL_SEPARATOR = " \N{EM DASH} "
 _SUBMIT_KEY = "enter"
@@ -156,6 +159,7 @@ class ResolutionScreen(ModalScreen[bool]):
         Binding("down", f"{_ACTION_MOVE}(1)", "Next choice", show=False, priority=True),
         Binding(_SUBMIT_KEY, _ACTION_ACTIVATE, "Send", show=False),
         Binding(TRIED_TOGGLE_KEY, _ACTION_TOGGLE_TRIED, "Details", show=False),
+        Binding(EXTRA_DETAILS_KEY, _ACTION_EXTRA_DETAILS, "Extra details", show=False),
     ]
     DEFAULT_CSS = (
         POPUP_CSS
@@ -193,6 +197,7 @@ class ResolutionScreen(ModalScreen[bool]):
         self._on_change = on_change
         self._drafts = drafts
         self._escalation_id = escalation_id
+        self._packet_text = ""
         self._panel = self._load()
         self._selected = self._panel.preselected if self._panel is not None else 0
         self._answer_for: int | None = None
@@ -262,6 +267,8 @@ class ResolutionScreen(ModalScreen[bool]):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         del parameters
+        if action == _ACTION_EXTRA_DETAILS:
+            return self._extra_details_shown() and not isinstance(self.focused, TextArea)
         if action in _SELECTION_ACTIONS:
             if isinstance(self.focused, TextArea):
                 return False
@@ -290,6 +297,12 @@ class ResolutionScreen(ModalScreen[bool]):
             self._tried_open = not self._tried_open
             self._paint()
             self._relayout()
+
+    def action_extra_details(self) -> None:
+        """Open the evidence popup while `Details` is open and a packet exists."""
+        if self._extra_details_shown():
+            task_id = cast("ResolutionPanel", self._panel).task_id
+            cast("App[None]", self.app).push_screen(ExtraDetailsScreen(task_id, self._packet_text))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == RESOLUTION_CLOSE_BUTTON:
@@ -352,6 +365,7 @@ class ResolutionScreen(ModalScreen[bool]):
         view = self._queries.get_escalation(self._escalation_id)
         if view is None:
             return None
+        self._packet_text = view.packet or ""
         task = self._queries.get_task_state(view.escalation.task_id)
         packet = parse_escalation_packet(view.packet) if view.packet is not None else None
         return build_resolution_panel(
@@ -359,6 +373,15 @@ class ResolutionScreen(ModalScreen[bool]):
             packet,
             task.title if task is not None else "",
             self._queries.escalation_resolution_disabled_reason(self._escalation_id),
+        )
+
+    def _extra_details_shown(self) -> bool:
+        panel = self._panel
+        return (
+            panel is not None
+            and bool(panel.details)
+            and self._tried_open
+            and bool(self._packet_text)
         )
 
     def _disabled_reason(self) -> str | None:
@@ -445,7 +468,11 @@ class ResolutionScreen(ModalScreen[bool]):
             answer.disabled = disabled
         if panel.details:
             self.query_one("#resolution-tried", _TriedSection).update(
-                tried_renderable(panel.details, expanded=self._tried_open)
+                tried_renderable(
+                    panel.details,
+                    expanded=self._tried_open,
+                    extra_details=self._extra_details_shown(),
+                )
             )
 
     def _render_notice(self) -> None:
