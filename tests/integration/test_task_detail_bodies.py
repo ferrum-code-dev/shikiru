@@ -70,6 +70,11 @@ def _body_lines(panel: TaskDetailPanel, widget_id: str) -> list[str]:
     return rendered_lines(panel.query_one(f"#{widget_id}", Static).content, width=PANEL_WIDTH)
 
 
+def _first_line_starts(panel: TaskDetailPanel, widget_id: str, prefix: str) -> bool:
+    lines = _body_lines(panel, widget_id)
+    return bool(lines) and lines[0].startswith(prefix)
+
+
 def _criteria_heading(body: Static) -> list[Cell]:
     none: list[Cell] = []
     return next(
@@ -215,11 +220,13 @@ async def test_workspace_and_settings_tables_repeat_no_title(
             async with WidgetHostApp(panel).run_test(size=(PANEL_WIDTH, 40)):
                 await _loaded(panel, task.id)
                 await wait_until(
-                    lambda panel=panel: bool(_body_lines(panel, "task-detail-workspace")),
+                    lambda panel=panel: _first_line_starts(panel, "task-detail-workspace", "Path"),
                     timeout=UI_WAIT_SECONDS,
                 )
                 await wait_until(
-                    lambda panel=panel: bool(_body_lines(panel, "task-detail-context-info")),
+                    lambda panel=panel: _first_line_starts(
+                        panel, "task-detail-context-info", "Submitted"
+                    ),
                     timeout=UI_WAIT_SECONDS,
                 )
                 workspace = _body_lines(panel, "task-detail-workspace")
