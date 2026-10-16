@@ -63,7 +63,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.render import plain_text
 from tests.support.store import reopen_command
-from tests.support.waiting import wait_until_advancing
+from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -207,6 +207,7 @@ class WorkspaceRuntime:
                     self.commands,
                     self.queries,
                     select_pane,
+                    action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
                     on_change=self.reader.watch,
                     initial_action=action,
                     evidence_exporter=self.exporter,
@@ -220,6 +221,7 @@ class WorkspaceRuntime:
                     self.commands,
                     self.queries,
                     select_pane,
+                    action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
                     on_change=self.reader.watch,
                     initial_context=request,
                     evidence_exporter=self.exporter,
@@ -497,7 +499,7 @@ async def test_fake_agent_workspace_finds_verdict_and_applies_contextual_message
                 )
             )
             await runtime.wait_for(
-                lambda: "Applied" in _plain(palette.query_one("#palette-result", Static))
+                lambda: "\N{CHECK MARK}" in str(palette.query_one("#palette-submit", Button).label)
             )
             delivered = list(
                 (run_dir(tmp_path, task_id) / "messages" / Role.IMPLEMENTER.value).glob("*.md")

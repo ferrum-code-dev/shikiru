@@ -48,7 +48,7 @@ from tests.support.escalations import (
     wait_for_resolution,
 )
 from tests.support.store import seed_task
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from textual.pilot import Pilot
@@ -626,6 +626,7 @@ async def test_every_entry_route_opens_the_resolution_screen_without_dispatching
                 commands,
                 queries,
                 _no_pane_selection,
+                action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
                 on_change=reader.watch,
                 initial_context=palette_request,
                 task_routes_available=True,
@@ -697,6 +698,7 @@ async def test_the_generic_resolve_action_opens_the_first_decision_or_says_none_
         commands,
         queries,
         _no_pane_selection,
+        action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
         on_change=reader.watch,
         resolution_screen=resolution_factory(commands, queries, clock, reader),
     )

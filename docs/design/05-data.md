@@ -115,6 +115,7 @@ last_words_chars = 4000                         # safety cap on the stored last 
 now_max_lines = 6                               # lines Now wraps the last message over; ends with … only when cut
 now_compact_lines = 2                           # the same in the compact and tiny layouts
 results_commits = 3                             # commits the task Results list before "+N more"
+action_confirmation_seconds = 5                 # how long the ✓ after a queued Message, Pause, Resume or Cancel stays visible
 layout = { split = "v", panes = [
   { pane = "leader", size = 40 },
   { pane = "implementer", size = 40 },

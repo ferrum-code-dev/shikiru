@@ -117,7 +117,7 @@ from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.render import plain_text, rendered_lines
 from tests.support.store import seed_task
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, wait_until
 from tests.support.workspace import task_root_builder
 
 pytestmark = pytest.mark.asyncio
@@ -398,6 +398,7 @@ def _operator_task_app(
                 commands,
                 queries,
                 _unexpected_pane_selection,
+                action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
                 on_change=reader.watch,
                 initial_context=request,
             ),

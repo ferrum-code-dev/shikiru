@@ -1,8 +1,8 @@
 # Phase 11 fifteenth review: action popups and help
 
-Status: in progress (Tasks 223-226). Refines the [fourteenth review](tui-feedback-fourteenth-review.md) where it differs. **The TUI is the source of truth.** The operator approved the decisions below; do not redesign.
+Status: in progress (Tasks 223-227). Refines the [fourteenth review](tui-feedback-fourteenth-review.md) where it differs. **The TUI is the source of truth.** The operator approved the decisions below; do not redesign.
 
-## Action popups (Tasks 223, 225 and 226)
+## Action popups (Tasks 223, 225, 226 and 227)
 
 Applies to the shared `PaletteScreen` reached from task details (an action preset) or from the Ctrl+P menu.
 
@@ -24,7 +24,15 @@ Applies to the shared `PaletteScreen` reached from task details (an action prese
 
 ### Close after queueing (Task 226)
 - A Pause, Resume or Cancel popup from task details closes as soon as its command is queued or applied, through the Esc close path, so one Enter sends exactly one command (for Cancel, the second Enter). A rejected command keeps the popup open with its reason.
-- The outcome stays visible on Home: the footer shows the latest command (`Pending: Pause T-1`) and the task detail refreshes. Ctrl+P popups and Message are unchanged.
+- The outcome stays visible on Home: the footer shows the latest command (`Pending: Pause T-1`) and the task detail refreshes. Ctrl+P popups and Message follow Task 227.
+
+### Ctrl+P, Message and the confirmation mark (Task 227)
+- A Pause, Resume or Cancel form opened from the Ctrl+P menu returns to the Actions menu once its command is queued or applied (the Back path), so repeated clicks or Enter cannot queue a duplicate; a rejected command keeps the form open with its reason. Task-detail popups still close (Task 226) and show no mark.
+- A successful send shows a bold sage `✓` (glyph only, no text) for `dashboard.action_confirmation_seconds` (5 seconds). On Message it sits right after the hint line `Ctrl+S queue message · Enter new line`; on the Ctrl+P menu it sits next to the entry of the action just queued (Pause, Resume or Cancel). When the hint does not fit beside it (48 columns and narrower) the `✓` takes its own row under the hint for those seconds. A new send, opening another action, Back, or the timer clears it.
+- Success text is no longer written to the result area: a queued or applied Message clears its text and focus returns to the empty box, and the Ctrl+P menu has no result line. Rejections and errors keep their text and reason in the result area, and a rejected send keeps the Message text.
+- A command that is still unacknowledged after the ack wait keeps its `Pending` warning text (the engine running but not acknowledging is a warning, not a success), and its Message text stays in the box.
+- An empty Message cannot be sent (Send and Ctrl+S are disabled), so a cleared box cannot queue an empty message.
+- The hint keeps its colours in every state: keys bold cyan and labels grey, after a send, while the `✓` shows, after a rejected send, after focus changes, and after the armed Cancel hint resets. Disabled hints keep these colours too (the state shows through the disabled control and the Unavailable line).
 
 ## Help panel (Task 224)
 

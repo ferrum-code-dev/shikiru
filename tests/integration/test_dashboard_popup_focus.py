@@ -31,7 +31,7 @@ from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, choose_focus_view, state_views
 from tests.support.store import seed_task
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -171,7 +171,13 @@ def _dashboard(
     async def open_palette(action: str) -> None:
         del action
         await app.push_screen(
-            PaletteScreen(commands, queries, _select_pane, on_change=reader.watch)
+            PaletteScreen(
+                commands,
+                queries,
+                _select_pane,
+                action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
+                on_change=reader.watch,
+            )
         )
 
     app = DashboardApp(

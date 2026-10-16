@@ -138,7 +138,7 @@ from tests.support.render import plain_text
 from tests.support.resource_agent import resource_services, start_resource_agent
 from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, wait_until
 
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
 _COMPACT_RESOLUTION_CONTEXT_SCROLL_ROWS = 5
@@ -431,6 +431,7 @@ def _palette_screen_for_app(
         commands,
         queries,
         _unexpected_pane_selection,
+        action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
         on_change=reader.watch,
         initial_context=request,
         remember_contextual_draft=remember_contextual_draft,
@@ -2017,6 +2018,7 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
                 commands,
                 queries,
                 _unexpected_pane_selection,
+                action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
                 on_change=reader.watch,
                 initial_context=PaletteRequest(action="stop"),
             )
@@ -5311,6 +5313,7 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
                 commands,
                 queries,
                 _unexpected_pane_selection,
+                action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
                 on_change=reader.watch,
             )
         )

@@ -58,11 +58,18 @@ from shikiru.ui.popup import (
 )
 from shikiru.ui.screen import widget_is_attached, widget_is_on_screen
 from shikiru.ui.theme import install_theme
-from shikiru.ui.tokens import DUSTY_ROSE, SECONDARY_TEXT_COLOR, STEEL_BLUE, STYLE_BOLD
+from shikiru.ui.tokens import (
+    DUSTY_ROSE,
+    SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
+    STYLE_BOLD,
+    SUCCESS_COLOR,
+)
 
 if TYPE_CHECKING:
     from textual import events
     from textual.app import ComposeResult
+    from textual.timer import Timer
     from textual.worker import Worker
 
     from shikiru.agents.contracts import Rung
@@ -166,6 +173,10 @@ _HINT_KEY_ACTIONS = {
     "queue": frozenset({_ACTION_MESSAGE}),
 }
 _CONFIRM_TWICE_ACTIONS = frozenset({_ACTION_CANCEL})
+_CLEAR_AFTER_QUEUE_ACTIONS = frozenset({_ACTION_MESSAGE})
+_CONFIRMED_ACTIONS = _ENTER_HINT_ACTIONS | _CLEAR_AFTER_QUEUE_ACTIONS
+_PALETTE_WRAPPED_HINT_ROWS = 2
+_CONFIRMATION_GLYPH = "\N{CHECK MARK}"
 _ENTER_KEY = "enter"
 _TASK_ROLES = TASK_ACTION_ROLES
 _ROLE_OPTIONS = tuple((role.value.title(), role.value) for role in _TASK_ROLES)
@@ -405,8 +416,11 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     #palette-actions.short { margin-top: 0; }
     #palette-actions.hint { align-horizontal: left; }
     #palette-actions.hint #palette-submit {
-        padding: 0; background: $surface; color: $secondary-text;
+        padding: 0; background: $surface; color: $secondary-text; text-opacity: 1;
         content-align: left middle; text-align: left;
+    }
+    #palette-actions.hint #palette-submit:disabled {
+        color: $secondary-text; text-opacity: 1;
     }
     #palette-actions Button {
         width: auto; max-width: 100%; height: auto; min-height: 1; padding: 0;
@@ -426,6 +440,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         pane_selector: PaneSelector,
         *,
         on_change: OnChangeRegistration,
+        action_confirmation_seconds: float,
         initial_action: str = _EMPTY,
         initial_context: PaletteRequest | None = None,
         evidence_exporter: TaskEvidenceExporter | None = None,
@@ -451,6 +466,9 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._task_routes_available = task_routes_available
         self._project_diagnostics_available = project_diagnostics_available
         self._resolution_screen = resolution_screen
+        self._action_confirmation_seconds = action_confirmation_seconds
+        self._confirmed_action: str | None = None
+        self._confirmation_timer: Timer | None = None
         self._previous_action = _ACTION_SUBMIT
         self._more_actions_expanded = False
         self._role_is_explicit = self._initial_context.role is not None
@@ -727,8 +745,65 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     def _hint_mode(self) -> bool:
         return self._preset_popup() and self._selected_value(_FIELD_ACTION) in _HINT_LABELS
 
-    def _closes_after_queue(self, action: str) -> bool:
-        return action in _ENTER_HINT_ACTIONS and self._preset_popup()
+    def _confirm_submitted(self, action: str) -> None:
+        self._paint_result(_EMPTY)
+        if action in _CLEAR_AFTER_QUEUE_ACTIONS:
+            self._clear_message()
+            self._show_confirmation(action)
+            return
+        self._closing_after_queue = True
+        if self._preset_popup():
+            self.call_later(self.action_close)
+            return
+        self._return_to_menu()
+        self._show_confirmation(action)
+
+    def _clear_message(self) -> None:
+        message = self.query_one(f"#{_FIELD_MESSAGE}", TextArea)
+        message.text = _EMPTY
+        message.focus()
+
+    def _show_confirmation(self, action: str) -> None:
+        self._stop_confirmation()
+        self._confirmed_action = action
+        self._confirmation_timer = self.set_timer(
+            self._action_confirmation_seconds, self._end_confirmation
+        )
+        self._refresh_confirmation()
+
+    def _end_confirmation(self) -> None:
+        self._confirmed_action = None
+        self._confirmation_timer = None
+        self._refresh_confirmation()
+
+    def _clear_confirmation(self) -> None:
+        self._stop_confirmation()
+        self._refresh_confirmation()
+
+    def _stop_confirmation(self) -> None:
+        if self._confirmation_timer is not None:
+            self._confirmation_timer.stop()
+        self._confirmed_action = None
+        self._confirmation_timer = None
+
+    def _refresh_confirmation(self) -> None:
+        self._refresh_submit()
+        self._refresh_menu_marks()
+        self._refresh_context_menu()
+
+    def _refresh_menu_marks(self) -> None:
+        for label, action in PALETTE_ACTIONS:
+            if action not in _ENTER_HINT_ACTIONS:
+                continue
+            button = self.query_one(f"#{_PALETTE_MENU_ACTION_PREFIX}{action}", Button)
+            marked = self._marked(Text(label), action)
+            if str(button.label) != marked.plain:
+                button.label = marked
+
+    def _marked(self, label: Text, action: str) -> Text:
+        if self._confirmed_action != action:
+            return label
+        return Text.assemble(label, "  ", (_CONFIRMATION_GLYPH, f"{STYLE_BOLD} {SUCCESS_COLOR}"))
 
     def _activate_submit(self) -> None:
         if self._action_in_flight or self._closing_after_queue:
@@ -741,6 +816,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             self._refresh_submit()
             return
         self._cancel_armed = False
+        self._stop_confirmation()
         self._action_in_flight = True
         self.query_one(f"#{_SUBMIT_ID}", Button).disabled = True
         self._refresh_submit()
@@ -756,15 +832,17 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         submit.can_focus = not hint
         if not hint:
             compact_label = "Queue" if action == _ACTION_MESSAGE else "Submit"
-            submit.label = (
+            label = Text(
                 compact_label if tiny else SUBMIT_ACTION_LABELS.get(action, "Submit action")
             )
         elif self._cancel_armed:
-            submit.label = key_hint(_CANCEL_CONFIRM_HINT[tiny], f"{STYLE_BOLD} {DUSTY_ROSE}")
-        elif submit.disabled:
-            submit.label = Text(_HINT_LABELS[action][tiny], style=SECONDARY_TEXT_COLOR)
+            label = key_hint(_CANCEL_CONFIRM_HINT[tiny], f"{STYLE_BOLD} {DUSTY_ROSE}")
         else:
-            submit.label = key_hint(_HINT_LABELS[action][tiny], SECONDARY_TEXT_COLOR)
+            label = key_hint(_HINT_LABELS[action][tiny], SECONDARY_TEXT_COLOR)
+        marked = self._marked(label, action)
+        submit.label = marked
+        wraps = hint and len(marked.plain) > submit.size.width
+        submit.styles.height = _PALETTE_WRAPPED_HINT_ROWS if wraps else "auto"
 
     def _size_action_buttons(self, *, hint: bool) -> None:
         tiny = self.size.height <= _PALETTE_TINY_PANE_MAX_ROWS
@@ -958,6 +1036,8 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         if not same_form:
             self._form_focus_id = None
             self._form_scroll_y = 0
+        self._closing_after_queue = False
+        self._clear_confirmation()
         if action in _FORM_ROLE_ACTIONS:
             self._choose_available_role(action)
         action_search = self.query_one(f"#{_FIELD_ACTION_SEARCH}", Input)
@@ -977,6 +1057,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self.call_after_refresh(self._restore_context_form_position)
 
     def _return_to_menu(self) -> None:
+        self._clear_confirmation()
         form = self.query_one(f"#{_PALETTE_FORM_ID}", VerticalScroll)
         self._form_position_action = self._selected_value(_FIELD_ACTION)
         self._form_scroll_y = form.scroll_y
@@ -1437,9 +1518,12 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             return
         if ack.status is AckStatus.QUEUED:
             self._pending_form_commands[form_identity] = ack.id
-        if self._closes_after_queue(action) and ack.status is not AckStatus.REJECTED:
-            self._closing_after_queue = True
-            self.call_later(self.action_close)
+        if (
+            ack.status is not AckStatus.REJECTED
+            and ack.message != ACK_TIMEOUT_MESSAGE
+            and action in _CONFIRMED_ACTIONS
+        ):
+            self._confirm_submitted(action)
             return
         if self._is_current_screen():
             self._show_ack(ack)
@@ -1505,11 +1589,13 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             _ACTION_GUIDANCE.get(action or "", _EMPTY)
         )
         pending_same_form = form_identity in self._pending_form_commands
+        blank_message = action == _ACTION_MESSAGE and not self._text(_FIELD_MESSAGE).strip()
         self.query_one(f"#{_SUBMIT_ID}", Button).disabled = (
             self._route_error is not None
             or disabled_reason is not None
             or self._action_in_flight
             or pending_same_form
+            or blank_message
         )
         self._refresh_submit()
         self._refresh_context_menu()
@@ -1538,18 +1624,18 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         return item is not None and item.escalation.status is EscalationStatus.OPEN
 
     def _refresh_pending_commands(self) -> None:
-        completed: set[int] = set()
-        for command_id in set(self._pending_form_commands.values()):
+        for identity, command_id in tuple(self._pending_form_commands.items()):
             outcome = self._queries.command_status(command_id)
             if outcome is None:
                 message = f"pending command {command_id} is missing from durable history"
                 raise RuntimeError(message)
-            if outcome.status is not CommandStatus.PENDING:
-                completed.add(command_id)
+            if outcome.status is CommandStatus.PENDING:
+                continue
+            del self._pending_form_commands[identity]
+            if outcome.status is CommandStatus.DONE and identity[0] in _CONFIRMED_ACTIONS:
+                self._show_result(_EMPTY)
+            else:
                 self._show_stored_command(outcome)
-        for identity, command_id in tuple(self._pending_form_commands.items()):
-            if command_id in completed:
-                del self._pending_form_commands[identity]
 
     def _observe_pending_form(self, identity: tuple[str, ...]) -> bool:
         if identity in self._pending_form_commands:
@@ -1966,6 +2052,7 @@ class PaletteApp(App[None]):
         pane_selector: PaneSelector,
         *,
         on_change: OnChangeRegistration,
+        action_confirmation_seconds: float,
         initial_context: PaletteRequest | None = None,
         evidence_exporter: TaskEvidenceExporter | None = None,
         resolution_screen: ResolutionScreenFactory | None = None,
@@ -1977,6 +2064,7 @@ class PaletteApp(App[None]):
         self._queries = queries
         self._pane_selector = pane_selector
         self._on_change = on_change
+        self._action_confirmation_seconds = action_confirmation_seconds
         self._initial_context = initial_context
         self._evidence_exporter = evidence_exporter
         self._resolution_screen = resolution_screen
@@ -1993,6 +2081,7 @@ class PaletteApp(App[None]):
                 self._queries,
                 self._pane_selector,
                 on_change=self._on_change,
+                action_confirmation_seconds=self._action_confirmation_seconds,
                 initial_context=self._initial_context,
                 evidence_exporter=self._evidence_exporter,
                 resolution_screen=self._resolution_screen,

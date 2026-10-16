@@ -67,6 +67,7 @@ last_words_chars = 4000
 now_max_lines = 6
 now_compact_lines = 2
 results_commits = 3
+action_confirmation_seconds = 5
 
 [dashboard.motion]
 refresh_hz = 4

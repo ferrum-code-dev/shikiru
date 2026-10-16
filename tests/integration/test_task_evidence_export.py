@@ -52,7 +52,7 @@ from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG, LEADER_RUNG_2
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -443,6 +443,7 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
         commands,
         queries,
         _selection_must_not_run,
+        action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
         on_change=reader.watch,
         initial_context=PaletteRequest(action="export", task_id=task.id),
         evidence_exporter=exporter,

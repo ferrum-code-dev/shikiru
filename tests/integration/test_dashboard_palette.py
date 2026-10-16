@@ -26,19 +26,24 @@ from shikiru.domain.commands import (
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
 from shikiru.errors import ConfigError
-from shikiru.operator.commands import COMMAND_ACK_WAIT_SECONDS, OperatorCommands
+from shikiru.operator.commands import (
+    COMMAND_ACK_WAIT_SECONDS,
+    COMMAND_POLL_SECONDS,
+    OperatorCommands,
+)
 from shikiru.operator.queries import TASK_ACTION_ROLES
 from shikiru.store.commands import CommandQueue
 from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import FORMAT_PANE_ID, Tmux, exact_target
+from tests.support.cells import CYAN_BOLD, GREY, rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.escalations import (
     operator_services,
 )
 from tests.support.store import seed_task
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -60,6 +65,7 @@ _POLL_SECONDS = 0.25
 _APP_SIZE = (120, 32)
 _LIVE_RUNG = Rung(agent="codex", model="sol", effort="high")
 _NATIVE_VISUAL_REVIEW_DIR_ENV = "SHIKIRU_NATIVE_VISUAL_REVIEW_DIR"
+_CONFIRMED_GLYPH = "\N{CHECK MARK}"
 
 
 def _seed_live_session(connection: Connection, clock: FakeClock, task_id: str) -> None:
@@ -123,6 +129,7 @@ def _palette_app(
         commands,
         queries,
         pane_selector,
+        action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
         on_change=reader.watch,
         initial_context=initial_context,
     )
@@ -147,6 +154,24 @@ async def _set_target(pilot: Pilot[None], screen: PaletteScreen, task_id: str) -
 async def _set_role(pilot: Pilot[None], screen: PaletteScreen, role: Role) -> None:
     screen.query_one("#role", Select).value = role.value
     await pilot.pause()
+
+
+async def _wait_for_confirmation(screen: PaletteScreen, *, shown: bool = True) -> None:
+    await wait_until(
+        lambda: (
+            (_CONFIRMED_GLYPH in str(screen.query_one("#palette-submit", Button).label)) is shown
+        ),
+        timeout=UI_WAIT_SECONDS,
+    )
+
+
+def _hint_key_style(button: Button, text: str) -> set[tuple[bool, str | None]]:
+    for cells in rendered_lines(button):
+        plain = "".join(char for char, _ in cells)
+        start = plain.find(text)
+        if start >= 0:
+            return {style for _, style in cells[start : start + len(text)]}
+    raise AssertionError(text)
 
 
 async def _wait_for_ack(screen: PaletteScreen, status: str = "Pending") -> None:
@@ -186,7 +211,7 @@ async def test_palette_context_targets_message_and_rung_without_id_entry(
         await _open_action(pilot, screen, "message")
         screen.query_one("#message", TextArea).text = "Check the failing integration path."
         await pilot.click("#palette-submit")
-        await _wait_for_ack(screen)
+        await _wait_for_confirmation(screen)
         assert queue.pending()[0].command == Say(
             task_id=task.id,
             role=Role.IMPLEMENTER,
@@ -393,6 +418,7 @@ async def test_contextual_project_actions_queue_only_after_explicit_submission(
                 await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
 
 
+@pytest.mark.usefixtures("colour_terminal")
 async def test_applied_message_feedback_keeps_next_turn_guidance(
     connection: Connection,
     reader: StateReader,
@@ -443,14 +469,139 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
         returned = {"queued_for_next_turn": True}
         queue.mark_done(queued.id, returned)
         clock.advance(_POLL_SECONDS)
-        await _wait_for_ack(screen, "Applied")
+        await _wait_for_confirmation(screen)
+        assert _static_text(screen, "#palette-result") == ""
+        assert app.is_running
+        assert message.text == ""
+        assert app.focused is message
+        submit = screen.query_one("#palette-submit", Button)
+        assert _hint_key_style(submit, "Ctrl+S") == {CYAN_BOLD}
+        assert _hint_key_style(submit, "Enter") == {CYAN_BOLD}
+        assert _hint_key_style(submit, "queue message") == {GREY}
+        await pilot.press("tab", "shift+tab")
+        await wait_until(lambda: app.focused is message, timeout=UI_WAIT_SECONDS)
+        assert _hint_key_style(submit, "Ctrl+S") == {CYAN_BOLD}
+        await _wait_for_confirmation(screen, shown=False)
+        assert _hint_key_style(submit, "Ctrl+S") == {CYAN_BOLD}
 
-        feedback = _static_text(screen, "#palette-result")
-        assert f"command {queued.id}" in feedback
-        assert f"{task.id} · implementer" in feedback
-        assert "guidance queued for the selected role's next turn" in feedback
+        await pilot.press(*"Second note.")
+        await pilot.press("ctrl+s")
+        await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+        rejected = queue.pending()[0]
+        queue.mark_rejected(rejected.id, {"error": "guidance refused"})
+        clock.advance(_POLL_SECONDS)
+        await _wait_for_ack(screen, "Rejected")
+        assert "guidance refused" in _static_text(screen, "#palette-result")
+        assert message.text == "Second note."
+        assert _hint_key_style(submit, "Ctrl+S") == {CYAN_BOLD}
 
 
+async def _assert_menu_routes_and_rejected_keys(
+    connection: Connection,
+    reader: StateReader,
+    clock: FakeClock,
+    tmp_path: Path,
+    task_id: str,
+) -> None:
+    await _assert_rejected_pause_keeps_hint_keys(connection, reader, clock, tmp_path, task_id)
+    for action in ("resume", "pause", "cancel"):
+        await _assert_menu_action_returns_to_menu_after_one_command(
+            connection, reader, clock, tmp_path, task_id=task_id, action=action
+        )
+
+
+async def _assert_rejected_pause_keeps_hint_keys(
+    connection: Connection,
+    reader: StateReader,
+    clock: FakeClock,
+    tmp_path: Path,
+    task_id: str,
+) -> None:
+    commands, queries, queue = operator_services(
+        connection,
+        reader,
+        clock,
+        tmp_path,
+        engine_up=True,
+    )
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(action="pause", task_id=task_id),
+    )
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        screen = await _mounted_palette(app)
+        submit = screen.query_one("#palette-submit", Button)
+        await wait_until(lambda: not submit.disabled, timeout=UI_WAIT_SECONDS)
+        await pilot.click("#palette-submit")
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+        queue.mark_rejected(queue.pending()[0].id, {"error": "engine refused the hold"})
+        clock.advance(COMMAND_POLL_SECONDS)
+        await wait_until(
+            lambda: "Rejected" in _static_text(screen, "#palette-result"),
+            timeout=UI_WAIT_SECONDS,
+        )
+        await wait_until(lambda: not submit.has_class("-active"), timeout=UI_WAIT_SECONDS)
+        assert _hint_key_style(submit, "Enter") == {CYAN_BOLD}
+        assert app.is_running
+        await pilot.press("escape")
+        await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
+
+
+async def _assert_menu_action_returns_to_menu_after_one_command(
+    connection: Connection,
+    reader: StateReader,
+    clock: FakeClock,
+    tmp_path: Path,
+    *,
+    task_id: str,
+    action: str,
+) -> None:
+    commands, queries, queue = operator_services(
+        connection,
+        reader,
+        clock,
+        tmp_path,
+        engine_up=True,
+    )
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(task_id=task_id),
+    )
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        screen = await _mounted_palette(app)
+        menu = screen.query_one("#palette-menu", VerticalScroll)
+        submitted_before = reader.command_history(limit=1).total_count
+        await _click_menu_button(pilot, screen, f"palette-menu-action-{action}")
+        await wait_until(lambda: not menu.display, timeout=UI_WAIT_SECONDS)
+        submit = screen.query_one("#palette-submit", Button)
+        await wait_until(lambda: not submit.disabled, timeout=UI_WAIT_SECONDS)
+        await pilot.click("#palette-submit")
+        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+        queue.mark_done(queue.pending()[0].id)
+        clock.advance(COMMAND_POLL_SECONDS)
+        await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
+        await wait_until(
+            lambda: screen.focused is not None and menu in screen.focused.ancestors_with_self,
+            timeout=UI_WAIT_SECONDS,
+        )
+        entry = screen.query_one(f"#palette-menu-action-{action}", Button)
+        await wait_until(lambda: _CONFIRMED_GLYPH in str(entry.label), timeout=UI_WAIT_SECONDS)
+        await wait_until(lambda: _CONFIRMED_GLYPH not in str(entry.label), timeout=UI_WAIT_SECONDS)
+        assert not submit.display
+        assert reader.command_history(limit=1).total_count == submitted_before + 1
+        assert app.is_running
+        await screen.action_close()
+        await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
+
+
+@pytest.mark.usefixtures("colour_terminal")
 async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
     connection: Connection,
     reader: StateReader,
@@ -481,13 +632,13 @@ async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
         assert queue.pending() == []
         await pilot.press("escape")
         await wait_until(lambda: "again" not in str(submit.label), timeout=UI_WAIT_SECONDS)
+        assert _hint_key_style(submit, "Enter") == {CYAN_BOLD}
         assert app.screen is screen
         await pilot.press("enter", "enter", "enter")
         await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
-        assert len(queue.pending()) == 1
-        assert queue.pending()[0].command == Cancel(
-            task_id=task.id, command_id=queue.pending()[0].id
-        )
+        assert [item.command for item in queue.pending()] == [
+            Cancel(task_id=task.id, command_id=queue.pending()[0].id)
+        ]
 
     app = open_action("pause")
     async with app.run_test(size=_APP_SIZE) as pilot:
@@ -522,6 +673,8 @@ async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
         await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
         assert len(queue.pending()) == 3
         assert queue.pending()[2].command == Resume(task_id=task.id)
+
+    await _assert_menu_routes_and_rejected_keys(connection, reader, clock, tmp_path, task.id)
 
 
 async def test_palette_target_follows_search_choice_and_stays_manually_editable(
@@ -572,7 +725,7 @@ async def test_palette_target_follows_search_choice_and_stays_manually_editable(
         assert task_id.value == selected_task.id
         screen.query_one("#message", TextArea).text = "Use the deliberately selected task."
         await pilot.click("#palette-submit")
-        await _wait_for_ack(screen)
+        await _wait_for_confirmation(screen)
 
         (queued,) = queue.pending()
         assert queued.command == Say(
@@ -760,7 +913,7 @@ async def test_palette_keeps_acknowledgement_timeout_pending_with_current_engine
         assert outcome.status is CommandStatus.PENDING
 
 
-@pytest.mark.parametrize(("terminal", "expected"), [("done", "Applied"), ("rejected", "Rejected")])
+@pytest.mark.parametrize("terminal", ["done", "rejected"])
 async def test_palette_observes_outcome_after_ack_wait_without_form_edits(
     connection: Connection,
     database: Database,
@@ -768,7 +921,6 @@ async def test_palette_observes_outcome_after_ack_wait_without_form_edits(
     tmp_path: Path,
     *,
     terminal: str,
-    expected: str,
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Observed pending outcome")
@@ -811,21 +963,23 @@ async def test_palette_observes_outcome_after_ack_wait_without_form_edits(
                 engine_queue.mark_rejected(pending.id, {"error": "late engine rejection"})
         finally:
             engine.close()
-        await wait_until(
-            lambda: (
-                expected in _static_text(screen, "#palette-result")
-                and not screen.query_one("#palette-submit", Button).disabled
-            ),
-            timeout=UI_WAIT_SECONDS,
-        )
-        assert f"command {pending.id}" in _static_text(screen, "#palette-result")
-        assert len(queue.pending()) == 0
         if terminal == "done":
-            assert "guidance queued for the selected role's next turn" in _static_text(
-                screen, "#palette-result"
+            await wait_until(
+                lambda: _static_text(screen, "#palette-result") == "",
+                timeout=UI_WAIT_SECONDS,
             )
         else:
+            await wait_until(
+                lambda: "Rejected" in _static_text(screen, "#palette-result"),
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert f"command {pending.id}" in _static_text(screen, "#palette-result")
             assert "late engine rejection" in _static_text(screen, "#palette-result")
+        await wait_until(
+            lambda: not screen.query_one("#palette-submit", Button).disabled,
+            timeout=UI_WAIT_SECONDS,
+        )
+        assert len(queue.pending()) == 0
 
 
 async def test_pending_form_guards_survive_form_switches_and_palette_reopen(
@@ -849,6 +1003,8 @@ async def test_pending_form_guards_survive_form_switches_and_palette_reopen(
         await pilot.click("#palette-submit")
         await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
         say_id = queue.pending()[0].id
+        await _wait_for_confirmation(screen)
+        assert screen.query_one("#message", TextArea).text == ""
 
         menu = screen.query_one("#palette-menu", VerticalScroll)
         await pilot.click("#palette-back-to-menu")
@@ -857,10 +1013,10 @@ async def test_pending_form_guards_survive_form_switches_and_palette_reopen(
         await pilot.click("#palette-submit")
         await wait_until(lambda: len(queue.pending()) == 2, timeout=UI_WAIT_SECONDS)
         pause_id = queue.pending()[1].id
-
-        await pilot.click("#palette-back-to-menu")
         await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
+
         await _click_menu_button(pilot, screen, "palette-menu-action-message")
+        assert screen.query_one("#message", TextArea).text == ""
         assert screen.query_one("#palette-submit", Button).disabled
         await pilot.click("#palette-submit")
         assert [item.id for item in queue.pending()] == [say_id, pause_id]
@@ -1333,7 +1489,7 @@ async def test_popup_pane_context_selects_its_recorded_task_and_role(
         )
         screen.query_one("#message", TextArea).text = "Continue the implementer turn."
         await pilot.click("#palette-submit")
-        await _wait_for_ack(screen)
+        await _wait_for_confirmation(screen)
 
     queued = queue.pending()[0]
     assert queued.command == Say(
