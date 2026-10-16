@@ -19,6 +19,7 @@ from shikiru.ui.section import (
     Row,
     Section,
     grey,
+    key_label,
     labelled_rows,
     row_name,
 )
@@ -62,6 +63,8 @@ _BOX_HINTS = ("Ctrl+S send", "Enter new line", "Esc back")
 _NEEDS_INPUT_MARK = "\N{LOWER RIGHT PENCIL}"
 _NEEDS_INPUT_TEXT = "needs your input"
 _DETAILS_TITLE = "Details"
+TRIED_TOGGLE_KEY = "t"
+_TRIED_TOGGLE_LABEL = "show/hide"
 _TURNS_LABEL = "Turns"
 _PART_SEPARATOR = " \N{MIDDLE DOT} "
 _TURN_KINDS = frozenset({AttemptKind.TURN_OK, AttemptKind.TURN_FAILED, AttemptKind.VERDICT})
@@ -229,10 +232,15 @@ def _detail_rows(items: tuple[AttemptItem, ...]) -> RenderableType:
 
 
 def tried_renderable(items: tuple[AttemptItem, ...], *, expanded: bool) -> RenderableType:
-    """Return the collapsible `Details` section; its rule is a separate widget."""
+    """Return the collapsible `Details` section with its toggle hint, without its rule."""
     arrow = _EXPANDED_ARROW if expanded else _COLLAPSED_ARROW
     body = _detail_rows(items) if expanded else Group()
-    return Section(f"{_DETAILS_TITLE} {arrow}", body, ruled=False)
+    return Section(
+        f"{_DETAILS_TITLE} {arrow}",
+        body,
+        trailing=key_label(TRIED_TOGGLE_KEY, _TRIED_TOGGLE_LABEL),
+        ruled=False,
+    )
 
 
 def starred_indexes(panel: ResolutionPanel) -> frozenset[int]:

@@ -351,7 +351,7 @@ Fifteenth-review scope: [fifteenth review](../docs/tui-feedback-fifteenth-review
 
 Sixteenth-review scope: [sixteenth review](../docs/tui-feedback-sixteenth-review.md).
 
-- [ ] Task 228: Escalations screen: send keys and Details hint
+- [x] Task 228: Escalations screen: send keys and Details hint
 - [ ] Task 229: Help wording and the `v details` action hint
 - [ ] Task 230: Escalation bar clean-up and the extra details panel
 - [ ] Task 231: Remove the Views panel and the Home `v`, remove the Workflow and Activity Home entries, group extensions in Ctrl+P

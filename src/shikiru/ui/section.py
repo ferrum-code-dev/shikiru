@@ -56,6 +56,11 @@ def number(value: str) -> Text:
     return Text(value, style=BOLD_STEEL)
 
 
+def key_label(key: str, label: str) -> Text:
+    """Return `key` in the bold cyan key style followed by its grey `label`."""
+    return Text.assemble((key, BOLD_STEEL), grey(f" {label}"))
+
+
 def observed_text(observed_ago: str) -> str:
     """Return `observed <age> ago`, or `observed now`."""
     suffix = "" if observed_ago == AGE_NOW else f" {AGO_WORD}"

@@ -155,7 +155,6 @@ def _resolution_groups() -> tuple[HelpGroup, ...]:
             "Write an answer",
             (
                 HelpRow("Ctrl+S", "Send the typed answer"),
-                HelpRow("Ctrl+J", "Send it; Ctrl+Enter also sends where reported"),
                 HelpRow(_ESC, "Back to the choices"),
             ),
         ),

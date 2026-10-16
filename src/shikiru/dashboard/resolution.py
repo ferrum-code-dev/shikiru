@@ -13,6 +13,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Rule, Static, TextArea
 
 from shikiru.dashboard.resolution_view import (
+    TRIED_TOGGLE_KEY,
     ResolutionLayout,
     choice_renderable,
     choose_renderable,
@@ -58,7 +59,7 @@ if TYPE_CHECKING:
 RESOLUTION_CLOSE_BUTTON = "resolution-close"
 _REFRESH_GROUP = "resolution-refresh"
 _SEND_GROUP = "resolution-send"
-_SEND_KEYS = frozenset({"ctrl+s", "ctrl+enter", "ctrl+j"})
+_SEND_KEY = "ctrl+s"
 _LEAVE_KEY = "escape"
 _ACTION_MOVE = "move"
 _ACTION_ACTIVATE = "activate"
@@ -135,7 +136,7 @@ class _AnswerBox(TextArea):
         pass
 
     def on_key(self, event: events.Key) -> None:
-        if event.key in _SEND_KEYS:
+        if event.key == _SEND_KEY:
             event.stop()
             event.prevent_default()
             self.post_message(self.Submitted())
@@ -154,7 +155,7 @@ class ResolutionScreen(ModalScreen[bool]):
         Binding("up", f"{_ACTION_MOVE}(-1)", "Previous choice", show=False, priority=True),
         Binding("down", f"{_ACTION_MOVE}(1)", "Next choice", show=False, priority=True),
         Binding(_SUBMIT_KEY, _ACTION_ACTIVATE, "Send", show=False),
-        Binding("t", _ACTION_TOGGLE_TRIED, "Details", show=False),
+        Binding(TRIED_TOGGLE_KEY, _ACTION_TOGGLE_TRIED, "Details", show=False),
     ]
     DEFAULT_CSS = (
         POPUP_CSS

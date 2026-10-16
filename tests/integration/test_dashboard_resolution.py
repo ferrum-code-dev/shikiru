@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from textual.geometry import Region
+from textual.geometry import Region, Size
 from textual.widgets import Button, Select, Static, TextArea
 
 from shikiru.clock import SystemClock
@@ -33,7 +33,7 @@ from shikiru.ui.tokens import (
     SELECTED_SURFACE_COLOR,
     STEEL_BLUE,
 )
-from tests.support.cells import foregrounds, painted_backgrounds
+from tests.support.cells import CYAN_BOLD, GREY, foregrounds, painted_backgrounds, styles
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import dashboard_app
@@ -79,6 +79,9 @@ _ATTEMPTED = (
     "Leader: verify \N{MIDDLE DOT} changes requested (1 blocker)"
 )
 _SELECTED_CLASS = "-selected"
+_INERT_KEY_ACTS = frozenset({"flagged-ctrl+j", "flagged-ctrl+enter"})
+_DETAILS_SIZES = (_SIZE, (60, 40), (48, 40), (40, 40), (40, 8))
+_DETAILS_HINT = "t show/hide"
 
 
 def _text_of(widget: Widget) -> str:
@@ -161,6 +164,15 @@ async def _back_in_list(app: ResolutionHost) -> None:
     assert isinstance(app.screen, ResolutionScreen)
 
 
+async def _assert_collapsed_details_hint_on_one_row(
+    pilot: Pilot[None], screen: ResolutionScreen, details: Widget, size: tuple[int, int]
+) -> None:
+    await pilot.resize_terminal(*size)
+    await wait_until(lambda: screen.size == Size(*size), timeout=UI_WAIT_SECONDS)
+    assert details.size.height == 1
+    assert _DETAILS_HINT in _text_of(details)
+
+
 @pytest.mark.parametrize(
     ("reason", "act", "expected"),
     [
@@ -180,13 +192,13 @@ async def _back_in_list(app: ResolutionHost) -> None:
             EscalationReason.DECISION_REQUIRED,
             "flagged-ctrl+j",
             AnswerResolution(text=f"{_ALTERNATIVE}{_PREFILL}{_DETAILS}"),
-            id="ctrl-j-sends",
+            id="ctrl-j-does-not-send",
         ),
         pytest.param(
             EscalationReason.DECISION_REQUIRED,
             "flagged-ctrl+enter",
             AnswerResolution(text=f"{_ALTERNATIVE}{_PREFILL}{_DETAILS}"),
-            id="ctrl-enter-sends",
+            id="ctrl-enter-does-not-send",
         ),
         pytest.param(
             EscalationReason.DECISION_REQUIRED,
@@ -251,9 +263,14 @@ async def test_each_send_route_queues_one_resolution_the_engine_applies(
             await wait_until(lambda: app.focused is answer, timeout=UI_WAIT_SECONDS)
             assert queue.pending() == []
             assert answer.text == (_OWN_TEXT if act == "own-draft" else "")
-            if act in {"flagged-enter-details", "flagged-ctrl+j", "flagged-ctrl+enter"}:
+            if act in {"flagged-enter-details", *_INERT_KEY_ACTS}:
                 await _type(pilot, _DETAILS)
-            await pilot.press(act.removeprefix("flagged-") if "+" in act else "ctrl+s")
+            if act in _INERT_KEY_ACTS:
+                await pilot.press(act.removeprefix("flagged-"))
+                assert answer.text == _DETAILS
+                assert queue.pending() == []
+                assert app.results == []
+            await pilot.press("ctrl+s")
         elif act == "own-answer":
             await pilot.click(_rows(screen)[_OWN_ANSWER_ROW])
             answer = screen.query_one("#resolution-answer", TextArea)
@@ -439,6 +456,9 @@ async def test_details_is_its_own_tab_stop_whose_highlight_excludes_the_rule(
         rule = siblings[siblings.index(details) - 1]
         choose = screen.query_one("#resolution-choose")
         assert set(foregrounds(choose, "Enter")) == {STEEL_BLUE}
+        hint = styles(details, _DETAILS_HINT)
+        assert hint[0] == CYAN_BOLD
+        assert set(hint[1:]) == {GREY}
         await pilot.press(*["down"] * len(rows))
         await wait_until(lambda: rows[-1].has_class(_SELECTED_CLASS), timeout=UI_WAIT_SECONDS)
         assert app.focused is not None
@@ -471,6 +491,8 @@ async def test_details_is_its_own_tab_stop_whose_highlight_excludes_the_rule(
             timeout=UI_WAIT_SECONDS,
         )
         assert queue.pending() == []
+        for size in _DETAILS_SIZES:
+            await _assert_collapsed_details_hint_on_one_row(pilot, screen, details, size)
 
 
 async def test_cancel_needs_a_second_enter_and_any_other_key_resets_it(

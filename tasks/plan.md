@@ -2030,8 +2030,9 @@ Refs: `dashboard/palette.py` `PaletteScreen` (`_confirm_submitted`, `_show_confi
 Scope: [sixteenth review](../docs/tui-feedback-sixteenth-review.md); the operator approved the decisions. Tasks run in order 228, 229, 230, 231.
 
 ### Task 228: Escalations screen: send keys and Details hint
-Refs: `dashboard/resolution.py` (`_SEND_KEYS`, `_AnswerBox`, `_TriedSection`), `dashboard/resolution_view.py` `tried_renderable`, `dashboard/help_keys.py`, `dashboard/detail_hint.py`, `tests/integration/test_dashboard_resolution.py`, `docs/design/06-operator.md`.
-- [ ] Ctrl+S is the only send key on the Escalations answer box (Ctrl+J and Ctrl+Enter removed from code, help, tests and current docs), and the Details line shows a right-aligned `t show/hide` that stays one row at 100, 60, 48 and 40 columns.
+Refs: `dashboard/resolution.py` (`_SEND_KEY`, `_AnswerBox`, `_TriedSection`), `dashboard/resolution_view.py` `tried_renderable`, `ui/section.py` `key_label`, `dashboard/help_keys.py`, `tests/integration/test_dashboard_resolution.py`, `tests/support/cells.py`, `docs/design/06-operator.md`, `docs/design/references/focus-steel-approved.html`.
+- [x] Ctrl+S is the only send key on the Escalations answer box (Ctrl+J and Ctrl+Enter removed from code, help, tests and current docs), and the Details line shows a right-aligned `t show/hide` that stays one row at 100, 60, 48 and 40 columns.
+  - Proof: Ctrl+J and Ctrl+Enter no longer send (the old code queued a Resolve on Ctrl+J, so the new assertion fails there), Ctrl+S still sends, and the Details line shows `t show/hide` with `t` bold `#83bddd` and the label grey `#9aa5b5`. Headless native dumps at 100, 60, 48 and 40 columns and 40x8 show the collapsed line on one row, and under NO_COLOR `t` stays bold on one row. `uv run poe check` exited 0 in colour and under `TERM=dumb NO_COLOR=1` (1633 passed, 14 skipped each; collected 1654), after the palette and task-detail wait fixes in 657e2fd and 183d1ce.
 
 ### Task 229: Help wording and the `v details` action hint
 Refs: `dashboard/help_screen.py`, `dashboard/help_keys.py`, `dashboard/app.py` (`_HELP_HOME_HEADING`), `dashboard/detail.py` (task actions bar), `tests/integration/test_dashboard_app.py`, `tests/integration/test_dashboard_briefing.py`, `docs/design/06-operator.md`.
