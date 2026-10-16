@@ -46,8 +46,8 @@ from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     WidgetHostApp,
-    choose_focus_view,
     dashboard_app,
+    open_usage_details,
     widget_context,
 )
 from tests.support.store import seed_task
@@ -68,7 +68,6 @@ _WIDE = (100, 40)
 _COMPACT = (48, 40)
 _TINY = (20, 8)
 _WAIT_SECONDS = 5
-_HOME_USAGE_ENTRY = "Usage details"
 _PROJECT_USAGE_TITLE = "Project usage"
 _API = BillingDeclaration(BILLING_MODE_API, BILLING_SOURCE_OPERATOR_CONFIG)
 _SUBSCRIPTION = BillingDeclaration(BILLING_MODE_SUBSCRIPTION, BILLING_SOURCE_OPERATOR_CONFIG)
@@ -599,7 +598,7 @@ async def test_tiny_popup_is_titled_and_keeps_every_section_label_in_a_scrolling
         reader, write_minimal_project(tmp_path), FakeClock(_START), widget_names=["usage"]
     )
     async with app.run_test(size=_TINY) as pilot:
-        await choose_focus_view(pilot, _HOME_USAGE_ENTRY)
+        await open_usage_details(pilot)
         await wait_until(lambda: bool(app.screen.query(UsagePanel)), timeout=_WAIT_SECONDS)
         panel = app.screen.query_one(UsagePanel)
         await _settled_lines(panel)

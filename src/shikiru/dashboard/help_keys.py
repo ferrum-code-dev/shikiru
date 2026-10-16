@@ -76,7 +76,6 @@ def _home_groups(availability: HelpAvailability) -> tuple[HelpGroup, ...]:
             )
         )
     everywhere = [
-        HelpRow(TASK_DETAIL_VIEWS_KEY, "Views: filters, history and other panels"),
         HelpRow(f"{_PALETTE} / F12", "Open the actions for the selected task"),
         HelpRow("Tab", "Move to the footer, command status and resources; Enter uses them"),
         HelpRow("?", "Show this help"),

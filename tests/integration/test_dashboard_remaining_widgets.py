@@ -17,7 +17,7 @@ from rich.cells import cell_len
 from textual.color import Color
 from textual.containers import Vertical, VerticalScroll
 from textual.geometry import Region
-from textual.widgets import Button, DataTable, Label, ListItem, ListView, Static
+from textual.widgets import Button, DataTable, ListView, Static
 
 from shikiru.agents.contracts import (
     BILLING_MODE_API,
@@ -79,7 +79,7 @@ from shikiru.workspace.git import Git
 from tests.support.cells import rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import WidgetHostApp, widget_context
+from tests.support.dashboard import WidgetHostApp, open_project_diagnostics, widget_context
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT
 from tests.support.render import plain_text
 from tests.support.store import seed_task
@@ -1248,21 +1248,7 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
     )
     async with app.run_test(size=(100, 50)) as pilot:
         home_screen = app.screen
-        await pilot.press("v")
-        await wait_until(
-            lambda: bool(app.screen.query("#focus-views-list")), timeout=UI_WAIT_SECONDS
-        )
-        view_list = app.screen.query_one("#focus-views-list", ListView)
-        choices = [item for item in view_list.children if isinstance(item, ListItem)]
-        docker_index = next(
-            index
-            for index, item in enumerate(choices)
-            if plain_text(item.query_one(Label).render()) == "Diagnostics · docker"
-        )
-        view_list.focus()
-        view_list.index = docker_index
-        await pilot.press("enter")
-        await wait_until(lambda: app.screen is not home_screen, timeout=UI_WAIT_SECONDS)
+        await open_project_diagnostics(pilot)
         await wait_until(lambda: bool(app.screen.query("#docker")), timeout=UI_WAIT_SECONDS)
         docker_panel = app.screen.query_one("#docker", Static)
         await wait_until(

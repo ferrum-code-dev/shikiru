@@ -40,7 +40,6 @@ from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
 from shikiru.paths import run_dir, turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.queue import QueuePanel
-from shikiru.plugins.widgets.strips import StripsPanel
 from shikiru.plugins.widgets.usage import UsagePanel
 from shikiru.process import ProcessIdentity
 from shikiru.store.escalations import EscalationStore
@@ -51,7 +50,6 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.glyphs import GLYPH_ENGINE, GLYPH_ESCALATED, GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, TaskStrip
-from shikiru.ui.tokens import STYLE_REVERSE
 from shikiru.view_log import (
     VIEW_MESSAGE_SIGNAL,
     VIEW_MESSAGE_TEXT_KEY,
@@ -71,8 +69,9 @@ from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
     choose_details_entry,
-    choose_focus_view,
     ignore_palette_action,
+    open_command_history,
+    open_usage_details,
     state_views,
     widget_context,
 )
@@ -90,7 +89,6 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator
     from pathlib import Path
 
-    from rich.text import Text
     from textual.content import Content
     from textual.pilot import Pilot
 
@@ -260,7 +258,7 @@ async def _assert_closed_history_callback_is_safe(
     pilot: Pilot[None],
     registered_callbacks: list[tuple[object | None, Callable[[], Awaitable[None]]]],
 ) -> None:
-    await choose_focus_view(pilot, "Command history · pending, applied and rejected")
+    await open_command_history(pilot)
     await wait_until(
         lambda: bool(app.screen.query("#command-history-page")),
         timeout=UI_WAIT_SECONDS,
@@ -564,84 +562,6 @@ def test_role_view_tail_reports_the_agents_last_words(tmp_path: Path) -> None:
     assert whole is not None
     assert whole.last_words == "word " * 199 + "word"
     assert RoleViewTail(_LAST_WORDS_CAP).read(tmp_path / "missing.jsonl", _TURN_NAME) is None
-
-
-async def test_dashboard_motion_ticks_live_views_from_current_turn_log_without_db_changes(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = FakeClock(_START)
-    settings = _motion_settings(project_dir)
-    task, _ = _seed_dashboard_state(connection, clock)
-
-    reader = StateReader(database, clock)
-    try:
-        views = _build_views(reader, project_dir, settings, clock, task)
-        log_path = _write_current_turn_log(project_dir, task, views)
-        initial_strips = views.strips()
-        initial_rendered = {item.task_id: TaskStrip(item).render(100) for item in initial_strips}
-        verdict_strip = next(item for item in initial_strips if item.stamp is not None)
-        merge_strip = next(item for item in initial_strips if item.title == "Merged task")
-        assert "VERDICT" in initial_rendered[verdict_strip.task_id].plain
-        assert any(
-            STYLE_REVERSE in str(span.style)
-            for span in initial_rendered[verdict_strip.task_id].spans
-        )
-        assert "MERGED" in initial_rendered[merge_strip.task_id].plain
-        merge_rendered = initial_rendered[merge_strip.task_id]
-        assert any(STYLE_REVERSE in str(span.style) for span in merge_rendered.spans)
-
-        async def open_palette(action: str) -> None:
-            del action
-
-        app = DashboardApp(
-            focus_task=None,
-            views=views,
-            on_change=reader.watch,
-            clock=clock,
-            motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
-            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-            disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-            quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-            quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
-            open_palette=open_palette,
-            widget_names=settings.dashboard.widgets,
-        )
-        async with app.run_test(size=(180, 40)) as pilot:
-            await choose_focus_view(pilot, "Workflow · strips")
-            strips = pilot.app.screen.query_one(StripsPanel)
-            await wait_until(clock.has_pending_sleep, timeout=1)
-
-            previous_frame = cast("Text", strips.content).plain
-            clock.advance(1)
-            await wait_until(lambda: all(item.stamp is None for item in views.strips()), timeout=1)
-            await wait_until(
-                lambda: cast("Text", strips.content).plain != previous_frame,
-                timeout=1,
-            )
-            clock.advance(2)
-            await wait_until(
-                lambda: (
-                    "3s"
-                    in next(item for item in views.strips() if item.task_id == task.id)
-                    .panels[1]
-                    .detail
-                ),
-                timeout=1,
-            )
-            current_strip = next(item for item in views.strips() if item.task_id == task.id)
-            assert "$0.42" in current_strip.panels[1].detail
-            assert GLYPH_STALLED not in cast("Text", strips.content).plain
-
-            with log_path.open("a") as handle:
-                handle.write(f"{_row(clock.now(), _TURN_NAME, VIEW_TOOL_FINISHED_SIGNAL)}\n")
-            clock.advance(2.5)
-            await wait_until(lambda: GLYPH_STALLED in cast("Text", strips.content).plain, timeout=1)
-    finally:
-        reader.close()
 
 
 async def test_quiet_current_tool_keeps_cycling_without_changing_recorded_signal_age(
@@ -1076,7 +996,7 @@ async def test_focus_usage_details_refreshes_reported_cost_and_quota_on_motion(
             widget_names=settings.dashboard.widgets,
         )
         async with app.run_test(size=(180, 40)) as pilot:
-            await choose_focus_view(pilot, "Usage details")
+            await open_usage_details(pilot)
             usage = pilot.app.screen.query_one("#usage", UsagePanel)
             await wait_until(clock.has_pending_sleep, timeout=1)
             assert "$0.42" in plain_text(usage.content)
@@ -2017,7 +1937,7 @@ async def test_disabled_animations_keep_countdowns_live_without_animating_frames
             widget_names=settings.dashboard.widgets,
         )
         async with app.run_test(size=(180, 40)) as pilot:
-            await choose_focus_view(pilot, "Usage details")
+            await open_usage_details(pilot)
             usage = pilot.app.screen.query_one(UsagePanel)
             await wait_until(clock.has_pending_sleep, timeout=1)
             initial_usage = plain_text(usage.content)
@@ -2038,17 +1958,6 @@ async def test_disabled_animations_keep_countdowns_live_without_animating_frames
             usage_screen = pilot.app.screen
             await pilot.press("escape")
             await wait_until(lambda: pilot.app.screen is not usage_screen, timeout=1)
-            await choose_focus_view(pilot, "Workflow · strips")
-            assert pilot.app.screen.query_one(StripsPanel).is_mounted
-            initial_frames = tuple(
-                panel_view.spinner_frame for item in views.strips() for panel_view in item.panels
-            )
-            clock.advance(2)
-            await wait_until(clock.has_pending_sleep, timeout=1)
-            current_frames = tuple(
-                panel_view.spinner_frame for item in views.strips() for panel_view in item.panels
-            )
-            assert current_frames == initial_frames
     finally:
         reader.close()
 

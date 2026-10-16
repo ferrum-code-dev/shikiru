@@ -328,7 +328,7 @@ async def test_project_context_menu_has_no_task_targets(
         assert screen.query_one("#palette-menu").display
         assert _static_text(screen, "#palette-menu-context") == "Project"
         assert not screen.query_one("#palette-menu-task-actions").display
-        assert not screen.query_one("#palette-menu-task-views").display
+        assert not screen.query_one("#palette-menu-extensions").display
         assert not screen.query_one("#palette-menu-more-actions").display
         assert screen.query_one("#palette-menu-action-submit").display
         assert screen.query_one("#palette-menu-action-stop").display

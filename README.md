@@ -51,8 +51,8 @@ Evidence & reports, Message a role, Take over/Hand back when applicable, Usage, 
 Project diagnostics. More actions opens the remaining task and project operations. Answer opens the
 recorded question directly; only its explicit submit queues an answer. Form inputs retain native
 editing keys, and Escape returns without submitting. In task detail, `v` focuses the inline
-folds for Events, Usage and sessions and the other task sections. The Views menu also opens Help,
-filters, command history and configured secondary widgets, including Extensions.
+folds for Events, Usage and sessions and the other task sections. Ctrl+P lists configured
+extension widgets under Extensions.
 Selecting a task updates its inline detail, and Escape clears the selection after closing an
 overlay. Home's `Ctrl+P` opens contextual Actions over the running dashboard. `prefix + Space`
 does the same on Home; in other Shikiru panes it opens the standalone palette with that pane's

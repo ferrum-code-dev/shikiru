@@ -16,7 +16,13 @@ from textual.widgets import Button, Input, Label, Rule, Select, Static, TextArea
 
 from shikiru.agents.contracts import parse_rung
 from shikiru.config.settings import ComplexityName
-from shikiru.dashboard.contract import PaletteDraft, PaletteRequest, TaskPaletteRoute
+from shikiru.dashboard.contract import (
+    ExtensionEntry,
+    PaletteDraft,
+    PaletteRequest,
+    PaletteReturn,
+    TaskPaletteRoute,
+)
 from shikiru.domain.commands import (
     COMMAND_REJECTED_FALLBACK,
     CommandKind,
@@ -236,13 +242,13 @@ _PALETTE_MENU_ACTION_PREFIX = "palette-menu-action-"
 _PALETTE_MENU_TASK_ACTIONS = "palette-menu-task-actions"
 _PALETTE_MENU_MORE_ACTIONS = "palette-menu-more-actions"
 _PALETTE_MENU_PROJECT_ACTIONS = "palette-menu-project-actions"
-_PALETTE_MENU_TASK_VIEWS = "palette-menu-task-views"
+_PALETTE_MENU_EXTENSIONS = "palette-menu-extensions"
+_PALETTE_EXTENSION_PREFIX = "palette-menu-extension-"
 _PALETTE_MENU_CONTEXT = "palette-menu-context"
 _PALETTE_CLOSE = "palette-close"
 _PALETTE_BACK_TO_MENU = "palette-back-to-menu"
 _PALETTE_ROUTE_EVIDENCE = "palette-menu-view-evidence"
 _PALETTE_ROUTE_USAGE = "palette-menu-view-usage"
-_PALETTE_ROUTE_VIEWS = "palette-menu-view-secondary"
 _PALETTE_ROUTE_ANSWER = "palette-menu-answer"
 _PALETTE_ROUTE_COMMANDS = "palette-menu-commands"
 _PALETTE_ROUTE_DIAGNOSTICS = "palette-menu-diagnostics"
@@ -251,7 +257,6 @@ _PRIMARY_TASK_ACTIONS = frozenset({_ACTION_MESSAGE, _ACTION_TAKE_OVER, _ACTION_H
 _TASK_PALETTE_ROUTES = {
     _PALETTE_ROUTE_EVIDENCE: TaskPaletteRoute.EVIDENCE,
     _PALETTE_ROUTE_USAGE: TaskPaletteRoute.USAGE,
-    _PALETTE_ROUTE_VIEWS: TaskPaletteRoute.VIEWS,
     _PALETTE_ROUTE_COMMANDS: TaskPaletteRoute.COMMANDS,
     _PALETTE_ROUTE_DIAGNOSTICS: TaskPaletteRoute.DIAGNOSTICS,
 }
@@ -354,7 +359,7 @@ def _context_menu_entry(label: str, meaning: str) -> Text:
     )
 
 
-class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
+class PaletteScreen(ModalScreen[PaletteReturn | None]):
     """Render operator actions, dispatch commands and show their acknowledgements."""
 
     BINDINGS: ClassVar[list[Binding]] = [
@@ -375,11 +380,11 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     #palette-menu-task-actions, #palette-menu-project-actions {
         height: auto; margin-top: 1; color: $secondary-text;
     }
-    #palette-menu-task-views { height: auto; margin-top: 1; color: $secondary-text; }
+    #palette-menu-extensions { height: auto; margin-top: 1; color: $secondary-text; }
     #palette-menu-task-actions Label, #palette-menu-project-actions Label {
         height: 1; color: $secondary-text; text-style: none;
     }
-    #palette-menu-task-views Label { height: 1; color: $secondary-text; text-style: none; }
+    #palette-menu-extensions Label { height: 1; color: $secondary-text; text-style: none; }
     #palette-menu Button {
         width: 100%; height: auto; min-height: 1; margin: 0; padding: 0 1 1 1;
         border: none; background: $surface; color: $primary-text;
@@ -447,6 +452,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         remember_contextual_draft: Callable[[PaletteDraft], None] | None = None,
         task_routes_available: bool = False,
         project_diagnostics_available: bool = False,
+        extensions: tuple[ExtensionEntry, ...] = (),
         resolution_screen: ResolutionScreenFactory | None = None,
     ) -> None:
         """Use the operator services for actions and queries and inject pane selection."""
@@ -465,6 +471,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._remember_contextual_draft = remember_contextual_draft
         self._task_routes_available = task_routes_available
         self._project_diagnostics_available = project_diagnostics_available
+        self._extensions = extensions
         self._resolution_screen = resolution_screen
         self._action_confirmation_seconds = action_confirmation_seconds
         self._confirmed_action: str | None = None
@@ -570,9 +577,10 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
                         *_PRIMARY_TASK_ACTIONS,
                     }:
                         yield Button(label, id=f"{_PALETTE_MENU_ACTION_PREFIX}{action}")
-            with Vertical(id=_PALETTE_MENU_TASK_VIEWS):
-                yield Label("Secondary views and extensions")
-                yield Button("Views and extensions", id=_PALETTE_ROUTE_VIEWS)
+            with Vertical(id=_PALETTE_MENU_EXTENSIONS):
+                yield Label("Extensions")
+                for index, extension in enumerate(self._extensions):
+                    yield Button(extension.label, id=f"{_PALETTE_EXTENSION_PREFIX}{index}")
             with Vertical(id=_PALETTE_MENU_PROJECT_ACTIONS):
                 yield Label("Project actions")
                 for label, action in PALETTE_ACTIONS:
@@ -974,11 +982,16 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         elif button_id.startswith(_PALETTE_MENU_ACTION_PREFIX):
             action = button_id.removeprefix(_PALETTE_MENU_ACTION_PREFIX)
             self._open_menu_action(action)
-        elif (route := _TASK_PALETTE_ROUTES.get(button_id)) is not None:
+        elif (route := self._route_for(button_id)) is not None:
             self._remember_form_draft()
             self.dismiss(route)
         elif button_id == _SUBMIT_ID:
             self._activate_submit()
+
+    def _route_for(self, button_id: str) -> PaletteReturn | None:
+        if button_id.startswith(_PALETTE_EXTENSION_PREFIX):
+            return self._extensions[int(button_id.removeprefix(_PALETTE_EXTENSION_PREFIX))]
+        return _TASK_PALETTE_ROUTES.get(button_id)
 
     def on_unmount(self) -> None:
         worker = self._action_worker
@@ -1251,8 +1264,8 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         )
         task_group.display = bool(task_exists and secondary_actions and self._more_actions_expanded)
         project_group.display = self._more_actions_expanded if task_exists else True
-        self.query_one(f"#{_PALETTE_MENU_TASK_VIEWS}", Vertical).display = (
-            task_exists and self._task_routes_available and self._more_actions_expanded
+        self.query_one(f"#{_PALETTE_MENU_EXTENSIONS}", Vertical).display = bool(
+            self._extensions and (self._more_actions_expanded if task_exists else True)
         )
         for route_id in (
             _PALETTE_ROUTE_EVIDENCE,
@@ -1282,9 +1295,6 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             self.query_one(
                 f"#{_PALETTE_MENU_ACTION_PREFIX}{action}", Button
             ).label = _context_menu_entry(label, meaning)
-        self.query_one(f"#{_PALETTE_ROUTE_VIEWS}", Button).display = (
-            task_exists and self._task_routes_available
-        )
 
     def _answerable_escalation_id(self, task_id: str) -> str | None:
         escalation_id = self._context_escalation_id()

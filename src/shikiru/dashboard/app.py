@@ -13,7 +13,7 @@ from textual.app import App
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widget import Widget
-from textual.widgets import Button, Label, ListItem, ListView, Rule, Select, Static
+from textual.widgets import Button, Label, ListView, Rule, Select, Static
 
 from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import (
@@ -26,8 +26,10 @@ from shikiru.dashboard.contract import (
     CommandFeedbackEntryView,
     CommandFeedbackStatus,
     CommandHistoryView,
+    ExtensionEntry,
     PaletteDraft,
     PaletteRequest,
+    PaletteReturn,
     TaskBrowserFilter,
     TaskPaletteRoute,
     WidgetContext,
@@ -158,8 +160,6 @@ _RESOURCES_RULE = "resources-rule"
 _HOME_FOOTER_HELP = "focus-footer-help"
 _HOME_FOOTER_DETACH = "focus-footer-detach"
 _HOME_FOOTER_COMMAND_STATUS = "workspace-command-status"
-_CONTEXT_VIEWS_HEADER = "context-views-header"
-_CONTEXT_VIEWS_CLOSE = "context-views-close"
 _CONTEXT_WIDGET_HEADER = "context-widget-header"
 _PROJECT_USAGE_TITLE = "Project usage"
 _CONTEXT_WIDGET_CLOSE = "context-widget-close"
@@ -190,17 +190,12 @@ FOCUS_ATTENTION_HEIGHT = 3
 FOCUS_SHORT_HOME_HEIGHT = 14
 FOCUS_COMPACT_SHORT_HOME_HEIGHT = 20
 FOCUS_COMPACT_SHORT_MAIN_ROWS = 7
-FOCUS_VIEWS_LIST = "focus-views-list"
-FOCUS_VIEW_PREFIX = "focus-view-"
 FOCUS_COMMAND_HISTORY = "commands"
-FOCUS_ATTENTION = "attention"
-FOCUS_REVEAL_TASK = "reveal-task"
 FOCUS_USAGE_DETAILS = "usage"
-FOCUS_TASK_FILTER_PREFIX = "filter:"
-FOCUS_CONTEXT_VIEW_WORKER = "focus-context-view"
-FOCUS_OPERATOR_ACTIONS = "operator-actions"
-FOCUS_CONTEXT_HELP = "context-help"
-EMPTY_CONTEXT_CHOICE = ""
+FOCUS_WIDGET_PREFIX = "widget-"
+_CONTEXT_WIDGET_PLACEMENTS = frozenset(
+    {WidgetPlacement.DETAILED_USAGE, WidgetPlacement.DIAGNOSTICS, WidgetPlacement.EXTENSIONS}
+)
 TASK_PALETTE_ROUTE_WORKER = "task-palette-route"
 _MAX_CONTEXTUAL_PALETTE_DRAFTS = 16
 _TASK_MOVE_STEPS = {"up": -1, "down": 1}
@@ -278,12 +273,14 @@ def _placement_for_widget(name: str, plugin: DashboardWidget) -> WidgetPlacement
         raise WidgetPluginError(message) from error
 
 
+def _extension_name(name: str) -> str:
+    return name.replace("_", " ").capitalize()
+
+
 def _contextual_widget_label(name: str, placement: WidgetPlacement) -> str:
     category = {
-        WidgetPlacement.ACTIVITY: "Activity",
         WidgetPlacement.DETAILED_USAGE: "Usage",
         WidgetPlacement.DIAGNOSTICS: "Diagnostics",
-        WidgetPlacement.WORKFLOW: "Workflow",
         WidgetPlacement.EXTENSIONS: "Extensions",
     }.get(placement)
     label = name.replace("_", " ")
@@ -295,86 +292,9 @@ class _ContextChoice:
     choice_id: str
     label: str
     title: str | None = None
-    task_filter: TaskBrowserFilter | None = None
     widget_name: str | None = None
     placement: WidgetPlacement | None = None
     command_history: bool = False
-    attention: bool = False
-    reveal_task: bool = False
-    operator_actions: bool = False
-    context_help: bool = False
-
-
-class _ContextViewsScreen(ModalScreen[str]):
-    BINDINGS: ClassVar[list[BindingType]] = [("escape", "close", "Back")]
-    DEFAULT_CSS = (
-        POPUP_CSS
-        + """
-    #focus-views-list { max-height: 1fr; min-height: 0; border: none; background: $surface; }
-    #focus-views-list > ListItem.-highlight {
-        background: $selected-surface; color: $primary-text; text-style: none;
-    }
-    #context-views-hint { height: 1; }
-    #context-views-frame.compact { margin: 0 1; padding: 0 1; }
-    """
-    )
-
-    def __init__(self, choices: tuple[_ContextChoice, ...]) -> None:
-        super().__init__()
-        prepare_popup(self)
-        self._choices = {
-            f"{FOCUS_VIEW_PREFIX}{index}": choice for index, choice in enumerate(choices)
-        }
-
-    def compose(self) -> ComposeResult:
-        with PopupFrame(widget_id="context-views-frame", classes=POPUP_FRAME_CLASS):
-            with Horizontal(id=_CONTEXT_VIEWS_HEADER, classes=POPUP_HEADER_CLASS):
-                yield Label("Views", id="context-views-title", classes=POPUP_TITLE_CLASS)
-                yield Button(
-                    popup_close_label(), id=_CONTEXT_VIEWS_CLOSE, classes=POPUP_CLOSE_CLASS
-                )
-            yield Rule(classes=POPUP_RULE_CLASS)
-            items = [
-                ListItem(Label(choice.label), id=choice_id)
-                for choice_id, choice in self._choices.items()
-            ]
-            yield ListView(*items, id=FOCUS_VIEWS_LIST, classes=POPUP_BODY_CLASS)
-            yield Static(
-                key_hint("↑↓ select · Enter open", SECONDARY_TEXT_COLOR),
-                id="context-views-hint",
-                classes=POPUP_SECONDARY_CLASS,
-            )
-
-    def on_mount(self) -> None:
-        self._apply_compact_layout(self.size.width, self.size.height)
-        self.set_focus(self.query_one(f"#{FOCUS_VIEWS_LIST}", ListView))
-        self.call_after_refresh(self.query_one("#context-views-frame", PopupFrame).content_ready)
-
-    def on_resize(self, event: events.Resize) -> None:
-        self._apply_compact_layout(event.size.width, event.size.height)
-        self.call_after_refresh(
-            self.query_one("#context-views-frame", PopupFrame).update_preferred_size
-        )
-
-    def _apply_compact_layout(self, width: int, height: int) -> None:
-        frame = self.query_one("#context-views-frame", PopupFrame)
-        compact = (
-            width <= _CONTEXT_WIDGET_COMPACT_MAX_COLUMNS
-            or height <= _CONTEXT_WIDGET_COMPACT_MAX_ROWS
-        )
-        frame.set_class(compact, "compact")
-
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        choice_id = event.item.id
-        if choice_id is not None and choice_id in self._choices:
-            self.dismiss(self._choices[choice_id].choice_id)
-
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == _CONTEXT_VIEWS_CLOSE:
-            self.dismiss(EMPTY_CONTEXT_CHOICE)
-
-    async def action_close(self) -> None:
-        self.dismiss("")
 
 
 class _ContextWidgetScreen(ModalScreen[None]):
@@ -1263,45 +1183,11 @@ class DashboardApp(App[None]):
     def _context_choices(self) -> tuple[_ContextChoice, ...]:
         choices = [
             _ContextChoice(
-                FOCUS_OPERATOR_ACTIONS,
-                "Operator actions",
-                operator_actions=True,
-            ),
-            _ContextChoice(FOCUS_CONTEXT_HELP, "Help", context_help=True),
-        ]
-        if _WIDGET_QUEUE in self._widget_plugins:
-            choices.extend(
-                _ContextChoice(
-                    f"{FOCUS_TASK_FILTER_PREFIX}{task_filter.value}",
-                    f"Task filter · {task_filter.value}",
-                    task_filter=task_filter,
-                )
-                for task_filter in TaskBrowserFilter
-            )
-            queue = self._widget_instances.get(_WIDGET_QUEUE)
-            if queue is not None and getattr(queue, "selected_task_missing", False):
-                choices.append(
-                    _ContextChoice(
-                        FOCUS_REVEAL_TASK,
-                        "Reveal selected task in its matching filter",
-                        reveal_task=True,
-                    )
-                )
-        choices.append(
-            _ContextChoice(
                 FOCUS_COMMAND_HISTORY,
                 "Command history · pending, applied and rejected",
                 command_history=True,
             )
-        )
-        if _WIDGET_ESCALATIONS in self._widget_plugins:
-            choices.append(
-                _ContextChoice(
-                    FOCUS_ATTENTION,
-                    "Attention · decisions, stalls and faults",
-                    attention=True,
-                )
-            )
+        ]
         for name in self._configured_widget_names:
             placement = self._widget_placements[name]
             if placement is WidgetPlacement.PROJECT_USAGE:
@@ -1314,27 +1200,25 @@ class DashboardApp(App[None]):
                         placement=WidgetPlacement.DETAILED_USAGE,
                     )
                 )
-            elif placement in {
-                WidgetPlacement.ACTIVITY,
-                WidgetPlacement.DETAILED_USAGE,
-                WidgetPlacement.DIAGNOSTICS,
-                WidgetPlacement.WORKFLOW,
-                WidgetPlacement.EXTENSIONS,
-            }:
-                label = _contextual_widget_label(name, placement)
+            elif placement in _CONTEXT_WIDGET_PLACEMENTS:
                 choices.append(
                     _ContextChoice(
-                        f"widget-{name}",
-                        label,
+                        f"{FOCUS_WIDGET_PREFIX}{name}",
+                        _contextual_widget_label(name, placement),
                         widget_name=name,
                         placement=placement,
                     )
                 )
         return tuple(choices)
 
+    def extension_entries(self) -> tuple[ExtensionEntry, ...]:
+        """List the extension widgets the operator can open from the palette."""
+        return tuple(
+            ExtensionEntry(f"{FOCUS_WIDGET_PREFIX}{name}", _extension_name(name))
+            for name in self._widget_names_by_placement.get(WidgetPlacement.EXTENSIONS, ())
+        )
+
     async def _open_contextual_view(self, choice_id: str) -> None:
-        if choice_id == EMPTY_CONTEXT_CHOICE:
-            return
         if choice_id == FOCUS_PROJECT_DIAGNOSTICS_VIEW:
             await self._show_project_diagnostics()
             return
@@ -1406,12 +1290,17 @@ class DashboardApp(App[None]):
 
     def palette_return_callback(
         self, task_id: str | None
-    ) -> Callable[[TaskPaletteRoute | None], None]:
+    ) -> Callable[[PaletteReturn | None], None]:
         """Return from a palette to its task context and optional secondary route."""
 
-        def on_return(route: TaskPaletteRoute | None) -> None:
+        def on_return(route: PaletteReturn | None) -> None:
             self.refresh_task_detail_after_resume()
-            if route is not None and task_id is not None:
+            if isinstance(route, ExtensionEntry):
+                self.run_worker(
+                    self._open_contextual_view(route.choice_id),
+                    group=TASK_PALETTE_ROUTE_WORKER,
+                )
+            elif route is not None and task_id is not None:
                 self.route_task_palette(task_id, route)
 
         return on_return
@@ -1437,19 +1326,6 @@ class DashboardApp(App[None]):
             )
         elif route is TaskPaletteRoute.DIAGNOSTICS:
             await self._open_contextual_view(FOCUS_PROJECT_DIAGNOSTICS_VIEW)
-        else:
-            panel = self._inline_task_panel(task_id)
-            if panel is not None:
-                panel.focus_folds()
-            else:
-                self.push_screen(
-                    TaskDetailScreen(
-                        self._widget_context(),
-                        task_id,
-                        focus_folds_on_mount=True,
-                    ),
-                    callback=lambda _: self.refresh_task_detail_after_resume(),
-                )
 
     def _find_context_choice(self, choice_id: str) -> _ContextChoice | None:
         return next(
@@ -1458,28 +1334,11 @@ class DashboardApp(App[None]):
         )
 
     async def _run_context_choice(self, choice: _ContextChoice) -> None:
-        if await self._run_special_context_choice(choice):
-            return
-        if choice.task_filter is not None:
-            queue = self._widget_instances.get(_WIDGET_QUEUE)
-            if queue is not None:
-                await cast("_TaskBrowserNavigation", queue).activate_filter(choice.task_filter)
-            return
         if choice.command_history:
             await self.push_screen(
                 _CommandHistoryScreen(self._views, self._on_change),
                 callback=lambda _: self.refresh_task_detail_after_resume(),
             )
-            return
-        if choice.attention:
-            panel = self._widget_instances.get(_WIDGET_ESCALATIONS)
-            if panel is not None:
-                cast("_AttentionPanelNavigation", panel).activate_attention()
-            return
-        if choice.reveal_task:
-            queue = self._widget_instances.get(_WIDGET_QUEUE)
-            if queue is not None:
-                await cast("_TaskBrowserNavigation", queue).reveal_selected_task()
             return
         await self._show_context_widget(choice)
 
@@ -1501,19 +1360,6 @@ class DashboardApp(App[None]):
             callback=refresh_resumed_detail,
         )
 
-    async def _run_special_context_choice(self, choice: _ContextChoice) -> bool:
-        if choice.operator_actions:
-            await self.action_open_palette()
-            return True
-        if choice.context_help:
-            if self._home_detail_panel is not None and self._selected_task_id is not None:
-                self._home_detail_panel.select_task(self._selected_task_id)
-                await self._home_detail_panel.open_help()
-            else:
-                await self.action_show_help()
-            return True
-        return False
-
     async def _show_context_widget(self, choice: _ContextChoice) -> None:
         if choice.widget_name is None or choice.placement is None:
             message = f"contextual dashboard view {choice.choice_id!r} has no target"
@@ -1523,14 +1369,6 @@ class DashboardApp(App[None]):
             _ContextWidgetScreen(choice.title or choice.label, widget),
             callback=lambda _: self.refresh_task_detail_after_resume(),
         )
-
-    def _context_view_selected(self, choice_id: str | None) -> None:
-        self.refresh_task_detail_after_resume()
-        if choice_id is not None and choice_id != EMPTY_CONTEXT_CHOICE:
-            self.run_worker(
-                self._open_contextual_view(choice_id),
-                group=FOCUS_CONTEXT_VIEW_WORKER,
-            )
 
     def _select_task_context(self, task_id: str | None) -> None:
         self._selected_task_id = task_id
@@ -1675,8 +1513,6 @@ class DashboardApp(App[None]):
             panel = self._context_task_detail_panel()
             if panel is not None:
                 panel.focus_folds()
-            else:
-                await self.action_open_views()
         else:
             return self._open_workspace_search(event.key)
         return True
@@ -1861,16 +1697,6 @@ class DashboardApp(App[None]):
         await self.push_screen(
             WorkspaceHelpScreen(context),
             callback=lambda _: self.refresh_task_detail_after_resume(),
-        )
-
-    async def action_open_views(self) -> None:
-        """Open configured filters, history and secondary dashboard widgets."""
-        if self._focus_task is not None:
-            self.query_one("#task-detail-panel", TaskDetailPanel).focus_folds()
-            return
-        self.push_screen(
-            _ContextViewsScreen(self._context_choices()),
-            callback=self._context_view_selected,
         )
 
     async def action_open_palette(self) -> None:

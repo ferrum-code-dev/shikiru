@@ -34,7 +34,6 @@ from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
-    choose_focus_view,
     ignore_palette_action,
     pick_details_entry,
     state_views,
@@ -62,7 +61,6 @@ _SIZES = (_WIDE, _COMPACT, _TINY)
 _INVISIBLE_STOPS = frozenset(
     {"focus-root", "focus-readouts", "escalation-panels", "focus-footer", "header"}
 )
-_ATTENTION_LABEL = "Attention · decisions, stalls and faults"
 _READOUTS = (UsagePanel, ResourcesPanel, EscalationsPanel)
 _SELECTED_SURFACE = Color.parse(SELECTED_SURFACE_COLOR).rgb
 
@@ -248,7 +246,7 @@ async def test_focused_readout_scrolls_with_page_keys_and_keeps_the_task_selecti
 
 
 @pytest.mark.parametrize("size", _SIZES)
-async def test_quiet_bar_is_not_a_tab_stop_but_views_attention_still_reaches_it(
+async def test_quiet_bar_is_not_a_tab_stop(
     quiet_home: DashboardApp,
     size: tuple[int, int],
 ) -> None:
@@ -256,8 +254,6 @@ async def test_quiet_bar_is_not_a_tab_stop_but_views_attention_still_reaches_it(
         bar = await _settled(quiet_home, pilot, decision=False)
         assert not bar.has_class("armed")
         assert bar not in await _tab_cycle(quiet_home, pilot)
-        await choose_focus_view(pilot, _ATTENTION_LABEL)
-        await wait_until(lambda: quiet_home.focused is bar, timeout=UI_WAIT_SECONDS)
 
 
 async def _settled_lists(app: DashboardApp, pilot: Pilot[None]) -> tuple[ListView, ListView]:

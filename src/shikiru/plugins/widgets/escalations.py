@@ -86,7 +86,7 @@ class EscalationsPanel(Static):
             self.call_later(self._refresh)
 
     def allow_focus(self) -> bool:
-        """Join the Tab chain only while it holds attention groups or was opened from Views."""
+        """Join the Tab chain only while it holds attention groups or was opened on request."""
         return bool(self._attention.groups) or self._focus_requested
 
     def compose(self) -> ComposeResult:

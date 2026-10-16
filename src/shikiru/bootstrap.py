@@ -429,6 +429,7 @@ async def run_dashboard(
                 project_diagnostics_available=(
                     context is not None and DASHBOARD_RESOURCES_WIDGET in settings.dashboard.widgets
                 ),
+                extensions=app_instance.extension_entries(),
                 resolution_screen=resolution_screen,
             )
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, cast
 
 from textual.app import App, ComposeResult
-from textual.widgets import Label, ListItem, ListView, Static
+from textual.widgets import Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.activity import RoleViewTail
@@ -107,27 +107,23 @@ async def ignore_palette_action(action: str) -> None:
     del action
 
 
-async def choose_focus_view(pilot: Pilot[None], label: str) -> None:
-    await pilot.press("v")
-    await wait_until(
-        lambda: bool(pilot.app.screen.query("#focus-views-list")),
-        timeout=UI_WAIT_SECONDS,
-    )
-    menu = pilot.app.screen
-    view_list = menu.query_one("#focus-views-list", ListView)
-    items = [item for item in view_list.children if isinstance(item, ListItem)]
-    view_list.index = next(
-        index
-        for index, item in enumerate(items)
-        if plain_text(item.query_one(Label).render()) == label
-    )
-    view_list.focus()
+async def _activate_control(pilot: Pilot[None], selector: str) -> None:
+    origin = pilot.app.screen
+    pilot.app.screen.query_one(selector).focus()
     await pilot.press("enter")
-    await wait_until(
-        lambda: pilot.app.screen is not menu,
-        timeout=UI_WAIT_SECONDS,
-    )
-    await pilot.pause()
+    await wait_until(lambda: pilot.app.screen is not origin, timeout=UI_WAIT_SECONDS)
+
+
+async def open_command_history(pilot: Pilot[None]) -> None:
+    await _activate_control(pilot, "#workspace-command-status")
+
+
+async def open_project_diagnostics(pilot: Pilot[None]) -> None:
+    await _activate_control(pilot, "#resources")
+
+
+async def open_usage_details(pilot: Pilot[None]) -> None:
+    await _activate_control(pilot, "#usage")
 
 
 async def choose_details_entry(pilot: Pilot[None], entry_id: str) -> None:

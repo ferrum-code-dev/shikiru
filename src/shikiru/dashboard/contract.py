@@ -99,9 +99,19 @@ class TaskPaletteRoute(StrEnum):
     INSPECT = "inspect"
     EVIDENCE = "evidence"
     USAGE = "usage"
-    VIEWS = "views"
     COMMANDS = "commands"
     DIAGNOSTICS = "diagnostics"
+
+
+@dataclass(frozen=True)
+class ExtensionEntry:
+    """An extension widget listed in the palette, opened through its contextual view."""
+
+    choice_id: str
+    label: str
+
+
+PaletteReturn = TaskPaletteRoute | ExtensionEntry
 
 
 @dataclass(frozen=True)

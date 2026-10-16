@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from textual.containers import VerticalScroll
-from textual.widgets import Button, DataTable, ListView, Static
+from textual.widgets import Button, ListView, Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
@@ -28,7 +28,12 @@ from shikiru.ui.tokens import STEEL_BLUE
 from tests.support.cells import foregrounds, rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices, choose_focus_view, state_views
+from tests.support.dashboard import (
+    StubServices,
+    open_command_history,
+    open_usage_details,
+    state_views,
+)
 from tests.support.store import seed_task
 from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, wait_until
 
@@ -49,9 +54,6 @@ _COMPACT_APP_SIZE = (48, 20)
 _OVERFLOWING_HELP_SIZE = (70, 22)
 _OVERFLOWING_WORDS = 800
 _PROJECT_NAME = "popup-focus"
-_COMMAND_HISTORY_LABEL = "Command history · pending, applied and rejected"
-_USAGE_DETAILS_LABEL = "Usage details"
-_DIALOGUE_LABEL = "Activity · dialogue"
 
 
 async def _await_popup(app: DashboardApp, pilot: Pilot[None], origin: Screen[Any]) -> Screen[Any]:
@@ -66,21 +68,15 @@ async def _open_help(app: DashboardApp, pilot: Pilot[None]) -> Screen[Any]:
     return await _await_popup(app, pilot, origin)
 
 
-async def _open_views(app: DashboardApp, pilot: Pilot[None]) -> Screen[Any]:
-    origin = app.screen
-    await pilot.press("v")
-    return await _await_popup(app, pilot, origin)
-
-
 async def _open_command_history(app: DashboardApp, pilot: Pilot[None]) -> Screen[Any]:
     origin = app.screen
-    await choose_focus_view(pilot, _COMMAND_HISTORY_LABEL)
+    await open_command_history(pilot)
     return await _await_popup(app, pilot, origin)
 
 
 async def _open_usage_details(app: DashboardApp, pilot: Pilot[None]) -> Screen[Any]:
     origin = app.screen
-    await choose_focus_view(pilot, _USAGE_DETAILS_LABEL)
+    await open_usage_details(pilot)
     return await _await_popup(app, pilot, origin)
 
 
@@ -90,23 +86,11 @@ async def _open_standalone_palette(app: DashboardApp, pilot: Pilot[None]) -> Scr
     return await _await_popup(app, pilot, origin)
 
 
-async def _open_dialogue_text(app: DashboardApp, pilot: Pilot[None]) -> Screen[Any]:
-    if not app.screen.query("#dialogue-table"):
-        await choose_focus_view(pilot, _DIALOGUE_LABEL)
-    table = cast("DataTable[object]", app.screen.query_one("#dialogue-table", DataTable))
-    table.focus()
-    origin = app.screen
-    await pilot.press("enter")
-    return await _await_popup(app, pilot, origin)
-
-
 _ROUTES = (
     pytest.param(_open_help, "#workspace-help-scroll", id="help"),
-    pytest.param(_open_views, "#focus-views-list", id="views"),
     pytest.param(_open_command_history, "#command-history-filter", id="command-history"),
     pytest.param(_open_usage_details, "#context-widget-content", id="usage-details"),
     pytest.param(_open_standalone_palette, "#action-search", id="standalone-palette"),
-    pytest.param(_open_dialogue_text, "#dialogue-text-scroll", id="dialogue-text"),
 )
 
 
@@ -236,7 +220,6 @@ async def test_popup_starts_on_its_useful_control_and_closes_with_escape_or_its_
         pytest.param(
             _open_help, "#workspace-help-copy", "Up/Down", "Select a task", id="help-copy"
         ),
-        pytest.param(_open_views, "#context-views-hint", "Enter", "open", id="views-hint"),
         pytest.param(_open_command_history, f".{POPUP_CLOSE_CLASS}", "Esc", "\u00d7", id="history"),
     ],
 )
@@ -279,14 +262,6 @@ async def test_popup_bodies_and_task_lists_use_the_one_column_scrollbar(
         )
         await pilot.press("escape")
         await wait_until(lambda: popup_app.screen is home, timeout=UI_WAIT_SECONDS)
-        await pilot.press("v")
-        await wait_until(
-            lambda: bool(popup_app.screen.query("#focus-views-list")),
-            timeout=UI_WAIT_SECONDS,
-        )
-        assert _scrollbar_width(popup_app.screen.query_one("#focus-views-list")) == (
-            SCROLLBAR_WIDTH
-        )
 
 
 def _copy_text(widget: Widget) -> str:
