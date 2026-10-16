@@ -16,6 +16,7 @@ from shikiru.domain.commands import (
     CommandStatus,
     Pause,
     Prioritize,
+    Resume,
     Say,
     SetRung,
     Stop,
@@ -23,7 +24,7 @@ from shikiru.domain.commands import (
     TakeOver,
 )
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import Mode, Role, Status, Step
+from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
 from shikiru.errors import ConfigError
 from shikiru.operator.commands import COMMAND_ACK_WAIT_SECONDS, OperatorCommands
 from shikiru.operator.queries import TASK_ACTION_ROLES
@@ -474,10 +475,7 @@ async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
         screen = _screen(app)
         submit = screen.query_one("#palette-submit", Button)
         assert not screen.query_one("#palette-back-to-menu").display
-        assert not any(
-            screen.query_one(selector).show_vertical_scrollbar
-            for selector in ("#palette-form", "#palette-result-scroll")
-        )
+        assert _no_static_scrollbar(screen)
         await pilot.press("enter")
         await wait_until(lambda: "again" in str(submit.label), timeout=UI_WAIT_SECONDS)
         assert queue.pending() == []
@@ -496,6 +494,33 @@ async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
         await pilot.press("enter")
         await wait_until(lambda: len(queue.pending()) == 2, timeout=UI_WAIT_SECONDS)
         assert queue.pending()[1].command == Pause(task_id=task.id)
+        await pilot.press("escape")
+        await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
+
+    app = open_action("resume")
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        screen = await _mounted_palette(app)
+        await wait_until(
+            lambda: screen.query_one("#palette-submit", Button).disabled,
+            timeout=UI_WAIT_SECONDS,
+        )
+        await pilot.press("enter")
+        assert len(queue.pending()) == 2
+        await pilot.press("escape")
+        await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
+
+    TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
+    app = open_action("resume")
+    async with app.run_test(size=_APP_SIZE) as pilot:
+        screen = await _mounted_palette(app)
+        submit = screen.query_one("#palette-submit", Button)
+        await wait_until(lambda: not submit.disabled, timeout=UI_WAIT_SECONDS)
+        assert not submit.can_focus
+        assert not screen.query_one("#palette-back-to-menu").display
+        assert _no_static_scrollbar(screen)
+        await pilot.press("enter")
+        await wait_until(lambda: len(queue.pending()) == 3, timeout=UI_WAIT_SECONDS)
+        assert queue.pending()[2].command == Resume(task_id=task.id)
         await pilot.press("escape")
         await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
 
@@ -998,6 +1023,21 @@ async def _enter_text(pilot: Pilot[None], text: str) -> None:
 def _static_text(screen: PaletteScreen, selector: str) -> str:
     rendered = cast("Text", screen.query_one(selector, Static).render())
     return rendered.plain
+
+
+async def _mounted_palette(app: PaletteApp) -> PaletteScreen:
+    await wait_until(
+        lambda: isinstance(app.screen, PaletteScreen) and app.screen.is_mounted,
+        timeout=UI_WAIT_SECONDS,
+    )
+    return _screen(app)
+
+
+def _no_static_scrollbar(screen: PaletteScreen) -> bool:
+    return not any(
+        screen.query_one(selector).show_vertical_scrollbar
+        for selector in ("#palette-form", "#palette-result-scroll")
+    )
 
 
 def _assert_fixed_task_context_title(screen: PaletteScreen, task_id: str) -> None:

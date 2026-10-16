@@ -155,14 +155,16 @@ SUBMIT_ACTION_LABELS = {
 _HINT_LABELS = {
     _ACTION_MESSAGE: ("Ctrl+S queue message \N{MIDDLE DOT} Enter new line", "Ctrl+S queue"),
     _ACTION_PAUSE: ("Enter pause task", "Enter pause"),
+    _ACTION_RESUME: ("Enter resume task", "Enter resume"),
     _ACTION_CANCEL: ("Enter cancel task", "Enter cancel"),
 }
 _CANCEL_CONFIRM_HINT = ("Enter again to cancel task", "Enter again")
 _HINT_CLASS = "hint"
 _HINT_KEY_ACTIONS = {
-    "confirm": frozenset({_ACTION_PAUSE, _ACTION_CANCEL}),
+    "confirm": frozenset({_ACTION_PAUSE, _ACTION_RESUME, _ACTION_CANCEL}),
     "queue": frozenset({_ACTION_MESSAGE}),
 }
+_CONFIRM_TWICE_ACTIONS = frozenset({_ACTION_CANCEL})
 _ENTER_KEY = "enter"
 _TASK_ROLES = TASK_ACTION_ROLES
 _ROLE_OPTIONS = tuple((role.value.title(), role.value) for role in _TASK_ROLES)
@@ -727,7 +729,9 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
     def _activate_submit(self) -> None:
         if self._action_in_flight:
             return
-        confirming = self._selected_value(_FIELD_ACTION) == _ACTION_CANCEL and self._hint_mode()
+        confirming = (
+            self._selected_value(_FIELD_ACTION) in _CONFIRM_TWICE_ACTIONS and self._hint_mode()
+        )
         if confirming and not self._cancel_armed:
             self._cancel_armed = True
             self._refresh_submit()
