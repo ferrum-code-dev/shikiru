@@ -160,8 +160,9 @@ _HINT_LABELS = {
 }
 _CANCEL_CONFIRM_HINT = ("Enter again to cancel task", "Enter again")
 _HINT_CLASS = "hint"
+_ENTER_HINT_ACTIONS = frozenset({_ACTION_PAUSE, _ACTION_RESUME, _ACTION_CANCEL})
 _HINT_KEY_ACTIONS = {
-    "confirm": frozenset({_ACTION_PAUSE, _ACTION_RESUME, _ACTION_CANCEL}),
+    "confirm": _ENTER_HINT_ACTIONS,
     "queue": frozenset({_ACTION_MESSAGE}),
 }
 _CONFIRM_TWICE_ACTIONS = frozenset({_ACTION_CANCEL})
@@ -467,6 +468,7 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         self._advanced_expanded = False
         self._action_in_flight = False
         self._cancel_armed = False
+        self._closing_after_queue = False
         self._pending_form_commands: dict[tuple[str, ...], int] = {}
         self._submitting_form_identity: tuple[str, ...] | None = None
         self._command_action = _EMPTY
@@ -719,15 +721,17 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
         """Queue the message named by the Ctrl+S hint."""
         self._activate_submit()
 
+    def _preset_popup(self) -> bool:
+        return self._contextual_palette and not self._menu_available
+
     def _hint_mode(self) -> bool:
-        return (
-            self._contextual_palette
-            and not self._menu_available
-            and self._selected_value(_FIELD_ACTION) in _HINT_LABELS
-        )
+        return self._preset_popup() and self._selected_value(_FIELD_ACTION) in _HINT_LABELS
+
+    def _closes_after_queue(self, action: str) -> bool:
+        return action in _ENTER_HINT_ACTIONS and self._preset_popup()
 
     def _activate_submit(self) -> None:
-        if self._action_in_flight:
+        if self._action_in_flight or self._closing_after_queue:
             return
         confirming = (
             self._selected_value(_FIELD_ACTION) in _CONFIRM_TWICE_ACTIONS and self._hint_mode()
@@ -1433,6 +1437,10 @@ class PaletteScreen(ModalScreen[TaskPaletteRoute | None]):
             return
         if ack.status is AckStatus.QUEUED:
             self._pending_form_commands[form_identity] = ack.id
+        if self._closes_after_queue(action) and ack.status is not AckStatus.REJECTED:
+            self._closing_after_queue = True
+            self.call_later(self.action_close)
+            return
         if self._is_current_screen():
             self._show_ack(ack)
         if action == _ACTION_TAKE_OVER and ack.status is AckStatus.DONE and role is not None:

@@ -482,8 +482,9 @@ async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
         await pilot.press("escape")
         await wait_until(lambda: "again" not in str(submit.label), timeout=UI_WAIT_SECONDS)
         assert app.screen is screen
-        await pilot.press("enter", "enter")
-        await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
+        await pilot.press("enter", "enter", "enter")
+        await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
+        assert len(queue.pending()) == 1
         assert queue.pending()[0].command == Cancel(
             task_id=task.id, command_id=queue.pending()[0].id
         )
@@ -491,11 +492,10 @@ async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
     app = open_action("pause")
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
-        await pilot.press("enter")
-        await wait_until(lambda: len(queue.pending()) == 2, timeout=UI_WAIT_SECONDS)
-        assert queue.pending()[1].command == Pause(task_id=task.id)
-        await pilot.press("escape")
+        await pilot.press("enter", "enter", "enter")
         await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
+        assert len(queue.pending()) == 2
+        assert queue.pending()[1].command == Pause(task_id=task.id)
 
     app = open_action("resume")
     async with app.run_test(size=_APP_SIZE) as pilot:
@@ -518,11 +518,10 @@ async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
         assert not submit.can_focus
         assert not screen.query_one("#palette-back-to-menu").display
         assert _no_static_scrollbar(screen)
-        await pilot.press("enter")
-        await wait_until(lambda: len(queue.pending()) == 3, timeout=UI_WAIT_SECONDS)
-        assert queue.pending()[2].command == Resume(task_id=task.id)
-        await pilot.press("escape")
+        await pilot.press("enter", "enter", "enter")
         await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
+        assert len(queue.pending()) == 3
+        assert queue.pending()[2].command == Resume(task_id=task.id)
 
 
 async def test_palette_target_follows_search_choice_and_stays_manually_editable(

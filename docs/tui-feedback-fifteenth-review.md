@@ -1,8 +1,8 @@
 # Phase 11 fifteenth review: action popups and help
 
-Status: in progress (Tasks 223-225). Refines the [fourteenth review](tui-feedback-fourteenth-review.md) where it differs. **The TUI is the source of truth.** The operator approved the decisions below; do not redesign.
+Status: in progress (Tasks 223-226). Refines the [fourteenth review](tui-feedback-fourteenth-review.md) where it differs. **The TUI is the source of truth.** The operator approved the decisions below; do not redesign.
 
-## Action popups (Tasks 223 and 225)
+## Action popups (Tasks 223, 225 and 226)
 
 Applies to the shared `PaletteScreen` reached from task details (an action preset) or from the Ctrl+P menu.
 
@@ -21,6 +21,10 @@ Applies to the shared `PaletteScreen` reached from task details (an action prese
 ### Resume (Task 225)
 - Reworked the same way as Pause: no `Back to actions` from task details; the submit button becomes the hint `Enter resume task` (tiny panes `Enter resume`), activated by Enter while the action is available and disabled when it is unavailable, pending or in flight.
 - Resume is not destructive, so Enter runs it at once with no second step; Esc closes the popup.
+
+### Close after queueing (Task 226)
+- A Pause, Resume or Cancel popup from task details closes as soon as its command is queued or applied, through the Esc close path, so one Enter sends exactly one command (for Cancel, the second Enter). A rejected command keeps the popup open with its reason.
+- The outcome stays visible on Home: the footer shows the latest command (`Pending: Pause T-1`) and the task detail refreshes. Ctrl+P popups and Message are unchanged.
 
 ## Help panel (Task 224)
 
