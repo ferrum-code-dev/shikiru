@@ -12,7 +12,7 @@ from rich.text import Text
 from textual.containers import Horizontal, Vertical
 from textual.content import Content
 from textual.style import Style
-from textual.widgets import Button, Input, ListItem, ListView, Static
+from textual.widgets import Input, ListItem, ListView, Static
 
 from shikiru.agents.contracts import role_dir
 from shikiru.config.loader import load_settings
@@ -538,12 +538,12 @@ async def test_history_load_more_keeps_the_selected_task(
         await wait_until(lambda: len(task_list.children) == PAGE_SIZE, timeout=5.0)
         first_page = tuple(item.id for item in task_list.children)
         assert selected.id not in first_page
-        more = widget.query_one("#task-browser-more", Button)
+        more = widget.query_one("#task-browser-more", Static)
         await wait_until(lambda: more.display and more.region.height > 0, timeout=5.0)
         assert await pilot.click(more)
         await wait_until(lambda: len(task_list.children) == PAGE_SIZE + 1, timeout=5.0)
         assert tuple(item.id for item in task_list.children[:PAGE_SIZE]) == first_page
-        assert not widget.query_one("#task-browser-more", Button).display
+        assert not widget.query_one("#task-browser-more", Static).display
         assert task_list.children[-1].id == f"task-row-{selected.id}"
         await wait_until(lambda: _selected_task_id(widget) == selected.id, timeout=5.0)
 
@@ -588,20 +588,19 @@ async def test_unsearched_all_load_more_stops_after_queued_tasks_and_recent_hist
         visible_ids = loaded_ids()
         assert len(visible_ids & {task.id for task in queued}) == PAGE_SIZE
         assert {task.id for task in terminal} <= visible_ids
-        load_more = widget.query_one("#task-browser-more", Button)
-        assert not load_more.disabled
+        load_more = widget.query_one("#task-browser-more", Static)
+        assert load_more.display
 
         assert await pilot.click(load_more)
         await wait_until(
             lambda: (
                 queued[-1].id in _loaded_task_ids(task_list)
-                and widget.query_one("#task-browser-more", Button).disabled
+                and not widget.query_one("#task-browser-more", Static).display
             ),
             timeout=5.0,
         )
         visible_ids = loaded_ids()
         assert visible_ids == {task.id for task in queued} | {task.id for task in terminal}
-        assert widget.query_one("#task-browser-more", Button).disabled
 
 
 async def test_home_search_preserves_matching_terminal_tasks_across_loaded_pages(
@@ -876,22 +875,15 @@ async def test_refresh_waits_for_recent_targets_after_teardown(
         assert app.is_running
 
 
-async def test_dashboard_slash_focuses_search_and_a_slash_inside_search_is_text(
+async def test_dashboard_slash_and_m_keys_act_on_home_and_are_text_inside_search(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
-    del connection
+    for index in range(PAGE_SIZE + 1):
+        seed_task(connection, FakeClock(START), title=f"m task {index}")
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     settings = load_settings(project_dir)
     services = StubServices()
-    empty_project = reader.task_browser_page(
-        category=TaskBrowserFilter.ALL.value,
-        search="",
-        limit=PAGE_SIZE,
-        offset=0,
-    )
-    assert empty_project.matching_count == 0
-    assert empty_project.project_count == 0
     app = DashboardApp(
         focus_task=None,
         views=state_views(reader, project_dir, clock, services),
@@ -908,8 +900,13 @@ async def test_dashboard_slash_focuses_search_and_a_slash_inside_search_is_text(
     )
 
     async with app.run_test(size=(90, 60)) as pilot:
-        await pilot.pause()
         search = app.query_one("#task-browser-search", Input)
+        task_list = app.query_one("#task-browser-list", ListView)
+        more = app.query_one("#task-browser-more", Static)
+        await wait_until(
+            lambda: len(task_list.children) == PAGE_SIZE and more.display,
+            timeout=TASK_BROWSER_WAIT_TIMEOUT_SECONDS,
+        )
         assert not search.display
         await pilot.press("slash")
         await pilot.pause()
@@ -923,6 +920,19 @@ async def test_dashboard_slash_focuses_search_and_a_slash_inside_search_is_text(
         await pilot.press("escape")
         assert search.value == ""
         assert not search.display
+        await pilot.press("slash", "m")
+        await wait_until(
+            lambda: search.value == "m" and len(task_list.children) == PAGE_SIZE and more.display,
+            timeout=TASK_BROWSER_WAIT_TIMEOUT_SECONDS,
+        )
+        await pilot.press("escape")
+        assert not search.display
+        await pilot.press("m")
+        await wait_until(
+            lambda: len(task_list.children) == PAGE_SIZE + 1 and not more.display,
+            timeout=TASK_BROWSER_WAIT_TIMEOUT_SECONDS,
+        )
+        assert task_list.has_focus
         await pilot.press("?")
         await pilot.pause()
         assert app.screen.query_one("#workspace-help-frame")

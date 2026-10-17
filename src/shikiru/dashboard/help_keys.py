@@ -66,6 +66,7 @@ def _home_groups(availability: HelpAvailability) -> tuple[HelpGroup, ...]:
             HelpRow(_ARROWS, "Select a task, wherever focus is"),
             HelpRow("f", "Cycle the task status filter"),
             HelpRow("/", "Search by task ID or title; Enter keeps it, Esc clears it"),
+            HelpRow("m", "Load more tasks, while the list shows the hint"),
         ]
     tasks.append(HelpRow(_ESC, "Close a popup, clear the search, then clear the selection"))
     groups = [HelpGroup("Tasks", tuple(tasks))]

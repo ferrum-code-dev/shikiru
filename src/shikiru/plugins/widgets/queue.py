@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, cast
 
 from rich.text import Text
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Input, ListItem, ListView, Static
+from textual.widgets import Input, ListItem, ListView, Static
 
 from shikiru.dashboard.contract import (
     TASK_STATUS_QUEUED,
@@ -18,7 +18,7 @@ from shikiru.dashboard.contract import (
     TaskBrowserView,
     WidgetPlacement,
 )
-from shikiru.plugins.widgets.queue_hint import task_list_header
+from shikiru.plugins.widgets.queue_hint import load_more_hint, task_list_header
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.keys import key_hint
 from shikiru.ui.recent_window import RecentWindow, step_selection
@@ -107,7 +107,7 @@ SEARCH_INPUT_ID = "task-browser-search"
 TASK_LIST_ID = "task-browser-list"
 COUNT_ID = "task-browser-count"
 EMPTY_ID = "task-browser-empty"
-MORE_BUTTON_ID = "task-browser-more"
+MORE_HINT_ID = "task-browser-more"
 ESCAPE_KEY = "escape"
 MOVE_STEPS = {"up": -1, "down": 1}
 STATUS_FILTER_CYCLE = (
@@ -127,6 +127,7 @@ FILTER_LABELS = {
     **{task_filter: task_filter.value.capitalize() for task_filter in STATUS_FILTER_CYCLE[1:]},
 }
 STATUS_FILTER_WORKER = "task-browser-status-filter"
+MORE_WORKER = "task-browser-more"
 SEARCH_FIELD_CLASS = "focus-search"
 SEARCH_OPEN_CLASS = "search-open"
 HEADER_TINY_MAX_ROWS = 8
@@ -337,6 +338,16 @@ class _RecentPager(Static):
             await self._page()
 
 
+class _LoadMoreHint(Static):
+    def __init__(self, *, load: Callable[[], Awaitable[None]]) -> None:
+        super().__init__(id=MORE_HINT_ID, markup=False)
+        self._load = load
+
+    async def on_click(self, event: events.Click) -> None:
+        event.stop()
+        await self._load()
+
+
 class QueuePanel(Vertical):
     """Render the Home task list with status filter, search, selection and Recent."""
 
@@ -399,7 +410,9 @@ class QueuePanel(Vertical):
     }
     #task-browser-list:focus { background-tint: transparent; }
     #task-browser-empty { height: auto; padding: 1; color: $muted-text; }
-    #task-browser-more { width: auto; min-width: 1; }
+    #task-browser-more {
+        width: auto; height: 1; margin-top: 1; text-wrap: nowrap; text-overflow: ellipsis;
+    }
     """
 
     def __init__(self, context: WidgetContext) -> None:
@@ -456,7 +469,7 @@ class QueuePanel(Vertical):
             select_task=self.select_task,
             activate_attention_decision=context.activate_attention_decision,
         )
-        self._more_button = Button("Load more", id=MORE_BUTTON_ID)
+        self._more_hint = _LoadMoreHint(load=self.load_more)
 
     def compose(self) -> ComposeResult:
         search = Input(placeholder="Search task ID or title", id=SEARCH_INPUT_ID)
@@ -464,13 +477,13 @@ class QueuePanel(Vertical):
         search.add_class(SEARCH_FIELD_CLASS)
         self._task_list.add_class(FOCUS_LIST_CLASS)
         self._recent_list.add_class(FOCUS_LIST_CLASS)
-        self._more_button.display = False
+        self._more_hint.display = False
         with self._active_block:
             yield self._count
             yield search
             yield self._empty
             yield self._task_list
-            yield self._more_button
+            yield self._more_hint
         with self._recent_block:
             yield self._recent_heading
             yield self._recent_list
@@ -488,6 +501,8 @@ class QueuePanel(Vertical):
         self._render_recent_pager()
         if self._view is not None and self._count.is_attached:
             self._render_count(self._view)
+        if self._more_hint.is_attached:
+            self._more_hint.update(load_more_hint(keys_only=self._keys_only()))
 
     def on_unmount(self) -> None:
         if self._remove_motion_callback is not None:
@@ -573,19 +588,20 @@ class QueuePanel(Vertical):
         search.display = visible
         self._count.set_class(visible, SEARCH_OPEN_CLASS)
 
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == MORE_BUTTON_ID:
-            await self._refresh(append_page=True)
-            self.focus_task_results()
+    async def load_more(self) -> None:
+        """Append the next bounded browser page and return focus to the task list."""
+        await self._refresh(append_page=True)
+        self.focus_task_results()
+
+    def request_more(self) -> None:
+        """Load the next page from the `m` key while the hint is shown."""
+        if self._more_hint.display:
+            self.run_worker(self.load_more(), group=MORE_WORKER)
 
     async def activate_filter(self, task_filter: TaskBrowserFilter) -> None:
         """Navigate to a task category while retaining search and selected identity."""
         await self._refresh(task_filter=task_filter, reset_pages=True)
         self.focus_task_results()
-
-    async def load_more(self) -> None:
-        """Append the next bounded browser page."""
-        await self._refresh(append_page=True)
 
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.list_view.id not in {TASK_LIST_ID, TASK_RECENT_LIST_ID} or self._refreshing:
@@ -1060,9 +1076,9 @@ class QueuePanel(Vertical):
         if not self._render_targets_are_attached():
             return
         self._render_count(view)
-        more = self._more_button
-        more.disabled = not view.has_more
+        more = self._more_hint
         more.display = view.has_more
+        more.update(load_more_hint(keys_only=self._keys_only()))
         empty = self._empty
         empty.display = not view.rows
         if view.rows:
@@ -1081,7 +1097,7 @@ class QueuePanel(Vertical):
         return (
             self._count,
             self._empty,
-            self._more_button,
+            self._more_hint,
             self._task_list,
             self._recent_heading,
             self._recent_list,
@@ -1100,8 +1116,11 @@ class QueuePanel(Vertical):
             marker=None if is_all else _status_marker(view.filter.value),
             search=view.search,
             width=self.size.width,
-            keys_only=cast("App[object]", self.app).size.height <= HEADER_TINY_MAX_ROWS,
+            keys_only=self._keys_only(),
         )
+
+    def _keys_only(self) -> bool:
+        return cast("App[object]", self.app).size.height <= HEADER_TINY_MAX_ROWS
 
 
 class QueueWidget:

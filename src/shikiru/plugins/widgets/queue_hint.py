@@ -5,12 +5,14 @@ from __future__ import annotations
 from rich.cells import cell_len, set_cell_size
 from rich.text import Text
 
-from shikiru.ui.section import BOLD_STEEL, grey
+from shikiru.ui.section import BOLD_STEEL, grey, key_label
 from shikiru.ui.tokens import PRIMARY_TEXT_COLOR
 
 TASKS_LABEL = "Tasks"
 FILTER_KEY = "f"
 SEARCH_KEY = "/"
+MORE_KEY = "m"
+MORE_LABEL = "load more"
 HINT_GAP = "  "
 ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 MIN_SEARCH_CELLS = 3
@@ -40,6 +42,11 @@ def task_list_header(
         if clipped is not None:
             return _header(level, name, marker, clipped)
     return _header(LEVEL_KEYS, name, marker, search)
+
+
+def load_more_hint(*, keys_only: bool) -> Text:
+    """Return the `m load more` hint, or only the key at tiny heights."""
+    return Text(MORE_KEY, style=BOLD_STEEL) if keys_only else key_label(MORE_KEY, MORE_LABEL)
 
 
 def _clip(search: str, excess: int) -> str | None:

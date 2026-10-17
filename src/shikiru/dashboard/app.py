@@ -154,7 +154,12 @@ COMMAND_RESULT_PAUSED = "paused"
 COMMAND_RESULT_NOW = "now"
 _SEARCH_KEY = "slash"
 _FILTER_KEY = "f"
-_QUEUE_KEY_ACTIONS = {_SEARCH_KEY: "open_search", _FILTER_KEY: "cycle_status_filter"}
+_MORE_KEY = "m"
+_QUEUE_KEY_ACTIONS = {
+    _SEARCH_KEY: "open_search",
+    _FILTER_KEY: "cycle_status_filter",
+    _MORE_KEY: "request_more",
+}
 _QUEUE_KEY_OWNERS = {_FILTER_KEY: (TimelineSection,)}
 _ACTIONS_KEY = "ctrl+p"
 _HOME_FOOTER_CLEAR = "focus-footer-clear"
