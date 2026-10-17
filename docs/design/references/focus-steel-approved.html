@@ -1116,8 +1116,11 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-modal-footer select { width:auto; max-width:100%; min-width:110px; border:1px solid var(--shk-edge); border-radius:0; padding:2px 5px; }
 #shikiru-focus-steel .shk-modal select { border:1px solid var(--shk-edge); border-radius:0; border-left:1px solid var(--shk-edge); border-right:1px solid var(--shk-edge); }
 #shikiru-focus-steel .shk-modal select:focus { border-color:var(--shk-accent); outline:1px solid var(--shk-accent); outline-offset:0; }
-#shikiru-focus-steel .shk-menu-item { display:flex; flex-wrap:wrap; gap:5px 12px; padding:6px 7px !important; width:100%; }
-#shikiru-focus-steel .shk-menu-item:first-child { background:var(--shk-selected); }
+#shikiru-focus-steel .shk-menu-item { display:flex; flex-wrap:wrap; gap:0 12px; padding:2px 7px 2px 14px !important; width:100%; }
+#shikiru-focus-steel .shk-menu-label { min-width:19ch; }
+#shikiru-focus-steel .shk-menu-title { padding:5px 7px 1px; }
+#shikiru-focus-steel .shk-menu-hint { padding:10px 7px 0; }
+#shikiru-focus-steel .shk-menu-group:first-child .shk-menu-item:first-of-type { background:var(--shk-selected); }
 #shikiru-focus-steel .shk-res-head { display:flex; justify-content:space-between; gap:8px; color:var(--shk-dim); }
 #shikiru-focus-steel .shk-res-rows { display:grid; grid-template-columns:9ch minmax(0,1fr); overflow-wrap:anywhere; }
 #shikiru-focus-steel .shk-res-rule { border-top:1px solid var(--shk-edge); margin:6px 0; }
@@ -1298,7 +1301,7 @@ html&gt;body{padding:0}&lt;/style&gt;
   const modalSelections = {};
   const modalScrollTop = {};
   const modalFrames = {
-    menu:[460,340], resolve:[460,410], message:[460,330],
+    menu:[460,460], resolve:[460,410], message:[460,330],
     takeover:[460,300], handback:[460,260], projectusage:[460,360],
     commands:[520,390], history:[520,390], diagnostics:[452,390], docker:[452,260], disk:[452,220], faults:[452,240], widgets:[460,300],
     submitted:[420,240], help:[420,290]
@@ -1577,15 +1580,18 @@ html&gt;body{padding:0}&lt;/style&gt;
     return `&lt;div class=&quot;shk-board&quot;&gt;${lanes}&lt;/div&gt;${caption}`;
   };
   const menu = task =&gt; {
-    const items = task ? [[&#x27;Evidence &amp; reports&#x27;,&#x27;evidence&#x27;,&#x27;Reports, verdicts and engine facts&#x27;]] : [[&#x27;Project totals&#x27;,&#x27;projectusage&#x27;,&#x27;Recorded project usage and declared billing&#x27;]];
-    if (task &amp;&amp; task.id === &#x27;T-42&#x27; &amp;&amp; scene.value !== &#x27;quiet&#x27; &amp;&amp; scene.value !== &#x27;stopped&#x27;) items.unshift([&#x27;Answer&#x27;,&#x27;resolve&#x27;,&#x27;Answer the Leader; consult next&#x27;]);
-    if (task &amp;&amp; ![&#x27;Queued&#x27;,&#x27;Merged&#x27;].includes(task.step)) items.push([&#x27;Message&#x27;,&#x27;message&#x27;,&#x27;Delivered on the next role turn&#x27;]);
-    if (task &amp;&amp; task.id === &#x27;T-43&#x27; &amp;&amp; scene.value === &#x27;owned&#x27;) items.push([&#x27;Hand back&#x27;,&#x27;handback&#x27;,&#x27;Release this role; remaining holds apply&#x27;]);
-    else if (task &amp;&amp; ![&#x27;Queued&#x27;,&#x27;Merged&#x27;].includes(task.step)) items.push([&#x27;Take over&#x27;,&#x27;takeover&#x27;,&#x27;Stop the turn; hold this task&#x27;]);
-    if (task) items.push([&#x27;Usage&#x27;,&#x27;usage&#x27;,&#x27;Recorded session values&#x27;]);
-    items.push([&#x27;Commands&#x27;,&#x27;history&#x27;,&#x27;Paginated preview outcomes&#x27;]);
-    if (task) items.push([&#x27;Project diagnostics&#x27;,&#x27;diagnostics&#x27;,&#x27;Secondary observations&#x27;]);
-    return `&lt;div&gt;${items.map(([label,action,meaning])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-menu-item&quot; data-open=&quot;${action}&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;› ${label}&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;${meaning}&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;`;
+    const started = task &amp;&amp; ![&#x27;Queued&#x27;,&#x27;Merged&#x27;].includes(task.step);
+    const live = task &amp;&amp; ![&#x27;Done&#x27;,&#x27;Cancelled&#x27;].includes(task.state);
+    const taskRows = [];
+    if (task &amp;&amp; task.id === &#x27;T-42&#x27; &amp;&amp; scene.value !== &#x27;quiet&#x27; &amp;&amp; scene.value !== &#x27;stopped&#x27;) taskRows.push([&#x27;Answer&#x27;,&#x27;resolve&#x27;,&#x27;Answer the recorded decision&#x27;]);
+    if (started) taskRows.push([&#x27;Message&#x27;,&#x27;message&#x27;,&#x27;Delivered on the next turn&#x27;]);
+    if (task &amp;&amp; task.id === &#x27;T-43&#x27; &amp;&amp; scene.value === &#x27;owned&#x27;) taskRows.push([&#x27;Hand back&#x27;,&#x27;handback&#x27;,&#x27;Return this role to automation&#x27;]);
+    else if (started) taskRows.push([&#x27;Take over&#x27;,&#x27;takeover&#x27;,&#x27;Stop the turn, work in the pane&#x27;]);
+    if (live) taskRows.push(task.state.includes(&#x27;Paused&#x27;) ? [&#x27;Resume&#x27;,&#x27;menu&#x27;,&#x27;Clear the task holds&#x27;] : [&#x27;Pause&#x27;,&#x27;menu&#x27;,&#x27;Stop after the current turn&#x27;], [&#x27;Cancel&#x27;,&#x27;menu&#x27;,&#x27;Abandon this task&#x27;], [&#x27;More…&#x27;,&#x27;menu&#x27;,&#x27;Pause now · Priority · Retry · Rung · Open session · Export evidence&#x27;]);
+    const viewRows = task ? [[&#x27;Evidence &amp; reports&#x27;,&#x27;evidence&#x27;,&#x27;Reports, verdicts and engine facts&#x27;], [&#x27;Usage&#x27;,&#x27;usage&#x27;,&#x27;Recorded session values&#x27;], [&#x27;Commands&#x27;,&#x27;history&#x27;,&#x27;Durable outcomes&#x27;], [&#x27;Project diagnostics&#x27;,&#x27;diagnostics&#x27;,&#x27;Secondary observations&#x27;]] : [];
+    const projectRows = [[&#x27;Submit task&#x27;,&#x27;menu&#x27;,&#x27;Create a new task&#x27;], [&#x27;Stop engine&#x27;,&#x27;menu&#x27;,&#x27;Stop running turns, keep the state&#x27;], [&#x27;Switch task…&#x27;,&#x27;menu&#x27;,&#x27;Act on another task&#x27;]];
+    const group = (title, rows) =&gt; rows.length ? `&lt;div class=&quot;shk-menu-group&quot;&gt;&lt;div class=&quot;shk-dim shk-menu-title&quot;&gt;${title}&lt;/div&gt;${rows.map(([label,action,meaning])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-menu-item&quot; data-open=&quot;${action}&quot;&gt;&lt;span class=&quot;shk-menu-label&quot;&gt;${label}&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;${meaning}&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;` : &#x27;&#x27;;
+    return `&lt;div&gt;${group(&#x27;Task&#x27;, taskRows)}${group(&#x27;Views&#x27;, viewRows)}${group(&#x27;Project&#x27;, projectRows)}&lt;/div&gt;&lt;div class=&quot;shk-menu-hint&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;↑↓&lt;/span&gt; &lt;span class=&quot;shk-dim&quot;&gt;select&lt;/span&gt;   &lt;span class=&quot;shk-key&quot;&gt;Enter&lt;/span&gt; &lt;span class=&quot;shk-dim&quot;&gt;open&lt;/span&gt;&lt;/div&gt;`;
   };
   const foldNames = [&#x27;Task description&#x27;, &#x27;Results&#x27;, &#x27;Decisions&#x27;, &#x27;Events&#x27;, &#x27;Agent activity&#x27;, &#x27;Usage&#x27;, &#x27;Dependencies&#x27;, &#x27;Workspace&#x27;, &#x27;Settings&#x27;];
   const foldState = {};
@@ -1871,7 +1877,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     const kind=overlays[id];
     if (!kind) return &#x27;&#x27;;
     const resolveHeading = () =&gt; width.value===&#x27;tiny&#x27; ? &#x27;T-42 · Decision required&#x27; : `${width.value===&#x27;compact&#x27;?&#x27;Resolve&#x27;:&#x27;Resolve escalation&#x27;} · E-7 · T-42`;
-    const headings={menu:&#x27;Actions&#x27;,widgets:&#x27;Configured widgets&#x27;,resolve:resolveHeading(),message:&#x27;Message&#x27;,takeover:&#x27;Take over&#x27;,handback:&#x27;Hand back&#x27;,projectusage:&#x27;Project usage&#x27;,commands:&#x27;Command history&#x27;,history:&#x27;Command history&#x27;,diagnostics:&#x27;Project diagnostics&#x27;,docker:&#x27;Diagnostics · docker&#x27;,disk:&#x27;Diagnostics · disk&#x27;,faults:&#x27;Diagnostics · faults&#x27;,submitted:&#x27;Preview result&#x27;,help:&#x27;Help&#x27;};
+    const headings={menu:task?`Actions · ${task.id} ${task.title} · ${task.role===&#x27;—&#x27;?&#x27;Leader&#x27;:task.role}`:&#x27;Actions · Project&#x27;,widgets:&#x27;Configured widgets&#x27;,resolve:resolveHeading(),message:&#x27;Message&#x27;,takeover:&#x27;Take over&#x27;,handback:&#x27;Hand back&#x27;,projectusage:&#x27;Project usage&#x27;,commands:&#x27;Command history&#x27;,history:&#x27;Command history&#x27;,diagnostics:&#x27;Project diagnostics&#x27;,docker:&#x27;Diagnostics · docker&#x27;,disk:&#x27;Diagnostics · disk&#x27;,faults:&#x27;Diagnostics · faults&#x27;,submitted:&#x27;Preview result&#x27;,help:&#x27;Help&#x27;};
     let content=&#x27;&#x27;;
     let footer=&#x27;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · &lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt;&lt;/button&gt;&#x27;;
     if (kind===&#x27;menu&#x27;) content=menu(task);
@@ -1889,7 +1895,7 @@ html&gt;body{padding:0}&lt;/style&gt;
     if (kind===&#x27;faults&#x27;) content=faultsSection(scene.value===&#x27;decision&#x27;, false);
     if (kind===&#x27;submitted&#x27;) { content=&#x27;&lt;div class=&quot;shk-feedback&quot;&gt;Preview action complete&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;A real command result appears as Pending, Applied or Rejected.&lt;/div&gt;&#x27;; footer=&#x27;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · &lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt;&lt;/button&gt;&#x27;; }
     if (kind===&#x27;help&#x27;) content=&#x27;&lt;div&gt;&lt;span class=&quot;shk-key&quot;&gt;Up/Down&lt;/span&gt; select a task, from any bar&lt;/div&gt;&lt;div&gt;&lt;span class=&quot;shk-key&quot;&gt;f&lt;/span&gt; cycle the task status filter · &lt;span class=&quot;shk-key&quot;&gt;/&lt;/span&gt; search&lt;/div&gt;&lt;div&gt;&lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt; close popup · &lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt; clear selection&lt;/div&gt;&lt;div&gt;&lt;span class=&quot;shk-key&quot;&gt;Ctrl+P&lt;/span&gt; actions · &lt;span class=&quot;shk-key&quot;&gt;v&lt;/span&gt; focus task details&lt;/div&gt;&lt;div&gt;&lt;span class=&quot;shk-key&quot;&gt;↓&lt;/span&gt; details · &lt;span class=&quot;shk-key&quot;&gt;?&lt;/span&gt; help&lt;/div&gt;&lt;div&gt;History: &lt;span class=&quot;shk-key&quot;&gt;←&lt;/span&gt; newer · &lt;span class=&quot;shk-key&quot;&gt;→&lt;/span&gt; older&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Page controls disable at their ends. The arrows page only while the status filter is collapsed.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Native Select: first Esc collapses options; next Esc closes the popup.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;New task windows remain in the background until explicitly selected.&lt;/div&gt;&#x27;;
-    return `&lt;div class=&quot;shk-modal-wrap&quot;&gt;&lt;section class=&quot;shk-modal&quot; style=&quot;${modalFrame(kind)}&quot; aria-label=&quot;${headings[kind]}&quot; role=&quot;dialog&quot;&gt;&lt;div class=&quot;shk-modal-head&quot;&gt;&lt;h4&gt;${headings[kind]}${task &amp;&amp; ![&#x27;projectusage&#x27;,&#x27;diagnostics&#x27;,&#x27;commands&#x27;,&#x27;history&#x27;,&#x27;help&#x27;,&#x27;widgets&#x27;,&#x27;submitted&#x27;,&#x27;docker&#x27;,&#x27;disk&#x27;,&#x27;faults&#x27;,&#x27;resolve&#x27;].includes(kind)?` · ${task.id}`:&#x27;&#x27;}&lt;/h4&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot; aria-label=&quot;Esc ×&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt; ×&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scroll&quot;&gt;&lt;div class=&quot;shk-modal-body&quot; tabindex=&quot;0&quot;&gt;${content}&lt;div class=&quot;shk-validation&quot; role=&quot;alert&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scrollbar&quot; aria-hidden=&quot;true&quot;&gt;&lt;div class=&quot;shk-modal-scroll-thumb&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;${footer?`&lt;div class=&quot;shk-modal-footer&quot;&gt;${footer}&lt;/div&gt;`:&#x27;&#x27;}&lt;/section&gt;&lt;/div&gt;`;
+    return `&lt;div class=&quot;shk-modal-wrap&quot;&gt;&lt;section class=&quot;shk-modal&quot; style=&quot;${modalFrame(kind)}&quot; aria-label=&quot;${headings[kind]}&quot; role=&quot;dialog&quot;&gt;&lt;div class=&quot;shk-modal-head&quot;&gt;&lt;h4&gt;${headings[kind]}${task &amp;&amp; ![&#x27;menu&#x27;,&#x27;projectusage&#x27;,&#x27;diagnostics&#x27;,&#x27;commands&#x27;,&#x27;history&#x27;,&#x27;help&#x27;,&#x27;widgets&#x27;,&#x27;submitted&#x27;,&#x27;docker&#x27;,&#x27;disk&#x27;,&#x27;faults&#x27;,&#x27;resolve&#x27;].includes(kind)?` · ${task.id}`:&#x27;&#x27;}&lt;/h4&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot; aria-label=&quot;Esc ×&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt; ×&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scroll&quot;&gt;&lt;div class=&quot;shk-modal-body&quot; tabindex=&quot;0&quot;&gt;${content}&lt;div class=&quot;shk-validation&quot; role=&quot;alert&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scrollbar&quot; aria-hidden=&quot;true&quot;&gt;&lt;div class=&quot;shk-modal-scroll-thumb&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;${footer?`&lt;div class=&quot;shk-modal-footer&quot;&gt;${footer}&lt;/div&gt;`:&#x27;&#x27;}&lt;/section&gt;&lt;/div&gt;`;
   };
   const storeModalSelection = (field,id) =&gt; {
     if (field.tagName !== &#x27;TEXTAREA&#x27;) return;

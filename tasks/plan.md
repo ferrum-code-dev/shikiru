@@ -2136,10 +2136,12 @@ Refs: `dashboard/task_picker.py` (new), `operator/queries.py` (`search_task_targ
 
 ### Task 243: Actions list
 Refs: `dashboard/palette.py`, `dashboard/app.py` (`_open_task_palette_route`, `_menu_available`, `_preset_popup`), `dashboard/task_picker.py`, `dashboard/help_keys.py`, `tests/integration/test_dashboard_palette.py`, `test_dashboard_app.py`, `test_tmux_palette_binding.py`, `docs/design/06-operator.md` §5.5, `docs/tui-focus.md`.
-- [ ] The option-A grouped list (Task, Views, Project; `More…` expands in place; rows hidden when unavailable, Resume with holds as today) replaces the contextual menu, the More-actions toggle and the legacy no-context form entry; header `Actions · T-n title · Role`; background-only selection.
-- [ ] Rows open the existing preset popups through `initial_action`; popups from the list return to it on Esc/`×` and close after queueing; popups from the actions bar keep today's behaviour.
-- [ ] `Switch task…` opens the picker and re-targets the list; with no task only Project (and Views where available) shows; `PaletteApp` uses the same list without Views and Extensions.
-- [ ] Help and docs match; the collected cases do not grow (1644) and both gates pass.
+- [x] The option-A grouped list (Task, Views, Project; `More…` expands in place; rows hidden when unavailable, Resume with holds as today) replaces the contextual menu, the More-actions toggle and the legacy no-context form entry; header `Actions · T-n title · Role`; background-only selection.
+- [x] Rows open the existing preset popups through `initial_action`; popups from the list return to it on Esc/`×` and close after queueing; popups from the actions bar keep today's behaviour.
+- [x] `Switch task…` opens the picker and re-targets the list; with no task only Project (and Views where available) shows; `PaletteApp` uses the same list without Views and Extensions.
+- [x] Help and docs match; the collected cases do not grow (1644) and both gates pass.
+- Proof: headless Textual at 130x50, 100x40, 60x24, 48x20, 40x14 and 40x8 showed the grouped list (`Task`, `Views`, `Extensions`, `Project`) for a running, escalated (Answer first), operator-owned (Hand back, Resume with holds), project-only and standalone-popup context: `$selected-surface` background-only selection on the first row, grey group titles, the title shrinking its task title first, the one-column scrollbar only when rows do not fit and the hint line unwrapped. Esc from a popup returned to the list, Enter on Pause queued the command, closed the popup and showed `Pause ✓` for the confirmation time, `More…` expanded in place, and `Switch task…` opened the picker and re-targeted the list (the `✓` cleared with the task change). `PaletteScreen` shrank from 2103 to about 1440 lines (menu, More toggle, task finder, resolve and no-context form entry deleted); collected cases 1643 (was 1645; obsolete menu, finder and resolve-form tests deleted, a list table and two flow tests added); both gates passed.
+
 
 ### Task 244: Simple action popups in the common style
 Refs: `dashboard/palette.py`, `ui/keys.py`, `ui/popup.py`, `tests/integration/test_dashboard_palette.py`, `docs/design/06-operator.md`. Layouts: the architect proposes a mockup before this task starts if one is needed.
