@@ -2104,6 +2104,6 @@ Refs: `plugins/widgets/queue.py`, `dashboard/app.py` (`_QUEUE_KEY_ACTIONS`), `da
 
 ### Task 238: Help panel spacing and stable size
 Refs: `dashboard/help_screen.py`, `ui/popup.py`, `tests/integration/test_dashboard_popup_focus.py`, `tests/integration/test_dashboard_app.py`, `docs/tui-feedback-seventeenth-review.md`.
-- [ ] One blank line follows the `← → switch section` hint row.
-- [ ] The Help panel keeps one size across sections (tallest and widest content at the current width, capped by the viewport), shows the scrollbar only when that does not fit, and re-measures on resize.
-- [ ] The collected cases do not grow (1646) and both gates pass.
+- [x] One blank line follows the `← → switch section` hint row.
+- [x] The Help panel keeps one size across sections (tallest and widest content at the current width, capped by the viewport), shows the scrollbar only when that does not fit, and re-measures on resize.
+- [x] The collected cases do not grow (1646) and both gates pass.
