@@ -372,3 +372,12 @@ Seventeenth-review scope: [seventeenth review](../docs/tui-feedback-seventeenth-
 - [x] Task 237: Load more as the `m` hint
 - [x] Task 238: Help panel spacing and stable size
 - [x] Task 239: Disabled hints show a grey key
+
+Eighteenth-review scope: [eighteenth review](../docs/tui-feedback-eighteenth-review.md).
+
+- [ ] Task 241: Take over in the bar and one name per action
+- [ ] Task 242: Task picker popup
+- [ ] Task 243: Actions list
+- [ ] Task 244: Simple action popups in the common style
+- [ ] Task 245: Submit task and Export evidence popups
+- [ ] Task 246: Delete the legacy palette form

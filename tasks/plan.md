@@ -2114,3 +2114,43 @@ Refs: `ui/keys.py`, `dashboard/palette.py`, `dashboard/resolution_view.py`, `das
 - [x] The palette action hint and the resolution `Enter send` / `Enter edit` hint use it; always-active hints are unchanged.
 - [x] Design 06 states the colour rule; the collected cases do not grow by more than one (1644) and both gates pass.
 - Proof: headless Textual at 130x50, 100x40, 60x24, 48x20 and 40x14 showed the Message hint key bold grey while empty, bold cyan once text is typed and bold grey while the send waits for its acknowledgement (cyan again when usable), and the Pause hint bold cyan then grey after Enter; the resolution `Enter` key renders grey when choosing is disabled. A Textual `Content` compares by text only, so the palette hint now sets its label directly to repaint style-only changes. Collected cases 1644 (unchanged); `uv run poe check` and `TERM=dumb NO_COLOR=1 uv run poe check` passed.
+
+## Palette redesign and Take over in the bar (eighteenth review)
+
+Scope: [eighteenth review](../docs/tui-feedback-eighteenth-review.md); the operator approved the decisions. Tasks run in order 241, 242, 243, 244, 245, 246.
+
+### Task 241: Take over in the bar and one name per action
+Refs: `domain/briefing.py`, `dashboard/briefing_view.py`, `dashboard/views.py`, `dashboard/contract.py`, `dashboard/palette.py`, `dashboard/help_keys.py`, `operator/queries.py` (`task_action_availability`), `tests/unit/test_domain_briefing.py`, `tests/integration/test_dashboard_briefing.py`, `docs/design/06-operator.md` §5.2/§5.5, `docs/tui-focus.md`, `docs/design/references/focus-steel-approved.html`.
+- [ ] `briefing_actions` offers Take over whenever the palette's availability for the acting role allows it (pure `can_take_over` input), Hand back stays when the operator owns a role; Answer stays first and Cancel last within the four-slot cap.
+- [ ] Every action has one short name in the bar, the palette action list, menu rows, popup titles and hints (Message, Pause, Pause now, Resume, Cancel, Take over, Hand back, Retry, Priority, Rung, Open session, Export evidence, Submit task, Stop engine); action ids are unchanged.
+- [ ] Help (Home, Everywhere) lists `<prefix> Space` (open the actions in any Shikiru pane) only when the tmux prefix is known.
+- [ ] Design 06, `tui-focus.md` and the HTML reference match (exact srcdoc round trip and new SHA-256 when the HTML changes); the collected cases do not grow (1644) and both gates pass.
+
+### Task 242: Task picker popup
+Refs: `dashboard/task_picker.py` (new), `operator/queries.py` (`search_task_targets`), `plugins/widgets/queue.py` (status markers), `ui/popup.py`, `tests/integration/`, import-linter contract.
+- [ ] A popup in the common style lists tasks as one-line rows (`glyph T-n title status`, shared status markers) with background-only selection; Up/Down/Home/End/PgUp/PgDn move; Enter chooses and dismisses with the task id.
+- [ ] `/` opens the one-line search under the title; Esc clears and closes the search first, then the popup; pages are bounded with the `m load more` hint; no selected task stays outside the match.
+- [ ] It is not wired into the palette yet; one behaviour table covers it; the collected cases do not grow (1644) and both gates pass.
+
+### Task 243: Actions list
+Refs: `dashboard/palette.py`, `dashboard/app.py` (`_open_task_palette_route`, `_menu_available`, `_preset_popup`), `dashboard/task_picker.py`, `dashboard/help_keys.py`, `tests/integration/test_dashboard_palette.py`, `test_dashboard_app.py`, `test_tmux_palette_binding.py`, `docs/design/06-operator.md` §5.5, `docs/tui-focus.md`.
+- [ ] The option-A grouped list (Task, Views, Project; `More…` expands in place; rows hidden when unavailable, Resume with holds as today) replaces the contextual menu, the More-actions toggle and the legacy no-context form entry; header `Actions · T-n title · Role`; background-only selection.
+- [ ] Rows open the existing preset popups through `initial_action`; popups from the list return to it on Esc/`×` and close after queueing; popups from the actions bar keep today's behaviour.
+- [ ] `Switch task…` opens the picker and re-targets the list; with no task only Project (and Views where available) shows; `PaletteApp` uses the same list without Views and Extensions.
+- [ ] Help and docs match; the collected cases do not grow (1644) and both gates pass.
+
+### Task 244: Simple action popups in the common style
+Refs: `dashboard/palette.py`, `ui/keys.py`, `ui/popup.py`, `tests/integration/test_dashboard_palette.py`, `docs/design/06-operator.md`. Layouts: the architect proposes a mockup before this task starts if one is needed.
+- [ ] Take over, Hand back, Retry, Pause now, Priority, Rung, Open session and Stop engine show a title, one guidance line and only their own fields (Role select where needed, Priority number, Rung with a one-line explanation of the agent:model:effort level), with an `Enter <action>` hint whose key is grey while inert.
+- [ ] No "Run action" and no "Back to actions" button; the popup closes after queueing with ✓ for 5 s; the role pane selection after Take over stays.
+- [ ] Wraps at 100/60/48/40 columns; the collected cases do not grow (1644) and both gates pass.
+
+### Task 245: Submit task and Export evidence popups
+Refs: `dashboard/palette.py`, `operator/evidence_export.py`, `ui/popup.py`, `tests/integration/test_dashboard_palette.py`, `tests/integration/test_task_evidence_export.py`. Layouts: the architect proposes mockups and gets operator approval before implementation.
+- [ ] Submit task and Export evidence use the common popup style with the approved layouts, hints with grey inert keys and close-after-queue behaviour where they queue a command.
+- [ ] Wraps at 100/60/48/40 columns; the collected cases do not grow (1644) and both gates pass.
+
+### Task 246: Delete the legacy palette form
+Refs: `dashboard/palette.py`, `tests/integration/`, `docs/design/06-operator.md`, `docs/tui-focus.md`, `docs/tui-parity.md`, `docs/design/references/focus-steel-approved.html`.
+- [ ] The Find action input, Action select, Task match select, More matches, free-text Task ID, the old Advanced toggle and Back to actions are gone with every code, test and doc path only they used.
+- [ ] The HTML reference palette sections draw the new list (exact srcdoc round trip and new SHA-256); the collected cases do not grow (1644) and both gates pass.
