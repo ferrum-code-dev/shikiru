@@ -2097,9 +2097,10 @@ Refs: `plugins/widgets/queue.py`, `dashboard/contract.py`, `dashboard/views.py`,
 
 ### Task 237: Load more as the `m` hint
 Refs: `plugins/widgets/queue.py`, `dashboard/app.py` (`_QUEUE_KEY_ACTIONS`), `dashboard/help_keys.py`, `tests/integration/test_task_browser.py`, `docs/design/06-operator.md` §5.4, `docs/design/references/focus-steel-approved.html`.
-- [ ] `Load more` is a hint (`m` bold cyan, ` load more` grey) shown only while more tasks exist; `m` and a click load the next page; it is not a Tab stop.
-- [ ] `m` is routed like `f` and `/`; the Home Help tab, design 06 §5.4 and the HTML reference match.
-- [ ] The collected cases do not grow (1646) and both gates pass.
+- [x] `Load more` is a hint (`m` bold cyan, ` load more` grey) shown only while more tasks exist; `m` and a click load the next page; it is not a Tab stop.
+- [x] `m` is routed like `f` and `/`; the Home Help tab, design 06 §5.4 and the HTML reference match.
+- [x] The collected cases do not grow (1646) and both gates pass.
+- Proof: headless Textual at 130, 100, 60, 48, 40 columns and 40x8 showed `m load more` (bold cyan `m`, grey label; only `m` at 8 rows) under the list while more tasks exist, never a Tab stop; `m` loaded the next page keeping the selection and the list focus, a click did the same, and `m` typed in the search field inserted text. `m` is unbound elsewhere (task details, Agent activity fold, Escalations, Help, Palette); the HTML reference does not draw Load more, so it is unchanged. Collected cases 1644 (unchanged); `uv run poe check` and `TERM=dumb NO_COLOR=1 uv run poe check` passed (one unrelated load flake in the first run passed alone and on re-run).
 
 ### Task 238: Help panel spacing and stable size
 Refs: `dashboard/help_screen.py`, `ui/popup.py`, `tests/integration/test_dashboard_popup_focus.py`, `tests/integration/test_dashboard_app.py`, `docs/tui-feedback-seventeenth-review.md`.

@@ -113,6 +113,7 @@ The `Recent` list uses the existing task browser/history queries and retains the
 | Escape | Close the current menu/form/overlay or return to its caller, preserving task, role, selection, entered text and reading position. | None. |
 | `/` in Home | Reveal and focus the one-line task search under the `Tasks` label. Enter closes it and keeps the text filter (the hint shows `/ search: text`); Escape clears the text and closes it. Search remains hidden at rest. | None. |
 | `f` in Home | Cycle the task status filter: All, running, integrating, escalated, queued, done, cancelled, All. The `Tasks` hint shows the current status glyph and name; the search text and selection are kept. Inert in text inputs, expanded Selects, modals and the Agent activity fold. | None. |
+| `m` in Home | Load the next page of tasks while the `m load more` hint under the list is shown (a click on the hint does the same). The selection is kept and focus returns to the list. Inert in text inputs, expanded Selects and modals; the hint is not a Tab stop. | None. |
 | Click actionable attention row | Select the affected task and open its resolution screen directly. A fault or engine-stop row opens the corresponding evidence/action route. | None until submitted. |
 | Click project token, billing or subscription summary | Open Project totals and recorded subscription/quota details. | None. |
 | Click Host/Shikiru resource summary | Open Diagnostics with the same cached observation. | None. |
