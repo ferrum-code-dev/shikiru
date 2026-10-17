@@ -5026,6 +5026,35 @@ async def _open_extensions_palette(app: DashboardApp, pilot: Pilot[None]) -> Pal
     return cast("PaletteScreen", app.screen)
 
 
+async def _assert_task_palette_lists_extensions(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    *,
+    owner: DashboardApp,
+    reader: StateReader,
+    connection: Connection,
+    project_dir: Path,
+    clock: Clock,
+) -> None:
+    task = seed_task(connection, clock, title="Extension task")
+    await app.push_screen(
+        _palette_screen_for_app(
+            reader,
+            connection,
+            project_dir,
+            clock,
+            PaletteRequest(task_id=task.id),
+            extensions=owner.extension_entries(),
+        )
+    )
+    palette = cast("PaletteScreen", app.screen)
+    await wait_until(
+        lambda: palette.query_one("#palette-menu-extensions").display, timeout=UI_WAIT_SECONDS
+    )
+    assert not palette.query_one("#palette-menu-task-actions").display
+    await pilot.press("escape")
+
+
 async def test_dashboard_palette_lists_and_opens_external_widgets_under_extensions(
     database: Database,
     connection: Connection,
@@ -5096,6 +5125,17 @@ async def test_dashboard_palette_lists_and_opens_external_widgets_under_extensio
             assert extension_panel.region.width > 0
             assert _rendered_text(extension_panel) == '{"stopping": true}'
             await pilot.press("escape")
+            await wait_until(lambda: app.screen is workspace_screen, timeout=UI_WAIT_SECONDS)
+
+            await _assert_task_palette_lists_extensions(
+                app,
+                pilot,
+                owner=apps[0],
+                reader=reader,
+                connection=connection,
+                project_dir=project_dir,
+                clock=clock,
+            )
             await wait_until(lambda: app.screen is workspace_screen, timeout=UI_WAIT_SECONDS)
 
             await pilot.press("?")

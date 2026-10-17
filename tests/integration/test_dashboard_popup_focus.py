@@ -312,6 +312,10 @@ async def test_help_opens_on_its_context_tab_and_left_right_switch_the_keys_from
         copy = screen.query_one("#workspace-help-copy")
         await wait_until(lambda: _active_tabs(screen) == [opening.value], timeout=UI_WAIT_SECONDS)
         opening_keys = _copy_text(copy)
+        hint = screen.query_one("#workspace-help-hint")
+        assert _copy_text(screen.query_one("#workspace-help-context")).strip() == "Help"
+        assert _copy_text(hint).strip() == "\N{LEFTWARDS ARROW} \N{RIGHTWARDS ARROW} switch section"
+        assert set(foregrounds(hint, "\N{LEFTWARDS ARROW} \N{RIGHTWARDS ARROW}")) == {STEEL_BLUE}
         await pilot.press("pagedown")
         await wait_until(lambda: body.scroll_y > 0, timeout=UI_WAIT_SECONDS)
 

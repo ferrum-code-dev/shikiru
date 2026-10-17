@@ -564,6 +564,10 @@ class PaletteScreen(ModalScreen[PaletteReturn | None]):
                     _context_menu_entry("Project diagnostics", "Secondary observations"),
                     id=_PALETTE_ROUTE_DIAGNOSTICS,
                 )
+            with Vertical(id=_PALETTE_MENU_EXTENSIONS):
+                yield Label("Extensions")
+                for index, extension in enumerate(self._extensions):
+                    yield Button(extension.label, id=f"{_PALETTE_EXTENSION_PREFIX}{index}")
             yield Button(
                 _context_menu_entry("More actions", "Task changes and project controls"),
                 id=_PALETTE_MENU_MORE_ACTIONS,
@@ -577,10 +581,6 @@ class PaletteScreen(ModalScreen[PaletteReturn | None]):
                         *_PRIMARY_TASK_ACTIONS,
                     }:
                         yield Button(label, id=f"{_PALETTE_MENU_ACTION_PREFIX}{action}")
-            with Vertical(id=_PALETTE_MENU_EXTENSIONS):
-                yield Label("Extensions")
-                for index, extension in enumerate(self._extensions):
-                    yield Button(extension.label, id=f"{_PALETTE_EXTENSION_PREFIX}{index}")
             with Vertical(id=_PALETTE_MENU_PROJECT_ACTIONS):
                 yield Label("Project actions")
                 for label, action in PALETTE_ACTIONS:
@@ -1264,9 +1264,7 @@ class PaletteScreen(ModalScreen[PaletteReturn | None]):
         )
         task_group.display = bool(task_exists and secondary_actions and self._more_actions_expanded)
         project_group.display = self._more_actions_expanded if task_exists else True
-        self.query_one(f"#{_PALETTE_MENU_EXTENSIONS}", Vertical).display = bool(
-            self._extensions and (self._more_actions_expanded if task_exists else True)
-        )
+        self.query_one(f"#{_PALETTE_MENU_EXTENSIONS}", Vertical).display = bool(self._extensions)
         for route_id in (
             _PALETTE_ROUTE_EVIDENCE,
             _PALETTE_ROUTE_USAGE,

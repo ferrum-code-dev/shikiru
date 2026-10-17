@@ -125,7 +125,6 @@ _TASK_VIEW_OMITTED_PLACEMENTS = frozenset(
         WidgetPlacement.DIAGNOSTICS,
     }
 )
-_HELP_HOME_HEADING = HelpTab.HOME.value
 _COMMAND_HISTORY_CLOSE = "command-history-close"
 _COMMAND_HISTORY_COPY = "command-history-copy"
 _COMMAND_HISTORY_WORKER = "command-history-updates"
@@ -1690,9 +1689,9 @@ class DashboardApp(App[None]):
             detach_prefix=self._tmux_detach_hint,
         )
         context = (
-            HelpContext(f"{HelpTab.TASK.value} · {task_id}", HelpTab.TASK, availability)
+            HelpContext(HelpTab.TASK, availability)
             if task_id is not None
-            else HelpContext(_HELP_HOME_HEADING, HelpTab.HOME, availability)
+            else HelpContext(HelpTab.HOME, availability)
         )
         await self.push_screen(
             WorkspaceHelpScreen(context),
