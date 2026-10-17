@@ -49,7 +49,6 @@ _KIND_SEPARATOR = ": "
 _RESUME_SEPARATOR = " \N{EM DASH} "
 _SESSION_MARKER = " session `"
 _SESSION_ID_CLOSE = "`"
-_SESSION_ID_WIDTH = 8
 _ERROR_PREFIX = "Evidence error: "
 _QUESTION_TITLE = "Question"
 _TIMELINE = "Timeline"
@@ -90,8 +89,7 @@ def _session_row(line: str) -> Row:
     agent, marker, session = rest.partition(_SESSION_MARKER)
     if not marker:
         return _plain_row(entry)
-    short = session.removesuffix(_SESSION_ID_CLOSE)[:_SESSION_ID_WIDTH]
-    return grey(role), (*_value(agent), grey(short))
+    return grey(role), (*_value(agent), grey(session.removesuffix(_SESSION_ID_CLOSE)))
 
 
 def _line_rows(content: str, make: Callable[[str], Row]) -> list[Row]:

@@ -126,7 +126,9 @@ _SIGNAL_EVIDENCE = "\n".join(
         '{"ts": "2026-01-01T10:00:00+00:00", "sig',
     )
 )
-_SESSION_LINE = "- leader: claude session `s-1` \N{EM DASH} claude --resume s-1"
+_SESSION_LINE = (
+    "- leader: claude session `s-1-0123456789abcdef0123` \N{EM DASH} claude --resume s-1"
+)
 
 
 def _static_with(popup: Screen[object], needle: str) -> Static:
@@ -643,7 +645,7 @@ async def _assert_extra_details_page(pilot: Pilot[None], popup: Screen[object]) 
     assert "Facts" not in page
     assert "--resume" not in page
     assert "claude" in page
-    assert "s-1" in page
+    assert "s-1-0123456789abcdef0123" in page
     for heading in ("Question", "Timeline", "Reports", "Recent signals", "Sessions"):
         assert set(styles(_static_with(popup, heading), heading)) == {CYAN_BOLD}
     timeline = _static_with(popup, "Timeline")

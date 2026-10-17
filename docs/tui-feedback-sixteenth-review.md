@@ -59,3 +59,6 @@ Execution order: Task 228, then 229, 230 and 231, one task at a time.
 - Facts is removed from the page.
 - Sessions are formatted without commands.
 - The collected cases do not grow.
+
+## Full session id (Task 234)
+- Sessions in Extra details print the full session id; it wraps onto a second line when it does not fit and is never cut.
