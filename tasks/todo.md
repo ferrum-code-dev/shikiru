@@ -367,6 +367,7 @@ Sixteenth-review scope: [sixteenth review](../docs/tui-feedback-sixteenth-review
 
 Seventeenth-review scope: [seventeenth review](../docs/tui-feedback-seventeenth-review.md).
 
-- [ ] Task 236: Delete the older task-browser layout and Family context
+- [x] Task 236: Delete the older task-browser layout and Family context
+  - Proof: headless Textual at 130, 100, 60, 48 and 40 columns showed Home unchanged (hint, `f` empty statuses, `/` search, selection, Recent, `Load more`); the older layout and Family context are removed with their dead data path; collected cases 1644 (was 1646); both gates passed.
 - [ ] Task 237: Load more as the `m` hint
 - [ ] Task 238: Help panel spacing and stable size

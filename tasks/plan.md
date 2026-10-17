@@ -2090,9 +2090,10 @@ Scope: [seventeenth review](../docs/tui-feedback-seventeenth-review.md); the ope
 
 ### Task 236: Delete the older task-browser layout and Family context
 Refs: `plugins/widgets/queue.py`, `dashboard/contract.py`, `dashboard/views.py`, `store/tasks.py`, `tests/integration/test_task_browser.py`, `tests/integration/test_task_family_and_blockers.py`, `tests/integration/test_dashboard_motion_skips.py`, `docs/design/06-operator.md` §5.4, `docs/tui-workspace.md`, `docs/design/03-workflow.md`.
-- [ ] The non-Home layout (preview, Reveal selected task, Clear, search row, filter buttons, old count, non-Home Enter path) and every branch only it used are gone; Home behaves exactly as before.
-- [ ] The Family context text and its data path are gone; fields no Home code reads are removed.
-- [ ] Docs match; the collected cases do not grow (1646) and both gates pass.
+- [x] The non-Home layout (preview, Reveal selected task, Clear, search row, filter buttons, old count, non-Home Enter path) and every branch only it used are gone; Home behaves exactly as before.
+- [x] The Family context text and its data path are gone; fields no Home code reads are removed.
+- [x] Docs match; the collected cases do not grow (1646) and both gates pass.
+- Proof: headless Textual at 130, 100, 60, 48 and 40 columns showed Home unchanged: the `Tasks  f filter: all  / search` hint, `f` showing a status with no tasks (empty list, no count), `/` search under the label with the hint `/ search: text`, selection kept across filters, the Recent block and `Load more` while more tasks exist. The older layout, preview, Reveal, Clear, filter buttons, Family context, `selected_task_missing`, `selected_task_matches` and the ancestor and selected-task queries are gone; the HTML reference needed no change. Collected cases 1644 (was 1646: two tests of removed controls deleted); `uv run poe check` and `TERM=dumb NO_COLOR=1 uv run poe check` passed.
 
 ### Task 237: Load more as the `m` hint
 Refs: `plugins/widgets/queue.py`, `dashboard/app.py` (`_QUEUE_KEY_ACTIONS`), `dashboard/help_keys.py`, `tests/integration/test_task_browser.py`, `docs/design/06-operator.md` §5.4, `docs/design/references/focus-steel-approved.html`.

@@ -96,7 +96,7 @@ Illustrative wide home view; the numbers and task names are examples:
  │   ◌ T-16  Waiting on T-12   │ │                                 │
  │   ◌ T-17  Waiting on T-12   │ │ Leader asks:                    │
  │                            │ │ Which errors should be retried? │
- │ [Active] [Waiting] [History]│ │                                 │
+ │                            │ │                                 │
  └────────────────────────────┘ │ [Resolve] [Evidence] [Window]    │
                                 └─────────────────────────────────┘
  Recent activity · Verdicts, scope changes and completions
@@ -116,13 +116,13 @@ Every row keeps the task ID, title and meaningful state visible. Additional colu
 | History | `done`, `cancelled` | Latest finish time first, then sequence. |
 | All | Every task | Non-terminal tasks first, then history. |
 
-Search matches task ID and title case-insensitively and combines with the selected filter. Press `/` to focus search, type a title or task ID, then press Enter to move focus to the result list; Up/Down select a row and update inline detail. Enter activates the focused control and does not open duplicate detail. While the search input has focus, Up/Down move its text cursor. The full request is available in detail. Display the active search/filter, matching count and a clear empty result. Clear search and switching filters are explicit operations.
+Search matches task ID and title case-insensitively and combines with the selected filter. Press `/` to focus search, type a title or task ID, then press Enter to move focus to the result list; Up/Down select a row and update inline detail. Enter activates the focused control and does not open duplicate detail. While the search input has focus, Up/Down move its text cursor. The full request is available in detail. Display the active search/filter and a clear empty result.
 
 Queued rows use the same dispatch sort rule as the scheduler. A displayed position is an ordering aid, not a promised start time; eligibility can change and agent quota blocks can allow another task to proceed first.
 
 ### 5.2 Selection and refresh
 
-Selection is stored by task ID, not by row index. State updates, reordered rows, new tasks, changed titles and clock ticks retain the selected identity. If it leaves the active filter, retain its detail with an explanation and offer to reveal it in the appropriate filter; deliberate movement then selects a visible row. If the record is missing, show that fact and retain the previous navigation location.
+Selection is stored by task ID, not by row index. State updates, reordered rows, new tasks, changed titles and clock ticks retain the selected identity. If it leaves the active filter, retain its detail; deliberate movement then selects a visible row. If the record is missing, show that fact and retain the previous navigation location.
 
 Opening detail or a modal preserves the browser's search, filter, selection and scroll. Resizing preserves the selected task and focused section. UI navigation state is local to the dashboard process; it does not need a database table or a preferences system.
 
@@ -257,9 +257,9 @@ Task 82 shows the scheduler's stored wait reason with the current available evid
 
 Group children under their parent and allow expand/collapse. Show dependency links separately: parentage is not itself a scheduling dependency. Show a superseded task and its replacements when recorded evidence identifies them.
 
-When a filter matches a child, include ancestors as labelled context without counting them as additional matches. A finished plan parent may remain as context for active children. Its successful integration is not completion of the family's implementation. Family summaries show counts by outcome, including cancellations and superseded work; they do not become a task completion percentage.
+A finished plan parent's successful integration is not completion of the family's implementation. Family summaries show counts by outcome, including cancellations and superseded work; they do not become a task completion percentage.
 
-Task 82 keeps the browser's existing SQL match order and exact counts. Matched ancestors appear in a separate context area, outside the selectable rows. Expandable family detail shows the selected task's direct children, actual parent and family root, then offers bounded continuation pages for children, dependencies, dependents and recorded replacements. Recursive family outcome counts remain rooted at the family root; dependencies and dependents are separate links. A task is a replacement only when the superseded task's recorded scope-change event names it. Cancelled replacements remain visible with their cancelled outcome. Relationship rows, counts, root status and replacement evidence come from one SQLite snapshot.
+The browser keeps its SQL match order and exact counts; ancestors are not listed beside matches. Expandable family detail shows the selected task's direct children, actual parent and family root, then offers bounded continuation pages for children, dependencies, dependents and recorded replacements. Recursive family outcome counts remain rooted at the family root; dependencies and dependents are separate links. A task is a replacement only when the superseded task's recorded scope-change event names it. Cancelled replacements remain visible with their cancelled outcome. Relationship rows, counts, root status and replacement evidence come from one SQLite snapshot.
 
 ## 11. History, timeline and evidence export
 
