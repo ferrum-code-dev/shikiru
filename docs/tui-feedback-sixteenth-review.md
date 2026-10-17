@@ -62,3 +62,9 @@ Execution order: Task 228, then 229, 230 and 231, one task at a time.
 
 ## Full session id (Task 234)
 - Sessions in Extra details print the full session id; it wraps onto a second line when it does not fit and is never cut.
+
+## Home task filter and search hints (Task 235)
+- The Views panel removal left the Tasks filter unreachable on Home. A hint line next to the `Tasks` label shows `f` (bold steel blue) ` filter` (grey) `:` and the current filter as status glyph plus name in white (`f filter: ● running`), then `/` ` search`; an active search shows `/ search: text`. At 48 and 40 columns the labels are dropped (keys and glyph), in tiny panes only keys remain; the line never wraps.
+- `f` cycles the filter on every press: All, then individual task statuses in a fixed order (running, integrating, escalated, queued, done, cancelled), then All. The statuses reuse the task row glyphs and colours. The view model has no per-status counts, so empty statuses are not skipped. Filtering by one status is a new exact-status rule next to the existing groups, which the non-Home layout and the Home summary keep.
+- `f` works on Home anywhere except text inputs, expanded Selects, modals and inside the Agent activity fold, which keeps its own `f`.
+- `/` shows a one-line search field directly under the `Tasks` label (hidden when closed). Esc closes it and clears the text; Enter closes it and keeps the text filter (the hint shows `/ search: text`). Changing the status filter keeps the search text. The selection stays on its task while it is still listed.
