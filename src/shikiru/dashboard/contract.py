@@ -331,16 +331,6 @@ class TaskBrowserRow:
 
 
 @dataclass(frozen=True)
-class TaskBrowserContextRow:
-    """An ancestor shown as family context outside the matching task count."""
-
-    task_id: str
-    title: str
-    status: str
-    mode: str | None
-
-
-@dataclass(frozen=True)
 class TaskBrowserView:
     """A bounded page of matching tasks and the selected task's retained context."""
 
@@ -348,13 +338,10 @@ class TaskBrowserView:
     search: str
     rows: tuple[TaskBrowserRow, ...]
     selected_task: TaskBrowserRow | None
-    selected_task_missing: bool
-    selected_task_matches: bool
     matching_count: int
     filtered_count: int
     project_count: int
     has_more: bool
-    ancestor_context: tuple[TaskBrowserContextRow, ...] = ()
 
 
 @dataclass(frozen=True)

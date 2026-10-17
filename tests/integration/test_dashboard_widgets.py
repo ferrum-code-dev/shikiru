@@ -360,7 +360,7 @@ async def test_strips_shows_a_paused_stamp_for_a_held_task(
         assert "PAUSED" in _plain(widget.content)
 
 
-async def test_queue_lists_a_queued_task_with_its_priority_and_wait_reason(
+async def test_queue_lists_a_queued_task_with_its_wait_reason(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
@@ -371,10 +371,11 @@ async def test_queue_lists_a_queued_task_with_its_priority_and_wait_reason(
 
     context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("QueuePanel", QueueWidget().create(context))
-    async with WidgetHostApp(widget).run_test() as pilot:
-        await pilot.pause()
-        text = _plain(widget.query_one("#task-browser-preview", Static).render())
+    async with WidgetHostApp(widget).run_test():
+        await wait_until(
+            lambda: bool(widget.query(f"#task-row-{task.id}")), timeout=UI_WAIT_SECONDS
+        )
+        text = _plain(widget.query_one(f"#task-row-{task.id} > Static", Static).render())
         assert task.id in text
         assert "Add retry" in text
-        assert "Dispatch priority: 3" in text
-        assert "slot" in text
+        assert "waiting on slot" in text

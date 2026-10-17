@@ -85,7 +85,6 @@ class StateReader:
         search: str,
         limit: int,
         offset: int,
-        selected_task_id: str | None = None,
         diagnosed_stall_task_ids: Sequence[str] = (),
         quota_wait_task_ids: Sequence[str] = (),
     ) -> TaskBrowserPage:
@@ -97,7 +96,6 @@ class StateReader:
                 search=search,
                 limit=limit,
                 offset=offset,
-                selected_task_id=selected_task_id,
                 diagnosed_stall_task_ids=diagnosed_stall_task_ids,
                 quota_wait_task_ids=quota_wait_task_ids,
             )
@@ -112,7 +110,6 @@ class StateReader:
         search: str,
         limit: int,
         page_count: int,
-        selected_task_id: str | None = None,
         diagnosed_stall_task_ids: Sequence[str] = (),
         quota_wait_task_ids: Sequence[str] = (),
     ) -> tuple[TaskBrowserPage, ...]:
@@ -124,7 +121,6 @@ class StateReader:
                 search=search,
                 limit=limit,
                 page_count=page_count,
-                selected_task_id=selected_task_id,
                 diagnosed_stall_task_ids=diagnosed_stall_task_ids,
                 quota_wait_task_ids=quota_wait_task_ids,
             )

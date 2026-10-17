@@ -556,7 +556,6 @@ class OperatorQueries:
             search=search,
             limit=limit,
             offset=offset,
-            selected_task_id=selected_task_id,
         )
         tasks = tuple(TaskSummary.from_task(task) for task in page.tasks)
         selected_task = None

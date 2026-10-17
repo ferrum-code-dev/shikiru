@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual.widgets import Input, ListView, Static
@@ -30,7 +30,6 @@ from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step, next_step
 from shikiru.domain.tasks import Hold, Mode, Role, Status, StatusReason, TaskOrigin
 from shikiru.engine.events import emit_turn_started
-from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.runs import RunStore
@@ -476,7 +475,7 @@ def _static_text(widget: Static) -> str:
     return rendered.plain if isinstance(rendered, Text) else str(rendered)
 
 
-async def test_child_search_shows_parent_context_and_expands_the_family_group(
+async def test_child_search_matches_only_the_child_and_detail_expands_the_family_group(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -499,7 +498,6 @@ async def test_child_search_shows_parent_context_and_expands_the_family_group(
 
     assert page.matching_count == 1
     assert [row.task_id for row in page.rows] == [children[0].id]
-    assert [row.task_id for row in page.ancestor_context] == [parent.id, nested.id]
     assert detail is not None
     assert detail.relationships is not None
     assert detail.relationships.family_root.task_id == parent.id
@@ -508,18 +506,6 @@ async def test_child_search_shows_parent_context_and_expands_the_family_group(
     assert outcomes[Status.DONE.value] == 2
     assert outcomes[Status.RUNNING.value] == 1
     assert outcomes[Status.QUEUED.value] == 1
-
-    browser = widget_context(reader, project_dir, clock, services=services)
-    queue = cast("QueuePanel", QueueWidget().create(browser))
-    async with WidgetHostApp(queue).run_test(size=(90, 60)) as pilot:
-        await pilot.pause()
-        search = queue.query_one("#task-browser-search", Input)
-        search.value = "Parser implementation"
-        await pilot.pause()
-        context = queue.query_one("#task-browser-family-context", Static)
-        assert parent.id in _static_text(context)
-        assert nested.id in _static_text(context)
-        assert "of 1" in _static_text(queue.query_one("#task-browser-count", Static))
 
     detail_context = widget_context(reader, project_dir, clock)
     detail_panel = TaskDetailPanel(detail_context, nested.id, fixed=True)
@@ -619,7 +605,7 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
         assert root.id in _static_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
 
 
-def test_family_context_keeps_interleaved_priority_matches_in_dispatch_order(
+def test_interleaved_priority_matches_keep_dispatch_order(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -663,10 +649,6 @@ def test_family_context_keeps_interleaved_priority_matches_in_dispatch_order(
         first_children[0].id,
     ]
     assert page.matching_count == 4
-    assert {row.task_id for row in page.ancestor_context} == {
-        first_parent.id,
-        second_parent.id,
-    }
 
 
 def test_browser_row_ages_come_from_submission_and_recorded_requeue_times(

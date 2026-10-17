@@ -37,7 +37,6 @@ from shikiru.dashboard.contract import (
     RepoStatus,
     ResourceView,
     TaskBlockerView,
-    TaskBrowserContextRow,
     TaskBrowserFilter,
     TaskBrowserRow,
     TaskBrowserView,
@@ -513,7 +512,6 @@ class StateDashboardViews:
                 search,
                 limit,
                 offset,
-                selected_task_id,
                 diagnosed_stall_task_ids,
                 quota_wait_task_ids,
             ),
@@ -522,7 +520,6 @@ class StateDashboardViews:
                 search=search,
                 limit=limit,
                 offset=offset,
-                selected_task_id=selected_task_id,
                 diagnosed_stall_task_ids=diagnosed_stall_task_ids,
                 quota_wait_task_ids=quota_wait_task_ids,
             ),
@@ -577,7 +574,6 @@ class StateDashboardViews:
                 search,
                 limit,
                 page_count,
-                selected_task_id,
                 diagnosed_stall_task_ids,
                 quota_wait_task_ids,
             ),
@@ -586,7 +582,6 @@ class StateDashboardViews:
                 search=search,
                 limit=limit,
                 page_count=page_count,
-                selected_task_id=selected_task_id,
                 diagnosed_stall_task_ids=diagnosed_stall_task_ids,
                 quota_wait_task_ids=quota_wait_task_ids,
             ),
@@ -725,22 +720,10 @@ class StateDashboardViews:
             search=search,
             rows=tuple(rows),
             selected_task=selected_row,
-            selected_task_missing=selected_task_id is not None and selected_task is None,
-            selected_task_matches=page.selected_task_matches,
             matching_count=page.matching_count,
             filtered_count=page.filtered_count,
             project_count=page.project_count,
             has_more=offset + len(rows) < page.matching_count,
-            ancestor_context=tuple(
-                TaskBrowserContextRow(
-                    task_id=task.id,
-                    title=task.title,
-                    status=task.status.value,
-                    mode=task.mode.value if task.mode is not None else None,
-                )
-                for task in page.ancestor_tasks
-                if task.id not in {row.task_id for row in rows}
-            ),
         )
 
     def _task_browser_row(

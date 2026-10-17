@@ -57,10 +57,6 @@ def _count_content(queue: QueuePanel) -> object:
     return queue.query_one("#task-browser-count", Static).content
 
 
-def _preview_text(queue: QueuePanel) -> str:
-    return plain_text(queue.query_one("#task-browser-preview", Static).render())
-
-
 async def test_header_motion_tick_with_unchanged_state_keeps_the_rendered_content(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
@@ -171,25 +167,6 @@ async def test_queue_motion_tick_shows_a_data_change(
             ),
             timeout=WAIT_SECONDS,
         )
-
-
-async def test_queue_motion_tick_shows_a_time_only_change(
-    connection: Connection, reader: StateReader, tmp_path: Path
-) -> None:
-    clock = FakeClock(START)
-    ticks = MotionTicks()
-    seed_task(connection, clock, title="Add retry")
-    context = _context(reader, write_minimal_project(tmp_path), clock, ticks)
-    queue = cast("QueuePanel", QueueWidget().create(context))
-    async with WidgetHostApp(queue).run_test() as pilot:
-        await pilot.pause()
-        await ticks.tick()
-        before = _preview_text(queue)
-
-        clock.advance(LATER.total_seconds())
-        await ticks.tick()
-
-        assert _preview_text(queue) != before
 
 
 async def test_queue_filter_change_renders_after_skipped_ticks(

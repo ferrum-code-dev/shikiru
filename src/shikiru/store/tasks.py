@@ -91,8 +91,6 @@ class TaskBrowserPage:
     matching_count: int
     filtered_count: int
     project_count: int
-    selected_task_matches: bool
-    ancestor_tasks: tuple[Task, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -211,7 +209,6 @@ def fetch_task_browser_page(
     search: str,
     limit: int,
     offset: int,
-    selected_task_id: str | None = None,
     diagnosed_stall_task_ids: Sequence[str] = (),
     quota_wait_task_ids: Sequence[str] = (),
 ) -> TaskBrowserPage:
@@ -247,43 +244,14 @@ def fetch_task_browser_page(
             offset,
         ),
     ).fetchall()
-    selected_task_matches = False
-    if selected_task_id is not None:
-        selected_task_matches = (
-            connection.execute(
-                f"SELECT EXISTS (SELECT 1 FROM tasks t WHERE t.id = ? AND {match_where})",
-                (selected_task_id, *category_parameters, *match_parameters),
-            ).fetchone()[0]
-            == 1
-        )
     tasks = _rows_to_tasks(connection, rows)
-    ancestor_tasks = _fetch_task_ancestors(connection, [task.id for task in tasks])
     return TaskBrowserPage(
         tasks=tuple(tasks),
         open_decision_task_ids=frozenset(row["id"] for row in rows if row["has_open_decision"]),
         matching_count=counts["matching_count"],
         filtered_count=counts["filtered_count"],
         project_count=counts["project_count"],
-        selected_task_matches=selected_task_matches,
-        ancestor_tasks=tuple(ancestor_tasks),
     )
-
-
-def _fetch_task_ancestors(connection: sqlite3.Connection, task_ids: Sequence[str]) -> list[Task]:
-    if not task_ids:
-        return []
-    placeholders = ", ".join("?" for _ in task_ids)
-    rows = connection.execute(
-        "WITH RECURSIVE ancestry(parent_id) AS ("
-        f"SELECT parent_id FROM tasks WHERE id IN ({placeholders}) AND parent_id IS NOT NULL "
-        "UNION SELECT parent.parent_id FROM tasks parent "
-        "JOIN ancestry child ON parent.id = child.parent_id "
-        "WHERE parent.parent_id IS NOT NULL) "
-        f"SELECT {_TASK_COLUMNS} FROM tasks WHERE id IN "
-        "(SELECT parent_id FROM ancestry) ORDER BY seq",
-        tuple(task_ids),
-    ).fetchall()
-    return _rows_to_tasks(connection, rows)
 
 
 def _fetch_tasks_by_ids(
@@ -496,7 +464,6 @@ def fetch_task_browser_pages(
     search: str,
     limit: int,
     page_count: int,
-    selected_task_id: str | None = None,
     diagnosed_stall_task_ids: Sequence[str] = (),
     quota_wait_task_ids: Sequence[str] = (),
 ) -> tuple[TaskBrowserPage, ...]:
@@ -515,7 +482,6 @@ def fetch_task_browser_pages(
                 search=search,
                 limit=limit,
                 offset=offset,
-                selected_task_id=selected_task_id,
                 diagnosed_stall_task_ids=diagnosed_stall_task_ids,
                 quota_wait_task_ids=quota_wait_task_ids,
             )
