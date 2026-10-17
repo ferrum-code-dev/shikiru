@@ -606,7 +606,9 @@ class QueuePanel(Vertical):
     def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
         if event.list_view.id not in {TASK_LIST_ID, TASK_RECENT_LIST_ID} or self._refreshing:
             return
-        if isinstance(event.item, _BrowserListItem):
+        if event.item is event.list_view.highlighted_child and isinstance(
+            event.item, _BrowserListItem
+        ):
             self.select_task(event.item.task_id)
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
