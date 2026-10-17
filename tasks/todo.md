@@ -364,3 +364,9 @@ Sixteenth-review scope: [sixteenth review](../docs/tui-feedback-sixteenth-review
   - Proof: Sessions now print the whole id after role and agent; the value groups wrap between groups, so a long id moves under role and agent instead of being cut. The Extra details test uses a 24-character id and asserts it whole, with no new test function. `TERM=dumb NO_COLOR=1 uv run poe check` passed; the plain gate failed on one different load-timing test per run (all pass alone), and the whole suite passed with `-n 4` (1625 passed, 1646 collected).
 - [x] Task 235: Home task filter and search hints
   - Proof: headless Textual at 130, 100, 60, 48, 40 and 40x8 showed the `f filter` / `/ search` hint cycling the statuses and shortening without wrapping, the search field under the label, Esc clearing and Enter keeping the text; HTML reference updated (SHA-256 `2e80ba2d03165dea0d985497ce4381dd5e2f29d0595f5ddb4f941dde86ab4417`); collected cases stay 1646 and both gates passed.
+
+Seventeenth-review scope: [seventeenth review](../docs/tui-feedback-seventeenth-review.md).
+
+- [ ] Task 236: Delete the older task-browser layout and Family context
+- [ ] Task 237: Load more as the `m` hint
+- [ ] Task 238: Help panel spacing and stable size

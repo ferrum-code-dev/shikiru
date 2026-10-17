@@ -2083,3 +2083,25 @@ Refs: `plugins/widgets/queue.py`, `dashboard/contract.py` (`TaskBrowserFilter`),
 - [x] `/` shows the one-line search field directly under the `Tasks` label; Esc clears the text and closes it, Enter closes it and keeps the text filter; changing the status filter keeps the search text; the selection stays on the same task while it is still listed.
 - [x] Help (Home tab), design 06 §5.4, `tui-focus.md`, `tui-parity.md` and the HTML reference match; the collected cases do not grow (1646) and both gates pass.
 - Proof: headless Textual at 130, 100, 60, 48, 40 and 40x8 showed the hint `Tasks  f filter: all  / search` cycling `› running`, `› integrating`, `› escalated`, `· queued` on every `f`, shortening to `f › integrating  /` where the panel is under 40 cells, clipping a long search with an ellipsis and showing `f  /` in the 8-row pane, never wrapping; the search field sat directly under the label and Esc/Enter behaved as specified. The Home test asserts the cycle, the status-only list, steel `f`, white status name, the field order, Enter keeping and Esc clearing, `f` typed into the field and `f` in the Agent activity list changing nothing; the HTML reference draws the hint (srcdoc round-trip exact, `node --check`, SHA-256 `2e80ba2d03165dea0d985497ce4381dd5e2f29d0595f5ddb4f941dde86ab4417`). Collected cases stay 1646; `uv run poe check` and `TERM=dumb NO_COLOR=1 uv run poe check` passed (1625 passed) after re-runs for unrelated load flakes that pass alone.
+
+## Task browser clean-up, Load more hint and Help sizing (seventeenth review)
+
+Scope: [seventeenth review](../docs/tui-feedback-seventeenth-review.md); the operator approved the decisions. Tasks run in order 236, 237, 238.
+
+### Task 236: Delete the older task-browser layout and Family context
+Refs: `plugins/widgets/queue.py`, `dashboard/contract.py`, `dashboard/views.py`, `store/tasks.py`, `tests/integration/test_task_browser.py`, `tests/integration/test_task_family_and_blockers.py`, `tests/integration/test_dashboard_motion_skips.py`, `docs/design/06-operator.md` §5.4, `docs/tui-workspace.md`, `docs/design/03-workflow.md`.
+- [ ] The non-Home layout (preview, Reveal selected task, Clear, search row, filter buttons, old count, non-Home Enter path) and every branch only it used are gone; Home behaves exactly as before.
+- [ ] The Family context text and its data path are gone; fields no Home code reads are removed.
+- [ ] Docs match; the collected cases do not grow (1646) and both gates pass.
+
+### Task 237: Load more as the `m` hint
+Refs: `plugins/widgets/queue.py`, `dashboard/app.py` (`_QUEUE_KEY_ACTIONS`), `dashboard/help_keys.py`, `tests/integration/test_task_browser.py`, `docs/design/06-operator.md` §5.4, `docs/design/references/focus-steel-approved.html`.
+- [ ] `Load more` is a hint (`m` bold cyan, ` load more` grey) shown only while more tasks exist; `m` and a click load the next page; it is not a Tab stop.
+- [ ] `m` is routed like `f` and `/`; the Home Help tab, design 06 §5.4 and the HTML reference match.
+- [ ] The collected cases do not grow (1646) and both gates pass.
+
+### Task 238: Help panel spacing and stable size
+Refs: `dashboard/help_screen.py`, `ui/popup.py`, `tests/integration/test_dashboard_popup_focus.py`, `tests/integration/test_dashboard_app.py`, `docs/tui-feedback-seventeenth-review.md`.
+- [ ] One blank line follows the `← → switch section` hint row.
+- [ ] The Help panel keeps one size across sections (tallest and widest content at the current width, capped by the viewport), shows the scrollbar only when that does not fit, and re-measures on resize.
+- [ ] The collected cases do not grow (1646) and both gates pass.
