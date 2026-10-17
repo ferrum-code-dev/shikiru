@@ -7,14 +7,15 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from fake_agent.scripted import TASK_SCRIPT_DIR_ENV_VAR, role_script_env_var, task_script_path
-from textual.containers import VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Button, Input, ListView, Select, Static, TextArea
 
 from shikiru.bootstrap import build_engine
 from shikiru.config.loader import load_settings
+from shikiru.dashboard.actions_list import ActionsListScreen
 from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.app import DashboardApp, TaskPaletteRoute
+from shikiru.dashboard.contract import PaletteRequest
 from shikiru.dashboard.detail import (
     TASK_DETAIL_OWNERSHIP,
     TaskDetailScreen,
@@ -49,6 +50,7 @@ from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.session import SessionView
+from tests.support.actions import actions_screen, open_action, open_row, popup_screen
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, open_command_history
@@ -63,7 +65,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.render import plain_text
 from tests.support.store import reopen_command
-from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, wait_until_advancing
+from tests.support.waiting import wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -71,10 +73,10 @@ if TYPE_CHECKING:
 
     from rich.text import Text
     from textual.pilot import Pilot
+    from textual.screen import ModalScreen
     from textual.widget import Widget
 
     from shikiru.config.settings import Settings
-    from shikiru.dashboard.contract import PaletteRequest
     from shikiru.store.commands import CommandOutcome
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -201,33 +203,30 @@ class WorkspaceRuntime:
         async def select_pane(_pane_id: str) -> None:
             raise AssertionError
 
-        async def open_palette(action: str) -> None:
-            await app_ref[0].push_screen(
-                PaletteScreen(
-                    self.commands,
-                    self.queries,
-                    select_pane,
-                    action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
-                    on_change=self.reader.watch,
-                    initial_action=action,
-                    evidence_exporter=self.exporter,
-                    resolution_screen=resolution_screen,
-                )
-            )
-
         async def open_palette_context(request: PaletteRequest) -> None:
-            await app_ref[0].push_screen(
-                PaletteScreen(
+            if request.action:
+                screen: ModalScreen[Any] = popup_screen(
                     self.commands,
                     self.queries,
+                    self.reader,
                     select_pane,
-                    action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
-                    on_change=self.reader.watch,
-                    initial_context=request,
+                    request,
+                    evidence_exporter=self.exporter,
+                )
+            else:
+                screen = actions_screen(
+                    self.commands,
+                    self.queries,
+                    self.reader,
+                    select_pane,
+                    request,
                     evidence_exporter=self.exporter,
                     resolution_screen=resolution_screen,
                 )
-            )
+            await app_ref[0].push_screen(screen)
+
+        async def open_palette(action: str) -> None:
+            await open_palette_context(PaletteRequest(action=action or None))
 
         app = DashboardApp(
             focus_task=focus_task,
@@ -379,10 +378,7 @@ async def _export_terminal_task(
         await runtime.wait_for(
             lambda: task_id in _plain(identity) and "loading" not in _plain(identity)
         )
-        await pilot.press("ctrl+p")
-        await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen))
-        palette = cast("PaletteScreen", app.screen)
-        await _select_palette_action(runtime, pilot, palette, "export")
+        palette = await _open_palette_action(runtime, pilot, app, "export")
         await runtime.wait_for(lambda: palette.query_one("#export-destination", Input).display)
         palette.query_one("#export-destination", Input).value = destination
         cast("Select[str]", palette.query_one("#export-format", Select)).value = EXPORT_FORMAT_JSON
@@ -395,42 +391,17 @@ async def _export_terminal_task(
     return cast("dict[str, Any]", json.loads((runtime.project_root / destination).read_text()))
 
 
-async def _select_palette_action(
+async def _open_palette_action(
     runtime: WorkspaceRuntime,
     pilot: Pilot[None],
-    palette: PaletteScreen,
+    app: DashboardApp,
     action: str,
-) -> None:
-    menu = palette.query_one("#palette-menu", VerticalScroll)
-    if menu.display:
-        button = palette.query_one(f"#palette-menu-action-{action}", Button)
-        parent = button.parent
-        while parent is not None and parent is not menu:
-            if not parent.display:
-                more_actions = palette.query_one("#palette-menu-more-actions", Button)
-                menu.scroll_to_widget(more_actions, animate=False, immediate=True)
-                await pilot.pause()
-                await pilot.click(more_actions)
-                await runtime.wait_for(lambda parent=parent: parent.display)
-                break
-            parent = parent.parent
-        menu.scroll_to_widget(button, animate=False, immediate=True)
-        button.scroll_visible(animate=False, force=True)
-        button.focus()
-        await pilot.wait_for_scheduled_animations()
-        await pilot.pause()
-        assert button.region.y >= menu.region.y
-        assert button.region.bottom <= menu.region.bottom
-        assert await pilot.click(button)
-        await runtime.wait_for(
-            lambda: (
-                not menu.display
-                and cast("Select[str]", palette.query_one("#action", Select)).value == action
-            )
-        )
-        return
-    cast("Select[str]", palette.query_one("#action", Select)).value = action
-    await pilot.pause()
+) -> PaletteScreen:
+    await pilot.press("ctrl+p")
+    await runtime.wait_for(lambda: isinstance(app.screen, ActionsListScreen))
+    await open_action(pilot, cast("ActionsListScreen", app.screen), action)
+    await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen) and app.screen.is_mounted)
+    return cast("PaletteScreen", app.screen)
 
 
 async def test_fake_agent_workspace_finds_verdict_and_applies_contextual_message(
@@ -481,15 +452,11 @@ async def test_fake_agent_workspace_finds_verdict_and_applies_contextual_message
                     in plain_text(app.screen.query_one("#task-detail-decisions", Static).content)
                 )
             )
-            await pilot.press("ctrl+p")
-            await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen))
-            palette = cast("PaletteScreen", app.screen)
+            palette = await _open_palette_action(runtime, pilot, app, "message")
             assert palette.query_one("#task-id", Input).value == task_id
             assert cast("Select[str]", palette.query_one("#role", Select)).value == (
                 Role.IMPLEMENTER.value
             )
-            await _select_palette_action(runtime, pilot, palette, "message")
-            await pilot.pause()
             palette.query_one("#message", TextArea).text = REQUEST_MESSAGE
             await pilot.click("#palette-submit")
             await runtime.wait_for(
@@ -530,8 +497,8 @@ async def test_fake_agent_escalation_disables_an_open_resolution_resolved_by_ano
         app = runtime.app(focus_task=task_id)
         async with app.run_test(size=TASK_SIZE) as pilot:
             await pilot.press("ctrl+p")
-            await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen))
-            app.screen.query_one("#palette-menu-answer", Button).press()
+            await runtime.wait_for(lambda: isinstance(app.screen, ActionsListScreen))
+            await open_row(pilot, cast("ActionsListScreen", app.screen), "Answer")
             await runtime.wait_for(lambda: isinstance(app.screen, ResolutionScreen))
             resolution = cast("ResolutionScreen", app.screen)
             await runtime.wait_for(lambda: bool(resolution.query("#resolution-answer")))
@@ -640,10 +607,7 @@ async def test_dashboard_queued_submit_survives_engine_and_dashboard_restarts_on
     try:
         app = runtime.app()
         async with app.run_test(size=HOME_SIZE) as pilot:
-            await pilot.press("ctrl+p")
-            await runtime.wait_for(lambda: isinstance(app.screen, PaletteScreen))
-            palette = cast("PaletteScreen", app.screen)
-            await _select_palette_action(runtime, pilot, palette, "submit")
+            palette = await _open_palette_action(runtime, pilot, app, "submit")
             palette.query_one(
                 "#request", TextArea
             ).text = "Queue this task while the engine is stopped."
@@ -653,8 +617,10 @@ async def test_dashboard_queued_submit_survives_engine_and_dashboard_restarts_on
             await runtime.wait_for(
                 lambda: "Pending" in _plain(palette.query_one("#palette-result", Static))
             )
-            await pilot.press("escape")
-            await runtime.wait_for(lambda: not isinstance(app.screen, PaletteScreen))
+            await pilot.press("escape", "escape")
+            await runtime.wait_for(
+                lambda: not isinstance(app.screen, PaletteScreen | ActionsListScreen)
+            )
 
         await runtime.start_engine()
         await runtime.wait_for(

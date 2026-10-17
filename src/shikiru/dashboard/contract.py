@@ -111,7 +111,34 @@ class ExtensionEntry:
     label: str
 
 
-PaletteReturn = TaskPaletteRoute | ExtensionEntry
+@dataclass(frozen=True)
+class TaskRouteChoice:
+    """A task destination chosen from the Actions list, with the task it was chosen for."""
+
+    task_id: str
+    route: TaskPaletteRoute
+
+
+PaletteReturn = TaskRouteChoice | ExtensionEntry
+
+
+class PaletteAction(StrEnum):
+    """An operator action the palette popups can open."""
+
+    SUBMIT = "submit"
+    PRIORITIZE = "prioritize"
+    PAUSE = "pause"
+    PAUSE_NOW = "pause-now"
+    RESUME = "resume"
+    TAKE_OVER = "take-over"
+    HAND_BACK = "hand-back"
+    CANCEL = "cancel"
+    RETRY = "retry"
+    RUNG = "rung"
+    MESSAGE = "message"
+    PEEK = "peek"
+    STOP = "stop"
+    EXPORT = "export"
 
 
 @dataclass(frozen=True)

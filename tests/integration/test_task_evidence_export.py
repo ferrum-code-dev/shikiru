@@ -18,7 +18,6 @@ from shikiru.agents.contracts import (
     Usage,
 )
 from shikiru.dashboard.contract import PaletteRequest
-from shikiru.dashboard.palette import PaletteApp, PaletteScreen
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
     FACTS_FILENAME,
@@ -48,6 +47,7 @@ from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME
+from tests.support.actions import ScreenHost, popup_screen
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG, LEADER_RUNG_2
@@ -59,6 +59,7 @@ if TYPE_CHECKING:
 
     from textual.pilot import Pilot
 
+    from shikiru.dashboard.palette import PaletteScreen
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
 
@@ -439,14 +440,16 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
     destination = EXPORT_PATH if write_succeeds else FAILED_EXPORT_PATH
     if write_succeeds:
         (project_root / "exports").mkdir()
-    app = PaletteApp(
-        commands,
-        queries,
-        _selection_must_not_run,
-        action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
-        on_change=reader.watch,
-        initial_context=PaletteRequest(action="export", task_id=task.id),
-        evidence_exporter=exporter,
+    app = ScreenHost(
+        popup_screen(
+            commands,
+            queries,
+            reader,
+            _selection_must_not_run,
+            PaletteRequest(action="export", task_id=task.id),
+            action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
+            evidence_exporter=exporter,
+        )
     )
     before = _snapshot(connection, reader, task.id)
 

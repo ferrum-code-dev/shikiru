@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from rich.text import Text
 from textual.containers import VerticalScroll
-from textual.widgets import Button, Input, ListView, Select, Static, TextArea
+from textual.widgets import Button, ListView, Select, Static, TextArea
 
 import shikiru.agents.registry as registry_module
 from shikiru.agents.contracts import (
@@ -26,6 +26,7 @@ from shikiru.agents.contracts import (
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import RepoConfig
+from shikiru.dashboard.actions_list import ActionsListScreen
 from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.contract import (
     WIDGET_ENTRY_POINT_GROUP,
@@ -103,6 +104,14 @@ from shikiru.tmux.session import HOME_WINDOW_NAME
 from shikiru.view_log import view_log_path
 from shikiru.workspace.facts import WorkspaceFacts, render_facts
 from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME
+from tests.support.actions import (
+    action_list,
+    actions_screen,
+    open_action,
+    popup_screen,
+    structure,
+    title_text,
+)
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
@@ -117,7 +126,7 @@ from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.render import plain_text, rendered_lines
 from tests.support.store import seed_task
-from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 from tests.support.workspace import task_root_builder
 
 pytestmark = pytest.mark.asyncio
@@ -393,15 +402,9 @@ def _operator_task_app(
         def refresh_task_detail(_: object | None) -> None:
             active_apps[0].refresh_task_detail_after_resume()
 
+        build = popup_screen if request.action else actions_screen
         await active_apps[0].push_screen(
-            PaletteScreen(
-                commands,
-                queries,
-                _unexpected_pane_selection,
-                action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
-                on_change=reader.watch,
-                initial_context=request,
-            ),
+            build(commands, queries, reader, _unexpected_pane_selection, request),
             callback=refresh_task_detail,
         )
 
@@ -417,42 +420,19 @@ def _operator_task_app(
     return app
 
 
-async def _select_palette_action(
+async def _open_action_popup(
+    app: DashboardApp,
     pilot: Pilot[None],
-    palette: PaletteScreen,
     action: str,
-) -> None:
-    menu = palette.query_one("#palette-menu", VerticalScroll)
-    if menu.display:
-        button = palette.query_one(f"#palette-menu-action-{action}", Button)
-        parent = button.parent
-        while parent is not None and parent is not menu:
-            if not parent.display:
-                more_actions = palette.query_one("#palette-menu-more-actions", Button)
-                menu.scroll_to_widget(more_actions, animate=False, immediate=True)
-                await pilot.pause()
-                await pilot.click(more_actions)
-                await wait_until(lambda parent=parent: parent.display, timeout=UI_WAIT_SECONDS)
-                break
-            parent = parent.parent
-        menu.scroll_to_widget(button, animate=False, immediate=True)
-        button.scroll_visible(animate=False, force=True)
-        button.focus()
-        await pilot.wait_for_scheduled_animations()
-        await pilot.pause()
-        assert button.region.y >= menu.region.y
-        assert button.region.bottom <= menu.region.bottom
-        assert await pilot.click(button)
-        await wait_until(
-            lambda: (
-                not menu.display
-                and cast("Select[str]", palette.query_one("#action", Select)).value == action
-            ),
-            timeout=UI_WAIT_SECONDS,
-        )
-        return
-    cast("Select[str]", palette.query_one("#action", Select)).value = action
-    await pilot.pause()
+) -> PaletteScreen:
+    await pilot.press("ctrl+p")
+    await wait_until(lambda: isinstance(app.screen, ActionsListScreen), timeout=UI_WAIT_SECONDS)
+    await open_action(pilot, cast("ActionsListScreen", app.screen), action)
+    await wait_until(
+        lambda: isinstance(app.screen, PaletteScreen) and app.screen.is_mounted,
+        timeout=UI_WAIT_SECONDS,
+    )
+    return cast("PaletteScreen", app.screen)
 
 
 async def _submit_detail_command(
@@ -464,10 +444,7 @@ async def _submit_detail_command(
     role: Role | None = None,
 ) -> QueuedCommand:
     dashboard_screen = app.screen
-    await pilot.press("ctrl+p")
-    await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
-    palette = cast("PaletteScreen", app.screen)
-    await _select_palette_action(pilot, palette, action)
+    palette = await _open_action_popup(app, pilot, action)
     if role is not None:
         palette.query_one("#role", Select).value = role.value
     await wait_until(
@@ -1967,19 +1944,18 @@ async def _assert_responsive_task_actions(
     task: Task,
 ) -> None:
     await pilot.press("ctrl+p")
-    await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
-    palette = cast("PaletteScreen", app.screen)
-    assert palette.query_one("#task-id", Input).value == task.id
-    menu = palette.query_one("#palette-menu", VerticalScroll)
-    assert menu.display
-    assert menu.region.width > 0
-    assert menu.region.x >= 0
-    assert menu.region.right <= app.size.width
-    assert palette.query_one("#palette-menu-action-submit", Button).display
-    assert palette.query_one("#palette-menu-action-stop", Button).display
-    assert palette.query_one("#palette-menu-action-resolve", Button).display
+    await wait_until(lambda: isinstance(app.screen, ActionsListScreen), timeout=UI_WAIT_SECONDS)
+    listing = cast("ActionsListScreen", app.screen)
+    assert task.id in title_text(listing)
+    rows = action_list(listing)
+    assert rows.region.width > 0
+    assert rows.region.x >= 0
+    assert rows.region.right <= app.size.width
+    await wait_until(
+        lambda: {"Submit task", "Stop engine"} <= set(structure(listing)), timeout=UI_WAIT_SECONDS
+    )
     await pilot.press("escape")
-    await wait_until(lambda: not isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
+    await wait_until(lambda: not isinstance(app.screen, ActionsListScreen), timeout=UI_WAIT_SECONDS)
 
 
 async def _assert_task_context_keeps_priority(app: DashboardApp, pilot: Pilot[None]) -> None:
@@ -2060,10 +2036,7 @@ async def test_compact_palette_form_keeps_visible_text_cursor_and_run_after_resi
         app = _operator_task_app(reader, project_root, task.id, queue, clock)
         async with app.run_test(size=(36, 20)) as pilot:
             await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
-            await pilot.press("ctrl+p")
-            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
-            palette = cast("PaletteScreen", app.screen)
-            await _select_palette_action(pilot, palette, "submit")
+            palette = await _open_action_popup(app, pilot, "submit")
             await wait_until(
                 lambda: palette.query_one("#field-request").display, timeout=UI_WAIT_SECONDS
             )
@@ -2178,7 +2151,9 @@ async def test_task_detail_refreshes_durable_ownership_after_palette_closes(
             await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
 
             await pilot.press("ctrl+p")
-            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
+            await wait_until(
+                lambda: isinstance(app.screen, ActionsListScreen), timeout=UI_WAIT_SECONDS
+            )
             TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
             assert Hold.PAUSED.value not in _text(ownership)
 
@@ -2259,10 +2234,7 @@ async def test_resume_waits_for_every_hand_back_and_keeps_the_other_holds_until_
                 ),
                 timeout=UI_WAIT_SECONDS,
             )
-            await pilot.press("ctrl+p")
-            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
-            palette = cast("PaletteScreen", app.screen)
-            await _select_palette_action(pilot, palette, "resume")
+            palette = await _open_action_popup(app, pilot, "resume")
             await wait_until(
                 lambda: palette.query_one("#palette-submit", Button).disabled,
                 timeout=UI_WAIT_SECONDS,
@@ -2271,7 +2243,7 @@ async def test_resume_waits_for_every_hand_back_and_keeps_the_other_holds_until_
             assert "hand back all taken-over roles" in _text(
                 palette.query_one("#palette-action-state", Static)
             )
-            await pilot.press("escape")
+            await pilot.press("escape", "escape")
             task_after_partial_hand_back = reader.get_task(task.id)
             assert task_after_partial_hand_back is not None
             assert task_after_partial_hand_back.holds == frozenset({Hold.PAUSED, Hold.INTERVENTION})
@@ -2331,10 +2303,7 @@ async def test_resume_availability_includes_an_intervention_only_hold(
             await wait_until(
                 lambda: Hold.INTERVENTION.value in _text(ownership), timeout=UI_WAIT_SECONDS
             )
-            await pilot.press("ctrl+p")
-            await wait_until(lambda: isinstance(app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS)
-            palette = cast("PaletteScreen", app.screen)
-            await _select_palette_action(pilot, palette, "resume")
+            palette = await _open_action_popup(app, pilot, "resume")
             await wait_until(
                 lambda: not palette.query_one("#palette-submit", Button).disabled,
                 timeout=UI_WAIT_SECONDS,

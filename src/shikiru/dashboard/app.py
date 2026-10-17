@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
@@ -52,6 +52,7 @@ from shikiru.dashboard.diagnostics import ProjectDiagnosticsPanel
 from shikiru.dashboard.help_keys import HelpAvailability, HelpTab
 from shikiru.dashboard.help_screen import HelpContext, WorkspaceHelpScreen
 from shikiru.dashboard.interaction import native_editor_has_focus
+from shikiru.dashboard.palette_drafts import PaletteDrafts
 from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.tick import pinned_tick
 from shikiru.dashboard.timeline_filter import TimelineFilterBar
@@ -205,7 +206,6 @@ _CONTEXT_WIDGET_PLACEMENTS = frozenset(
     {WidgetPlacement.DETAILED_USAGE, WidgetPlacement.DIAGNOSTICS, WidgetPlacement.EXTENSIONS}
 )
 TASK_PALETTE_ROUTE_WORKER = "task-palette-route"
-_MAX_CONTEXTUAL_PALETTE_DRAFTS = 16
 _TASK_MOVE_STEPS = {"up": -1, "down": 1}
 _ARROW_KEY_OWNERS = (ListView, RowList, FoldHeader, TaskDetailVerb, TimelineFilterBar)
 
@@ -998,7 +998,7 @@ class DashboardApp(App[None]):
         self._open_palette = open_palette
         self._open_palette_context = open_palette_context
         self._resolution_screen = resolution_screen
-        self._palette_drafts: dict[tuple[str, str, str | None], PaletteDraft] = {}
+        self._palette_drafts = PaletteDrafts()
         self._selected_task_id = focus_task
         self._navigate_task_window = navigate_task_window
         self._navigate_home = navigate_home
@@ -1259,14 +1259,7 @@ class DashboardApp(App[None]):
         if callback is None:
             await self._open_palette(request.action or "")
             return
-        drafts = tuple(
-            draft
-            for (task_id, _, _), draft in self._palette_drafts.items()
-            if task_id == request.task_id
-        )
-        if drafts:
-            request = replace(request, drafts=drafts)
-        await callback(request)
+        await callback(self._palette_drafts.attach(request))
 
     async def open_resolution(self, escalation_id: str) -> None:
         """Open the resolution screen for one escalation."""
@@ -1281,11 +1274,11 @@ class DashboardApp(App[None]):
 
     def remember_contextual_palette_draft(self, draft: PaletteDraft) -> None:
         """Keep the latest contextual form draft in memory while its caller is visible."""
-        key = (draft.task_id, draft.action, draft.role)
-        self._palette_drafts.pop(key, None)
-        self._palette_drafts[key] = draft
-        if len(self._palette_drafts) > _MAX_CONTEXTUAL_PALETTE_DRAFTS:
-            self._palette_drafts.pop(next(iter(self._palette_drafts)))
+        self._palette_drafts.remember(draft)
+
+    def attach_palette_drafts(self, request: PaletteRequest) -> PaletteRequest:
+        """Return `request` carrying the drafts remembered for its task."""
+        return self._palette_drafts.attach(request)
 
     def route_task_palette(self, task_id: str, route: TaskPaletteRoute) -> None:
         """Open a task detail destination selected from its contextual action surface."""
@@ -1294,20 +1287,18 @@ class DashboardApp(App[None]):
             group=TASK_PALETTE_ROUTE_WORKER,
         )
 
-    def palette_return_callback(
-        self, task_id: str | None
-    ) -> Callable[[PaletteReturn | None], None]:
-        """Return from a palette to its task context and optional secondary route."""
+    def palette_return_callback(self) -> Callable[[PaletteReturn | None], None]:
+        """Return from the Actions list to its task context and optional secondary route."""
 
-        def on_return(route: PaletteReturn | None) -> None:
+        def on_return(choice: PaletteReturn | None) -> None:
             self.refresh_task_detail_after_resume()
-            if isinstance(route, ExtensionEntry):
+            if isinstance(choice, ExtensionEntry):
                 self.run_worker(
-                    self._open_contextual_view(route.choice_id),
+                    self._open_contextual_view(choice.choice_id),
                     group=TASK_PALETTE_ROUTE_WORKER,
                 )
-            elif route is not None and task_id is not None:
-                self.route_task_palette(task_id, route)
+            elif choice is not None:
+                self.route_task_palette(choice.task_id, choice.route)
 
         return on_return
 

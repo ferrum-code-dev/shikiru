@@ -9,9 +9,9 @@ from textual.widgets import Button, ListView, Static
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp
+from shikiru.dashboard.contract import PaletteRequest
 from shikiru.dashboard.detail import TASK_DETAIL_BODY, TaskDetailBody
 from shikiru.dashboard.help_keys import HelpTab
-from shikiru.dashboard.palette import PaletteScreen
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
@@ -25,6 +25,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.ui.popup import POPUP_CLOSE_CLASS
 from shikiru.ui.theme import SCROLLBAR_WIDTH
 from shikiru.ui.tokens import STEEL_BLUE
+from tests.support.actions import actions_screen
 from tests.support.cells import foregrounds, rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -35,7 +36,7 @@ from tests.support.dashboard import (
     state_views,
 )
 from tests.support.store import seed_task
-from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -90,7 +91,7 @@ _ROUTES = (
     pytest.param(_open_help, "#workspace-help-scroll", id="help"),
     pytest.param(_open_command_history, "#command-history-filter", id="command-history"),
     pytest.param(_open_usage_details, "#context-widget-content", id="usage-details"),
-    pytest.param(_open_standalone_palette, "#action-search", id="standalone-palette"),
+    pytest.param(_open_standalone_palette, "#actions-list", id="standalone-palette"),
 )
 
 
@@ -143,13 +144,7 @@ def _dashboard(
     async def open_palette(action: str) -> None:
         del action
         await app.push_screen(
-            PaletteScreen(
-                commands,
-                queries,
-                _select_pane,
-                action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
-                on_change=reader.watch,
-            )
+            actions_screen(commands, queries, reader, _select_pane, PaletteRequest())
         )
 
     app = DashboardApp(

@@ -320,6 +320,8 @@ async def run_dashboard(
     """Run the configured dashboard for one project entry point."""
     dashboard_app_module = import_module("shikiru.dashboard.app")
     dashboard_palette_module = import_module("shikiru.dashboard.palette")
+    dashboard_actions_module = import_module("shikiru.dashboard.actions_list")
+    dashboard_contract_module = import_module("shikiru.dashboard.contract")
     dashboard_resolution_module = import_module("shikiru.dashboard.resolution")
     dashboard_services_module = import_module("shikiru.dashboard.services")
     dashboard_views_module = import_module("shikiru.dashboard.views")
@@ -411,38 +413,51 @@ async def run_dashboard(
                 escalation_id=escalation_id,
             )
 
-        async def push_palette(action: str, context: _PaletteContext | None = None) -> None:
+        async def push_palette(request: _PaletteContext) -> None:
             if app_instance is None:
                 message = "dashboard palette is not mounted"
                 raise ConfigError(message)
-            palette = dashboard_palette_module.PaletteScreen(
-                services.commands,
+            dashboard = app_instance
+
+            def popup(popup_request: _PaletteContext) -> ModalScreen[str | None]:
+                return dashboard_palette_module.PaletteScreen(
+                    services.commands,
+                    services.queries,
+                    tmux.select_pane,
+                    on_change=services.reader.watch,
+                    action_confirmation_seconds=settings.dashboard.action_confirmation_seconds,
+                    initial_context=dashboard.attach_palette_drafts(popup_request),
+                    evidence_exporter=evidence_exporter,
+                    remember_contextual_draft=dashboard.remember_contextual_palette_draft,
+                )
+
+            def popup_closed(queued: str | None) -> None:
+                del queued
+                dashboard.refresh_task_detail_after_resume()
+
+            if request.action:
+                await dashboard.push_screen(popup(request), callback=popup_closed)
+                return
+            actions = dashboard_actions_module.ActionsListScreen(
                 services.queries,
-                tmux.select_pane,
+                popup,
+                request,
                 on_change=services.reader.watch,
                 action_confirmation_seconds=settings.dashboard.action_confirmation_seconds,
-                initial_action=action,
-                initial_context=context,
-                evidence_exporter=evidence_exporter,
-                remember_contextual_draft=(app_instance.remember_contextual_palette_draft),
-                task_routes_available=context is not None and context.task_id is not None,
+                task_routes_available=True,
                 project_diagnostics_available=(
-                    context is not None and DASHBOARD_RESOURCES_WIDGET in settings.dashboard.widgets
+                    DASHBOARD_RESOURCES_WIDGET in settings.dashboard.widgets
                 ),
-                extensions=app_instance.extension_entries(),
+                extensions=dashboard.extension_entries(),
                 resolution_screen=resolution_screen,
             )
-
-            callback = app_instance.palette_return_callback(
-                context.task_id if context is not None else None
-            )
-            await app_instance.push_screen(palette, callback=callback)
+            await dashboard.push_screen(actions, callback=dashboard.palette_return_callback())
 
         async def open_palette(action: str) -> None:
-            await push_palette(action)
+            await push_palette(dashboard_contract_module.PaletteRequest(action=action or None))
 
         async def open_palette_context(request: _PaletteContext) -> None:
-            await push_palette(request.action or "", request)
+            await push_palette(request)
 
         app_instance = dashboard_app_module.DashboardApp(
             focus_task=focus_task,
@@ -477,7 +492,7 @@ async def run_palette(
     project_root: Path, overrides: Sequence[str], origin_pane: str | None = None
 ) -> None:
     """Run the operator palette as a popup using project-local operator services."""
-    palette_module = import_module("shikiru.dashboard.palette")
+    palette_module = import_module("shikiru.dashboard.palette_app")
     resolution_module = import_module("shikiru.dashboard.resolution")
     palette_request = import_module("shikiru.dashboard.contract").PaletteRequest
     clock = build_clock()

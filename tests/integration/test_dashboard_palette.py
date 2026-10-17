@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from textual.containers import VerticalScroll
 from textual.widgets import Button, Input, Select, Static, TextArea
 from textual.widgets._select import SelectOverlay
 
 from shikiru.agents.contracts import Rung
 from shikiru.dashboard.contract import PaletteRequest
-from shikiru.dashboard.palette import PaletteApp, PaletteScreen
+from shikiru.dashboard.palette import PaletteScreen
 from shikiru.domain.commands import (
     Cancel,
     CommandStatus,
@@ -19,12 +19,11 @@ from shikiru.domain.commands import (
     Resume,
     Say,
     SetRung,
-    Stop,
     Submit,
     TakeOver,
 )
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
+from shikiru.domain.tasks import Hold, Mode, Role, Status
 from shikiru.errors import ConfigError
 from shikiru.operator.commands import (
     COMMAND_ACK_WAIT_SECONDS,
@@ -33,10 +32,10 @@ from shikiru.operator.commands import (
 )
 from shikiru.operator.queries import TASK_ACTION_ROLES
 from shikiru.store.commands import CommandQueue
-from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import FORMAT_PANE_ID, Tmux, exact_target
+from tests.support.actions import ScreenHost, popup_screen
 from tests.support.cells import CYAN_BOLD, DISABLED_KEY, GREY, rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.escalations import (
@@ -61,6 +60,7 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
     from shikiru.operator.queries import OperatorQueries
     from shikiru.store.database import Database
+    from shikiru.store.reader import StateReader
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -79,47 +79,8 @@ def _seed_live_session(connection: Connection, clock: FakeClock, task_id: str) -
     runs.set_session(run.id, "session-current", "resume-current")
 
 
-def _screen(app: PaletteApp) -> PaletteScreen:
+def _screen(app: ScreenHost) -> PaletteScreen:
     return cast("PaletteScreen", app.screen)
-
-
-async def _click_menu_button(
-    pilot: Pilot[None],
-    screen: PaletteScreen,
-    button_id: str,
-) -> None:
-    button = screen.query_one(f"#{button_id}", Button)
-    menu = screen.query_one("#palette-menu", VerticalScroll)
-    parent = button.parent
-    while parent is not None and parent is not menu:
-        if not parent.display:
-            more_actions = screen.query_one("#palette-menu-more-actions", Button)
-            menu.scroll_to_widget(more_actions, animate=False, immediate=True)
-            await pilot.pause()
-            await pilot.click(more_actions)
-            await wait_until(lambda parent=parent: parent.display, timeout=UI_WAIT_SECONDS)
-            break
-        parent = parent.parent
-    menu.scroll_to_widget(button, animate=False, immediate=True)
-    await pilot.pause()
-    await pilot.click(button)
-
-
-def _assert_context_menu_role_actions(
-    screen: PaletteScreen,
-    queue: CommandQueue,
-) -> VerticalScroll:
-    menu = screen.query_one("#palette-menu", VerticalScroll)
-    assert menu.display
-    assert screen.query_one("#palette-menu-action-submit").display
-    assert screen.query_one("#palette-menu-action-stop").display
-    assert screen.query_one("#palette-menu-action-take-over").display
-    assert not screen.query_one("#palette-menu-action-resume").display
-    assert not screen.query_one("#palette-menu-action-hand-back").display
-    assert not screen.query_one("#palette-menu-task-actions").display
-    assert screen.query_one("#palette-menu-more-actions").display
-    assert queue.pending() == []
-    return menu
 
 
 def _palette_app(
@@ -128,38 +89,19 @@ def _palette_app(
     queries: OperatorQueries,
     pane_selector: Callable[[str], Awaitable[None]],
     *,
-    initial_context: PaletteRequest | None = None,
+    initial_context: PaletteRequest,
     action_confirmation_seconds: float = ACTION_CONFIRMATION_SECONDS,
-) -> PaletteApp:
-    return PaletteApp(
-        commands,
-        queries,
-        pane_selector,
-        action_confirmation_seconds=action_confirmation_seconds,
-        on_change=reader.watch,
-        initial_context=initial_context,
+) -> ScreenHost:
+    return ScreenHost(
+        popup_screen(
+            commands,
+            queries,
+            reader,
+            pane_selector,
+            initial_context,
+            action_confirmation_seconds=action_confirmation_seconds,
+        )
     )
-
-
-async def _open_action(pilot: Pilot[None], screen: PaletteScreen, action: str) -> None:
-    menu = screen.query_one("#palette-menu", VerticalScroll)
-    if menu.display:
-        button = screen.query_one(f"#palette-menu-action-{action}", Button)
-        assert button.display
-        await pilot.click(button)
-    else:
-        screen.query_one("#action", Select).value = action
-        await pilot.pause()
-
-
-async def _set_target(pilot: Pilot[None], screen: PaletteScreen, task_id: str) -> None:
-    screen.query_one("#task-id", Input).value = task_id
-    await pilot.pause()
-
-
-async def _set_role(pilot: Pilot[None], screen: PaletteScreen, role: Role) -> None:
-    screen.query_one("#role", Select).value = role.value
-    await pilot.pause()
 
 
 async def _wait_for_confirmation(screen: PaletteScreen, *, shown: bool = True) -> None:
@@ -205,7 +147,7 @@ async def test_palette_context_targets_message_and_rung_without_id_entry(
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Context task")
     commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    context = PaletteRequest(task_id=task.id, role=Role.IMPLEMENTER.value)
+    context = PaletteRequest(action="message", task_id=task.id, role=Role.IMPLEMENTER.value)
     app = _palette_app(reader, commands, queries, _selection_must_not_run, initial_context=context)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
@@ -215,10 +157,6 @@ async def test_palette_context_targets_message_and_rung_without_id_entry(
         assert cast("Select[str]", screen.query_one("#role", Select)).value == (
             Role.IMPLEMENTER.value
         )
-
-        screen.query_one("#action-search", Input).value = "message"
-        await pilot.pause()
-        await _open_action(pilot, screen, "message")
         screen.query_one("#message", TextArea).text = "Check the failing integration path."
         await pilot.click("#palette-submit")
         await _wait_for_confirmation(screen)
@@ -229,10 +167,16 @@ async def test_palette_context_targets_message_and_rung_without_id_entry(
             command_id=queue.pending()[0].id,
         )
 
-        menu = screen.query_one("#palette-menu", VerticalScroll)
-        await pilot.click("#palette-back-to-menu")
-        await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
-        await _click_menu_button(pilot, screen, "palette-menu-action-rung")
+    rung_app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=replace(context, action="rung"),
+    )
+    async with rung_app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        screen = _screen(rung_app)
         screen.query_one("#rung", Input).value = "codex:sol:high"
         assert not screen.query_one("#palette-submit", Button).disabled, _static_text(
             screen, "#palette-action-state"
@@ -244,188 +188,6 @@ async def test_palette_context_targets_message_and_rung_without_id_entry(
             role=Role.IMPLEMENTER,
             rung=_LIVE_RUNG,
         )
-
-
-async def test_context_menu_keeps_applicable_role_actions_and_form_drafts(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    task = seed_task(connection, clock, title="Context menu role target")
-    TaskStore(connection, clock).set_panes(task.id, {Role.IMPLEMENTER: "%7"})
-    run = RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, _LIVE_RUNG)
-    RunStore(connection, clock).set_session(run.id, "menu-session", "menu-resume")
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(task_id=task.id),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        menu = _assert_context_menu_role_actions(screen, queue)
-
-        await _click_menu_button(pilot, screen, "palette-menu-action-message")
-        assert not menu.display
-        assert screen.query_one("#field-role").display
-        assert screen.query_one("#field-message").display
-        _assert_fixed_task_context_title(screen, task.id)
-        message = screen.query_one("#message", TextArea)
-        await wait_until(lambda: app.focused is message, timeout=UI_WAIT_SECONDS)
-        guidance = "Keep the new parser branch behind the existing validation."
-        await pilot.press(*guidance)
-        await pilot.click("#palette-back-to-menu")
-        await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
-        assert message.text == guidance
-        assert queue.pending() == []
-
-        await _click_menu_button(pilot, screen, "palette-menu-action-message")
-        assert message.text == guidance
-        assert screen.query_one("#field-role").display
-        await pilot.click("#palette-back-to-menu")
-        await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
-        await _click_menu_button(pilot, screen, "palette-menu-action-take-over")
-        role = cast("Select[str]", screen.query_one("#role", Select))
-        assert role.value == Role.IMPLEMENTER.value
-        await wait_until(lambda: app.focused is role, timeout=UI_WAIT_SECONDS)
-        assert screen.query_one("#field-role").display
-        assert not screen.query_one("#field-message").display
-        assert queue.pending() == []
-
-        current = TaskStore(connection, clock).require(task.id)
-        TaskStore(connection, clock).apply_transition(
-            task.id,
-            Transition.stay(current, step=None, status=Status.CANCELLED),
-        )
-        clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
-        await wait_until(
-            lambda: not screen.query_one("#palette-menu-action-take-over").display,
-            timeout=UI_WAIT_SECONDS,
-        )
-        assert not screen.query_one("#palette-menu-action-message").display
-        assert queue.pending() == []
-
-
-async def test_project_context_menu_has_no_task_targets(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        assert screen.query_one("#palette-menu").display
-        assert _static_text(screen, "#palette-menu-context") == "Project"
-        assert not screen.query_one("#palette-menu-task-actions").display
-        assert not screen.query_one("#palette-menu-extensions").display
-        assert not screen.query_one("#palette-menu-more-actions").display
-        assert screen.query_one("#palette-menu-action-submit").display
-        assert screen.query_one("#palette-menu-action-stop").display
-        assert queue.pending() == []
-
-
-async def test_context_menu_preserves_an_explicit_unavailable_role(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    task = seed_task(connection, clock, title="Explicit role target")
-    TaskStore(connection, clock).set_panes(task.id, {Role.IMPLEMENTER: "%7"})
-    run = RunStore(connection, clock).start(task.id, Role.IMPLEMENTER, _LIVE_RUNG)
-    RunStore(connection, clock).set_session(run.id, "explicit-session", "explicit-resume")
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(task_id=task.id, role=Role.LEADER.value),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        assert screen.query_one("#palette-menu-action-take-over").display
-        await _click_menu_button(pilot, screen, "palette-menu-action-take-over")
-        assert cast("Select[str]", screen.query_one("#role", Select)).value == Role.LEADER.value
-        assert screen.query_one("#palette-submit", Button).disabled
-        assert queue.pending() == []
-
-
-async def test_contextual_project_actions_queue_only_after_explicit_submission(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    task = seed_task(connection, clock, title="Project action context")
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(task_id=task.id),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        menu = screen.query_one("#palette-menu", VerticalScroll)
-        assert menu.display
-        assert not screen.query_one("#palette-menu-project-actions").display
-        await pilot.click("#palette-menu-more-actions")
-        assert screen.query_one("#palette-menu-project-actions").display
-        assert queue.pending() == []
-
-        guidance = "Record the requested work before the next release."
-        for action in ("submit", "stop"):
-            button = screen.query_one(f"#palette-menu-action-{action}", Button)
-            menu.scroll_to_widget(button, animate=False, immediate=True)
-            button.scroll_visible(animate=False, force=True)
-            button.focus()
-            await pilot.wait_for_scheduled_animations()
-            await pilot.pause()
-            assert button.region.y >= menu.region.y
-            assert button.region.bottom <= menu.region.bottom
-            await pilot.click(button)
-            await wait_until(lambda: not menu.display, timeout=UI_WAIT_SECONDS)
-
-            if action == "submit":
-                screen.query_one("#request", TextArea).text = guidance
-            await pilot.click("#palette-submit")
-            expected_pending_count = 1 if action == "submit" else 2
-            await wait_until(
-                lambda count=expected_pending_count: len(queue.pending()) == count,
-                timeout=UI_WAIT_SECONDS,
-            )
-
-            if action == "submit":
-                submitted = queue.pending()[0].command
-                assert isinstance(submitted, Submit)
-                assert submitted.request == guidance
-            else:
-                assert isinstance(queue.pending()[1].command, Stop)
-
-            if action == "submit":
-                await pilot.click("#palette-back-to-menu")
-                await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
 
 
 @pytest.mark.usefixtures("colour_terminal")
@@ -460,7 +222,6 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
         await pilot.pause()
         screen = _screen(app)
         _assert_fixed_task_context_title(screen, task.id)
-        assert not screen.query_one("#palette-back-to-menu").display
         role = cast("Select[str]", screen.query_one("#role", Select))
         assert role.value == Role.IMPLEMENTER.value
         assert role.query_one(SelectOverlay).option_count == len(TASK_ACTION_ROLES)
@@ -510,20 +271,6 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
         await _wait_for_hint_key(submit, CYAN_BOLD)
 
 
-async def _assert_menu_routes_and_rejected_keys(
-    connection: Connection,
-    reader: StateReader,
-    clock: FakeClock,
-    tmp_path: Path,
-    task_id: str,
-) -> None:
-    await _assert_rejected_pause_keeps_hint_keys(connection, reader, clock, tmp_path, task_id)
-    for action in ("resume", "pause", "cancel"):
-        await _assert_menu_action_returns_to_menu_after_one_command(
-            connection, reader, clock, tmp_path, task_id=task_id, action=action
-        )
-
-
 async def _assert_rejected_pause_keeps_hint_keys(
     connection: Connection,
     reader: StateReader,
@@ -564,57 +311,6 @@ async def _assert_rejected_pause_keeps_hint_keys(
         await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
 
 
-async def _assert_menu_action_returns_to_menu_after_one_command(
-    connection: Connection,
-    reader: StateReader,
-    clock: FakeClock,
-    tmp_path: Path,
-    *,
-    task_id: str,
-    action: str,
-) -> None:
-    commands, queries, queue = operator_services(
-        connection,
-        reader,
-        clock,
-        tmp_path,
-        engine_up=True,
-    )
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(task_id=task_id),
-        action_confirmation_seconds=ACTION_CONFIRMATION_EXPIRY_SECONDS,
-    )
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        screen = await _mounted_palette(app)
-        menu = screen.query_one("#palette-menu", VerticalScroll)
-        submitted_before = reader.command_history(limit=1).total_count
-        await _click_menu_button(pilot, screen, f"palette-menu-action-{action}")
-        await wait_until(lambda: not menu.display, timeout=UI_WAIT_SECONDS)
-        submit = screen.query_one("#palette-submit", Button)
-        await wait_until(lambda: not submit.disabled, timeout=UI_WAIT_SECONDS)
-        await pilot.click("#palette-submit")
-        await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
-        queue.mark_done(queue.pending()[0].id)
-        clock.advance(COMMAND_POLL_SECONDS)
-        await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
-        await wait_until(
-            lambda: screen.focused is not None and menu in screen.focused.ancestors_with_self,
-            timeout=UI_WAIT_SECONDS,
-        )
-        entry = screen.query_one(f"#palette-menu-action-{action}", Button)
-        await wait_until(lambda: _CONFIRMED_GLYPH in str(entry.label), timeout=UI_WAIT_SECONDS)
-        await wait_until(lambda: _CONFIRMED_GLYPH not in str(entry.label), timeout=UI_WAIT_SECONDS)
-        assert not submit.display
-        assert reader.command_history(limit=1).total_count == submitted_before + 1
-        assert app.is_running
-        await screen.action_close()
-        await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
-
-
 @pytest.mark.usefixtures("colour_terminal")
 async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
     connection: Connection,
@@ -625,7 +321,7 @@ async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
     task = seed_task(connection, clock, title="Enter confirmations")
     commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
 
-    def open_action(action: str) -> PaletteApp:
+    def open_action(action: str) -> ScreenHost:
         return _palette_app(
             reader,
             commands,
@@ -639,7 +335,6 @@ async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
         await pilot.pause()
         screen = _screen(app)
         submit = screen.query_one("#palette-submit", Button)
-        assert not screen.query_one("#palette-back-to-menu").display
         assert _no_static_scrollbar(screen)
         await pilot.press("enter")
         await wait_until(lambda: "again" in str(submit.label), timeout=UI_WAIT_SECONDS)
@@ -681,114 +376,13 @@ async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
         submit = screen.query_one("#palette-submit", Button)
         await wait_until(lambda: not submit.disabled, timeout=UI_WAIT_SECONDS)
         assert not submit.can_focus
-        assert not screen.query_one("#palette-back-to-menu").display
         assert _no_static_scrollbar(screen)
         await pilot.press("enter", "enter", "enter")
         await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
         assert len(queue.pending()) == 3
         assert queue.pending()[2].command == Resume(task_id=task.id)
 
-    await _assert_menu_routes_and_rejected_keys(connection, reader, clock, tmp_path, task.id)
-
-
-async def test_palette_target_follows_search_choice_and_stays_manually_editable(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    context_task = seed_task(connection, clock, title="Detail task")
-    other_task = seed_task(connection, clock, title="Other task")
-    selected_task = seed_task(connection, clock, title="Chosen by title")
-    commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(
-            action="message",
-            task_id=context_task.id,
-            role=Role.LEADER.value,
-        ),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        screen.query_one("#task-search", Input).value = context_task.title
-        await pilot.pause()
-        task_id = screen.query_one("#task-id", Input)
-        task_choice = cast("Select[str]", screen.query_one("#task-choice", Select))
-        task_id.value = other_task.id
-        await wait_until(
-            lambda: task_id.value == other_task.id and task_choice.value == other_task.id,
-            timeout=UI_WAIT_SECONDS,
-        )
-        task_id.value = "T-999"
-        await wait_until(
-            lambda: task_id.value == "T-999" and task_choice.value is Select.BLANK,
-            timeout=UI_WAIT_SECONDS,
-        )
-
-        screen.query_one("#task-search", Input).value = selected_task.title
-        await pilot.pause()
-        task_choice.focus()
-        task_choice.value = selected_task.id
-        await pilot.pause()
-        assert task_id.value == selected_task.id
-        screen.query_one("#message", TextArea).text = "Use the deliberately selected task."
-        await pilot.click("#palette-submit")
-        await _wait_for_confirmation(screen)
-
-        (queued,) = queue.pending()
-        assert queued.command == Say(
-            task_id=selected_task.id,
-            role=Role.LEADER,
-            text="Use the deliberately selected task.",
-            command_id=queued.id,
-        )
-
-
-async def test_palette_task_search_is_bounded_current_and_retains_selected_target(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    for index in range(52):
-        seed_task(connection, clock, title=f"Older palette task {index}")
-    commands, queries, _queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(reader, commands, queries, _selection_must_not_run)
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        await _open_action(pilot, screen, "message")
-        assert "Showing 50 of 52 matches" in _static_text(screen, "#palette-task-count")
-        assert screen.query_one("#palette-task-more", Button).display
-        screen.query_one("#palette-task-more", Button).focus()
-        await pilot.press("enter")
-        await wait_until(
-            lambda: "Showing 52 of 52 matches" in _static_text(screen, "#palette-task-count"),
-            timeout=UI_WAIT_SECONDS,
-        )
-        assert not screen.query_one("#palette-task-more", Button).display
-
-        arriving_task = seed_task(connection, clock, title="Arrived while palette is open")
-        screen.query_one("#task-search", Input).value = "Arrived while palette is open"
-        await pilot.pause()
-        assert "Showing 1 of 1 matches" in _static_text(screen, "#palette-task-count")
-        task_choice = cast("Select[str]", screen.query_one("#task-choice", Select))
-        task_choice.focus()
-        task_choice.value = arriving_task.id
-        await pilot.pause()
-        screen.query_one("#task-search", Input).value = "No current match"
-        await pilot.pause()
-
-        assert "Showing 0 of 0 matches" in _static_text(screen, "#palette-task-count")
-        assert task_choice.value == arriving_task.id
-        assert screen.query_one("#task-id", Input).value == arriving_task.id
+    await _assert_rejected_pause_keeps_hint_keys(connection, reader, clock, tmp_path, task.id)
 
 
 async def test_palette_serializes_pending_action_and_closes_without_worker_errors(
@@ -811,13 +405,12 @@ async def test_palette_serializes_pending_action_and_closes_without_worker_error
         commands,
         queries,
         _selection_must_not_run,
-        initial_context=PaletteRequest(task_id=task.id, role=Role.LEADER.value),
+        initial_context=PaletteRequest(action="message", task_id=task.id, role=Role.LEADER.value),
     )
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(app)
-        await _open_action(pilot, screen, "message")
         screen.query_one("#message", TextArea).text = "Send once while awaiting acknowledgement."
         await pilot.click("#palette-submit")
         await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
@@ -865,13 +458,12 @@ async def test_palette_shutdown_keeps_a_pending_command_without_stale_ui_refresh
         commands,
         queries,
         _selection_must_not_run,
-        initial_context=PaletteRequest(task_id=task.id, role=Role.LEADER.value),
+        initial_context=PaletteRequest(action="message", task_id=task.id, role=Role.LEADER.value),
     )
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(app)
-        await _open_action(pilot, screen, "message")
         screen.query_one("#message", TextArea).text = "Keep the durable command on shutdown."
         await pilot.click("#palette-submit")
         await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
@@ -996,7 +588,7 @@ async def test_palette_observes_outcome_after_ack_wait_without_form_edits(
         assert len(queue.pending()) == 0
 
 
-async def test_pending_form_guards_survive_form_switches_and_palette_reopen(
+async def test_pending_form_guards_survive_palette_reopen(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -1004,7 +596,7 @@ async def test_pending_form_guards_survive_form_switches_and_palette_reopen(
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Multiple pending forms")
     commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    context = PaletteRequest(task_id=task.id, role=Role.LEADER.value)
+    context = PaletteRequest(action="message", task_id=task.id, role=Role.LEADER.value)
     first_app = _palette_app(
         reader, commands, queries, _selection_must_not_run, initial_context=context
     )
@@ -1012,7 +604,6 @@ async def test_pending_form_guards_survive_form_switches_and_palette_reopen(
     async with first_app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(first_app)
-        await _open_action(pilot, screen, "message")
         screen.query_one("#message", TextArea).text = "Do not send twice."
         await pilot.click("#palette-submit")
         await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
@@ -1020,32 +611,21 @@ async def test_pending_form_guards_survive_form_switches_and_palette_reopen(
         await _wait_for_confirmation(screen)
         assert screen.query_one("#message", TextArea).text == ""
 
-        menu = screen.query_one("#palette-menu", VerticalScroll)
-        await pilot.click("#palette-back-to-menu")
-        await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
-        await _click_menu_button(pilot, screen, "palette-menu-action-pause")
-        await pilot.click("#palette-submit")
-        await wait_until(lambda: len(queue.pending()) == 2, timeout=UI_WAIT_SECONDS)
-        pause_id = queue.pending()[1].id
-        await wait_until(lambda: menu.display, timeout=UI_WAIT_SECONDS)
-
-        await _click_menu_button(pilot, screen, "palette-menu-action-message")
-        assert screen.query_one("#message", TextArea).text == ""
-        assert screen.query_one("#palette-submit", Button).disabled
-        await pilot.click("#palette-submit")
-        assert [item.id for item in queue.pending()] == [say_id, pause_id]
-        await pilot.press("escape")
-
-    reopened = _palette_app(
+    pause_app = _palette_app(
         reader,
         commands,
         queries,
         _selection_must_not_run,
-        initial_context=PaletteRequest(
-            action="message",
-            task_id=task.id,
-            role=Role.LEADER.value,
-        ),
+        initial_context=replace(context, action="pause"),
+    )
+    async with pause_app.run_test(size=_APP_SIZE) as pilot:
+        await pilot.pause()
+        await pilot.press("enter", "enter")
+        await wait_until(lambda: len(queue.pending()) == 2, timeout=UI_WAIT_SECONDS)
+        pause_id = queue.pending()[1].id
+
+    reopened = _palette_app(
+        reader, commands, queries, _selection_must_not_run, initial_context=context
     )
     async with reopened.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -1065,7 +645,10 @@ async def test_pending_submit_recovers_after_store_allocates_its_task_id(
     clock = FakeClock(_START)
     commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
     request = "One pending task submission"
-    first_app = _palette_app(reader, commands, queries, _selection_must_not_run)
+    submit = PaletteRequest(action="submit")
+    first_app = _palette_app(
+        reader, commands, queries, _selection_must_not_run, initial_context=submit
+    )
 
     async with first_app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
@@ -1079,7 +662,9 @@ async def test_pending_submit_recovers_after_store_allocates_its_task_id(
         assert queued.command.title == request
         await pilot.press("escape")
 
-    reopened = _palette_app(reader, commands, queries, _selection_must_not_run)
+    reopened = _palette_app(
+        reader, commands, queries, _selection_must_not_run, initial_context=submit
+    )
     async with reopened.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(reopened)
@@ -1124,62 +709,6 @@ async def test_palette_revalidates_task_state_before_queueing(
     assert not queue.pending()
 
 
-async def test_implicit_role_default_tracks_task_selection_until_explicitly_changed(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(_START)
-    leader_task = seed_task(connection, clock, title="Leader default")
-    implementer_task = seed_task(
-        connection,
-        clock,
-        title="Implementer default",
-        mode=Mode.IMPLEMENT,
-    )
-    TaskStore(connection, clock).apply_transition(
-        implementer_task.id,
-        Transition.stay(implementer_task, step=Step.IMPLEMENT, status=Status.RUNNING),
-    )
-    commands, queries, _queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
-        commands,
-        queries,
-        _selection_must_not_run,
-        initial_context=PaletteRequest(
-            action="message",
-            task_id=leader_task.id,
-        ),
-    )
-
-    async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
-        role = cast("Select[str]", screen.query_one("#role", Select))
-        task_id = screen.query_one("#task-id", Input)
-        assert role.value == Role.LEADER.value
-
-        screen.query_one("#task-search", Input).value = implementer_task.title
-        await pilot.pause()
-        task_choice = cast("Select[str]", screen.query_one("#task-choice", Select))
-        task_choice.focus()
-        task_choice.value = implementer_task.id
-        await wait_until(
-            lambda: task_id.value == implementer_task.id and role.value == Role.IMPLEMENTER.value,
-            timeout=UI_WAIT_SECONDS,
-        )
-
-        role.focus()
-        role.value = Role.LEADER.value
-        await pilot.pause()
-        task_id.value = leader_task.id
-        await wait_until(lambda: task_id.value == leader_task.id, timeout=UI_WAIT_SECONDS)
-        task_id.value = implementer_task.id
-        await pilot.pause()
-        assert role.value == Role.LEADER.value
-
-
 async def _selection_must_not_run(pane_id: str) -> None:
     del pane_id
     raise AssertionError
@@ -1194,7 +723,7 @@ def _static_text(screen: PaletteScreen, selector: str) -> str:
     return rendered.plain
 
 
-async def _mounted_palette(app: PaletteApp) -> PaletteScreen:
+async def _mounted_palette(app: ScreenHost) -> PaletteScreen:
     await wait_until(
         lambda: isinstance(app.screen, PaletteScreen) and app.screen.is_mounted,
         timeout=UI_WAIT_SECONDS,
@@ -1210,8 +739,6 @@ def _no_static_scrollbar(screen: PaletteScreen) -> bool:
 
 
 def _assert_fixed_task_context_title(screen: PaletteScreen, task_id: str) -> None:
-    assert not screen.query_one("#field-task-search").display
-    assert not screen.query_one("#field-task-choice").display
     assert not screen.query_one("#field-task-id").display
     assert _static_text(screen, "#palette-title") == f"Message · {task_id}"
 
@@ -1235,12 +762,12 @@ async def _fill_submit(pilot: Pilot[None], screen: PaletteScreen, task: Task) ->
 
 
 async def _fill_prioritize(pilot: Pilot[None], screen: PaletteScreen, task: Task) -> None:
-    await _set_target(pilot, screen, task.id)
+    del pilot, task
     screen.query_one("#priority", Input).value = "17"
 
 
 async def _fill_pause_now(pilot: Pilot[None], screen: PaletteScreen, task: Task) -> None:
-    await _set_target(pilot, screen, task.id)
+    del pilot, screen, task
 
 
 def _is_typed_submit(command: Command, task: Task) -> bool:
@@ -1292,12 +819,19 @@ async def test_palette_submit_queues_the_command_and_shows_its_ack(
     clock = FakeClock(_START)
     task = seed_task(connection, clock)
     commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(reader, commands, queries, _selection_must_not_run)
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(
+            action=action, task_id=None if action == "submit" else task.id
+        ),
+    )
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(app)
-        await _open_action(pilot, screen, action)
         await fill(pilot, screen, task)
         await pilot.click("#palette-submit")
         await _wait_for_ack(screen)
@@ -1355,14 +889,17 @@ async def test_palette_takeover_queues_a_task_role_command_and_selects_the_pane_
             message = f"could not select {pane_id}"
             raise ConfigError(message)
 
-    app = _palette_app(reader, commands, queries, select_pane)
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        select_pane,
+        initial_context=PaletteRequest(action="take-over", task_id=task.id, role=Role.LEADER.value),
+    )
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(app)
-        await _open_action(pilot, screen, "take-over")
-        await _set_target(pilot, screen, task.id)
-        await _set_role(pilot, screen, Role.LEADER)
         await pilot.click("#palette-submit")
         if engine_up:
             await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
@@ -1418,14 +955,19 @@ async def test_completed_takeover_selects_the_role_pane_and_its_window(
     commands, queries, queue = operator_services(
         connection, reader, clock, tmp_path, engine_up=True
     )
-    app = _palette_app(reader, commands, queries, tmux.select_pane)
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        tmux.select_pane,
+        initial_context=PaletteRequest(
+            action="take-over", task_id=task.id, role=Role.IMPLEMENTER.value
+        ),
+    )
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(app)
-        await _open_action(pilot, screen, "take-over")
-        await _set_target(pilot, screen, task.id)
-        await _set_role(pilot, screen, Role.IMPLEMENTER)
         await pilot.click("#palette-submit")
         await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         queued = queue.pending()
@@ -1526,13 +1068,17 @@ async def test_palette_disables_takeover_without_task_or_role_pane(
     commands, queries, queue = operator_services(
         connection, reader, clock, tmp_path, engine_up=True
     )
-    app = _palette_app(reader, commands, queries, _selection_must_not_run)
+    app = _palette_app(
+        reader,
+        commands,
+        queries,
+        _selection_must_not_run,
+        initial_context=PaletteRequest(action="take-over", task_id=task_id),
+    )
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await pilot.pause()
         screen = _screen(app)
-        await _open_action(pilot, screen, "take-over")
-        await _set_target(pilot, screen, task_id)
         assert screen.query_one("#palette-submit", Button).disabled
         assert expected in _static_text(screen, "#palette-action-state")
         assert not queue.pending()
