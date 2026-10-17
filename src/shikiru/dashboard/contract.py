@@ -138,12 +138,18 @@ ActivateAttentionDecision = Callable[[], Awaitable[bool]]
 
 
 class TaskBrowserFilter(StrEnum):
-    """A task browser category with membership and order defined by Workspace §5.1."""
+    """A task browser category (Workspace §5.1) or one exact task status."""
 
     ACTIVE = "active"
     WAITING = "waiting"
     HISTORY = "history"
     ALL = "all"
+    RUNNING = "running"
+    INTEGRATING = "integrating"
+    ESCALATED = "escalated"
+    QUEUED = "queued"
+    DONE = "done"
+    CANCELLED = "cancelled"
 
 
 class WidgetPlacement(StrEnum):

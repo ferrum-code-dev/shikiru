@@ -704,7 +704,7 @@ async def test_home_search_preserves_matching_terminal_tasks_across_loaded_pages
         task_list = widget.query_one("#task-browser-list", ListView)
         count = widget.query_one("#task-browser-count", Static)
         await wait_until(
-            lambda: f"of {MATCHING_TERMINAL_COUNT}" in _static_text(count),
+            lambda: f"search: {TERMINAL_SEARCH_QUERY}" in _static_text(count),
             timeout=5.0,
         )
         await wait_until(lambda: len(task_list.children) == PAGE_SIZE, timeout=5.0)
@@ -992,8 +992,6 @@ async def test_dashboard_slash_focuses_search_and_a_slash_inside_search_is_text(
         assert search.value == "/"
         await pilot.press("escape")
         assert search.value == ""
-        assert search.has_focus
-        await pilot.press("escape")
         assert not search.display
         await pilot.press("?")
         await pilot.pause()

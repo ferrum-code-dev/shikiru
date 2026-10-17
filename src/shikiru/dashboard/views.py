@@ -192,6 +192,15 @@ _ACTIVITY_KINDS = (
     EventKind.ENGINE_RECOVERED,
 )
 _ACTIVE_TURN_STATUSES = (Status.RUNNING, Status.INTEGRATING)
+_MOTION_FILTERS = frozenset(
+    {
+        TaskBrowserFilter.ACTIVE,
+        TaskBrowserFilter.ALL,
+        TaskBrowserFilter.RUNNING,
+        TaskBrowserFilter.INTEGRATING,
+        TaskBrowserFilter.ESCALATED,
+    }
+)
 _RESET_AT_FIELD = "resets_at"
 _QUOTA_TURN_LIFECYCLE = (
     EventKind.STEP_STARTED,
@@ -607,7 +616,7 @@ class StateDashboardViews:
         motion_task_ids: set[str] = set()
         stalled_ids: set[str] = set()
         agent_processing_ids: set[str] = set()
-        if task_filter in (TaskBrowserFilter.ACTIVE, TaskBrowserFilter.ALL):
+        if task_filter in _MOTION_FILTERS:
             current_turn_tasks = self._cached_tasks(statuses=_ACTIVE_TURN_STATUSES)
             motion_task_ids.update(task.id for task in current_turn_tasks)
             frames = self._active_turn_frames(now, engine_running=self.engine_up())

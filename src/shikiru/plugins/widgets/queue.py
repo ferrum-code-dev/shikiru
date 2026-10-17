@@ -19,6 +19,7 @@ from shikiru.dashboard.contract import (
     TaskBrowserView,
     WidgetPlacement,
 )
+from shikiru.plugins.widgets.queue_hint import task_list_header
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.keys import key_hint
 from shikiru.ui.recent_window import RecentWindow, step_selection
@@ -121,7 +122,28 @@ FILTER_BUTTONS = (
     (TaskBrowserFilter.ALL, "task-filter-all", "All"),
 )
 FILTER_BY_BUTTON_ID = {button_id: task_filter for task_filter, button_id, _ in FILTER_BUTTONS}
-FILTER_LABELS = {task_filter: label for task_filter, _, label in FILTER_BUTTONS}
+STATUS_FILTER_CYCLE = (
+    TaskBrowserFilter.ALL,
+    TaskBrowserFilter.RUNNING,
+    TaskBrowserFilter.INTEGRATING,
+    TaskBrowserFilter.ESCALATED,
+    TaskBrowserFilter.QUEUED,
+    TaskBrowserFilter.DONE,
+    TaskBrowserFilter.CANCELLED,
+)
+FILTER_LABELS = {
+    **{task_filter: label for task_filter, _, label in FILTER_BUTTONS},
+    **{task_filter: task_filter.value.capitalize() for task_filter in STATUS_FILTER_CYCLE[1:]},
+}
+STATUS_FILTER_WORKER = "task-browser-status-filter"
+SEARCH_FIELD_CLASS = "focus-search"
+SEARCH_OPEN_CLASS = "search-open"
+HEADER_TINY_MAX_ROWS = 8
+ROW_STATUS_MARKERS = {
+    TASK_STATUS_DONE: (TASK_MARKER_DONE, SAGE),
+    TASK_STATUS_CANCELLED: (TASK_MARKER_CANCELLED, SECONDARY_TEXT_COLOR),
+    TASK_STATUS_QUEUED: (TASK_MARKER_QUEUED, SECONDARY_TEXT_COLOR),
+}
 
 
 class _BrowserListItem(ListItem):
@@ -269,23 +291,21 @@ def _focus_row_text(row: TaskBrowserRow, *, status_bright: bool = False) -> Text
 
 
 def _focus_row_marker(row: TaskBrowserRow) -> tuple[str, str]:
-    marker = TASK_MARKER_CURRENT
-    style = STEEL_BLUE
-    if row.status == TASK_STATUS_DONE:
-        marker, style = TASK_MARKER_DONE, SAGE
-    elif row.status == TASK_STATUS_CANCELLED:
-        marker, style = TASK_MARKER_CANCELLED, SECONDARY_TEXT_COLOR
-    elif row.open_decision:
-        marker, style = TASK_MARKER_DECISION, AMBER
-    elif row.diagnosed_stall:
-        marker, style = TASK_MARKER_STALL, ALERT_COLOR
-    elif TASK_HOLD_INTERVENTION in row.holds:
-        marker = TASK_MARKER_OPERATOR
-    elif TASK_HOLD_PAUSED in row.holds:
-        marker, style = TASK_MARKER_PAUSED, AMBER
-    elif row.status == TASK_STATUS_QUEUED:
-        marker, style = TASK_MARKER_QUEUED, SECONDARY_TEXT_COLOR
-    return marker, style
+    if row.status in TASK_TERMINAL_STATUSES:
+        return ROW_STATUS_MARKERS[row.status]
+    if row.open_decision:
+        return TASK_MARKER_DECISION, AMBER
+    if row.diagnosed_stall:
+        return TASK_MARKER_STALL, ALERT_COLOR
+    if TASK_HOLD_INTERVENTION in row.holds:
+        return TASK_MARKER_OPERATOR, STEEL_BLUE
+    if TASK_HOLD_PAUSED in row.holds:
+        return TASK_MARKER_PAUSED, AMBER
+    return _status_marker(row.status)
+
+
+def _status_marker(status: str) -> tuple[str, str]:
+    return ROW_STATUS_MARKERS.get(status, (TASK_MARKER_CURRENT, STEEL_BLUE))
 
 
 def _terminal_state(row: TaskBrowserRow) -> str:
@@ -394,7 +414,12 @@ class QueuePanel(Vertical):
     #task-browser-filters Button:focus {
         border: round $focus; color: $primary-text; text-style: bold reverse;
     }
-    #task-browser-count { height: 1; margin-bottom: 1; color: $steel-blue; }
+    #task-browser-count {
+        height: 1; margin-bottom: 1; color: $steel-blue;
+        text-wrap: nowrap; text-overflow: ellipsis;
+    }
+    #task-browser-count.search-open { margin-bottom: 0; }
+    #task-browser-search.focus-search { height: 1; border: none; padding: 0; margin-bottom: 1; }
     #task-browser-list {
         height: 12; min-height: 2; border: none; padding: 0; background: $background;
         scrollbar-size-vertical: $scrollbar-width;
@@ -525,10 +550,7 @@ class QueuePanel(Vertical):
 
     def compose(self) -> ComposeResult:
         search = Input(placeholder="Search task ID or title", id=SEARCH_INPUT_ID)
-        if self._focus_layout:
-            search.display = False
-            yield search
-        else:
+        if not self._focus_layout:
             with Horizontal(id="task-browser-tools"):
                 yield search
                 yield self._clear_button
@@ -536,6 +558,10 @@ class QueuePanel(Vertical):
                 yield from self._filter_buttons.values()
         with self._active_block:
             yield self._count
+            if self._focus_layout:
+                search.display = False
+                search.add_class(SEARCH_FIELD_CLASS)
+                yield search
             yield self._empty
             yield self._family_context
             if self._focus_layout:
@@ -567,6 +593,8 @@ class QueuePanel(Vertical):
     def on_resize(self, event: events.Resize) -> None:
         del event
         self._render_recent_pager()
+        if self._view is not None and self._count.is_attached:
+            self._render_count(self._view)
 
     def on_unmount(self) -> None:
         if self._remove_motion_callback is not None:
@@ -614,7 +642,7 @@ class QueuePanel(Vertical):
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id == SEARCH_INPUT_ID:
-            self.focus_task_results()
+            self._close_search()
 
     def focus_task_results(self) -> None:
         """Focus the visible task list, keeping empty result sets usable."""
@@ -633,8 +661,25 @@ class QueuePanel(Vertical):
     def open_search(self) -> None:
         """Focus the task search from contextual keyboard navigation."""
         search = self.query_one(f"#{SEARCH_INPUT_ID}", Input)
-        search.display = True
+        self._show_search_field(search, visible=True)
         search.focus()
+
+    def cycle_status_filter(self) -> None:
+        """Show the next task status filter, keeping the search text and the selection."""
+        cycle = STATUS_FILTER_CYCLE
+        position = cycle.index(self._filter) if self._filter in cycle else 0
+        self._filter = cycle[(position + 1) % len(cycle)]
+        self.run_worker(self._refresh(reset_pages=True), group=STATUS_FILTER_WORKER)
+
+    def _close_search(self) -> None:
+        search = self.query_one(f"#{SEARCH_INPUT_ID}", Input)
+        if self._focus_layout:
+            self._show_search_field(search, visible=False)
+        self.focus_task_results()
+
+    def _show_search_field(self, search: Input, *, visible: bool) -> None:
+        search.display = visible
+        self._count.set_class(visible and self._focus_layout, SEARCH_OPEN_CLASS)
 
     @property
     def selected_task_missing(self) -> bool:
@@ -689,15 +734,8 @@ class QueuePanel(Vertical):
         focused = cast("App[object]", self.app).focused
         if event.key == ESCAPE_KEY and isinstance(focused, Input) and focused.id == SEARCH_INPUT_ID:
             event.stop()
-            if focused.value:
-                focused.value = ""
-            else:
-                if self._focus_layout:
-                    focused.display = False
-                self.focus_task_results()
-            return
-        if isinstance(focused, Input):
-            return
+            focused.value = ""
+            self._close_search()
 
     async def move_selection(self, step: int) -> None:
         """Move the task selection by `step` rows across the visible task lists."""
@@ -1268,21 +1306,28 @@ class QueuePanel(Vertical):
         return widget_is_current(self) and list_view.is_attached and self in list_view.ancestors
 
     def _render_count(self, view: TaskBrowserView) -> None:
-        is_default_focus = (
-            self._focus_layout and view.filter is TaskBrowserFilter.ALL and not view.search
+        if self._focus_layout:
+            self._count.update(self._task_list_header(view))
+            return
+        count = Text(
+            f"Tasks · {FILTER_LABELS[view.filter].lower()} · "
+            f"{len(view.rows)} of {view.matching_count}"
         )
-        if is_default_focus:
-            count = Text("Tasks")
-        else:
-            count = Text(
-                f"Tasks · {FILTER_LABELS[view.filter].lower()} · "
-                f"{len(view.rows)} of {view.matching_count}"
-            )
         if view.search:
             count += f" · Search: {view.search}"
         if view.selected_task_missing and view.selected_task is not None:
             count += f" · selected {view.selected_task.task_id} remains outside this view"
         self._count.update(count)
+
+    def _task_list_header(self, view: TaskBrowserView) -> Text:
+        is_all = view.filter is TaskBrowserFilter.ALL
+        return task_list_header(
+            name=view.filter.value,
+            marker=None if is_all else _status_marker(view.filter.value),
+            search=view.search,
+            width=self.size.width,
+            keys_only=cast("App[object]", self.app).size.height <= HEADER_TINY_MAX_ROWS,
+        )
 
     def _render_preview(self, view: TaskBrowserView) -> None:
         preview = self._preview

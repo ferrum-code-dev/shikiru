@@ -54,7 +54,6 @@ from shikiru.dashboard.contract import (
     PaletteDraft,
     PaletteRequest,
     ResourceView,
-    TaskBrowserFilter,
     TaskPaletteRoute,
 )
 from shikiru.dashboard.detail import (
@@ -100,7 +99,7 @@ from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
-from shikiru.plugins.widgets.queue import QueuePanel
+from shikiru.plugins.widgets.queue import TASK_MARKER_CURRENT
 from shikiru.process import (
     identify_pid,
 )
@@ -114,7 +113,7 @@ from shikiru.telemetry.resources import ResourceProcessRoots, ResourceSampler
 from shikiru.tmux.client import Tmux, exact_target, tmux_key_label
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.ui.compact import format_cpu_pct
-from shikiru.ui.tokens import STEEL_BLUE
+from shikiru.ui.tokens import PRIMARY_TEXT_COLOR, STEEL_BLUE
 from tests.support.cells import foregrounds
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -1776,6 +1775,7 @@ async def test_home_quiet_status_reports_running_unblocked_engine(
         reader.close()
 
 
+@pytest.mark.usefixtures("colour_terminal")
 async def test_focus_operational_counts_and_contextual_task_filters(
     database: Database, connection: Connection, tmp_path: Path
 ) -> None:
@@ -1802,29 +1802,71 @@ async def test_focus_operational_counts_and_contextual_task_filters(
                 timeout=UI_WAIT_SECONDS,
             )
             assert app.query_one("#escalations").display is True
-            await app.query_one("#queue", QueuePanel).activate_filter(TaskBrowserFilter.WAITING)
             count = app.query_one("#task-browser-count", Static)
-            await wait_until(
-                lambda: plain_text(count.content).startswith("Tasks · waiting · 1 of 1"),
-                timeout=UI_WAIT_SECONDS,
-            )
-            assert waiting.title in plain_text(
-                app.query_one("#task-browser-list", ListView).children[0].query_one(Static).content
-            )
-            await pilot.press("/")
             search = app.query_one("#task-browser-search", Input)
-            assert app.focused is search
-            await pilot.press("z")
-            assert search.value == "z"
-            await pilot.press("v")
-            assert search.value == "zv"
-            await pilot.press("escape")
+            task_list = app.query_one("#task-browser-list", ListView)
+
+            def listed() -> str:
+                return " ".join(
+                    plain_text(item.query_one(Static).content) for item in task_list.children
+                )
+
+            await pilot.press("f")
             await wait_until(
-                lambda: search.value == "",
+                lambda: f"f filter: {TASK_MARKER_CURRENT} running" in plain_text(count.content),
                 timeout=UI_WAIT_SECONDS,
             )
+            await wait_until(
+                lambda: active.title in listed() and waiting.title not in listed(),
+                timeout=UI_WAIT_SECONDS,
+            )
+            for _ in range(3):
+                await pilot.press("f")
+            await wait_until(
+                lambda: "f filter: · queued" in plain_text(count.content),
+                timeout=UI_WAIT_SECONDS,
+            )
+            await wait_until(
+                lambda: waiting.title in listed() and active.title not in listed(),
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert set(foregrounds(count, "queued")) == {PRIMARY_TEXT_COLOR}
+            assert set(foregrounds(count, "f")) == {STEEL_BLUE}
+
+            await pilot.press("/")
+            assert app.focused is search
+            assert count.region.y < search.region.y < task_list.region.y
+            await pilot.press("f", "o", "c", "u", "s")
+            assert search.value == "focus"
+            assert "f filter: · queued" in plain_text(count.content)
+            await pilot.press("enter")
+            await wait_until(
+                lambda: (
+                    not search.display
+                    and "/ search: focus" in plain_text(count.content)
+                    and waiting.title in listed()
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
+            await pilot.press("f")
+            await wait_until(
+                lambda: (
+                    "f filter: ✓ done" in plain_text(count.content)
+                    and "/ search: focus" in plain_text(count.content)
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert not task_list.children or waiting.title not in listed()
+            await pilot.press("/")
             await pilot.press("escape")
-            assert search.display is False
+            await wait_until(
+                lambda: (
+                    not search.display
+                    and search.value == ""
+                    and plain_text(count.content).endswith("/ search")
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
     finally:
         reader.close()
 
@@ -4552,8 +4594,11 @@ async def _assert_palette_opens_from_the_filter_bar(
 ) -> None:
     await choose_inspector_details_entry(pilot, TASK_VIEW_AGENT)
     app.screen.query_one(f"#{TASK_DETAIL_AGENT_LIST}").focus()
+    count = app.screen.query_one("#task-browser-count", Static)
+    filter_before = plain_text(count.content)
     await pilot.press("f")
     await wait_until(lambda: isinstance(app.focused, TimelineFilterBar), timeout=UI_WAIT_SECONDS)
+    assert plain_text(count.content) == filter_before
     await pilot.press("ctrl+p")
     assert palette_requests[-1].task_id == task_id
 
@@ -4584,7 +4629,12 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
             search.value = task.id
             search.focus()
             await pilot.press("enter")
-            await pilot.pause()
+            count = home.query_one("#task-browser-count", Static)
+            await wait_until(
+                lambda: task.id in plain_text(count.content) and not search.display,
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert cell_len(plain_text(count.content)) <= count.size.width
             await pilot.press("enter")
             assert not isinstance(app.screen, TaskDetailScreen)
             identity = home.query_one("#task-detail-identity", Static)

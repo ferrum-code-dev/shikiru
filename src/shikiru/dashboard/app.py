@@ -55,6 +55,7 @@ from shikiru.dashboard.interaction import native_editor_has_focus
 from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.tick import pinned_tick
 from shikiru.dashboard.timeline_filter import TimelineFilterBar
+from shikiru.dashboard.timeline_section import TimelineSection
 from shikiru.domain.commands import command_rejection_cause
 from shikiru.errors import ConfigError
 from shikiru.ui.compact import ACTION_HINT, FocusAttentionStatus
@@ -152,6 +153,9 @@ COMMAND_RESULT_PRIORITY = "priority"
 COMMAND_RESULT_PAUSED = "paused"
 COMMAND_RESULT_NOW = "now"
 _SEARCH_KEY = "slash"
+_FILTER_KEY = "f"
+_QUEUE_KEY_ACTIONS = {_SEARCH_KEY: "open_search", _FILTER_KEY: "cycle_status_filter"}
+_QUEUE_KEY_OWNERS = {_FILTER_KEY: (TimelineSection,)}
 _ACTIONS_KEY = "ctrl+p"
 _HOME_FOOTER_CLEAR = "focus-footer-clear"
 _HOME_FOOTER_ACTIONS = "focus-footer-actions"
@@ -1513,21 +1517,28 @@ class DashboardApp(App[None]):
             if panel is not None:
                 panel.focus_folds()
         else:
-            return self._open_workspace_search(event.key)
+            return self._run_queue_key(event.key)
         return True
 
-    def _open_workspace_search(self, key: str) -> bool:
+    def _focus_inside(self, owners: tuple[type[Widget], ...]) -> bool:
+        focused = self.focused
+        return focused is not None and any(
+            isinstance(widget, owners) for widget in (focused, *focused.ancestors)
+        )
+
+    def _run_queue_key(self, key: str) -> bool:
+        action = _QUEUE_KEY_ACTIONS.get(key)
         if (
-            key != _SEARCH_KEY
+            action is None
             or self._focus_task is not None
             or _WIDGET_QUEUE not in self._widget_names
+            or self._focus_inside(_QUEUE_KEY_OWNERS.get(key, ()))
         ):
             return False
-        queue = self._widget_instances.get(_WIDGET_QUEUE)
-        open_search = getattr(queue, "open_search", None)
-        if not callable(open_search):
+        queue_action = getattr(self._widget_instances.get(_WIDGET_QUEUE), action, None)
+        if not callable(queue_action):
             return False
-        open_search()
+        queue_action()
         return True
 
     async def _motion_loop(self) -> None:

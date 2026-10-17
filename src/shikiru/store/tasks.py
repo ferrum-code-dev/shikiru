@@ -63,14 +63,13 @@ _BROWSER_CATEGORY_ACTIVE = "active"
 _BROWSER_CATEGORY_WAITING = "waiting"
 _BROWSER_CATEGORY_HISTORY = "history"
 _BROWSER_CATEGORY_ALL = "all"
-_BROWSER_FILTERS = frozenset(
-    {
-        _BROWSER_CATEGORY_ACTIVE,
-        _BROWSER_CATEGORY_WAITING,
-        _BROWSER_CATEGORY_HISTORY,
-        _BROWSER_CATEGORY_ALL,
-    }
-)
+_BROWSER_STATUS_FILTERS = frozenset(status.value for status in Status)
+_BROWSER_FILTERS = _BROWSER_STATUS_FILTERS | {
+    _BROWSER_CATEGORY_ACTIVE,
+    _BROWSER_CATEGORY_WAITING,
+    _BROWSER_CATEGORY_HISTORY,
+    _BROWSER_CATEGORY_ALL,
+}
 _RELATIONSHIP_LIMIT = 24
 _FAMILY_OUTCOME_ORDER = (
     Status.QUEUED.value,
@@ -532,6 +531,8 @@ def _task_browser_category(
 ) -> tuple[str, tuple[str, ...]]:
     if category == _BROWSER_CATEGORY_ALL:
         return "1 = 1", ()
+    if category in _BROWSER_STATUS_FILTERS:
+        return "t.status = ?", (category,)
     if category == _BROWSER_CATEGORY_WAITING:
         quota_wait = ""
         parameters: tuple[str, ...] = ()
