@@ -88,6 +88,7 @@ from shikiru.domain.workflow import WorkflowProgress, WorkflowReport, project_wo
 from shikiru.errors import ShikiruError
 from shikiru.operator.queries import (
     AGENT_REPORT_SOURCE,
+    OperatorTaskAction,
     aggregate_usage,
 )
 from shikiru.operator.strip_views import task_strip_data
@@ -1084,6 +1085,13 @@ class StateDashboardViews:
                 task, detail, reported, pull_request, latest_verdict=latest_verdict
             ),
             decisions=self._task_decisions(task.id),
+            can_take_over=self._can_take_over(task),
+        )
+
+    def _can_take_over(self, task: Task) -> bool:
+        availability = self._queries.task_action_availability(task.id, task_acting_role(task))
+        return any(
+            item.action is OperatorTaskAction.TAKE_OVER and item.enabled for item in availability
         )
 
     async def task_timeline(

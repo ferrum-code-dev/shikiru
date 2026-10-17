@@ -135,44 +135,44 @@ _TASK_ACTIONS = frozenset(
 _TASK_TARGET_ACTIONS = _TASK_ACTIONS | {_ACTION_PEEK, _ACTION_EXPORT}
 PALETTE_ACTIONS = (
     ("Submit task", _ACTION_SUBMIT),
-    ("Prioritize task", _ACTION_PRIORITIZE),
-    ("Pause task", _ACTION_PAUSE),
+    ("Priority", _ACTION_PRIORITIZE),
+    ("Pause", _ACTION_PAUSE),
     ("Pause now", _ACTION_PAUSE_NOW),
-    ("Resume task", _ACTION_RESUME),
-    ("Take over role", _ACTION_TAKE_OVER),
-    ("Hand back role", _ACTION_HAND_BACK),
-    ("Cancel task", _ACTION_CANCEL),
-    ("Retry task", _ACTION_RETRY),
-    ("Change rung", _ACTION_RUNG),
-    ("Message agent", _ACTION_MESSAGE),
-    ("Peek session", _ACTION_PEEK),
-    ("Resolve escalation", _ACTION_RESOLVE),
-    ("Export task evidence", _ACTION_EXPORT),
+    ("Resume", _ACTION_RESUME),
+    ("Take over", _ACTION_TAKE_OVER),
+    ("Hand back", _ACTION_HAND_BACK),
+    ("Cancel", _ACTION_CANCEL),
+    ("Retry", _ACTION_RETRY),
+    ("Rung", _ACTION_RUNG),
+    ("Message", _ACTION_MESSAGE),
+    ("Open session", _ACTION_PEEK),
+    ("Answer", _ACTION_RESOLVE),
+    ("Export evidence", _ACTION_EXPORT),
     ("Stop engine", _ACTION_STOP),
 )
 SUBMIT_ACTION_LABELS = {
     _ACTION_SUBMIT: "Submit task",
-    _ACTION_PRIORITIZE: "Set priority",
-    _ACTION_PAUSE: "Pause task",
+    _ACTION_PRIORITIZE: "Priority",
+    _ACTION_PAUSE: "Pause",
     _ACTION_PAUSE_NOW: "Pause now",
-    _ACTION_RESUME: "Resume task",
-    _ACTION_TAKE_OVER: "Take over role",
-    _ACTION_HAND_BACK: "Hand back role",
-    _ACTION_CANCEL: "Cancel task",
-    _ACTION_RETRY: "Retry task",
-    _ACTION_RUNG: "Change rung",
-    _ACTION_MESSAGE: "Queue message",
+    _ACTION_RESUME: "Resume",
+    _ACTION_TAKE_OVER: "Take over",
+    _ACTION_HAND_BACK: "Hand back",
+    _ACTION_CANCEL: "Cancel",
+    _ACTION_RETRY: "Retry",
+    _ACTION_RUNG: "Rung",
+    _ACTION_MESSAGE: "Message",
     _ACTION_PEEK: "Open session",
     _ACTION_EXPORT: "Export evidence",
     _ACTION_STOP: "Stop engine",
 }
 _HINT_LABELS = {
     _ACTION_MESSAGE: ("Ctrl+S queue message \N{MIDDLE DOT} Enter new line", "Ctrl+S queue"),
-    _ACTION_PAUSE: ("Enter pause task", "Enter pause"),
-    _ACTION_RESUME: ("Enter resume task", "Enter resume"),
-    _ACTION_CANCEL: ("Enter cancel task", "Enter cancel"),
+    _ACTION_PAUSE: ("Enter pause", "Enter pause"),
+    _ACTION_RESUME: ("Enter resume", "Enter resume"),
+    _ACTION_CANCEL: ("Enter cancel", "Enter cancel"),
 }
-_CANCEL_CONFIRM_HINT = ("Enter again to cancel task", "Enter again")
+_CANCEL_CONFIRM_HINT = ("Enter again to cancel", "Enter again")
 _HINT_CLASS = "hint"
 _ENTER_HINT_ACTIONS = frozenset({_ACTION_PAUSE, _ACTION_RESUME, _ACTION_CANCEL})
 _HINT_KEY_ACTIONS = {
@@ -528,7 +528,7 @@ class PaletteScreen(ModalScreen[PaletteReturn | None]):
             yield Static("", id=_PALETTE_MENU_CONTEXT, markup=False)
             with Vertical(id=_PALETTE_MENU_PRIMARY):
                 yield Button(
-                    _context_menu_entry("Answer decision", "Answer the recorded decision"),
+                    _context_menu_entry("Answer", "Answer the recorded decision"),
                     id=_PALETTE_ROUTE_ANSWER,
                 )
                 yield Button(
@@ -539,16 +539,16 @@ class PaletteScreen(ModalScreen[PaletteReturn | None]):
                     id=_PALETTE_ROUTE_EVIDENCE,
                 )
                 yield Button(
-                    _context_menu_entry("Message a role", "Delivered on the next role turn"),
+                    _context_menu_entry("Message", "Delivered on the next role turn"),
                     id=f"{_PALETTE_MENU_ACTION_PREFIX}{_ACTION_MESSAGE}",
                 )
                 yield Button(
-                    _context_menu_entry("Take over a role", "Stop the turn; hold this task"),
+                    _context_menu_entry("Take over", "Stop the turn; hold this task"),
                     id=f"{_PALETTE_MENU_ACTION_PREFIX}{_ACTION_TAKE_OVER}",
                 )
                 yield Button(
                     _context_menu_entry(
-                        "Hand back a role",
+                        "Hand back",
                         "Release this role; remaining holds apply",
                     ),
                     id=f"{_PALETTE_MENU_ACTION_PREFIX}{_ACTION_HAND_BACK}",
@@ -1288,10 +1288,10 @@ class PaletteScreen(ModalScreen[PaletteReturn | None]):
             task_exists and self._project_diagnostics_available
         )
         primary_labels = {
-            _ACTION_MESSAGE: ("Message a role", "Delivered on the next role turn"),
-            _ACTION_TAKE_OVER: ("Take over a role", "Stop the turn; hold this task"),
+            _ACTION_MESSAGE: ("Message", "Delivered on the next role turn"),
+            _ACTION_TAKE_OVER: ("Take over", "Stop the turn; hold this task"),
             _ACTION_HAND_BACK: (
-                "Hand back a role",
+                "Hand back",
                 "Release this role; remaining holds apply",
             ),
         }

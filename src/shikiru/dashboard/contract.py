@@ -540,6 +540,7 @@ class TaskDetailView:
     last_words: str | None = None
     results: TaskResults | None = None
     decisions: TaskDecisions | None = None
+    can_take_over: bool = False
 
 
 @dataclass(frozen=True)

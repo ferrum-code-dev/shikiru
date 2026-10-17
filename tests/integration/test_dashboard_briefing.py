@@ -105,6 +105,8 @@ LABELS = (
     "Risks",
     "Cost",
 )
+LIVE_SESSION = "live-session"
+LIVE_PANE = "%7"
 NEVER_SHOWN = ("ToolStarted", "Last recorded signal", "Work is active", "Queued for execution")
 
 
@@ -180,6 +182,8 @@ def _spend(connection: Connection, clock: FakeClock, task: Task) -> None:
     runs.record_usage(leader.id, Usage(10, 5, 0, 0, 0.42, "billed", 8))
     implementer = runs.start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
     runs.record_usage(implementer.id, Usage(30, 20, 0, 0, 1.10, "billed", 12))
+    runs.set_session(implementer.id, LIVE_SESSION, None)
+    TaskStore(connection, clock).set_panes(task.id, {Role.IMPLEMENTER: LIVE_PANE})
 
 
 def _live_log(project_root: Path, task: Task, clock: FakeClock, words: str = LAST_WORDS) -> None:
@@ -411,7 +415,7 @@ CASES = {
             "Rejected · 2 major · 1 minor",
             "#41 open",
         ),
-        TAKE_OVER_VERBS,
+        frozenset({BriefingAction.MESSAGE, BriefingAction.PAUSE, BriefingAction.CANCEL}),
     ),
     "done-with-report": _Case(
         _seed_done,

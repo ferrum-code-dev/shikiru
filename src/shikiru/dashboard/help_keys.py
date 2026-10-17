@@ -15,6 +15,7 @@ _ESC = "Esc"
 _ENTER = "Enter"
 _PALETTE = "Ctrl+P"
 _DETACH_KEY = "d"
+_PALETTE_POPUP_KEY = "Space"
 
 
 class HelpTab(StrEnum):
@@ -83,8 +84,14 @@ def _home_groups(availability: HelpAvailability) -> tuple[HelpGroup, ...]:
         HelpRow("?", "Show this help"),
     ]
     if availability.detach_prefix is not None:
-        detach = f"{availability.detach_prefix} {_DETACH_KEY}"
-        everywhere.append(HelpRow(detach, "Detach from tmux"))
+        prefix = availability.detach_prefix
+        everywhere.append(
+            HelpRow(
+                f"{prefix} {_PALETTE_POPUP_KEY}",
+                "Open the actions in any Shikiru pane (a popup in task and role panes)",
+            )
+        )
+        everywhere.append(HelpRow(f"{prefix} {_DETACH_KEY}", "Detach from tmux"))
     groups.append(HelpGroup("Everywhere", tuple(everywhere)))
     return tuple(groups)
 

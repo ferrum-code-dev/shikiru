@@ -211,15 +211,21 @@ def one_line(text: str, limit: int) -> str | None:
 
 
 def briefing_actions(
-    status: Status, holds: Sequence[str], *, operator_owned: bool, waiting: bool = False
+    status: Status,
+    holds: Sequence[str],
+    *,
+    operator_owned: bool,
+    can_take_over: bool = False,
+    waiting: bool = False,
 ) -> tuple[BriefingAction, ...]:
     """Return the at most four verbs the briefing offers for a task in this state.
 
     A decision comes first, then the ownership hand-over, a message, and the pause hold's
     opposite; Cancel always closes the row of an unfinished task and a finished task offers
-    none. Take over needs a running role to stop, so it is only offered while the task runs or
-    integrates. A waiting task has no agent to read a message, so it offers none. An
-    intervention hold is cleared by handing back, so it never offers Resume.
+    none. Take over is offered whenever the operator action can work (`can_take_over`, the
+    palette's own availability for the acting role). A waiting task has no agent to read a
+    message, so it offers none. An intervention hold is cleared by handing back, so it never
+    offers Resume.
     """
     if status in (Status.DONE, Status.CANCELLED):
         return ()
@@ -228,7 +234,7 @@ def briefing_actions(
         verbs.append(BriefingAction.ANSWER)
     if operator_owned:
         verbs.append(BriefingAction.HAND_BACK)
-    elif status in (Status.RUNNING, Status.INTEGRATING):
+    elif can_take_over:
         verbs.append(BriefingAction.TAKE_OVER)
     if not waiting:
         verbs.append(BriefingAction.MESSAGE)

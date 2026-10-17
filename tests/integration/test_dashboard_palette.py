@@ -1213,7 +1213,7 @@ def _assert_fixed_task_context_title(screen: PaletteScreen, task_id: str) -> Non
     assert not screen.query_one("#field-task-search").display
     assert not screen.query_one("#field-task-choice").display
     assert not screen.query_one("#field-task-id").display
-    assert _static_text(screen, "#palette-title") == f"Message agent · {task_id}"
+    assert _static_text(screen, "#palette-title") == f"Message · {task_id}"
 
 
 async def _fill_submit(pilot: Pilot[None], screen: PaletteScreen, task: Task) -> None:

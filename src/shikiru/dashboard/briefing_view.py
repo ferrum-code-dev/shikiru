@@ -192,6 +192,7 @@ def briefing_verbs(view: TaskDetailView) -> tuple[BriefingAction, ...]:
         Status(view.status),
         view.holds,
         operator_owned=bool(view.ownership),
+        can_take_over=view.can_take_over,
         waiting=view.wait_reason is not None,
     )
 

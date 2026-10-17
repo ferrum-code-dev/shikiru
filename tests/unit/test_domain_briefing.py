@@ -119,20 +119,32 @@ def test_briefing_verbs_follow_the_task_state_and_never_exceed_the_maximum() -> 
     pause, resume, answer = BriefingAction.PAUSE, BriefingAction.RESUME, BriefingAction.ANSWER
     cancel = BriefingAction.CANCEL
     cases = (
-        (Status.RUNNING, (), False, False, (take, message, pause, cancel)),
-        (Status.INTEGRATING, (), False, False, (take, message, pause, cancel)),
-        (Status.RUNNING, ("paused",), False, False, (take, message, resume, cancel)),
-        (Status.RUNNING, ("intervention",), True, False, (hand, message, cancel)),
-        (Status.RUNNING, ("paused", "intervention"), True, False, (hand, message, resume, cancel)),
-        (Status.QUEUED, (), False, False, (message, pause, cancel)),
-        (Status.QUEUED, (), False, True, (pause, cancel)),
-        (Status.QUEUED, ("paused",), False, True, (resume, cancel)),
-        (Status.ESCALATED, (), False, False, (answer, message, pause, cancel)),
-        (Status.ESCALATED, ("paused",), True, False, (answer, hand, message, cancel)),
-        (Status.DONE, (), False, False, ()),
-        (Status.CANCELLED, ("paused",), True, False, ()),
+        (Status.RUNNING, (), False, True, False, (take, message, pause, cancel)),
+        (Status.INTEGRATING, (), False, True, False, (take, message, pause, cancel)),
+        (Status.RUNNING, (), False, False, False, (message, pause, cancel)),
+        (Status.RUNNING, ("paused",), False, True, False, (take, message, resume, cancel)),
+        (Status.RUNNING, ("intervention",), True, False, False, (hand, message, cancel)),
+        (
+            Status.RUNNING,
+            ("paused", "intervention"),
+            True,
+            False,
+            False,
+            (hand, message, resume, cancel),
+        ),
+        (Status.QUEUED, (), False, False, False, (message, pause, cancel)),
+        (Status.QUEUED, (), False, True, False, (take, message, pause, cancel)),
+        (Status.QUEUED, (), False, False, True, (pause, cancel)),
+        (Status.QUEUED, ("paused",), False, False, True, (resume, cancel)),
+        (Status.ESCALATED, (), False, False, False, (answer, message, pause, cancel)),
+        (Status.ESCALATED, (), False, True, False, (answer, take, message, cancel)),
+        (Status.ESCALATED, ("paused",), True, False, False, (answer, hand, message, cancel)),
+        (Status.DONE, (), False, True, False, ()),
+        (Status.CANCELLED, ("paused",), True, False, False, ()),
     )
-    for status, holds, owned, waiting, expected in cases:
-        offered = briefing_actions(status, holds, operator_owned=owned, waiting=waiting)
+    for status, holds, owned, can_take_over, waiting, expected in cases:
+        offered = briefing_actions(
+            status, holds, operator_owned=owned, can_take_over=can_take_over, waiting=waiting
+        )
         assert offered == expected
         assert len(offered) <= MAX_BRIEFING_ACTIONS

@@ -78,7 +78,7 @@ from shikiru.dashboard.detail import (
     TaskDetailPanel,
     TaskDetailScreen,
 )
-from shikiru.dashboard.help_keys import HelpTab
+from shikiru.dashboard.help_keys import HelpAvailability, HelpTab, help_groups
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.domain.commands import (
@@ -4557,6 +4557,10 @@ async def test_home_help_opens_by_key_or_mouse_and_closing_leaves_home_unchanged
 ) -> None:
     size, gesture, anchors = case
     monkeypatch.setenv("NO_COLOR", "1")
+    for prefix, listed in ((_GLOBAL_TMUX_PREFIX, True), (None, False)):
+        groups = help_groups(HelpTab.HOME, HelpAvailability(True, True, prefix))
+        keys = {row.keys for group in groups for row in group.rows}
+        assert (f"{_GLOBAL_TMUX_PREFIX} Space" in keys) is listed
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Popup underlay task")
