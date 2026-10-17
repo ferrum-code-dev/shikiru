@@ -2053,3 +2053,18 @@ Refs: `dashboard/app.py` (`_ContextViewsScreen`, `action_open_views`, `_open_tas
 - [x] Extension widgets are listed in `Ctrl+P` under one `Extensions` group (project menu, and under More actions in the task menu; hidden when none) and open as before; the Workflow strips and Activity dialogue lose their Home entry point only, and the Views HTML reference, help rows and design docs match.
 - [x] Tests reach Usage, Resources and Project diagnostics, Command history, Help, Actions and Extensions through the real controls (Enter or click), the collected cases do not grow (1646, was 1654), and both gates pass.
 - Proof: headless Textual at 100, 60, 48 and 40 columns in colour and NO_COLOR showed Home `v` opening nothing, Ctrl+P without a Views entry and with the Extensions group hidden until an extension widget is configured (the integration test lists and opens two external widgets from it), and Enter on the usage, resources and footer command-status controls and `?` opening their panels. Help rows no longer mention Views, the HTML reference lost its Views menu, footer button and `v` handler (exact srcdoc round-trip, `node --check`, SHA-256 `ccf1031ca9f2b67453cfdb7f1cc81d1bc9811d08aaed5cea4ec8aae722a694c5`), and the Workflow strips and Activity dialogue no longer render anywhere (their Home and Views entry was their only mount). `uv run poe check` and `TERM=dumb NO_COLOR=1 uv run poe check` both passed (1625 passed, 1646 collected, was 1654); the second needed one re-run after the unrelated test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions failed once under load and passed alone twice.
+
+### Task 232: Help title and switch hint, top-level Extensions group
+Refs: `dashboard/help_screen.py`, `dashboard/palette.py`, `dashboard/app.py`, `tests/integration/test_dashboard_popup_focus.py`, `tests/integration/test_dashboard_app.py`, `docs/tui-feedback-sixteenth-review.md`.
+- [x] The Help title is `Help`; `HelpContext.heading` and `_HELP_HOME_HEADING` are gone.
+- [x] A `← → switch section` hint (keys-only in the tiny pane) sits under the tab row; Left/Right still switch tabs.
+- [x] The `Extensions` group is top-level in the project and task Ctrl+P menus when an extension entry exists; the standalone palette limit is documented.
+- [x] The collected cases do not grow (1646) and both gates pass.
+- Proof: headless Textual at 100, 60, 48, 40 and 40x8 showed the `Help` title and the hint row under the tabs (arrows only at 40x8), and the popup-focus test asserts the title, hint and steel arrows while Left/Right switch tabs. The Extensions test now opens a task palette with two external widgets and sees the group without expanding More actions, while the empty palette tests keep it hidden. Gates recorded in the final report.
+
+### Task 233: Extra details panel rework
+Refs: `dashboard/extra_details.py`, `tests/integration/test_dashboard_resolution.py`, `docs/tui-feedback-sixteenth-review.md`.
+- [ ] The Timeline rows are coloured by event tone.
+- [ ] Reports and Recent signals are selectable tables with a shaded structured details block under the selected row; the selection is a background only, without a left bar.
+- [ ] Facts is removed from the page and Sessions are formatted without commands.
+- [ ] The collected cases do not grow and both gates pass.

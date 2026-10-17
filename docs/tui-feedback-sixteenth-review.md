@@ -46,3 +46,16 @@ Execution order: Task 228, then 229, 230 and 231, one task at a time.
 - The store has no uniqueness rule, so a task can hold several open escalations (`EscalationStore.open` only inserts; `ensure_actionable` tolerates several; `settle_open` resolves all of a task's open escalations). The engine raises one per escalation and a retry or cancel settles them together. The bar shows the first open one; the next appears once it is resolved.
 - `PacketScreen` and its widget copy are gone. `dashboard/extra_details.py` holds `ExtraDetailsScreen`, opened by `ResolutionScreen`. Fault evidence never used the packet screen (it opens `FOCUS_FAULTS_VIEW` through `open_contextual_view`); the dead fallback that pushed the packet screen is removed.
 - A packet without text or a task without a Details section shows no hint and `o` is inert.
+
+## Operator findings after Tasks 229-231 (Task 232)
+- The Help title is the constant `Help`; the heading is no longer part of `HelpContext`.
+- A hint `← → switch section` (arrows bold steel blue, label grey, keys only in the tiny pane) sits on its own row directly under the Help tab row, in the gap the tab row's margin used.
+- The `Extensions` group in Ctrl+P is a top-level group in the project and the task menu (above More actions) whenever at least one extension entry exists, and hidden when there is none. The default config has no EXTENSIONS widget, so the group is absent by default.
+- Limit: the standalone `shikiru palette` popup (`run_palette`) receives no extension entries. Opening an extension widget needs the mounted dashboard (the palette only returns the entry to `DashboardApp`, and the standalone app has no such callback), so listing entries there would offer controls that cannot act; Home uses the in-dashboard palette.
+
+## Extra details panel rework (Task 233)
+- Timeline rows are coloured by event tone.
+- Reports and Recent signals are selectable tables, each with a shaded structured details block under the selection; the selection is a background only, without a left bar.
+- Facts is removed from the page.
+- Sessions are formatted without commands.
+- The collected cases do not grow.
