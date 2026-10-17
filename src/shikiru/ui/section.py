@@ -98,9 +98,11 @@ def wrap_groups(groups: tuple[Text, ...], width: int | None) -> Text:
     return result
 
 
-def labelled_rows(rows: list[Row], width: int, label_width: int) -> RenderableType:
-    """Lay rows out as a label column and wrapped values, stacked when narrow."""
-    if width < STACKED_BELOW_WIDTH:
+def labelled_rows(
+    rows: list[Row], width: int, label_width: int, stack_below: int = STACKED_BELOW_WIDTH
+) -> RenderableType:
+    """Lay rows out as a label column and wrapped values, stacked below `stack_below` cells."""
+    if width < stack_below:
         return Group(*_stacked_lines(rows, width))
     value_width = width - label_width - LABEL_GAP
     grid = Table.grid()

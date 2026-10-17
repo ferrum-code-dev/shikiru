@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation_evidence import NO_AGENT_PROPOSAL, parse_escalation_packet
 from shikiru.domain.reports import REPORT_JSON_INDENT, EscalationRequest, Option
@@ -45,9 +43,8 @@ def test_shikiru_packet_keeps_agent_alternatives_separate_from_engine_resolution
     assert parsed.errors == ()
 
 
-@pytest.mark.parametrize("sentinel", ["(none recorded)", NO_AGENT_PROPOSAL])
-def test_packet_no_agent_proposal_sentinels_preserve_engine_resolutions(sentinel: str) -> None:
-    packet = (
+def test_packet_no_agent_proposal_sentinels_preserve_engine_resolutions() -> None:
+    template = (
         "## Timeline\n\nOne recorded event.\n\n"
         "## What was tried\n\nOne recorded attempt.\n\n"
         "## Evidence\n\n"
@@ -56,20 +53,21 @@ def test_packet_no_agent_proposal_sentinels_preserve_engine_resolutions(sentinel
         "### Recent turn signals\n\nNo signals.\n\n"
         "### Sessions\n\nNo sessions.\n\n"
         "## Question\n\nWhat should happen next?\n\n"
-        f"## Agent alternatives\n\n{sentinel}\n\n"
+        "## Agent alternatives\n\n{sentinel}\n\n"
         "## Options\n\n"
         "- `retry` ★: Retry the failed step.\n"
         "- `cancel`: Keep the task branch.\n"
     )
 
-    parsed = parse_escalation_packet(packet)
+    for sentinel in ("(none recorded)", NO_AGENT_PROPOSAL):
+        parsed = parse_escalation_packet(template.replace("{sentinel}", sentinel))
 
-    assert parsed.agent_request is None
-    assert [option.kind for option in parsed.resolutions] == [
-        ResolutionKind.RETRY,
-        ResolutionKind.CANCEL,
-    ]
-    assert parsed.errors == ()
+        assert parsed.agent_request is None
+        assert [option.kind for option in parsed.resolutions] == [
+            ResolutionKind.RETRY,
+            ResolutionKind.CANCEL,
+        ]
+        assert parsed.errors == ()
 
 
 def test_alternatives_written_before_the_needs_input_flag_still_parse() -> None:

@@ -180,6 +180,17 @@ _EVENTS: dict[str, _EventSpec] = {
 }
 
 
+def kind_phrase(kind: str) -> Phrase | None:
+    """Return the label, glyph and tone of an engine event kind, or None when it is unlisted."""
+    spec = _EVENTS.get(kind)
+    return None if spec is None else Phrase(spec.label, spec.glyph, spec.tone)
+
+
+def verdict_phrase(decision: str) -> Phrase | None:
+    """Return the phrase of a verdict decision, or None when the decision is unknown."""
+    return _VERDICTS.get(decision)
+
+
 def _joined(label: str, detail: str) -> str:
     return f"{label}{PHRASE_SEPARATOR}{detail}" if detail else label
 
@@ -198,7 +209,8 @@ def event_phrase(event: Event) -> Phrase:
     return Phrase(_joined(spec.label, detail), spec.glyph, spec.tone)
 
 
-def _tool_target(detail: str) -> str:
+def tool_target(detail: str) -> str:
+    """Return the command, path or query inside a tool's JSON detail, else the detail itself."""
     try:
         decoded: object = json.loads(detail)
     except json.JSONDecodeError:
@@ -215,7 +227,7 @@ def _tool_target(detail: str) -> str:
 
 def _tool_started(data: Mapping[str, object]) -> Phrase:
     name = str(data.get("name", ""))
-    target = _tool_target(str(data.get("detail") or ""))
+    target = tool_target(str(data.get("detail") or ""))
     verb = _TOOL_VERBS.get(name, name)
     return Phrase(" ".join(part for part in (verb, target) if part))
 

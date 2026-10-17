@@ -43,7 +43,7 @@ ROLE_LABELS = {
     Role.IMPLEMENTER.value: "impl",
     Role.HELPER.value: "help",
 }
-_TONE_COLORS = {
+TONE_COLORS = {
     Tone.PLAIN.value: "",
     Tone.SUCCESS.value: SUCCESS_COLOR,
     Tone.FAILURE.value: ALERT_COLOR,
@@ -93,6 +93,11 @@ def _clock(entry: TaskTimelineEntryView) -> str:
     )
 
 
+def glyph_prefix(glyph: str) -> str:
+    """Return `glyph` and its gap, or a blank slot of the same width when there is none."""
+    return f"{glyph or _NO_GLYPH_SLOT}{_GLYPH_GAP}"
+
+
 def turn_label(turn: str | None) -> str:
     """Return a turn directory as `t3` (its numeric prefix), the raw name when it has none."""
     if not turn:
@@ -108,8 +113,8 @@ def timeline_cells(entry: TaskTimelineEntryView) -> RowCells:
         text.append(ROLE_LABELS[entry.role].ljust(_ROLE_LABEL_WIDTH), style=_role_color(entry.role))
         text.append(_COLUMN_GAP)
         text.append_text(grey(turn_label(entry.turn).ljust(_TURN_WIDTH)))
-    text.append(f"{entry.glyph or _NO_GLYPH_SLOT}{_GLYPH_GAP}", style=_TONE_COLORS[entry.tone])
-    text.append(entry.phrase, style=_TONE_COLORS[entry.tone])
+    text.append(glyph_prefix(entry.glyph), style=TONE_COLORS[entry.tone])
+    text.append(entry.phrase, style=TONE_COLORS[entry.tone])
     return RowCells(_clock(entry), text)
 
 

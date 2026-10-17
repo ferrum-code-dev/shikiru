@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -13,6 +14,7 @@ from shikiru.clock import SystemClock
 from shikiru.dashboard.extra_details import ExtraDetailsScreen
 from shikiru.dashboard.palette import PaletteApp, PaletteScreen
 from shikiru.dashboard.resolution import ResolutionDrafts, ResolutionScreen
+from shikiru.dashboard.row_list import RowList
 from shikiru.domain.commands import (
     AcceptResolution,
     AnswerResolution,
@@ -20,6 +22,8 @@ from shikiru.domain.commands import (
     Resolve,
     RetryResolution,
 )
+from shikiru.domain.reports import Commit, ImplementationReport, Issue, Verdict
+from shikiru.domain.reports import TestRun as RecordedTest
 from shikiru.domain.tasks import EscalationReason
 from shikiru.operator.commands import COMMAND_POLL_SECONDS
 from shikiru.store.escalations import EscalationStore
@@ -27,6 +31,7 @@ from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.ui.theme import SCROLLBAR_WIDTH
 from shikiru.ui.tokens import (
     AMBER,
+    DETAIL_SURFACE_COLOR,
     DUSTY_ROSE,
     PRIMARY_TEXT_COLOR,
     SAGE,
@@ -53,6 +58,7 @@ from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, 
 
 if TYPE_CHECKING:
     from textual.pilot import Pilot
+    from textual.screen import Screen
     from textual.widget import Widget
 
     from shikiru.dashboard.app import DashboardApp
@@ -63,6 +69,18 @@ if TYPE_CHECKING:
 
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _SIZE = (100, 40)
+_IMPLEMENTATION = ImplementationReport(
+    status="completed",
+    summary="Added retries.",
+    commits=[Commit(sha="a1b2c3d", subject="feat: retry")],
+    tests=[RecordedTest(name="test_cfg", result="failed", details="KeyError")],
+    trackers_updated=True,
+)
+_VERDICT = Verdict(
+    decision="changes_requested",
+    summary="The config test fails.",
+    issues=[Issue(severity="blocker", description="KeyError in cfg", location="cfg.py:4")],
+)
 _HOME_SIZE = (160, 50)
 _OWN_ANSWER_ROW = 2
 _EXTRA_LINES = 6
@@ -85,8 +103,42 @@ _DETAILS_SIZES = (_SIZE, (60, 40), (48, 40), (40, 40), (40, 8))
 _DETAILS_HINT = "t show/hide"
 _EXTRA_HINT = "o extra details"
 _EXTRA_SIZES = ((100, 40), (60, 40), (48, 30), (40, 30), (40, 8))
-_STAMPED_TIMELINE = "- 2026-01-01T10:20:00+00:00 verdict: accepted"
+
+
+def _signal_row(signal: str, **fields: object) -> str:
+    row = {"ts": "2026-01-01T10:00:00+00:00", "turn": "002-implement-i1", "signal": signal}
+    return json.dumps({**row, "rung": {"agent": "claude", "model": "opus"}, **fields})
+
+
+_STAMPED_TIMELINE = (
+    "- 2026-01-01T10:10:00+00:00 turn_completed: implementation\n"
+    "- 2026-01-01T10:15:00+00:00 turn_failed: boom\n"
+    "- 2026-01-01T10:20:00+00:00 verdict: accepted"
+)
+_REPORT_EVIDENCE = (
+    f"**002-implement-i1**\n\n{_IMPLEMENTATION.model_dump_json()}\n\n"
+    f"**003-verify-i1**\n\n{_VERDICT.model_dump_json()}"
+)
+_SIGNAL_EVIDENCE = "\n".join(
+    (
+        _signal_row("Message", text="Reading the failing test"),
+        _signal_row("ToolFinished", name="Bash", outcome="failure", exit_code=1),
+        '{"ts": "2026-01-01T10:00:00+00:00", "sig',
+    )
+)
 _SESSION_LINE = "- leader: claude session `s-1` \N{EM DASH} claude --resume s-1"
+
+
+def _static_with(popup: Screen[object], needle: str) -> Static:
+    return next(
+        widget
+        for widget in popup.query("#extra-details-body Static").results(Static)
+        if needle in _text_of(widget)
+    )
+
+
+def _page_text(popup: Screen[object]) -> str:
+    return "\n".join(_text_of(widget) for widget in popup.query("#extra-details-body Static"))
 
 
 def _text_of(widget: Widget) -> str:
@@ -542,6 +594,8 @@ async def test_extra_details_opens_from_open_details_and_esc_returns_to_the_scre
     )
     text = packet.replace("- turn completed: implementation", _STAMPED_TIMELINE)
     text = text.replace("Leader session evidence.", _SESSION_LINE)
+    text = text.replace("Implementation report evidence.", _REPORT_EVIDENCE)
+    text = text.replace("Recent stream tail.", _SIGNAL_EVIDENCE)
     await asyncio.to_thread(
         Path(escalation.packet_path).write_text,
         text if readable else text.replace("## Options", "## Opts"),
@@ -572,24 +626,65 @@ async def test_extra_details_opens_from_open_details_and_esc_returns_to_the_scre
         await pilot.resize_terminal(*_SIZE)
         await wait_until(lambda: popup.size == Size(*_SIZE), timeout=UI_WAIT_SECONDS)
         if readable:
-            for heading in (
-                "Question",
-                "Timeline",
-                "Reports",
-                "Facts",
-                "Recent signals",
-                "Sessions",
-            ):
-                assert set(styles(body, heading)) == {CYAN_BOLD}
-            assert set(foregrounds(body, "01-01 10:20")) == {SECONDARY_TEXT_COLOR}
-            assert set(foregrounds(body, "verdict: accepted")) == {PRIMARY_TEXT_COLOR}
-            assert set(foregrounds(body, "leader")) == {SECONDARY_TEXT_COLOR}
+            await _assert_extra_details_page(pilot, popup)
         else:
-            assert set(foregrounds(body, "Evidence error")) == {AMBER}
-            assert "## Opts" in _text_of(body)
+            assert set(foregrounds(_static_with(popup, "Evidence error"), "Evidence error")) == {
+                AMBER
+            }
+            assert "## Opts" in _page_text(popup)
         await pilot.press("escape")
         await wait_until(lambda: app.screen is screen, timeout=UI_WAIT_SECONDS)
         assert app.results == []
+
+
+async def _assert_extra_details_page(pilot: Pilot[None], popup: Screen[object]) -> None:
+    app = pilot.app
+    page = _page_text(popup)
+    assert "Facts" not in page
+    assert "--resume" not in page
+    assert "claude" in page
+    assert "s-1" in page
+    for heading in ("Question", "Timeline", "Reports", "Recent signals", "Sessions"):
+        assert set(styles(_static_with(popup, heading), heading)) == {CYAN_BOLD}
+    timeline = _static_with(popup, "Timeline")
+    assert set(foregrounds(timeline, "01-01 10:20")) == {SECONDARY_TEXT_COLOR}
+    assert set(foregrounds(timeline, "verdict: accepted")) == {PRIMARY_TEXT_COLOR}
+    assert set(foregrounds(timeline, "turn completed: implementation")) == {SAGE}
+    assert set(foregrounds(timeline, "turn failed: boom")) == {DUSTY_ROSE}
+    assert set(foregrounds(_static_with(popup, "Sessions"), "leader")) == {SECONDARY_TEXT_COLOR}
+
+    reports = popup.query_one("#extra-details-reports", RowList)
+    signals = popup.query_one("#extra-details-signals", RowList)
+    report_detail, signal_detail = popup.query(".evidence-detail").results(Static)
+    assert app.focused is reports
+    first, second = reports.query(".row-list-row").results(Static)
+    assert "002  implement  completed" in _text_of(first)
+    assert SELECTED_SURFACE_COLOR in painted_backgrounds(first)
+    assert SELECTED_SURFACE_COLOR not in painted_backgrounds(second)
+    assert DETAIL_SURFACE_COLOR in painted_backgrounds(report_detail)
+    assert set(foregrounds(report_detail, "completed")) == {SAGE}
+    assert set(foregrounds(report_detail, "a1b2c3d")) == {STEEL_BLUE}
+    assert set(foregrounds(report_detail, "failed")) == {DUSTY_ROSE}
+    await pilot.press("down")
+    await wait_until(lambda: "blocker" in _text_of(report_detail), timeout=UI_WAIT_SECONDS)
+    assert SELECTED_SURFACE_COLOR in painted_backgrounds(second)
+    assert set(foregrounds(report_detail, "changes requested")) == {DUSTY_ROSE}
+    assert set(foregrounds(report_detail, "blocker")) == {DUSTY_ROSE}
+
+    await pilot.press("tab")
+    await wait_until(lambda: app.focused is signals, timeout=UI_WAIT_SECONDS)
+    assert "Reading the failing test" in _text_of(signal_detail)
+    await pilot.press("down")
+    await wait_until(lambda: "Result" in _text_of(signal_detail), timeout=UI_WAIT_SECONDS)
+    assert set(foregrounds(signal_detail, "failure")) == {DUSTY_ROSE}
+    await pilot.press("tab", "tab")
+    await wait_until(
+        lambda: app.focused is popup.query_one("#extra-details-scroll"), timeout=UI_WAIT_SECONDS
+    )
+    await pilot.press("shift+tab", "shift+tab")
+    await wait_until(lambda: app.focused is signals, timeout=UI_WAIT_SECONDS)
+    plain = list(signals.query(".row-list-row").results(Static))[-1]
+    assert "sig" in _text_of(plain)
 
 
 async def test_cancel_needs_a_second_enter_and_any_other_key_resets_it(

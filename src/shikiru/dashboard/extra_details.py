@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, ClassVar
 
-from rich.cells import cell_len
 from rich.console import Group, RenderableType
 from rich.text import Text
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Rule, Static
 
+from shikiru.dashboard.evidence_table import EvidenceTable, LabelledRows
 from shikiru.dashboard.resolution_view import ResolutionLayout, layout_for
+from shikiru.dashboard.row_list import RowList
+from shikiru.dashboard.section_rows import TONE_COLORS, glyph_prefix
 from shikiru.domain.escalation_evidence import EscalationPacket, parse_escalation_packet
+from shikiru.domain.packet_evidence import parse_reports, parse_signals
+from shikiru.domain.timeline_phrases import NO_GLYPH, kind_phrase
 from shikiru.ui.popup import (
     POPUP_BODY_CLASS,
     POPUP_CLOSE_CLASS,
@@ -27,37 +30,43 @@ from shikiru.ui.popup import (
     popup_close_label,
     prepare_popup,
 )
-from shikiru.ui.section import BOLD_STEEL, GROUP_SEPARATOR, Row, Section, grey, labelled_rows
+from shikiru.ui.section import BOLD_STEEL, GROUP_SEPARATOR, Row, Section, grey
 from shikiru.ui.tokens import AMBER, PRIMARY_TEXT_COLOR
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from rich.console import Console, ConsoleOptions, RenderResult
     from textual import events
     from textual.app import ComposeResult
+    from textual.widget import Widget
 
 EXTRA_DETAILS_CLOSE_BUTTON = "extra-details-close"
 _TITLE = "Extra details"
 _ENTRY_PREFIX = "- "
 _NONE_RECORDED = "(none)"
 _TIME_FORMAT = "%m-%d %H:%M"
-_MAX_LABEL_WIDTH = 14
-_REPORT_LABEL_OPEN = "**"
-_REPORT_SEPARATOR = "\n\n"
-_SESSION_SEPARATOR = ": "
+_KIND_SEPARATOR = ": "
+_RESUME_SEPARATOR = " \N{EM DASH} "
+_SESSION_MARKER = " session `"
+_SESSION_ID_CLOSE = "`"
+_SESSION_ID_WIDTH = 8
 _ERROR_PREFIX = "Evidence error: "
 _QUESTION_TITLE = "Question"
 _TIMELINE = "Timeline"
 _REPORTS = "Reports"
-_FACTS = "Facts"
 _RECENT_SIGNALS = "Recent turn signals"
 _SESSIONS = "Sessions"
 _SIGNALS_TITLE = "Recent signals"
+_REPORTS_TABLE = "extra-details-reports"
+_SIGNALS_TABLE = "extra-details-signals"
 
 
 def _value(text: str) -> tuple[Text, ...]:
     return (Text(text, style=PRIMARY_TEXT_COLOR),)
+
+
+def _plain_row(line: str) -> Row:
+    return Text(), _value(line)
 
 
 def _timeline_row(line: str) -> Row:
@@ -67,84 +76,64 @@ def _timeline_row(line: str) -> Row:
         label = datetime.fromisoformat(stamp).strftime(_TIME_FORMAT)
     except ValueError:
         return _plain_row(entry)
-    return grey(label), _value(message)
-
-
-def _plain_row(line: str) -> Row:
-    return Text(), _value(line)
-
-
-def _report_rows(content: str) -> list[Row]:
-    rows: list[Row] = []
-    for block in content.split(_REPORT_SEPARATOR + _REPORT_LABEL_OPEN):
-        label, _, body = block.removeprefix(_REPORT_LABEL_OPEN).partition(
-            _REPORT_LABEL_OPEN + _REPORT_SEPARATOR
-        )
-        rows.append((grey(label), _value(body)) if body else _plain_row(block))
-    return rows
+    kind, separator, detail = message.partition(_KIND_SEPARATOR)
+    phrase = kind_phrase(kind)
+    if phrase is None:
+        return grey(label), (Text(glyph_prefix(NO_GLYPH) + message, style=PRIMARY_TEXT_COLOR),)
+    text = glyph_prefix(phrase.glyph) + (phrase.text + separator + detail)
+    return grey(label), (Text(text, style=TONE_COLORS[phrase.tone.value] or PRIMARY_TEXT_COLOR),)
 
 
 def _session_row(line: str) -> Row:
-    role, separator, rest = line.removeprefix(_ENTRY_PREFIX).partition(_SESSION_SEPARATOR)
-    return (grey(role), _value(rest)) if separator else _plain_row(line)
+    entry = line.removeprefix(_ENTRY_PREFIX).partition(_RESUME_SEPARATOR)[0]
+    role, _, rest = entry.partition(_KIND_SEPARATOR)
+    agent, marker, session = rest.partition(_SESSION_MARKER)
+    if not marker:
+        return _plain_row(entry)
+    short = session.removesuffix(_SESSION_ID_CLOSE)[:_SESSION_ID_WIDTH]
+    return grey(role), (*_value(agent), grey(short))
 
 
 def _line_rows(content: str, make: Callable[[str], Row]) -> list[Row]:
     return [make(line) for line in content.splitlines() if line.strip()]
 
 
-_SECTIONS: dict[str, tuple[str, Callable[[str], list[Row]]]] = {
-    _TIMELINE: (_TIMELINE, lambda content: _line_rows(content, _timeline_row)),
-    _REPORTS: (_REPORTS, _report_rows),
-    _FACTS: (_FACTS, lambda content: _line_rows(content, _plain_row)),
-    _RECENT_SIGNALS: (_SIGNALS_TITLE, lambda content: _line_rows(content, _plain_row)),
-    _SESSIONS: (_SESSIONS, lambda content: _line_rows(content, _session_row)),
+_ROW_SECTIONS: dict[str, tuple[str, Callable[[str], Row]]] = {
+    _TIMELINE: (_TIMELINE, _timeline_row),
+    _SESSIONS: (_SESSIONS, _session_row),
 }
-
-
-@dataclass(frozen=True)
-class _Rows:
-    rows: list[Row]
-
-    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        del console
-        label_width = min(
-            max((cell_len(label.plain) for label, _ in self.rows), default=0), _MAX_LABEL_WIDTH
-        )
-        if label_width:
-            yield labelled_rows(self.rows, options.max_width, label_width)
-        else:
-            yield Group(*(values[0] for _, values in self.rows))
 
 
 def _titled(title: str, body: RenderableType) -> Section:
     return Section(title, body, ruled=False, title_style=BOLD_STEEL)
 
 
-def _packet_sections(packet: EscalationPacket) -> list[RenderableType]:
+def _static(title: str, rows: list[Row]) -> Static:
+    return Static(_titled(title, LabelledRows(rows)))
+
+
+def _page_widgets(packet: EscalationPacket) -> list[Widget]:
     request = packet.agent_request
     question = request.question if request is not None else packet.question
-    sections: list[RenderableType] = []
+    widgets: list[Widget] = []
     if question:
-        sections.append(_titled(_QUESTION_TITLE, Text(question, style=PRIMARY_TEXT_COLOR)))
+        widgets.append(Static(_titled(_QUESTION_TITLE, Text(question, style=PRIMARY_TEXT_COLOR))))
     for label, content in packet.evidence_sections:
-        if label not in _SECTIONS or not content or content == _NONE_RECORDED:
+        if not content or content == _NONE_RECORDED:
             continue
-        title, make_rows = _SECTIONS[label]
-        sections.append(_titled(title, _Rows(make_rows(content))))
-    return sections
+        if label in _ROW_SECTIONS:
+            title, make = _ROW_SECTIONS[label]
+            widgets.append(_static(title, _line_rows(content, make)))
+        elif label == _REPORTS and (reports := parse_reports(content)):
+            widgets.append(EvidenceTable(_REPORTS, reports, table_id=_REPORTS_TABLE))
+        elif label == _RECENT_SIGNALS and (signals := parse_signals(content)):
+            widgets.append(EvidenceTable(_SIGNALS_TITLE, signals, table_id=_SIGNALS_TABLE))
+    return widgets
 
 
-def extra_details_renderable(packet_text: str) -> RenderableType:
-    """Return the sectioned page, or the amber parse error above the original packet text."""
-    packet = parse_escalation_packet(packet_text)
-    if packet.errors:
-        error = Text(_ERROR_PREFIX + GROUP_SEPARATOR.join(packet.errors), style=AMBER)
-        return Group(error, Text(""), Text(packet_text, style=PRIMARY_TEXT_COLOR))
-    sections: list[RenderableType] = []
-    for section in _packet_sections(packet):
-        sections.extend((section, Text("")))
-    return Group(*sections[:-1])
+def _error_widget(packet: EscalationPacket, packet_text: str) -> Static:
+    error = Text(_ERROR_PREFIX + GROUP_SEPARATOR.join(packet.errors), style=AMBER)
+    return Static(Group(error, Text(""), Text(packet_text, style=PRIMARY_TEXT_COLOR)))
 
 
 class ExtraDetailsScreen(ModalScreen[None]):
@@ -158,6 +147,8 @@ class ExtraDetailsScreen(ModalScreen[None]):
     #extra-details-title { text-wrap: nowrap; text-overflow: ellipsis; }
     #extra-details-scroll { max-height: 1fr; min-height: 0; }
     #extra-details-body { height: auto; }
+    #extra-details-body > * { margin-top: 1; }
+    #extra-details-body > :first-child { margin-top: 0; }
     """
     )
 
@@ -183,12 +174,23 @@ class ExtraDetailsScreen(ModalScreen[None]):
                     classes=POPUP_CLOSE_CLASS,
                 )
             yield Rule(classes=POPUP_RULE_CLASS)
-            with VerticalScroll(id="extra-details-scroll", classes=POPUP_BODY_CLASS):
-                yield Static(extra_details_renderable(self._packet_text), id="extra-details-body")
+            with (
+                VerticalScroll(id="extra-details-scroll", classes=POPUP_BODY_CLASS),
+                Vertical(id="extra-details-body"),
+            ):
+                yield from self._page()
+
+    def _page(self) -> list[Widget]:
+        packet = parse_escalation_packet(self._packet_text)
+        if packet.errors:
+            return [_error_widget(packet, self._packet_text)]
+        return _page_widgets(packet)
 
     def on_mount(self) -> None:
         self._fit()
-        self.set_focus(self.query_one("#extra-details-scroll", VerticalScroll))
+        tables = self.query(RowList)
+        first = tables.first() if tables else self.query_one("#extra-details-scroll")
+        self.set_focus(first, scroll_visible=False)
         self.call_after_refresh(self.query_one("#extra-details-frame", PopupFrame).content_ready)
 
     def on_resize(self, event: events.Resize) -> None:
