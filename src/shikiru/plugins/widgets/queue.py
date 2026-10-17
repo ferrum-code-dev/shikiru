@@ -241,10 +241,10 @@ def _focus_row_marker(row: TaskBrowserRow) -> tuple[str, str]:
         return TASK_MARKER_OPERATOR, STEEL_BLUE
     if TASK_HOLD_PAUSED in row.holds:
         return TASK_MARKER_PAUSED, AMBER
-    return _status_marker(row.status)
+    return status_marker(row.status)
 
 
-def _status_marker(status: str) -> tuple[str, str]:
+def status_marker(status: str) -> tuple[str, str]:
     return ROW_STATUS_MARKERS.get(status, (TASK_MARKER_CURRENT, STEEL_BLUE))
 
 
@@ -1115,7 +1115,7 @@ class QueuePanel(Vertical):
         is_all = view.filter is TaskBrowserFilter.ALL
         return task_list_header(
             name=view.filter.value,
-            marker=None if is_all else _status_marker(view.filter.value),
+            marker=None if is_all else status_marker(view.filter.value),
             search=view.search,
             width=self.size.width,
             keys_only=self._keys_only(),
