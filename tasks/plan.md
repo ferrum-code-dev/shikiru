@@ -2107,3 +2107,9 @@ Refs: `dashboard/help_screen.py`, `ui/popup.py`, `tests/integration/test_dashboa
 - [x] One blank line follows the `← → switch section` hint row.
 - [x] The Help panel keeps one size across sections (tallest and widest content at the current width, capped by the viewport), shows the scrollbar only when that does not fit, and re-measures on resize.
 - [x] The collected cases do not grow (1646) and both gates pass.
+
+### Task 239: Disabled hints show a grey key
+Refs: `ui/keys.py`, `dashboard/palette.py`, `dashboard/resolution_view.py`, `dashboard/resolution.py`, `tests/integration/test_dashboard_palette.py`, `docs/design/06-operator.md`, `docs/tui-feedback-seventeenth-review.md`.
+- [ ] `key_hint` takes the enabled state; a disabled hint paints its key grey (bold kept) instead of bold cyan, and it is cyan again once it works.
+- [ ] The palette action hint and the resolution `Enter send` / `Enter edit` hint use it; always-active hints are unchanged.
+- [ ] Design 06 states the colour rule; the collected cases do not grow by more than one (1644) and both gates pass.
