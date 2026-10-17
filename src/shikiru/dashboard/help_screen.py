@@ -89,6 +89,21 @@ class _KeyTable:
             yield Section(group.title, body, ruled=False, title_style=STEEL_BLUE)
 
 
+class _SectionHeightTable:
+    def __init__(self, active: _KeyTable, sections: tuple[_KeyTable, ...]) -> None:
+        self._active = active
+        self._sections = sections
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        heights = [
+            len(console.render_lines(section, options, pad=False)) for section in self._sections
+        ]
+        shown = len(console.render_lines(self._active, options, pad=False))
+        yield self._active
+        for _ in range(max(heights) - shown):
+            yield Text("")
+
+
 class WorkspaceHelpScreen(ModalScreen[None]):
     """Help with a tab per context; Left and Right switch tabs and the body scrolls."""
 
@@ -101,7 +116,7 @@ class WorkspaceHelpScreen(ModalScreen[None]):
         POPUP_CSS
         + f"""
     #{HELP_TABS} {{ height: 1; overflow: hidden; }}
-    #{HELP_HINT} {{ height: 1; }}
+    #{HELP_HINT} {{ height: 1; margin-bottom: 1; }}
     .{TAB_CLASS} {{ width: auto; margin: 0 2 0 0; color: $muted-text; }}
     .{TAB_CLASS}.{TAB_ACTIVE_CLASS} {{
         color: $steel-blue; text-style: bold; background: $selected-surface;
@@ -146,7 +161,9 @@ class WorkspaceHelpScreen(ModalScreen[None]):
 
     def on_resize(self, event: events.Resize) -> None:
         self._apply_compact_layout(event.size.width, event.size.height)
-        self.call_after_refresh(self.query_one(f"#{HELP_FRAME}", PopupFrame).update_preferred_size)
+        frame = self.query_one(f"#{HELP_FRAME}", PopupFrame)
+        frame.reset_preferred_size()
+        self.call_after_refresh(frame.content_ready)
 
     def _apply_compact_layout(self, width: int, height: int) -> None:
         frame = self.query_one(f"#{HELP_FRAME}", PopupFrame)
@@ -159,8 +176,9 @@ class WorkspaceHelpScreen(ModalScreen[None]):
         for tab, label in zip(_TABS, self.query(f".{TAB_CLASS}"), strict=True):
             label.set_class(tab is self._tab, TAB_ACTIVE_CLASS)
 
-    def _table(self) -> _KeyTable:
-        return _KeyTable(help_groups(self._tab, self._help.availability))
+    def _table(self) -> _SectionHeightTable:
+        sections = tuple(_KeyTable(help_groups(tab, self._help.availability)) for tab in _TABS)
+        return _SectionHeightTable(sections[_TABS.index(self._tab)], sections)
 
     def action_select_tab(self, index: int) -> None:
         """Show the tab at `index` from the top."""
@@ -171,9 +189,6 @@ class WorkspaceHelpScreen(ModalScreen[None]):
         self._paint_tabs()
         self.query_one(f"#{HELP_COPY}", Static).update(self._table())
         self.query_one(f"#{HELP_SCROLL}", VerticalScroll).scroll_home(animate=False)
-        frame = self.query_one(f"#{HELP_FRAME}", PopupFrame)
-        frame.reset_preferred_size()
-        self.call_after_refresh(frame.content_ready)
 
     def action_switch(self, step: int) -> None:
         """Show the neighbouring tab, stopping at both ends."""

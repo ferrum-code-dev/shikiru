@@ -4,6 +4,7 @@ import errno
 import os
 import re
 from datetime import UTC, datetime
+from functools import partial
 from html import unescape
 from itertools import pairwise
 from typing import TYPE_CHECKING, cast
@@ -77,6 +78,7 @@ from shikiru.dashboard.detail import (
     TaskDetailPanel,
     TaskDetailScreen,
 )
+from shikiru.dashboard.help_keys import HelpTab
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.domain.commands import (
@@ -160,6 +162,7 @@ _GLOBAL_TMUX_PREFIX = "C-b"
 _SESSION_TMUX_PREFIX = "C-a"
 _TMUX_CLIENT_TTY_FORMAT = "#{client_tty}"
 _MEASURED_HOME_SIZE = (101, 35)
+_HELP_HINT_AND_BLANK_ROWS = 2
 _HELP_GESTURE_KEY = "key"
 _HELP_GESTURE_FOOTER = "footer"
 _STANDARD_HOME_SIZE = (100, 35)
@@ -4492,6 +4495,40 @@ def _assert_home_navigation_fits(app: DashboardApp, width: int, height: int) -> 
     assert not footer.display or footer.region.bottom <= height or root.max_scroll_y > 0
 
 
+def _active_help_tabs_are(screen: Widget, expected: list[str]) -> bool:
+    labels = screen.query(".help-tab.-active").results(Static)
+    return [str(label.content) for label in labels] == expected
+
+
+async def _assert_help_frame_keeps_its_size_across_sections(
+    app: DashboardApp, pilot: Pilot[None], size: tuple[int, int]
+) -> None:
+    screen = app.screen
+    frame = screen.query_one("#workspace-help-frame")
+    body = screen.query_one("#workspace-help-scroll", VerticalScroll)
+    hint = screen.query_one("#workspace-help-hint")
+    await wait_until(
+        lambda: frame.region.height > 0 and frame.has_class("stable"), timeout=UI_WAIT_SECONDS
+    )
+    region = frame.region
+    scrolls = body.max_scroll_y > 0
+    assert body.region.y - hint.region.y == _HELP_HINT_AND_BLANK_ROWS
+    assert region.height <= size[1]
+
+    for key, tab in (
+        ("right", HelpTab.TASK),
+        ("right", HelpTab.ESCALATIONS),
+        ("left", HelpTab.TASK),
+    ):
+        await pilot.press(key)
+        await wait_until(
+            partial(_active_help_tabs_are, screen, [tab.value]), timeout=UI_WAIT_SECONDS
+        )
+        await pilot.wait_for_scheduled_animations()
+        assert frame.region == region
+        assert (body.max_scroll_y > 0) is scrolls
+
+
 async def _open_home_help(app: DashboardApp, pilot: Pilot[None], gesture: str) -> None:
     if gesture == _HELP_GESTURE_KEY:
         await pilot.press("?")
@@ -4554,6 +4591,7 @@ async def test_home_help_opens_by_key_or_mouse_and_closing_leaves_home_unchanged
         help_screen = app.screen
         focus_on_home = home.focused
         await _assert_popup_close_reachable(help_screen, **popup)
+        await _assert_help_frame_keeps_its_size_across_sections(app, pilot, size)
         if size == _TINY_HOME_SIZE:
             frame = help_screen.query_one("#workspace-help-frame")
             await pilot.resize_terminal(*_WIDE_HOME_SIZE)
