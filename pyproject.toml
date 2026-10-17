@@ -236,6 +236,7 @@ forbidden_modules = [
   "shikiru.dashboard.services",
   "shikiru.dashboard.session_picker",
   "shikiru.dashboard.session_history",
+  "shikiru.dashboard.task_picker",
   "shikiru.dashboard.tick",
   "shikiru.dashboard.timeline_filter",
   "shikiru.dashboard.timeline_section",

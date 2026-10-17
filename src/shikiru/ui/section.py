@@ -80,21 +80,23 @@ def state_line(word: str, colour: str, error: str | None) -> Text:
     return Text(f"{word}{detail}", style=colour)
 
 
-def wrap_groups(groups: tuple[Text, ...], width: int | None) -> Text:
-    """Join `groups` with grey separators, breaking lines only between groups."""
+def wrap_groups(
+    groups: tuple[Text, ...], width: int | None, separator: str = GROUP_SEPARATOR
+) -> Text:
+    """Join `groups` with grey `separator`s, breaking lines only between groups."""
     result = Text()
     line_width = 0
     for group in groups:
-        separator = GROUP_SEPARATOR if line_width else ""
+        gap = separator if line_width else ""
         group_width = cell_len(group.plain)
-        exceeds_width = line_width + cell_len(separator) + group_width > width if width else False
+        exceeds_width = line_width + cell_len(gap) + group_width > width if width else False
         if width is not None and line_width and exceeds_width:
             result.append("\n")
             line_width = 0
-            separator = ""
-        result.append(separator, style=SECONDARY_TEXT_COLOR)
+            gap = ""
+        result.append(gap, style=SECONDARY_TEXT_COLOR)
         result.append(group)
-        line_width += cell_len(separator) + group_width
+        line_width += cell_len(gap) + group_width
     return result
 
 
