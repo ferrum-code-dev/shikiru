@@ -2129,9 +2129,10 @@ Refs: `domain/briefing.py`, `dashboard/briefing_view.py`, `dashboard/views.py`, 
 
 ### Task 242: Task picker popup
 Refs: `dashboard/task_picker.py` (new), `operator/queries.py` (`search_task_targets`), `plugins/widgets/queue.py` (status markers), `ui/popup.py`, `tests/integration/`, import-linter contract.
-- [ ] A popup in the common style lists tasks as one-line rows (`glyph T-n title status`, shared status markers) with background-only selection; Up/Down/Home/End/PgUp/PgDn move; Enter chooses and dismisses with the task id.
-- [ ] `/` opens the one-line search under the title; Esc clears and closes the search first, then the popup; pages are bounded with the `m load more` hint; no selected task stays outside the match.
-- [ ] It is not wired into the palette yet; one behaviour table covers it; the collected cases do not grow (1644) and both gates pass.
+- [x] A popup in the common style lists tasks as one-line rows (`glyph T-n title status`, shared status markers) with background-only selection; Up/Down/Home/End/PgUp/PgDn move; Enter chooses and dismisses with the task id.
+- [x] `/` opens the one-line search under the title; Esc clears and closes the search first, then the popup; pages are bounded with the `m load more` hint; no selected task stays outside the match.
+- [x] It is not wired into the palette yet; one behaviour table covers it; the collected cases grow by that one test only (1645) and both gates pass.
+- Proof: headless Textual on 60 mixed-status tasks at 130x50, 100x40, 60x24, 48x20, 40x14 and 40x8 showed one-line rows with the shared markers, background-only `$selected-surface` selection on the current task, a wrapping hint line and the one-column scrollbar only for the 50-row page (none for 5 tasks); `/`, Esc order, `m` load more, Home/End/PgUp/PgDn and Enter behave as specified. One behaviour test added (1645 collected, +1: the picker had no test); both gates passed.
 
 ### Task 243: Actions list
 Refs: `dashboard/palette.py`, `dashboard/app.py` (`_open_task_palette_route`, `_menu_available`, `_preset_popup`), `dashboard/task_picker.py`, `dashboard/help_keys.py`, `tests/integration/test_dashboard_palette.py`, `test_dashboard_app.py`, `test_tmux_palette_binding.py`, `docs/design/06-operator.md` §5.5, `docs/tui-focus.md`.
