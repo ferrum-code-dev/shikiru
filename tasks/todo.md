@@ -371,4 +371,4 @@ Seventeenth-review scope: [seventeenth review](../docs/tui-feedback-seventeenth-
   - Proof: headless Textual at 130, 100, 60, 48 and 40 columns showed Home unchanged (hint, `f` empty statuses, `/` search, selection, Recent, `Load more`); the older layout and Family context are removed with their dead data path; collected cases 1644 (was 1646); both gates passed.
 - [x] Task 237: Load more as the `m` hint
 - [x] Task 238: Help panel spacing and stable size
-- [ ] Task 239: Disabled hints show a grey key
+- [x] Task 239: Disabled hints show a grey key

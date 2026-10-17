@@ -2110,6 +2110,7 @@ Refs: `dashboard/help_screen.py`, `ui/popup.py`, `tests/integration/test_dashboa
 
 ### Task 239: Disabled hints show a grey key
 Refs: `ui/keys.py`, `dashboard/palette.py`, `dashboard/resolution_view.py`, `dashboard/resolution.py`, `tests/integration/test_dashboard_palette.py`, `docs/design/06-operator.md`, `docs/tui-feedback-seventeenth-review.md`.
-- [ ] `key_hint` takes the enabled state; a disabled hint paints its key grey (bold kept) instead of bold cyan, and it is cyan again once it works.
-- [ ] The palette action hint and the resolution `Enter send` / `Enter edit` hint use it; always-active hints are unchanged.
-- [ ] Design 06 states the colour rule; the collected cases do not grow by more than one (1644) and both gates pass.
+- [x] `key_hint` takes the enabled state; a disabled hint paints its key grey (bold kept) instead of bold cyan, and it is cyan again once it works.
+- [x] The palette action hint and the resolution `Enter send` / `Enter edit` hint use it; always-active hints are unchanged.
+- [x] Design 06 states the colour rule; the collected cases do not grow by more than one (1644) and both gates pass.
+- Proof: headless Textual at 130x50, 100x40, 60x24, 48x20 and 40x14 showed the Message hint key bold grey while empty, bold cyan once text is typed and bold grey while the send waits for its acknowledgement (cyan again when usable), and the Pause hint bold cyan then grey after Enter; the resolution `Enter` key renders grey when choosing is disabled. A Textual `Content` compares by text only, so the palette hint now sets its label directly to repaint style-only changes. Collected cases 1644 (unchanged); `uv run poe check` and `TERM=dumb NO_COLOR=1 uv run poe check` passed.
