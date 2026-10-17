@@ -26,7 +26,7 @@ from shikiru.ui.popup import (
     popup_close_label,
     prepare_popup,
 )
-from shikiru.ui.section import BOLD_PRIMARY, grey, key_label, wrap_groups
+from shikiru.ui.section import BOLD_PRIMARY, WrappedGroups, grey, key_label
 
 if TYPE_CHECKING:
     from rich.console import Console, ConsoleOptions, RenderResult
@@ -83,15 +83,6 @@ class _RowText:
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         del console
         yield picker_row_text(self._task, options.max_width)
-
-
-class _HintText:
-    def __init__(self, groups: tuple[Text, ...]) -> None:
-        self._groups = groups
-
-    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        del console
-        yield wrap_groups(self._groups, options.max_width, HINT_GAP)
 
 
 class PickerRow(ListItem):
@@ -240,7 +231,7 @@ class TaskPickerScreen(ModalScreen[str | None]):
             key_label(SEARCH_KEY, SEARCH_LABEL),
             self._load_more_hint(keys_only=keys_only),
         )
-        self.query_one(f"#{PICKER_HINT}", Static).update(_HintText(groups))
+        self.query_one(f"#{PICKER_HINT}", Static).update(WrappedGroups(groups, HINT_GAP))
 
     def _load_more_hint(self, *, keys_only: bool) -> Text:
         if self._has_more:

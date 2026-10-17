@@ -100,6 +100,18 @@ def wrap_groups(
     return result
 
 
+class WrappedGroups:
+    """Renderable that wraps its groups with `separator` at the width it is rendered in."""
+
+    def __init__(self, groups: tuple[Text, ...], separator: str = GROUP_SEPARATOR) -> None:
+        self._groups = groups
+        self._separator = separator
+
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        del console
+        yield wrap_groups(self._groups, options.max_width, self._separator)
+
+
 def labelled_rows(
     rows: list[Row], width: int, label_width: int, stack_below: int = STACKED_BELOW_WIDTH
 ) -> RenderableType:
