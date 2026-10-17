@@ -446,6 +446,7 @@ class ResolutionScreen(ModalScreen[bool]):
                 panel.choices[self._selected],
                 details_open=self._tried_open if isinstance(self.focused, _TriedSection) else None,
                 editing=isinstance(self.focused, _AnswerBox),
+                choosing_disabled=self._disabled_reason() is not None or self._sending,
             )
         )
         choose.display = layout is not ResolutionLayout.TINY
@@ -556,6 +557,7 @@ class ResolutionScreen(ModalScreen[bool]):
         if self._sending or self._disabled_reason() is not None:
             return
         self._sending = True
+        self._paint()
         self.run_worker(self._send(kind, answer), group=_SEND_GROUP)
 
     async def _send(self, kind: ResolutionKind, answer: str) -> None:

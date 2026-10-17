@@ -7,6 +7,7 @@ import re
 from rich.text import Text
 
 from shikiru.ui.section import BOLD_STEEL
+from shikiru.ui.tokens import SECONDARY_TEXT_COLOR, STYLE_BOLD
 
 KEY_NAMES: tuple[str, ...] = (
     "Ctrl+P",
@@ -24,6 +25,7 @@ KEY_NAMES: tuple[str, ...] = (
 )
 KEY_SYMBOLS: tuple[str, ...] = ("↑↓", "↑", "↓", "←", "→")
 KEY_LABELLED_CHARACTERS = "a-z?/"
+BOLD_DISABLED_KEY = f"{STYLE_BOLD} {SECONDARY_TEXT_COLOR}"
 
 _KEY_PATTERN = re.compile(
     "|".join(
@@ -36,13 +38,17 @@ _KEY_PATTERN = re.compile(
 )
 
 
-def key_hint(text: str, base_style: str = "") -> Text:
-    """Return `text` in `base_style` with every known key name in the cyan key style."""
+def key_hint(text: str, base_style: str = "", *, enabled: bool = True) -> Text:
+    """Return `text` in `base_style` with every known key name in the cyan key style.
+
+    A disabled hint (its key does nothing now) paints the keys bold grey instead.
+    """
+    key_style = BOLD_STEEL if enabled else BOLD_DISABLED_KEY
     hint = Text(text)
     if base_style:
         hint.stylize(base_style)
     for match in _KEY_PATTERN.finditer(text):
-        hint.stylize(BOLD_STEEL, match.start(), match.end())
+        hint.stylize(key_style, match.start(), match.end())
     return hint
 
 

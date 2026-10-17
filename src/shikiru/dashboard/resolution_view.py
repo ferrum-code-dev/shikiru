@@ -59,6 +59,7 @@ _EXPAND_HINT = "Enter expand"
 _BACK_HINT = "\N{UPWARDS ARROW} choices"
 _COLLAPSE_HINT = "Enter collapse"
 _EDIT_HINT = "Enter edit"
+_CHOICE_HINTS = frozenset({_SEND_HINT, _EDIT_HINT})
 _BOX_HINTS = ("Ctrl+S send", "Enter new line", "Esc back")
 _NEEDS_INPUT_MARK = "\N{LOWER RIGHT PENCIL}"
 _NEEDS_INPUT_TEXT = "needs your input"
@@ -188,17 +189,25 @@ def _hints(selected: PanelChoice, details_open: bool | None, *, editing: bool) -
 
 
 def choose_renderable(
-    selected: PanelChoice, *, details_open: bool | None = None, editing: bool = False
+    selected: PanelChoice,
+    *,
+    details_open: bool | None = None,
+    editing: bool = False,
+    choosing_disabled: bool = False,
 ) -> RenderableType:
     """Return the Choose heading with its key hint.
 
     `details_open` is `None` while the list has focus, else whether the focused Details is open.
+    `choosing_disabled` greys the `Enter` key of the list hint, which then does nothing.
     """
     hints = _hints(selected, details_open, editing=editing)
-    hint = GROUP_SEPARATOR.join(hints)
-    return Section(
-        _CHOOSE_TITLE, Group(), key_hint(hint, SECONDARY_TEXT_COLOR), title_style=BOLD_STEEL
-    )
+    inert = choosing_disabled and details_open is None and not editing
+    parts = [
+        key_hint(hint, SECONDARY_TEXT_COLOR, enabled=not (inert and hint in _CHOICE_HINTS))
+        for hint in hints
+    ]
+    hint = Text(GROUP_SEPARATOR, style=SECONDARY_TEXT_COLOR).join(parts)
+    return Section(_CHOOSE_TITLE, Group(), hint, title_style=BOLD_STEEL)
 
 
 def _toned(item: AttemptItem) -> Text:

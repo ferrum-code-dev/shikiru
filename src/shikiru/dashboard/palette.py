@@ -10,6 +10,7 @@ from rich.text import Text
 from textual.app import App
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, Rule, Select, Static, TextArea
@@ -846,9 +847,14 @@ class PaletteScreen(ModalScreen[PaletteReturn | None]):
         elif self._cancel_armed:
             label = key_hint(_CANCEL_CONFIRM_HINT[tiny], f"{STYLE_BOLD} {DUSTY_ROSE}")
         else:
-            label = key_hint(_HINT_LABELS[action][tiny], SECONDARY_TEXT_COLOR)
+            label = key_hint(
+                _HINT_LABELS[action][tiny],
+                SECONDARY_TEXT_COLOR,
+                enabled=not (submit.disabled or self._closing_after_queue),
+            )
         marked = self._marked(label, action)
-        submit.label = marked
+        submit.set_reactive(Button.label, Content.from_text(marked))
+        submit.refresh(layout=True)
         wraps = hint and len(marked.plain) > submit.size.width
         submit.styles.height = _PALETTE_WRAPPED_HINT_ROWS if wraps else "auto"
 

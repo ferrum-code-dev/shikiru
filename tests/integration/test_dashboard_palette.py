@@ -37,7 +37,7 @@ from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import FORMAT_PANE_ID, Tmux, exact_target
-from tests.support.cells import CYAN_BOLD, GREY, rendered_lines
+from tests.support.cells import CYAN_BOLD, DISABLED_KEY, GREY, rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.escalations import (
     operator_services,
@@ -178,6 +178,10 @@ def _hint_key_style(button: Button, text: str) -> set[tuple[bool, str | None]]:
         if start >= 0:
             return {style for _, style in cells[start : start + len(text)]}
     raise AssertionError(text)
+
+
+async def _wait_for_hint_key(button: Button, style: tuple[bool, str | None]) -> None:
+    await wait_until(lambda: _hint_key_style(button, "Ctrl+S") == {style}, timeout=UI_WAIT_SECONDS)
 
 
 async def _wait_for_ack(screen: PaletteScreen, status: str = "Pending") -> None:
@@ -462,10 +466,14 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
         assert role.query_one(SelectOverlay).option_count == len(TASK_ACTION_ROLES)
         message = screen.query_one("#message", TextArea)
         await wait_until(lambda: app.focused is message, timeout=UI_WAIT_SECONDS)
+        submit = screen.query_one("#palette-submit", Button)
+        await _wait_for_hint_key(submit, DISABLED_KEY)
         await pilot.press(*"Review", "enter", *"evidence")
         assert message.text == "Review\nevidence"
+        await _wait_for_hint_key(submit, CYAN_BOLD)
         await pilot.press("ctrl+s")
         await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+        await _wait_for_hint_key(submit, DISABLED_KEY)
         queued = queue.pending()[0]
         assert queued.command == Say(
             task_id=task.id,
@@ -481,17 +489,15 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
         assert app.is_running
         assert message.text == ""
         assert app.focused is message
-        submit = screen.query_one("#palette-submit", Button)
-        assert _hint_key_style(submit, "Ctrl+S") == {CYAN_BOLD}
-        assert _hint_key_style(submit, "Enter") == {CYAN_BOLD}
+        assert _hint_key_style(submit, "Ctrl+S") == {DISABLED_KEY}
         assert _hint_key_style(submit, "queue message") == {GREY}
         await pilot.press("tab", "shift+tab")
         await wait_until(lambda: app.focused is message, timeout=UI_WAIT_SECONDS)
-        assert _hint_key_style(submit, "Ctrl+S") == {CYAN_BOLD}
         await _wait_for_confirmation(screen, shown=False)
-        assert _hint_key_style(submit, "Ctrl+S") == {CYAN_BOLD}
 
         await pilot.press(*"Second note.")
+        await _wait_for_hint_key(submit, CYAN_BOLD)
+        assert _hint_key_style(submit, "Enter") == {CYAN_BOLD}
         await pilot.press("ctrl+s")
         await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
         await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
@@ -501,7 +507,7 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
         await _wait_for_ack(screen, "Rejected")
         assert "guidance refused" in _static_text(screen, "#palette-result")
         assert message.text == "Second note."
-        assert _hint_key_style(submit, "Ctrl+S") == {CYAN_BOLD}
+        await _wait_for_hint_key(submit, CYAN_BOLD)
 
 
 async def _assert_menu_routes_and_rejected_keys(

@@ -31,6 +31,7 @@ CYAN_BOLD: Style = (True, STEEL_BLUE)
 CYAN: Style = (False, STEEL_BLUE)
 GREEN_BOLD: Style = (True, SAGE)
 GREY: Style = (False, SECONDARY_TEXT_COLOR)
+DISABLED_KEY: Style = (True, SECONDARY_TEXT_COLOR)
 AMBER_TEXT: Style = (False, AMBER)
 ALERT_TEXT: Style = (False, ALERT_COLOR)
 BLANK = " "
