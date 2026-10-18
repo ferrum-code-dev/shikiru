@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, ClassVar, cast, get_args
 
 from rich.text import Text
+from textual import on
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.content import Content
@@ -39,6 +40,7 @@ from shikiru.operator.queries import (
     TASK_ACTION_ROLES,
     OperatorTaskAction,
 )
+from shikiru.ui.fold import FoldLine, fold_arrow
 from shikiru.ui.keys import key_hint
 from shikiru.ui.popup import (
     POPUP_BODY_CLASS,
@@ -152,6 +154,7 @@ SUBMIT_ACTION_LABELS = {
     _ACTION_STOP: "Stop engine",
 }
 _ENTER_HINT_VERBS = {
+    _ACTION_EXPORT: "export evidence",
     _ACTION_PAUSE: "pause",
     _ACTION_RESUME: "resume",
     _ACTION_CANCEL: "cancel",
@@ -166,22 +169,23 @@ _ENTER_HINT_VERBS = {
 }
 _ENTER_HINT_ACTIONS = frozenset(_ENTER_HINT_VERBS)
 _HINT_LABELS = {
+    _ACTION_SUBMIT: ("Ctrl+S submit task \N{MIDDLE DOT} Enter new line", "Ctrl+S submit"),
     _ACTION_MESSAGE: ("Ctrl+S queue message \N{MIDDLE DOT} Enter new line", "Ctrl+S queue"),
     **{action: (f"Enter {verb}", f"Enter {verb}") for action, verb in _ENTER_HINT_VERBS.items()},
 }
+_HINT_CLASS = "hint"
 _CONFIRM_HINTS = {
     _ACTION_CANCEL: ("Enter again to cancel", "Enter again"),
     _ACTION_RETRY: ("Enter again to retry", "Enter again"),
     _ACTION_STOP: ("Enter again to stop engine", "Enter again"),
 }
-_HINT_CLASS = "hint"
 _HINT_KEY_ACTIONS = {
     "confirm": _ENTER_HINT_ACTIONS,
-    "queue": frozenset({_ACTION_MESSAGE}),
+    "queue": frozenset({_ACTION_MESSAGE, _ACTION_SUBMIT}),
 }
 _CONFIRM_TWICE_ACTIONS = frozenset(_CONFIRM_HINTS)
 _CLEAR_AFTER_QUEUE_ACTIONS = frozenset({_ACTION_MESSAGE})
-_CONFIRMED_ACTIONS = _ENTER_HINT_ACTIONS | _CLEAR_AFTER_QUEUE_ACTIONS
+_CONFIRMED_ACTIONS = _ENTER_HINT_ACTIONS | _CLEAR_AFTER_QUEUE_ACTIONS | {_ACTION_SUBMIT}
 _PALETTE_WRAPPED_HINT_ROWS = 2
 _CONFIRMATION_GLYPH = "\N{CHECK MARK}"
 _ENTER_KEY = "enter"
@@ -219,18 +223,19 @@ _EXPORT_FORMAT_OPTIONS = (
     ("JSON", EXPORT_FORMAT_JSON),
 )
 _EXPORT_OVERWRITE_OPTIONS = (
-    ("Refuse an existing file", _EXPORT_REFUSE),
-    ("Replace an existing file", _EXPORT_OVERWRITE),
+    ("Refuse", _EXPORT_REFUSE),
+    ("Replace", _EXPORT_OVERWRITE),
 )
 _EXPORT_SIGNALS_OPTIONS = (
-    ("Exclude normalized signal excerpts", _EXPORT_SIGNALS_EXCLUDE),
-    ("Include normalized signal excerpts", _EXPORT_SIGNALS_INCLUDE),
+    ("Exclude", _EXPORT_SIGNALS_EXCLUDE),
+    ("Include", _EXPORT_SIGNALS_INCLUDE),
 )
 _ACTION_STATE_ID = "palette-action-state"
 _GUIDANCE_ID = "palette-guidance"
 _SUBMIT_ID = "palette-submit"
-_ADVANCED_TOGGLE_ID = "palette-advanced-toggle"
-_ADVANCED_FIELDS_ID = "palette-advanced-fields"
+_OPTIONS_FOLD_ID = "palette-options-fold"
+_OPTIONS_ID = "palette-options"
+_OPTIONS_TITLE = "Options"
 _SELECT_REQUIRED = "Select an item"
 _PALETTE_FORM_ID = "palette-form"
 _PALETTE_CLOSE = "palette-close"
@@ -248,6 +253,8 @@ _PALETTE_FRAME_VERTICAL_MARGIN_ROWS = 2
 _PALETTE_TEXT_AREA_MINIMUM_WIDTH = 5
 _PALETTE_INLINE_ACTIONS_ROWS = 1
 _PALETTE_STACKED_ACTIONS_ROWS = 2
+_EXPORT_DEFAULT_EXTENSION = "md"
+_EXPORT_DESTINATION_PLACEHOLDER = f"T-1-evidence.{_EXPORT_DEFAULT_EXTENSION}"
 _PALETTE_TEXT_AREA_FIELDS = (_FIELD_REQUEST, _FIELD_MESSAGE)
 _TAKEOVER_SELECTION_FAILURE = "take-over succeeded, but the role pane could not be selected"
 _PALETTE_STATE_WORKER = "palette-state-updates"
@@ -276,12 +283,13 @@ _FORM_ROLE_ACTIONS = frozenset(
     {_ACTION_TAKE_OVER, _ACTION_HAND_BACK, _ACTION_RUNG, _ACTION_MESSAGE, _ACTION_PEEK}
 )
 _REQUIRED_FIELDS = {
+    _ACTION_SUBMIT: _FIELD_REQUEST,
+    _ACTION_EXPORT: _FIELD_EXPORT_DESTINATION,
     _ACTION_MESSAGE: _FIELD_MESSAGE,
     _ACTION_PRIORITIZE: _FIELD_PRIORITY,
     _ACTION_RUNG: _FIELD_RUNG,
 }
 _ACTION_GUIDANCE = {
-    _ACTION_SUBMIT: "Creates a new task using the request and optional submission fields.",
     _ACTION_PRIORITIZE: "Changes dispatch order while the task is queued.",
     _ACTION_PAUSE: "Holds the task before its next turn or integration effect.",
     _ACTION_PAUSE_NOW: "Stops the current turn and cancels its step, then holds the task.",
@@ -310,21 +318,27 @@ _ACTION_GUIDANCE = {
         "engine starts again."
     ),
     _ACTION_EXPORT: (
-        "Writes retained task evidence to the selected local file path. Relative paths start at "
-        "the project root, and the parent directory must already exist."
+        "Writes retained evidence to a local file; relative paths start at the project root, and "
+        "parent folders must exist."
     ),
 }
 _TASK_ACTION_BY_ID = {action.value: action for action in OperatorTaskAction}
 _FIELD_CLASS = "palette-field"
 _ROW_CLASS = "palette-row"
+_WIDE_CLASS = "palette-wide"
 _NO_TASK_TARGET = "Choose a task target first"
 _ACTION_DISABLED_PREFIX = "unavailable: "
 
 PaneSelector = Callable[[str], Awaitable[None]]
 
 
-def _field_classes(*, inline: bool) -> str:
-    return f"{_FIELD_CLASS} {_ROW_CLASS}" if inline else _FIELD_CLASS
+def _field_classes(*, inline: bool, wide: bool = False) -> str:
+    classes = f"{_FIELD_CLASS} {_ROW_CLASS}" if inline else _FIELD_CLASS
+    return f"{classes} {_WIDE_CLASS}" if wide else classes
+
+
+def _default_export_destination(task_id: str) -> str:
+    return f"{task_id}-evidence.{_EXPORT_DEFAULT_EXTENSION}"
 
 
 class PaletteScreen(ModalScreen[str | None]):
@@ -351,13 +365,13 @@ class PaletteScreen(ModalScreen[str | None]):
     .palette-field { height: auto; margin-bottom: 1; }
     .palette-field Label { height: 1; color: $secondary-text; text-style: none; }
     .palette-field Input, .palette-field Select { width: 100%; }
-    .palette-field Input:focus,
-    #palette-submit:focus {
+    .palette-field Input:focus {
         border: round $focus;
         text-style: reverse;
     }
     .palette-row { layout: horizontal; margin-bottom: 0; }
     .palette-row Label { width: 9; }
+    .palette-wide Label { width: 17; }
     .palette-row Input, .palette-row Select { width: 1fr; min-width: 8; }
     .palette-row Input {
         height: 1; border: none; padding: 0 1; background: $background;
@@ -372,7 +386,12 @@ class PaletteScreen(ModalScreen[str | None]):
     .palette-row Select.-expanded > SelectCurrent {
         border: none; background: $selected-surface;
     }
+    #palette-options-fold { height: auto; margin: 0 0 1 0; color: $secondary-text; }
+    #palette-options-fold:focus { background: $selected-surface; background-tint: transparent; }
+    #palette-options { height: auto; margin-top: 1; }
+    .palette-note { height: auto; color: $secondary-text; }
     #palette-result-scroll { display: none; height: auto; max-height: 12; margin-top: 1; }
+    #palette-frame.short #palette-result-scroll { margin-top: 0; }
     #palette-result { height: auto; }
     #palette-submit {
         height: 1; min-height: 1; margin: 0 0 0 1; padding: 0 1; border: none;
@@ -384,20 +403,18 @@ class PaletteScreen(ModalScreen[str | None]):
     #palette-actions.short { margin-top: 0; }
     #palette-actions.hint { align-horizontal: left; }
     #palette-actions.hint #palette-submit {
-        padding: 0; background: $surface; color: $secondary-text; text-opacity: 1;
+        width: 100%; min-width: 1; height: auto; margin: 0; padding: 0;
+        border: none; border-top: none; border-bottom: none;
+        background: $surface; color: $secondary-text; text-opacity: 1; text-wrap: wrap;
         content-align: left middle; text-align: left;
     }
-    #palette-actions.hint #palette-submit:disabled {
-        color: $secondary-text; text-opacity: 1;
-    }
+    #palette-actions.hint #palette-submit:disabled { color: $secondary-text; text-opacity: 1; }
     #palette-actions Button {
         width: auto; max-width: 100%; height: auto; min-height: 1; padding: 0;
         border: none; border-top: none; border-bottom: none;
         text-wrap: wrap; text-style: none;
     }
-    #palette-submit:focus {
-        text-style: reverse;
-    }
+    #palette-submit:focus { text-style: reverse; }
     """
     )
 
@@ -432,7 +449,7 @@ class PaletteScreen(ModalScreen[str | None]):
         self._shown_action_options: tuple[tuple[str, str], ...] = ()
         self._route_error: str | None = None
         self._route_action: str | None = None
-        self._advanced_expanded = False
+        self._options_expanded = False
         self._action_in_flight = False
         self._confirm_armed = False
         self._closing_after_queue = False
@@ -459,7 +476,7 @@ class PaletteScreen(ModalScreen[str | None]):
             yield Rule(classes=POPUP_RULE_CLASS)
             yield from self._compose_form()
             with Vertical(id="palette-actions"):
-                yield Button("Run action", id=_SUBMIT_ID, variant="primary")
+                yield Button("Submit", id=_SUBMIT_ID, variant="primary")
 
     def _compose_form(self) -> ComposeResult:
         with VerticalScroll(id=_PALETTE_FORM_ID, classes=POPUP_BODY_CLASS):
@@ -477,35 +494,61 @@ class PaletteScreen(ModalScreen[str | None]):
         yield from self._input_field("Task ID", _FIELD_TASK_ID, "T-1")
 
     def _compose_task_submission_fields(self) -> ComposeResult:
-        yield Button("Advanced submission options", id=_ADVANCED_TOGGLE_ID)
-        yield from self._input_field(
-            "Export destination · relative to project root",
-            _FIELD_EXPORT_DESTINATION,
-            "evidence/T-1.md",
-        )
-        yield from self._select_field("Export format", _FIELD_EXPORT_FORMAT, _EXPORT_FORMAT_OPTIONS)
-        yield from self._select_field(
-            "Existing destination", _FIELD_EXPORT_OVERWRITE, _EXPORT_OVERWRITE_OPTIONS
-        )
-        yield from self._select_field(
-            "Normalized agent signal excerpts", _FIELD_EXPORT_SIGNALS, _EXPORT_SIGNALS_OPTIONS
-        )
-        yield from self._input_field("Priority", _FIELD_PRIORITY, "0", inline=True)
         yield from self._text_area_field("Request", "request", "Describe the work")
-        with Vertical(id=_ADVANCED_FIELDS_ID):
-            yield from self._input_field("Title (optional)", "title", "Task title")
-            yield from self._select_field("Mode", "mode", _MODE_OPTIONS)
-            yield from self._select_field("Complexity", "complexity", _COMPLEXITY_OPTIONS)
-            yield from self._input_field("Submission priority", "submission-priority", "0")
+        yield FoldLine("", id=_OPTIONS_FOLD_ID, markup=False)
+        with Vertical(id=_OPTIONS_ID):
             yield from self._input_field(
-                "Dependencies (comma separated)", "dependencies", "T-1, T-2"
+                "Title (optional)", _FIELD_TITLE, "Task title", inline=True, wide=True
             )
-            yield from self._input_field("Leader rung", "leader-rung", "agent:model:effort")
+            yield from self._select_field(
+                "Mode", _FIELD_MODE, _MODE_OPTIONS, inline=True, wide=True
+            )
+            yield from self._select_field(
+                "Complexity", _FIELD_COMPLEXITY, _COMPLEXITY_OPTIONS, inline=True, wide=True
+            )
             yield from self._input_field(
-                "Implementer rung", "implementer-rung", "agent:model:effort"
+                "Priority", _FIELD_SUBMISSION_PRIORITY, "0", inline=True, wide=True
             )
+            yield from self._input_field(
+                "Dependencies", _FIELD_DEPENDENCIES, "T-1, T-2", inline=True, wide=True
+            )
+            yield from self._input_field(
+                "Leader rung", _FIELD_LEADER_RUNG, "agent:model:effort", inline=True, wide=True
+            )
+            yield from self._input_field(
+                "Implementer rung",
+                _FIELD_IMPLEMENTER_RUNG,
+                "agent:model:effort",
+                inline=True,
+                wide=True,
+            )
+        yield from self._input_field(
+            "Destination",
+            _FIELD_EXPORT_DESTINATION,
+            _EXPORT_DESTINATION_PLACEHOLDER,
+            inline=True,
+            wide=True,
+        )
+        yield from self._select_field(
+            "Format", _FIELD_EXPORT_FORMAT, _EXPORT_FORMAT_OPTIONS, inline=True, wide=True
+        )
+        yield from self._select_field(
+            "Existing file",
+            _FIELD_EXPORT_OVERWRITE,
+            _EXPORT_OVERWRITE_OPTIONS,
+            inline=True,
+            wide=True,
+        )
+        yield from self._select_field(
+            "Agent signals",
+            _FIELD_EXPORT_SIGNALS,
+            _EXPORT_SIGNALS_OPTIONS,
+            inline=True,
+            wide=True,
+        )
 
     def _compose_task_role_fields(self) -> ComposeResult:
+        yield from self._input_field("Priority", _FIELD_PRIORITY, "0", inline=True)
         yield from self._select_field(
             "Role", _FIELD_ROLE, _ROLE_OPTIONS, allow_blank=False, inline=True
         )
@@ -584,7 +627,7 @@ class PaletteScreen(ModalScreen[str | None]):
         self.query_one("#priority", Input).value = "0"
         self.query_one("#submission-priority", Input).value = "0"
         self.query_one(f"#{_FIELD_TASK_ID}", Input).value = self._initial_context.task_id or _EMPTY
-        self._initialize_export_defaults()
+        self._initialize_export_defaults(task_id)
         self._route_action = self._selected_value(_FIELD_ACTION)
         self._update_fields(action_select.value)
         self._restore_contextual_form_draft(self._selected_value(_FIELD_ACTION))
@@ -736,10 +779,17 @@ class PaletteScreen(ModalScreen[str | None]):
                 _PALETTE_COMPACT_TEXT_AREA_MAX_HEIGHT if compact else None
             )
 
-    def _initialize_export_defaults(self) -> None:
+    def _initialize_export_defaults(self, task_id: str | None) -> None:
+        if task_id is not None:
+            self.query_one(
+                f"#{_FIELD_EXPORT_DESTINATION}", Input
+            ).value = _default_export_destination(task_id)
         cast(
             "Select[str]", self.query_one(f"#{_FIELD_EXPORT_FORMAT}", Select)
         ).value = EXPORT_FORMAT_MARKDOWN
+        cast(
+            "Select[str]", self.query_one(f"#{_FIELD_EXPORT_OVERWRITE}", Select)
+        ).value = _EXPORT_REFUSE
         cast(
             "Select[str]", self.query_one(f"#{_FIELD_EXPORT_SIGNALS}", Select)
         ).value = _EXPORT_SIGNALS_EXCLUDE
@@ -777,6 +827,14 @@ class PaletteScreen(ModalScreen[str | None]):
             if self._selected_value(_FIELD_ACTION) in _ENTER_HINT_ACTIONS:
                 self.set_focus(None)
             self._refresh_action_availability()
+        elif event.select.id in {
+            _FIELD_EXPORT_FORMAT,
+            _FIELD_EXPORT_OVERWRITE,
+            _FIELD_EXPORT_SIGNALS,
+        }:
+            if event.select.has_focus and self._selected_value(_FIELD_ACTION) == _ACTION_EXPORT:
+                self.set_focus(None)
+            self._refresh_action_availability()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         """Refresh current eligibility when a field changes."""
@@ -797,11 +855,20 @@ class PaletteScreen(ModalScreen[str | None]):
         button_id = event.button.id or _EMPTY
         if button_id == _PALETTE_CLOSE:
             await self.action_close()
-        elif button_id == _ADVANCED_TOGGLE_ID:
-            self._advanced_expanded = not self._advanced_expanded
-            self.query_one(f"#{_ADVANCED_FIELDS_ID}").display = self._advanced_expanded
         elif button_id == _SUBMIT_ID:
             self._activate_submit()
+
+    @on(FoldLine.Toggled)
+    def _options_toggled(self, message: FoldLine.Toggled) -> None:
+        message.stop()
+        self.action_toggle_options()
+
+    def action_toggle_options(self) -> None:
+        if self._selected_value(_FIELD_ACTION) != _ACTION_SUBMIT:
+            return
+        self._options_expanded = not self._options_expanded
+        self.query_one(f"#{_OPTIONS_ID}").display = self._options_expanded
+        self._paint_options_fold()
 
     def on_unmount(self) -> None:
         worker = self._action_worker
@@ -857,6 +924,13 @@ class PaletteScreen(ModalScreen[str | None]):
         if task_id is None or action in {_ACTION_SUBMIT, _ACTION_STOP}:
             return label
         return f"{label} \N{MIDDLE DOT} {task_id}"
+
+    def _paint_options_fold(self) -> None:
+        label = Text(
+            f"{fold_arrow(expanded=self._options_expanded)} {_OPTIONS_TITLE}",
+            style=SECONDARY_TEXT_COLOR,
+        )
+        self.query_one(f"#{_OPTIONS_FOLD_ID}", FoldLine).update(label)
 
     def _refresh_context_form_title(self) -> None:
         if not self.is_mounted or not widget_is_attached(self):
@@ -1028,11 +1102,13 @@ class PaletteScreen(ModalScreen[str | None]):
         failure = None
         if action == _ACTION_TAKE_OVER and ack.status is AckStatus.DONE and role is not None:
             failure = await self._select_role_pane(task_id, role)
-        if (
-            failure is None
-            and ack.status is not AckStatus.REJECTED
-            and ack.message != ACK_TIMEOUT_MESSAGE
-            and action in _CONFIRMED_ACTIONS
+        if ack.status is not AckStatus.REJECTED and (
+            action == _ACTION_SUBMIT
+            or (
+                failure is None
+                and ack.message != ACK_TIMEOUT_MESSAGE
+                and action in _CONFIRMED_ACTIONS
+            )
         ):
             self._confirm_submitted(action)
         elif self._is_current_screen():
@@ -1318,13 +1394,16 @@ class PaletteScreen(ModalScreen[str | None]):
         }
         for field, visible in groups.items():
             self.query_one(f"#field-{field}").display = visible
+        if action != _ACTION_SUBMIT:
+            self._options_expanded = False
+        self.query_one(f"#{_OPTIONS_FOLD_ID}").display = action == _ACTION_SUBMIT
+        self.query_one(f"#{_OPTIONS_ID}").display = (
+            action == _ACTION_SUBMIT and self._options_expanded
+        )
+        self._paint_options_fold()
         self._confirm_armed = False
         self._refresh_submit()
         self.query_one(f"#{_GUIDANCE_ID}").display = action in _ACTION_GUIDANCE
-        self.query_one(f"#{_ADVANCED_TOGGLE_ID}").display = action == _ACTION_SUBMIT
-        self.query_one(f"#{_ADVANCED_FIELDS_ID}").display = (
-            action == _ACTION_SUBMIT and self._advanced_expanded
-        )
 
     def _show_ack(self, ack: Ack, additional_detail: str | None = None) -> None:
         outcome = self._queries.command_status(ack.id)
@@ -1461,16 +1540,22 @@ class PaletteScreen(ModalScreen[str | None]):
         *,
         allow_blank: bool = True,
         inline: bool = False,
+        wide: bool = False,
     ) -> ComposeResult:
-        with Vertical(id=f"field-{field_id}", classes=_field_classes(inline=inline)):
+        with Vertical(id=f"field-{field_id}", classes=_field_classes(inline=inline, wide=wide)):
             yield Label(label)
             yield Select(options, prompt=_SELECT_REQUIRED, allow_blank=allow_blank, id=field_id)
 
     @staticmethod
     def _input_field(
-        label: str, field_id: str, placeholder: str, *, inline: bool = False
+        label: str,
+        field_id: str,
+        placeholder: str,
+        *,
+        inline: bool = False,
+        wide: bool = False,
     ) -> ComposeResult:
-        with Vertical(id=f"field-{field_id}", classes=_field_classes(inline=inline)):
+        with Vertical(id=f"field-{field_id}", classes=_field_classes(inline=inline, wide=wide)):
             yield Label(label)
             yield Input(placeholder=placeholder, id=field_id)
 

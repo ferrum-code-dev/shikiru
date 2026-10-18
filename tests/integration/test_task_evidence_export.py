@@ -8,7 +8,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from textual.widgets import Button, Input, Select, Static
+from textual.containers import VerticalScroll
+from textual.widgets import Input, Select, Static
 
 from shikiru.agents.contracts import (
     BILLING_MODE_SUBSCRIPTION,
@@ -57,7 +58,7 @@ from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, wait_until
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from textual.pilot import Pilot
+    from textual.geometry import Region
 
     from shikiru.dashboard.palette import PaletteScreen
     from shikiru.store.reader import StateReader
@@ -73,8 +74,13 @@ HOSTILE_CONTENT = "## forged heading\n`````json\n[link](https://example.invalid)
 SIGNAL_CONTENT = "normalized signal tail secret"
 PARTIAL_SIGNAL_CONTENT = "partial signal tail with ```"
 EXPORT_WAIT_SECONDS = 30
-COMPACT_SIZES = [(36, 20), (48, 14)]
-EXPORT_PATH = "exports/task-evidence.json"
+EXPORT_ATTEMPTS = (
+    ((100, 40), None, None),
+    ((60, 24), "task-evidence-60-24.json", EXPORT_FORMAT_JSON),
+    ((48, 20), "task-evidence-48-20.json", EXPORT_FORMAT_JSON),
+    ((40, 14), "task-evidence-40-14.json", EXPORT_FORMAT_JSON),
+    ((40, 8), "task-evidence-40-8.json", EXPORT_FORMAT_JSON),
+)
 FAILED_EXPORT_PATH = "missing-parent/task-evidence.json"
 EXISTING_CONTENT = "original evidence\n"
 INVALID_UTF8_CONTENT = "valid prefix\n\ud800"
@@ -353,8 +359,8 @@ def _assert_usage_provenance(document: dict[str, Any]) -> None:
     assert usage["claude"]["unknown_cost_runs"] == 1
 
 
-def _markdown_json_blocks(content: str) -> tuple[list[Any], str, list[int]]:
-    blocks: list[Any] = []
+def _markdown_json_blocks(content: str) -> tuple[list[object], str, list[int]]:
+    blocks: list[object] = []
     outside: list[str] = []
     block_lines: list[str] = []
     opening_fence: str | None = None
@@ -376,57 +382,61 @@ def _markdown_json_blocks(content: str) -> tuple[list[Any], str, list[int]]:
     return blocks, "\n".join(outside), fence_lengths
 
 
-async def _prepare_export_form(
-    pilot: Pilot[None],
+def _form_viewport(screen: PaletteScreen) -> Region:
+    form = screen.query_one("#palette-form", VerticalScroll)
+    frame = screen.query_one("#palette-frame")
+    return form.content_region.intersection(frame.content_region)
+
+
+def _contains_nonempty_region(viewport: Region, region: Region) -> bool:
+    return region.width > 0 and region.height > 0 and viewport.contains_region(region)
+
+
+def _intersects_nonempty_region(viewport: Region, region: Region) -> bool:
+    visible = viewport.intersection(region)
+    return visible.width > 0 and visible.height > 0
+
+
+async def _reach_export_controls(
     screen: PaletteScreen,
-    project_root: Path,
-    destination: str,
-) -> Select[str]:
-    screen.query_one("#export-destination", Input).value = destination
-    cast("Select[str]", screen.query_one("#export-format", Select)).value = EXPORT_FORMAT_JSON
-    cast("Select[str]", screen.query_one("#export-signals", Select)).value = "exclude"
-    overwrite_choice = cast("Select[str]", screen.query_one("#export-overwrite", Select))
-    assert overwrite_choice.value is Select.BLANK
-    await pilot.click("#palette-submit")
-    await wait_until(
-        lambda: (
-            "choose how to handle an existing destination"
-            in str(screen.query_one("#palette-result", Static).content)
-        ),
-        timeout=EXPORT_WAIT_SECONDS,
-    )
-    assert not (project_root / destination).exists()
-    await wait_until(
-        lambda: not screen.query_one("#palette-submit", Button).disabled,
-        timeout=EXPORT_WAIT_SECONDS,
-    )
-    overwrite_choice.value = "refuse"
-    await pilot.pause()
-    controls = (
-        screen.query_one("#export-destination", Input),
-        cast("Select[str]", screen.query_one("#export-format", Select)),
-        overwrite_choice,
+    destination: str | None,
+    export_format: str | None,
+) -> None:
+    destination_field = screen.query_one("#export-destination", Input)
+    format_field = cast("Select[str]", screen.query_one("#export-format", Select))
+    if destination is not None:
+        destination_field.value = destination
+    if export_format is not None:
+        format_field.value = export_format
+    controls: tuple[Input | Select[str], ...] = (
+        destination_field,
+        format_field,
+        cast("Select[str]", screen.query_one("#export-overwrite", Select)),
         cast("Select[str]", screen.query_one("#export-signals", Select)),
     )
     for control in controls:
         control.focus()
-        await pilot.pause()
         await wait_until(
-            lambda control=control: (
-                control.region.y >= 0 and control.region.bottom <= screen.size.height
+            lambda control=control: _contains_nonempty_region(
+                _form_viewport(screen), control.region
             ),
             timeout=EXPORT_WAIT_SECONDS,
         )
-    return overwrite_choice
+    destination_field.focus()
+    await wait_until(
+        lambda: (
+            destination_field.has_focus
+            and _contains_nonempty_region(_form_viewport(screen), destination_field.region)
+        ),
+        timeout=EXPORT_WAIT_SECONDS,
+    )
 
 
-@pytest.mark.parametrize("size", COMPACT_SIZES)
 @pytest.mark.parametrize("write_succeeds", [True, False])
 async def test_palette_export_controls_and_full_result_remain_reachable(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
-    size: tuple[int, int],
     write_succeeds: bool,
 ) -> None:
     project_root = write_minimal_project(tmp_path)
@@ -437,9 +447,6 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
     commands = OperatorCommands(queue, clock, engine_up=lambda: False)
     writer = LocalEvidenceWriter(project_root)
     exporter = TaskEvidenceExporter(queries, writer, clock)
-    destination = EXPORT_PATH if write_succeeds else FAILED_EXPORT_PATH
-    if write_succeeds:
-        (project_root / "exports").mkdir()
     app = ScreenHost(
         popup_screen(
             commands,
@@ -452,59 +459,67 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
         )
     )
     before = _snapshot(connection, reader, task.id)
+    default_destination = f"{task.id}-evidence.md"
 
-    async with app.run_test(size=size) as pilot:
-        await pilot.pause()
+    async with app.run_test(size=EXPORT_ATTEMPTS[0][0]) as pilot:
         screen = cast("PaletteScreen", app.screen)
-        form = screen.query_one("#palette-form")
-        frame = screen.query_one("#palette-frame")
-        submit = screen.query_one("#palette-submit", Button)
-        overwrite_choice = await _prepare_export_form(pilot, screen, project_root, destination)
-        await wait_until(
-            lambda: (
-                submit.visible
-                and submit.region.width > 0
-                and frame.content_region.contains_region(submit.region)
-                and screen.region.contains_region(submit.region)
-            ),
-            timeout=EXPORT_WAIT_SECONDS,
-        )
-        assert submit.region.right <= screen.size.width
-        assert submit.region.bottom <= screen.size.height
-        assert await pilot.click(submit)
-        expected_result = "Exported JSON" if write_succeeds else "missing-parent"
-        await wait_until(
-            lambda: expected_result in str(screen.query_one("#palette-result", Static).content),
-            timeout=EXPORT_WAIT_SECONDS,
-        )
-        assert screen.query_one("#export-destination", Input).value == destination
-        assert cast("Select[str]", screen.query_one("#export-format", Select)).value == (
-            EXPORT_FORMAT_JSON
-        )
-        assert overwrite_choice.value == "refuse"
-        assert cast("Select[str]", screen.query_one("#export-signals", Select)).value == ("exclude")
-        result_scroll = screen.query_one("#palette-result-scroll")
-        await wait_until(
-            lambda: (
-                result_scroll.region.y >= form.region.y
-                and result_scroll.region.bottom <= screen.size.height
-                and frame.content_region.contains_region(result_scroll.region)
-                and form.content_region.contains_region(result_scroll.region)
-                and form.scroll_y == form.max_scroll_y
-            ),
-            timeout=EXPORT_WAIT_SECONDS,
-        )
-        result_scroll.scroll_end(animate=False)
-        await wait_until(
-            lambda: result_scroll.scroll_y == result_scroll.max_scroll_y,
-            timeout=EXPORT_WAIT_SECONDS,
-        )
+        for index, (size, filename, export_format) in enumerate(EXPORT_ATTEMPTS):
+            if index:
+                await pilot.resize_terminal(*size)
+                await wait_until(
+                    lambda size=size: (
+                        screen.size.width == size[0] and screen.size.height == size[1]
+                    ),
+                    timeout=EXPORT_WAIT_SECONDS,
+                )
+            base_filename = default_destination if filename is None else filename
+            if write_succeeds:
+                if filename is None:
+                    destination = default_destination
+                else:
+                    destination = f"exports/{filename}"
+                    (project_root / "exports").mkdir(exist_ok=True)
+            else:
+                destination = f"existing/{base_filename}"
+                existing_file = project_root / destination
+                existing_file.parent.mkdir(parents=True, exist_ok=True)
+                existing_file.write_text(EXISTING_CONTENT)
+            await _reach_export_controls(
+                screen,
+                None if write_succeeds and filename is None else destination,
+                export_format,
+            )
+            result = screen.query_one("#palette-result", Static)
+            previous_result = str(result.content)
+            if write_succeeds and index == 0:
+                await pilot.press("enter")
+            else:
+                await pilot.click("#palette-submit")
+            await wait_until(
+                lambda result=result, previous=previous_result: (
+                    str(result.content) != previous
+                    and bool(str(result.content).strip())
+                    and _intersects_nonempty_region(_form_viewport(screen), result.region)
+                ),
+                timeout=EXPORT_WAIT_SECONDS,
+            )
+            output_path = project_root / destination
+            if write_succeeds:
+                assert output_path.is_file()
+                content = output_path.read_text()
+                if export_format is None:
+                    blocks, _, _ = _markdown_json_blocks(content)
+                    assert any(
+                        isinstance(block, dict)
+                        and cast("dict[str, Any]", block)["task_id"] == task.id
+                        for block in blocks
+                    )
+                else:
+                    assert json.loads(content)["task_id"] == task.id
+            else:
+                assert output_path.read_text() == EXISTING_CONTENT
 
     assert _snapshot(connection, reader, task.id) == before
-    output_path = project_root / destination
-    assert output_path.is_file() is write_succeeds
-    if write_succeeds:
-        assert json.loads(output_path.read_text())["task_id"] == task.id
 
 
 async def test_export_is_complete_read_only_and_preserves_usage_provenance(

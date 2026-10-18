@@ -761,7 +761,11 @@ async def _fill_submit(pilot: Pilot[None], screen: PaletteScreen) -> None:
         await pilot.press("tab")
     assert request.has_focus
     await _enter_text(pilot, "first line\nsecond line")
-    await pilot.click("#palette-advanced-toggle")
+    await pilot.click("#palette-options-fold")
+    await wait_until(
+        lambda: screen.query_one("#palette-options").display,
+        timeout=UI_WAIT_SECONDS,
+    )
     screen.query_one("#mode", Select).value = Mode.IMPLEMENT.value
     screen.query_one("#submission-priority", Input).value = "17"
     screen.query_one("#dependencies", Input).value = "T-8, T-9"
@@ -790,34 +794,45 @@ def _is_typed_submit(command: Command) -> bool:
     )
 
 
-async def test_palette_submit_queues_a_typed_task_and_shows_its_ack(
+@pytest.mark.usefixtures("colour_terminal")
+async def test_palette_submit_queues_a_typed_task_and_closes(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
 ) -> None:
     clock = FakeClock(_START)
     commands, queries, queue = operator_services(connection, reader, clock, tmp_path)
-    app = _palette_app(
-        reader,
+    listing = actions_screen(
         commands,
         queries,
+        reader,
         _selection_must_not_run,
-        initial_context=PaletteRequest(action="submit"),
+        PaletteRequest(),
     )
+    app = ScreenHost(listing)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
+        await wait_until(lambda: app.screen is listing, timeout=UI_WAIT_SECONDS)
+        await open_action(pilot, listing, "submit")
+        screen = await _mounted_palette(app)
+        await wait_until(
+            lambda: not screen.query_one("#palette-options").display,
+            timeout=UI_WAIT_SECONDS,
+        )
+        hint = screen.query_one("#palette-submit", Button)
+        await _wait_for_hint_key(hint, DISABLED_KEY)
         await _fill_submit(pilot, screen)
-        await pilot.click("#palette-submit")
-        await _wait_for_ack(screen)
+        await _wait_for_hint_key(hint, CYAN_BOLD)
+        await pilot.press("ctrl+s")
+        await wait_until(lambda: app.screen is listing, timeout=UI_WAIT_SECONDS)
 
         queued = queue.pending()
         assert len(queued) == 1
         assert _is_typed_submit(queued[0].command)
-        feedback = _static_text(screen, "#palette-result")
-        assert "Pending" in feedback
-        assert "acknowledgement wait elapsed" not in feedback
+        await wait_until(
+            lambda: _CONFIRMED_GLYPH in row_line(listing, "Submit task"),
+            timeout=UI_WAIT_SECONDS,
+        )
 
 
 @pytest.mark.parametrize(

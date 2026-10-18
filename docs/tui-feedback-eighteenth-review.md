@@ -46,5 +46,11 @@ Actions · T-12 Fix login · Leader        Esc ×
 - **Task 245, Submit task and Export evidence popups** in the common style. The architect proposes mockups and gets operator approval before implementation.
 - **Task 246, Delete the legacy form** (Find action, Action select, Task match select, More matches, free-text Task ID, the old Advanced toggle, Back to actions) and every test, doc and code path only they used; the HTML reference palette sections are redrawn to the new list.
 
+## Task 245 layout approval
+
+The operator approved layout A before implementation. Submit task uses the shared `PopupFrame` and `Esc ×`, a multiline `.popup-edit` Request, and a collapsed Options fold containing Title, Mode, Complexity, Priority, Dependencies, Leader rung and Implementer rung. Its hint is `Ctrl+S submit task · Enter new line`; it closes once the command is queued.
+
+Export evidence uses the shared `PopupFrame` and `Esc ×`, a guidance line, and labelled Destination, Format, Existing file and Agent signals rows. Destination defaults to `T-n-evidence.md`; the choices are Markdown/JSON, Refuse/Replace and Exclude/Include. Its hint is `Enter export evidence`; it stays open and shows the local file result or error. Relative destinations start at the project root.
+
 ## Acceptance
 The collected cases (1644) must not grow; both gates (`uv run poe check`, `TERM=dumb NO_COLOR=1 uv run poe check`) pass before every commit; the HTML reference and design docs change in the task that changes the behaviour they draw (exact srcdoc round trip and a new SHA-256 when the HTML changes).

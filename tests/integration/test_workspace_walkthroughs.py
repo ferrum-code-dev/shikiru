@@ -614,10 +614,8 @@ async def test_dashboard_queued_submit_survives_engine_and_dashboard_restarts_on
             await pilot.click("#palette-submit")
             await runtime.wait_for(lambda: bool(runtime.queue.pending()))
             pending = runtime.queue.pending()[0]
-            await runtime.wait_for(
-                lambda: "Pending" in _plain(palette.query_one("#palette-result", Static))
-            )
-            await pilot.press("escape", "escape")
+            await runtime.wait_for(lambda: isinstance(app.screen, ActionsListScreen))
+            await pilot.press("escape")
             await runtime.wait_for(
                 lambda: not isinstance(app.screen, PaletteScreen | ActionsListScreen)
             )
