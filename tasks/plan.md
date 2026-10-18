@@ -2145,9 +2145,10 @@ Refs: `dashboard/palette.py`, `dashboard/app.py` (`_open_task_palette_route`, `_
 
 ### Task 244: Simple action popups in the common style
 Refs: `dashboard/palette.py`, `ui/keys.py`, `ui/popup.py`, `tests/integration/test_dashboard_palette.py`, `docs/design/06-operator.md`. Layouts: the architect proposes a mockup before this task starts if one is needed.
-- [ ] Take over, Hand back, Retry, Pause now, Priority, Rung, Open session and Stop engine show a title, one guidance line and only their own fields (Role select where needed, Priority number, Rung with a one-line explanation of the agent:model:effort level), with an `Enter <action>` hint whose key is grey while inert.
-- [ ] No "Run action" and no "Back to actions" button; the popup closes after queueing with ✓ for 5 s; the role pane selection after Take over stays.
-- [ ] Wraps at 100/60/48/40 columns; the collected cases do not grow (1644) and both gates pass.
+- [x] Take over, Hand back, Retry, Pause now, Priority, Rung, Open session and Stop engine show a title, one guidance line and only their own fields (Role select where needed, Priority number, Rung with a one-line explanation of the agent:model:effort level), with an `Enter <action>` hint whose key is grey while inert.
+- [x] No "Run action" and no "Back to actions" button; the popup closes after queueing with ✓ for 5 s; the role pane selection after Take over stays.
+- [x] Wraps at 100/60/48/40 columns; the collected cases do not grow (1644) and both gates pass.
+- Proof: headless Textual at 130x50, 100x40, 60x24, 48x20, 40x14 and 40x8, from the actions bar and the Actions list, showed each popup with its guidance, grey-label field rows, `Enter <action>` hint (grey key when inert), no scrollbar except the one column at 40x8, and Take over, Hand back, Priority, Rung and Pause now queued exactly once. Retry and Stop engine arm on the first Enter and queue on the second; the Actions list shows `✓` after queueing. Open session keeps its Role row because the role chooses which session is shown, and the HTML reference draws no body for these popups, so it is unchanged. Collected cases 1,643 (unchanged); both gates passed.
 
 ### Task 245: Submit task and Export evidence popups
 Refs: `dashboard/palette.py`, `operator/evidence_export.py`, `ui/popup.py`, `tests/integration/test_dashboard_palette.py`, `tests/integration/test_task_evidence_export.py`. Layouts: the architect proposes mockups and gets operator approval before implementation.

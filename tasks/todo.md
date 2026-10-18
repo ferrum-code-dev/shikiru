@@ -378,6 +378,6 @@ Eighteenth-review scope: [eighteenth review](../docs/tui-feedback-eighteenth-rev
 - [x] Task 241: Take over in the bar and one name per action
 - [x] Task 242: Task picker popup
 - [x] Task 243: Actions list
-- [ ] Task 244: Simple action popups in the common style
+- [x] Task 244: Simple action popups in the common style
 - [ ] Task 245: Submit task and Export evidence popups
 - [ ] Task 246: Delete the legacy palette form
