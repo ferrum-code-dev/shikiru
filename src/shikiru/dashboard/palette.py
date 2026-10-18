@@ -55,6 +55,7 @@ from shikiru.ui.popup import (
 )
 from shikiru.ui.screen import widget_is_attached, widget_is_on_screen
 from shikiru.ui.tokens import (
+    AMBER,
     DUSTY_ROSE,
     SECONDARY_TEXT_COLOR,
     STYLE_BOLD,
@@ -150,20 +151,35 @@ SUBMIT_ACTION_LABELS = {
     _ACTION_EXPORT: "Export evidence",
     _ACTION_STOP: "Stop engine",
 }
+_ENTER_HINT_VERBS = {
+    _ACTION_PAUSE: "pause",
+    _ACTION_RESUME: "resume",
+    _ACTION_CANCEL: "cancel",
+    _ACTION_TAKE_OVER: "take over",
+    _ACTION_HAND_BACK: "hand back",
+    _ACTION_RETRY: "retry",
+    _ACTION_PAUSE_NOW: "pause now",
+    _ACTION_PRIORITIZE: "set priority",
+    _ACTION_RUNG: "set rung",
+    _ACTION_PEEK: "open session",
+    _ACTION_STOP: "stop engine",
+}
+_ENTER_HINT_ACTIONS = frozenset(_ENTER_HINT_VERBS)
 _HINT_LABELS = {
     _ACTION_MESSAGE: ("Ctrl+S queue message \N{MIDDLE DOT} Enter new line", "Ctrl+S queue"),
-    _ACTION_PAUSE: ("Enter pause", "Enter pause"),
-    _ACTION_RESUME: ("Enter resume", "Enter resume"),
-    _ACTION_CANCEL: ("Enter cancel", "Enter cancel"),
+    **{action: (f"Enter {verb}", f"Enter {verb}") for action, verb in _ENTER_HINT_VERBS.items()},
 }
-_CANCEL_CONFIRM_HINT = ("Enter again to cancel", "Enter again")
+_CONFIRM_HINTS = {
+    _ACTION_CANCEL: ("Enter again to cancel", "Enter again"),
+    _ACTION_RETRY: ("Enter again to retry", "Enter again"),
+    _ACTION_STOP: ("Enter again to stop engine", "Enter again"),
+}
 _HINT_CLASS = "hint"
-_ENTER_HINT_ACTIONS = frozenset({_ACTION_PAUSE, _ACTION_RESUME, _ACTION_CANCEL})
 _HINT_KEY_ACTIONS = {
     "confirm": _ENTER_HINT_ACTIONS,
     "queue": frozenset({_ACTION_MESSAGE}),
 }
-_CONFIRM_TWICE_ACTIONS = frozenset({_ACTION_CANCEL})
+_CONFIRM_TWICE_ACTIONS = frozenset(_CONFIRM_HINTS)
 _CLEAR_AFTER_QUEUE_ACTIONS = frozenset({_ACTION_MESSAGE})
 _CONFIRMED_ACTIONS = _ENTER_HINT_ACTIONS | _CLEAR_AFTER_QUEUE_ACTIONS
 _PALETTE_WRAPPED_HINT_ROWS = 2
@@ -227,8 +243,7 @@ _PALETTE_COMPACT_TEXT_AREA_MAX_HEIGHT = 3
 _PALETTE_COMPACT_RESULT_MAX_HEIGHT = 3
 _PALETTE_RESULT_MAX_HEIGHT = 12
 _PALETTE_FORM_STANDARD_FIXED_ROWS = 9
-_PALETTE_FORM_SHORT_FIXED_ROWS = 8
-_PALETTE_FORM_TINY_FIXED_ROWS = 4
+_PALETTE_FORM_COMPACT_FIXED_ROWS = 4
 _PALETTE_FRAME_VERTICAL_MARGIN_ROWS = 2
 _PALETTE_TEXT_AREA_MINIMUM_WIDTH = 5
 _PALETTE_INLINE_ACTIONS_ROWS = 1
@@ -260,7 +275,11 @@ _FORM_IDENTITY_FIELDS = {
 _FORM_ROLE_ACTIONS = frozenset(
     {_ACTION_TAKE_OVER, _ACTION_HAND_BACK, _ACTION_RUNG, _ACTION_MESSAGE, _ACTION_PEEK}
 )
-_TITLE_ROLE_ACTIONS = _FORM_ROLE_ACTIONS - {_ACTION_MESSAGE}
+_REQUIRED_FIELDS = {
+    _ACTION_MESSAGE: _FIELD_MESSAGE,
+    _ACTION_PRIORITIZE: _FIELD_PRIORITY,
+    _ACTION_RUNG: _FIELD_RUNG,
+}
 _ACTION_GUIDANCE = {
     _ACTION_SUBMIT: "Creates a new task using the request and optional submission fields.",
     _ACTION_PRIORITIZE: "Changes dispatch order while the task is queued.",
@@ -270,8 +289,8 @@ _ACTION_GUIDANCE = {
         "Clears task holds; dependencies, slots and other scheduling limits still apply."
     ),
     _ACTION_TAKE_OVER: (
-        "Stops automation and holds this task while the selected role is owned; "
-        "other tasks continue."
+        "Stops the running turn and holds this task while you work in the role's pane. "
+        "Other tasks continue."
     ),
     _ACTION_HAND_BACK: (
         "Returns this role to automation; another taken-over role or pause can still hold the task."
@@ -280,17 +299,15 @@ _ACTION_GUIDANCE = {
         "Cancels only this task and keeps its branch. Dirty or off-branch worktrees are preserved "
         "with their path returned; a clean worktree is removed during cleanup."
     ),
-    _ACTION_RETRY: "Cancels and re-runs this task's current step.",
-    _ACTION_RUNG: (
-        "Uses the selected rung on this role's next turn; an in-flight turn is unchanged."
-    ),
+    _ACTION_RETRY: "Cancels the current step and runs it again, closing any open decision.",
+    _ACTION_RUNG: "The rung is the agent:model:effort level a role uses from its next turn.",
     _ACTION_MESSAGE: (
         "Queues guidance for this role's next turn; it does not interrupt a running turn."
     ),
     _ACTION_PEEK: "Shows recorded session activity for this task and role.",
     _ACTION_STOP: (
-        "Stops this project's engine and running turns. Task state, sessions and worktrees "
-        "remain for the next engine start."
+        "Stops the engine for every task. Running turns are stopped and continue when the "
+        "engine starts again."
     ),
     _ACTION_EXPORT: (
         "Writes retained task evidence to the selected local file path. Relative paths start at "
@@ -298,10 +315,16 @@ _ACTION_GUIDANCE = {
     ),
 }
 _TASK_ACTION_BY_ID = {action.value: action for action in OperatorTaskAction}
+_FIELD_CLASS = "palette-field"
+_ROW_CLASS = "palette-row"
 _NO_TASK_TARGET = "Choose a task target first"
 _ACTION_DISABLED_PREFIX = "unavailable: "
 
 PaneSelector = Callable[[str], Awaitable[None]]
+
+
+def _field_classes(*, inline: bool) -> str:
+    return f"{_FIELD_CLASS} {_ROW_CLASS}" if inline else _FIELD_CLASS
 
 
 class PaletteScreen(ModalScreen[str | None]):
@@ -314,15 +337,17 @@ class PaletteScreen(ModalScreen[str | None]):
     DEFAULT_CSS = (
         POPUP_CSS
         + """
-    #palette-frame.tiny { margin: 0; padding: 0 1; }
+    #palette-frame.short { margin: 0 1; padding: 0 1; }
+    #palette-frame.tiny { margin: 0; }
     #palette-frame.tiny #palette-close { padding: 0; }
     #palette-close {
         width: auto; min-width: 5; height: 1; margin: 0;
     }
     #palette-form {
-        max-height: 1fr; min-height: 0; margin-top: 0; padding-top: 0;
+        height: auto; max-height: 1fr; min-height: 0; margin-top: 0; padding-top: 0;
         border-top: none;
     }
+    #field-role, #field-priority { margin-top: 1; }
     .palette-field { height: auto; margin-bottom: 1; }
     .palette-field Label { height: 1; color: $secondary-text; text-style: none; }
     .palette-field Input, .palette-field Select { width: 100%; }
@@ -330,6 +355,22 @@ class PaletteScreen(ModalScreen[str | None]):
     #palette-submit:focus {
         border: round $focus;
         text-style: reverse;
+    }
+    .palette-row { layout: horizontal; margin-bottom: 0; }
+    .palette-row Label { width: 9; }
+    .palette-row Input, .palette-row Select { width: 1fr; min-width: 8; }
+    .palette-row Input {
+        height: 1; border: none; padding: 0 1; background: $background;
+    }
+    .palette-row Input:focus {
+        border: none; background: $selected-surface; text-style: none;
+    }
+    .palette-row SelectCurrent {
+        height: 1; border: none; padding: 0 1; background: $background;
+    }
+    .palette-row Select:focus > SelectCurrent,
+    .palette-row Select.-expanded > SelectCurrent {
+        border: none; background: $selected-surface;
     }
     #palette-result-scroll { display: none; height: auto; max-height: 12; margin-top: 1; }
     #palette-result { height: auto; }
@@ -393,7 +434,7 @@ class PaletteScreen(ModalScreen[str | None]):
         self._route_action: str | None = None
         self._advanced_expanded = False
         self._action_in_flight = False
-        self._cancel_armed = False
+        self._confirm_armed = False
         self._closing_after_queue = False
         self._pending_form_commands: dict[tuple[str, ...], int] = {}
         self._submitting_form_identity: tuple[str, ...] | None = None
@@ -423,16 +464,16 @@ class PaletteScreen(ModalScreen[str | None]):
     def _compose_form(self) -> ComposeResult:
         with VerticalScroll(id=_PALETTE_FORM_ID, classes=POPUP_BODY_CLASS):
             yield from self._compose_action_target_fields()
+            yield Static("", id=_GUIDANCE_ID, markup=False)
             yield from self._compose_task_submission_fields()
             yield from self._compose_task_role_fields()
-            yield Static("", id=_GUIDANCE_ID, markup=False)
+            yield Static("", id=_ACTION_STATE_ID, markup=False)
             with VerticalScroll(id="palette-result-scroll", classes=POPUP_BODY_CLASS):
                 yield Static("", id="palette-result", markup=False)
 
     def _compose_action_target_fields(self) -> ComposeResult:
         yield from self._input_field("Find action", _FIELD_ACTION_SEARCH, "message")
         yield from self._select_field("Action", _FIELD_ACTION, PALETTE_ACTIONS)
-        yield Static("", id=_ACTION_STATE_ID, markup=False)
         yield from self._input_field("Task ID", _FIELD_TASK_ID, "T-1")
 
     def _compose_task_submission_fields(self) -> ComposeResult:
@@ -449,7 +490,7 @@ class PaletteScreen(ModalScreen[str | None]):
         yield from self._select_field(
             "Normalized agent signal excerpts", _FIELD_EXPORT_SIGNALS, _EXPORT_SIGNALS_OPTIONS
         )
-        yield from self._input_field("Priority", "priority", "0")
+        yield from self._input_field("Priority", _FIELD_PRIORITY, "0", inline=True)
         yield from self._text_area_field("Request", "request", "Describe the work")
         with Vertical(id=_ADVANCED_FIELDS_ID):
             yield from self._input_field("Title (optional)", "title", "Task title")
@@ -465,8 +506,10 @@ class PaletteScreen(ModalScreen[str | None]):
             )
 
     def _compose_task_role_fields(self) -> ComposeResult:
-        yield from self._select_field("Role", _FIELD_ROLE, _ROLE_OPTIONS, allow_blank=False)
-        yield from self._input_field("Rung", "rung", "agent:model:effort")
+        yield from self._select_field(
+            "Role", _FIELD_ROLE, _ROLE_OPTIONS, allow_blank=False, inline=True
+        )
+        yield from self._input_field("Rung", _FIELD_RUNG, "agent:model:effort", inline=True)
         yield from self._text_area_field("Message", "message", "Message for the next turn")
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
@@ -490,7 +533,6 @@ class PaletteScreen(ModalScreen[str | None]):
         focused = cast("App[None]", self.app).focused
         self._set_text_area_heights(event.size.width, event.size.height)
         self._apply_layout()
-        self.call_after_refresh(self.update_popup_geometry)
         self.call_after_refresh(self._restore_form_layout, scroll_y, focused)
 
     async def on_mount(self) -> None:
@@ -500,7 +542,6 @@ class PaletteScreen(ModalScreen[str | None]):
         self._initialize_form_state()
         self._refresh_action_availability()
         self._apply_layout()
-        self.call_after_refresh(self.query_one("#palette-frame", PopupFrame).content_ready)
         self.call_after_refresh(self._restore_context_form_position)
         self._change_worker = self.run_worker(
             self._on_change(self._refresh_after_database_change),
@@ -560,7 +601,7 @@ class PaletteScreen(ModalScreen[str | None]):
         )
 
     def action_confirm(self) -> None:
-        """Run the pause or cancel action named by the Enter hint."""
+        """Run the action named by the Enter hint."""
         self._activate_submit()
 
     def action_queue(self) -> None:
@@ -620,11 +661,11 @@ class PaletteScreen(ModalScreen[str | None]):
         confirming = (
             self._selected_value(_FIELD_ACTION) in _CONFIRM_TWICE_ACTIONS and self._hint_mode()
         )
-        if confirming and not self._cancel_armed:
-            self._cancel_armed = True
+        if confirming and not self._confirm_armed:
+            self._confirm_armed = True
             self._refresh_submit()
             return
-        self._cancel_armed = False
+        self._confirm_armed = False
         self._stop_confirmation()
         self._action_in_flight = True
         self.query_one(f"#{_SUBMIT_ID}", Button).disabled = True
@@ -644,8 +685,8 @@ class PaletteScreen(ModalScreen[str | None]):
             label = Text(
                 compact_label if tiny else SUBMIT_ACTION_LABELS.get(action, "Submit action")
             )
-        elif self._cancel_armed:
-            label = key_hint(_CANCEL_CONFIRM_HINT[tiny], f"{STYLE_BOLD} {DUSTY_ROSE}")
+        elif self._confirm_armed:
+            label = key_hint(_CONFIRM_HINTS[action][tiny], f"{STYLE_BOLD} {DUSTY_ROSE}")
         else:
             label = key_hint(
                 _HINT_LABELS[action][tiny],
@@ -669,8 +710,8 @@ class PaletteScreen(ModalScreen[str | None]):
         button.styles.line_pad = 0 if hint else None
 
     async def on_key(self, event: events.Key) -> None:
-        if self._cancel_armed and event.key != _ENTER_KEY:
-            self._cancel_armed = False
+        if self._confirm_armed and event.key != _ENTER_KEY:
+            self._confirm_armed = False
             self._refresh_submit()
             if event.key == _PALETTE_ESCAPE_KEY:
                 event.stop()
@@ -733,12 +774,19 @@ class PaletteScreen(ModalScreen[str | None]):
         elif event.select.id == _FIELD_ROLE:
             if not self._role_is_explicit and event.select.has_focus:
                 self._role_is_explicit = True
+            if self._selected_value(_FIELD_ACTION) in _ENTER_HINT_ACTIONS:
+                self.set_focus(None)
             self._refresh_action_availability()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         """Refresh current eligibility when a field changes."""
         del event
         self._refresh_action_availability()
+
+    def on_input_submitted(self) -> None:
+        """Run the Enter hint's action when a field of its popup is submitted."""
+        if self.check_action("confirm", ()):
+            self.action_confirm()
 
     async def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area.id in {_FIELD_REQUEST, _FIELD_MESSAGE}:
@@ -778,19 +826,16 @@ class PaletteScreen(ModalScreen[str | None]):
         narrow_pane = self.size.width <= _PALETTE_SHORT_PANE_MAX_COLUMNS
         frame.styles.max_height = max(
             1,
-            self.size.height - (0 if tiny_pane else _PALETTE_FRAME_VERTICAL_MARGIN_ROWS),
+            self.size.height - (0 if short_pane else _PALETTE_FRAME_VERTICAL_MARGIN_ROWS),
         )
         actions = self.query_one("#palette-actions", Vertical)
         actions.styles.layout = "horizontal" if tiny_pane or not narrow_pane else "vertical"
         actions.set_class(short_pane, "short")
+        frame.set_class(short_pane, "short")
         frame.set_class(tiny_pane, "tiny")
         form.set_class(tiny_pane, "tiny")
         fixed_rows = (
-            _PALETTE_FORM_TINY_FIXED_ROWS
-            if tiny_pane
-            else _PALETTE_FORM_SHORT_FIXED_ROWS
-            if short_pane
-            else _PALETTE_FORM_STANDARD_FIXED_ROWS
+            _PALETTE_FORM_COMPACT_FIXED_ROWS if short_pane else _PALETTE_FORM_STANDARD_FIXED_ROWS
         )
         action_rows = (
             _PALETTE_STACKED_ACTIONS_ROWS
@@ -802,7 +847,6 @@ class PaletteScreen(ModalScreen[str | None]):
             self._refresh_submit()
         else:
             self._update_fields(self._selected_value(_FIELD_ACTION))
-        frame.styles.height = "100%" if short_pane else "auto"
         self.query_one("#palette-title", Label).update(self._context_form_title())
         self.call_after_refresh(self._refresh_context_form_title)
 
@@ -812,24 +856,12 @@ class PaletteScreen(ModalScreen[str | None]):
         task_id = self._initial_context.task_id
         if task_id is None or action in {_ACTION_SUBMIT, _ACTION_STOP}:
             return label
-        target = task_id
-        if action in _TITLE_ROLE_ACTIONS:
-            role = self._selected_value(_FIELD_ROLE)
-            if role is not None:
-                target = f"{task_id} · {role.title()}"
-        return f"{label} · {target}"
+        return f"{label} \N{MIDDLE DOT} {task_id}"
 
     def _refresh_context_form_title(self) -> None:
         if not self.is_mounted or not widget_is_attached(self):
             return
         self.query_one("#palette-title", Label).update(self._context_form_title())
-
-    def update_popup_geometry(self) -> None:
-        """Refresh popup geometry after the responsive layout changes."""
-        if not self.is_mounted or not widget_is_attached(self):
-            return
-        self.query_one("#palette-frame", PopupFrame).update_preferred_size()
-        self.call_after_refresh(self._refresh_context_form_title)
 
     def _remember_form_draft(self) -> None:
         task_id = self._initial_context.task_id
@@ -885,9 +917,7 @@ class PaletteScreen(ModalScreen[str | None]):
         candidates = {
             _ACTION_SUBMIT: _FIELD_REQUEST,
             _ACTION_PRIORITIZE: _FIELD_PRIORITY,
-            _ACTION_TAKE_OVER: _FIELD_ROLE,
-            _ACTION_HAND_BACK: _FIELD_ROLE,
-            _ACTION_RUNG: _FIELD_ROLE,
+            _ACTION_RUNG: _FIELD_RUNG,
             _ACTION_MESSAGE: _FIELD_MESSAGE,
             _ACTION_EXPORT: _FIELD_EXPORT_DESTINATION,
         }
@@ -995,17 +1025,18 @@ class PaletteScreen(ModalScreen[str | None]):
             return
         if ack.status is AckStatus.QUEUED:
             self._pending_form_commands[form_identity] = ack.id
+        failure = None
+        if action == _ACTION_TAKE_OVER and ack.status is AckStatus.DONE and role is not None:
+            failure = await self._select_role_pane(task_id, role)
         if (
-            ack.status is not AckStatus.REJECTED
+            failure is None
+            and ack.status is not AckStatus.REJECTED
             and ack.message != ACK_TIMEOUT_MESSAGE
             and action in _CONFIRMED_ACTIONS
         ):
             self._confirm_submitted(action)
-            return
-        if self._is_current_screen():
-            self._show_ack(ack)
-        if action == _ACTION_TAKE_OVER and ack.status is AckStatus.DONE and role is not None:
-            await self._select_role_pane(ack, task_id, role)
+        elif self._is_current_screen():
+            self._show_ack(ack, failure)
 
     async def _dispatch(self) -> Ack | None:
         action = self._value(_FIELD_ACTION)
@@ -1060,19 +1091,22 @@ class PaletteScreen(ModalScreen[str | None]):
             )
             disabled_reason = role_state.disabled_reason
         state = self.query_one(f"#{_ACTION_STATE_ID}", Static)
-        state.update(f"Unavailable: {disabled_reason}" if disabled_reason is not None else _EMPTY)
+        state.update(
+            Text(f"Unavailable: {disabled_reason}", style=AMBER)
+            if disabled_reason is not None
+            else _EMPTY
+        )
         state.display = disabled_reason is not None
         self.query_one(f"#{_GUIDANCE_ID}", Static).update(
             _ACTION_GUIDANCE.get(action or "", _EMPTY)
         )
         pending_same_form = form_identity in self._pending_form_commands
-        blank_message = action == _ACTION_MESSAGE and not self._text(_FIELD_MESSAGE).strip()
         self.query_one(f"#{_SUBMIT_ID}", Button).disabled = (
             self._route_error is not None
             or disabled_reason is not None
             or self._action_in_flight
             or pending_same_form
-            or blank_message
+            or self._required_field_is_blank(action)
         )
         self._refresh_submit()
 
@@ -1083,6 +1117,10 @@ class PaletteScreen(ModalScreen[str | None]):
     def _refresh_if_current_screen(self) -> None:
         if self._is_current_screen():
             self._refresh_action_availability()
+
+    def _required_field_is_blank(self, action: str | None) -> bool:
+        field = _REQUIRED_FIELDS.get(action or _EMPTY)
+        return field is not None and not self._identity_value(field).strip()
 
     def _refresh_pending_commands(self) -> None:
         for identity, command_id in tuple(self._pending_form_commands.items()):
@@ -1224,20 +1262,17 @@ class PaletteScreen(ModalScreen[str | None]):
             return _NO_TASK_TARGET
         return state.disabled_reason
 
-    async def _select_role_pane(self, ack: Ack, task_id: str, role: Role) -> None:
+    async def _select_role_pane(self, task_id: str, role: Role) -> str | None:
         detail = self._queries.get_task(task_id)
         task = detail.task if detail is not None else None
         pane_id = task.panes.get(role) if task is not None else None
         if pane_id is None:
-            condition = "task is missing" if task is None else f"{role.value} pane is missing"
-            if self._is_current_screen():
-                self._show_ack(ack, condition)
-            return
+            return "task is missing" if task is None else f"{role.value} pane is missing"
         try:
             await self._pane_selector(pane_id)
         except ShikiruError as error:
-            if self._is_current_screen():
-                self._show_ack(ack, f"{_TAKEOVER_SELECTION_FAILURE}: {error}")
+            return f"{_TAKEOVER_SELECTION_FAILURE}: {error}"
+        return None
 
     def _show_peek(self, task_id: str) -> None:
         selected_role = self._selected_value(_FIELD_ROLE)
@@ -1283,7 +1318,7 @@ class PaletteScreen(ModalScreen[str | None]):
         }
         for field, visible in groups.items():
             self.query_one(f"#field-{field}").display = visible
-        self._cancel_armed = False
+        self._confirm_armed = False
         self._refresh_submit()
         self.query_one(f"#{_GUIDANCE_ID}").display = action in _ACTION_GUIDANCE
         self.query_one(f"#{_ADVANCED_TOGGLE_ID}").display = action == _ACTION_SUBMIT
@@ -1425,14 +1460,17 @@ class PaletteScreen(ModalScreen[str | None]):
         options: tuple[tuple[str, str], ...],
         *,
         allow_blank: bool = True,
+        inline: bool = False,
     ) -> ComposeResult:
-        with Vertical(id=f"field-{field_id}", classes="palette-field"):
+        with Vertical(id=f"field-{field_id}", classes=_field_classes(inline=inline)):
             yield Label(label)
             yield Select(options, prompt=_SELECT_REQUIRED, allow_blank=allow_blank, id=field_id)
 
     @staticmethod
-    def _input_field(label: str, field_id: str, placeholder: str) -> ComposeResult:
-        with Vertical(id=f"field-{field_id}", classes="palette-field"):
+    def _input_field(
+        label: str, field_id: str, placeholder: str, *, inline: bool = False
+    ) -> ComposeResult:
+        with Vertical(id=f"field-{field_id}", classes=_field_classes(inline=inline)):
             yield Label(label)
             yield Input(placeholder=placeholder, id=field_id)
 

@@ -2033,7 +2033,7 @@ async def test_home_bar_shows_the_first_decision_of_a_task_and_the_next_once_it_
         reader.close()
 
 
-async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
+async def test_queued_stop_engine_stays_visible_in_dashboard_history(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -2082,22 +2082,15 @@ async def test_palette_close_keeps_pending_command_visible_in_dashboard_history(
             await wait_until(
                 lambda: isinstance(first_app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS
             )
-            palette = cast("PaletteScreen", first_app.screen)
-            await pilot.click("#palette-submit")
+            await pilot.press("enter")
+            assert queue.pending() == []
+            await pilot.press("enter")
             await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
             pending_id = queue.pending()[0].id
-            await wait_until(
-                lambda: (
-                    f"Pending · command {pending_id}"
-                    in _rendered_text(palette.query_one("#palette-result", Static))
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
             assert isinstance(queue.pending()[0].command, Stop)
             queued_at = reader.command_history(limit=1).entries[0].ts
             queued_time = datetime.fromisoformat(queued_at)
             summary_time = f"queued {queued_time.month}/{queued_time.day} {queued_time:%H:%M}Z"
-            await pilot.press("escape")
             await wait_until(lambda: first_app.screen is dashboard_screen, timeout=UI_WAIT_SECONDS)
             status = first_app.query_one("#workspace-command-status", Button)
             await wait_until(

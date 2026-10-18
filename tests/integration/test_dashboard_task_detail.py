@@ -450,10 +450,9 @@ async def _submit_detail_command(
     await wait_until(
         lambda: not palette.query_one("#palette-submit", Button).disabled, timeout=UI_WAIT_SECONDS
     )
-    await pilot.click("#palette-submit")
+    await pilot.press("enter")
     await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
     command = queue.pending()[0]
-    await pilot.press("escape")
     await pilot.press("escape")
     await wait_until(lambda: app.screen is dashboard_screen, timeout=UI_WAIT_SECONDS)
     return command
