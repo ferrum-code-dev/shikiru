@@ -453,7 +453,6 @@ async def test_fake_agent_workspace_finds_verdict_and_applies_contextual_message
                 )
             )
             palette = await _open_palette_action(runtime, pilot, app, "message")
-            assert palette.query_one("#task-id", Input).value == task_id
             assert cast("Select[str]", palette.query_one("#role", Select)).value == (
                 Role.IMPLEMENTER.value
             )

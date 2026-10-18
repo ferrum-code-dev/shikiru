@@ -1120,7 +1120,17 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-menu-label { min-width:19ch; }
 #shikiru-focus-steel .shk-menu-title { padding:5px 7px 1px; }
 #shikiru-focus-steel .shk-menu-hint { padding:10px 7px 0; }
-#shikiru-focus-steel .shk-menu-group:first-child .shk-menu-item:first-of-type { background:var(--shk-selected); }
+#shikiru-focus-steel .shk-menu-item[aria-pressed=&quot;true&quot;] { background:var(--shk-selected); }
+#shikiru-focus-steel .shk-menu-group + .shk-menu-group { margin-top:4px; }
+#shikiru-focus-steel .shk-form-guidance { margin:0 0 8px; color:var(--shk-ink); }
+#shikiru-focus-steel .shk-form-row { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; margin:8px 0; }
+#shikiru-focus-steel .shk-form-row label { flex:0 0 12ch; margin:0; }
+#shikiru-focus-steel .shk-form-row :is(input,select) { flex:1 1 18ch; min-width:0; border:1px solid var(--shk-edge); border-radius:0; padding:4px 6px; background:var(--shk-bg); color:var(--shk-ink); font:inherit; }
+#shikiru-focus-steel .shk-form-row textarea { display:block; width:100%; min-height:4lh; border:0; border-bottom:1px solid var(--shk-edge); border-radius:0; padding:4px 0; background:var(--shk-bg); color:var(--shk-ink); font:inherit; resize:vertical; }
+#shikiru-focus-steel .shk-form-row textarea:focus { border-color:var(--shk-accent); outline:0; background:var(--shk-selected); }
+#shikiru-focus-steel .shk-form-options { width:100%; display:block; text-align:left; color:var(--shk-dim); padding:4px 0 !important; }
+#shikiru-focus-steel .shk-picker-row { display:block; width:100%; padding:3px 7px !important; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+#shikiru-focus-steel .shk-picker-row[aria-pressed=&quot;true&quot;] { background:var(--shk-selected); }
 #shikiru-focus-steel .shk-res-head { display:flex; justify-content:space-between; gap:8px; color:var(--shk-dim); }
 #shikiru-focus-steel .shk-res-rows { display:grid; grid-template-columns:9ch minmax(0,1fr); overflow-wrap:anywhere; }
 #shikiru-focus-steel .shk-res-rule { border-top:1px solid var(--shk-edge); margin:6px 0; }
@@ -1240,7 +1250,7 @@ html&gt;body{padding:0}&lt;/style&gt;
 #shikiru-focus-steel .shk-history-row { padding:2px 0; }
 #shikiru-focus-steel .shk-history-row .shk-ink { color:var(--shk-ink); }
 #shikiru-focus-steel .shk-status { font-weight:700; }
-#shikiru-focus-steel .shk-modal-footer button:disabled .shk-key { opacity:0.6; }
+#shikiru-focus-steel .shk-modal-footer button:disabled .shk-key { color:var(--shk-dim); opacity:1; }
 #shikiru-focus-steel .shk-compact .shk-page-word, #shikiru-focus-steel .shk-tiny .shk-page-word { display:none; }
 #shikiru-focus-steel .shk-history-empty { padding:8px 0; color:var(--shk-dim); }
 #shikiru-focus-steel .shk-history-count { color:var(--shk-dim); }
@@ -1291,6 +1301,22 @@ html&gt;body{padding:0}&lt;/style&gt;
   const decisionId = &#x27;E-7&#x27;;
   const selections = Object.fromEntries(concepts.map(c =&gt; [c.id,decisionTaskId]));
   const overlays = {};
+  const paletteExpanded = {};
+  const menuSelection = {};
+  const submitOptionsOpen = {};
+  const taskSearchOpen = {};
+  const taskSearchValue = {};
+  const pickerSelection = {};
+  const paletteReturn = {};
+  const messageSent = {};
+  const exportFinished = {};
+  const actionFeedback = {};
+  const actionFeedbackTimers = {};
+  const actionConfirm = {};
+  const actionFeedbackDuration = 5000;
+  const confirmActions = new Set([&#x27;cancel&#x27;,&#x27;retry&#x27;,&#x27;stop&#x27;]);
+  const actionPopupKinds=[&#x27;message&#x27;,&#x27;takeover&#x27;,&#x27;handback&#x27;,&#x27;pause&#x27;,&#x27;resume&#x27;,&#x27;cancel&#x27;,&#x27;pause-now&#x27;,&#x27;priority&#x27;,&#x27;retry&#x27;,&#x27;rung&#x27;,&#x27;session&#x27;,&#x27;stop&#x27;,&#x27;export&#x27;,&#x27;submit&#x27;];
+  const sessionOpen = {};
   const contextWarnPct = 40;
   const contextAlertPct = 60;
   const contextClass = pct =&gt; `shk-ctx-${pct &gt;= contextAlertPct ? &#x27;alert&#x27; : pct &gt;= contextWarnPct ? &#x27;warn&#x27; : &#x27;ok&#x27;}`;
@@ -1301,10 +1327,12 @@ html&gt;body{padding:0}&lt;/style&gt;
   const modalSelections = {};
   const modalScrollTop = {};
   const modalFrames = {
-    menu:[460,460], resolve:[460,410], message:[460,330],
-    takeover:[460,300], handback:[460,260], projectusage:[460,360],
-    commands:[520,390], history:[520,390], diagnostics:[452,390], docker:[452,260], disk:[452,220], faults:[452,240], widgets:[460,300],
-    submitted:[420,240], help:[420,290]
+    menu:[460,460], resolve:[460,410], message:[460,330], submit:[460,410], export:[460,350],
+    takeover:[460,300], handback:[460,260], pause:[440,240], resume:[440,240], cancel:[440,260],
+    &#x27;pause-now&#x27;:[440,250], priority:[440,250], retry:[440,250], rung:[440,300], session:[460,340], stop:[440,260],
+    taskpicker:[460,430], projectusage:[460,360],
+    commands:[520,390], history:[520,390], diagnostics:[452,390], docker:[452,260], disk:[452,220], faults:[452,240],
+    help:[420,290]
   };
   const historyPageSize = 20;
   const previewHistory = Array.from({length:21},(_,index)=&gt;({
@@ -1579,19 +1607,107 @@ html&gt;body{padding:0}&lt;/style&gt;
     const caption = selected ? `&lt;div class=&quot;shk-board-caption&quot;&gt;&lt;span class=&quot;shk-accent&quot;&gt;› ${selected.id}&lt;/span&gt; ${esc(selected.note)}&lt;span class=&quot;shk-dim&quot;&gt; · ${esc(selected.role)}&lt;/span&gt;&lt;/div&gt;` : &#x27;&lt;div class=&quot;shk-board-caption shk-dim&quot;&gt;No task selected&lt;/div&gt;&#x27;;
     return `&lt;div class=&quot;shk-board&quot;&gt;${lanes}&lt;/div&gt;${caption}`;
   };
-  const menu = task =&gt; {
+  const menu = (task, id) =&gt; {
+    menuSelection[id] ??= 0;
     const started = task &amp;&amp; ![&#x27;Queued&#x27;,&#x27;Merged&#x27;].includes(task.step);
     const live = task &amp;&amp; ![&#x27;Done&#x27;,&#x27;Cancelled&#x27;].includes(task.state);
     const taskRows = [];
-    if (task &amp;&amp; task.id === &#x27;T-42&#x27; &amp;&amp; scene.value !== &#x27;quiet&#x27; &amp;&amp; scene.value !== &#x27;stopped&#x27;) taskRows.push([&#x27;Answer&#x27;,&#x27;resolve&#x27;,&#x27;Answer the recorded decision&#x27;]);
-    if (started) taskRows.push([&#x27;Message&#x27;,&#x27;message&#x27;,&#x27;Delivered on the next turn&#x27;]);
-    if (task &amp;&amp; task.id === &#x27;T-43&#x27; &amp;&amp; scene.value === &#x27;owned&#x27;) taskRows.push([&#x27;Hand back&#x27;,&#x27;handback&#x27;,&#x27;Return this role to automation&#x27;]);
-    else if (started) taskRows.push([&#x27;Take over&#x27;,&#x27;takeover&#x27;,&#x27;Stop the turn, work in the pane&#x27;]);
-    if (live) taskRows.push(task.state.includes(&#x27;Paused&#x27;) ? [&#x27;Resume&#x27;,&#x27;menu&#x27;,&#x27;Clear the task holds&#x27;] : [&#x27;Pause&#x27;,&#x27;menu&#x27;,&#x27;Stop after the current turn&#x27;], [&#x27;Cancel&#x27;,&#x27;menu&#x27;,&#x27;Abandon this task&#x27;], [&#x27;More…&#x27;,&#x27;menu&#x27;,&#x27;Pause now · Priority · Retry · Rung · Open session · Export evidence&#x27;]);
-    const viewRows = task ? [[&#x27;Evidence &amp; reports&#x27;,&#x27;evidence&#x27;,&#x27;Reports, verdicts and engine facts&#x27;], [&#x27;Usage&#x27;,&#x27;usage&#x27;,&#x27;Recorded session values&#x27;], [&#x27;Commands&#x27;,&#x27;history&#x27;,&#x27;Durable outcomes&#x27;], [&#x27;Project diagnostics&#x27;,&#x27;diagnostics&#x27;,&#x27;Secondary observations&#x27;]] : [];
-    const projectRows = [[&#x27;Submit task&#x27;,&#x27;menu&#x27;,&#x27;Create a new task&#x27;], [&#x27;Stop engine&#x27;,&#x27;menu&#x27;,&#x27;Stop running turns, keep the state&#x27;], [&#x27;Switch task…&#x27;,&#x27;menu&#x27;,&#x27;Act on another task&#x27;]];
-    const group = (title, rows) =&gt; rows.length ? `&lt;div class=&quot;shk-menu-group&quot;&gt;&lt;div class=&quot;shk-dim shk-menu-title&quot;&gt;${title}&lt;/div&gt;${rows.map(([label,action,meaning])=&gt;`&lt;button type=&quot;button&quot; class=&quot;shk-menu-item&quot; data-open=&quot;${action}&quot;&gt;&lt;span class=&quot;shk-menu-label&quot;&gt;${label}&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;${meaning}&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;)}&lt;/div&gt;` : &#x27;&#x27;;
-    return `&lt;div&gt;${group(&#x27;Task&#x27;, taskRows)}${group(&#x27;Views&#x27;, viewRows)}${group(&#x27;Project&#x27;, projectRows)}&lt;/div&gt;&lt;div class=&quot;shk-menu-hint&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;↑↓&lt;/span&gt; &lt;span class=&quot;shk-dim&quot;&gt;select&lt;/span&gt;   &lt;span class=&quot;shk-key&quot;&gt;Enter&lt;/span&gt; &lt;span class=&quot;shk-dim&quot;&gt;open&lt;/span&gt;&lt;/div&gt;`;
+    const taskLabel = (label, action=label) =&gt; `${label}${actionFeedback[id]===action?&#x27; &lt;span class=&quot;shk-good shk-bold&quot;&gt;✓&lt;/span&gt;&#x27;:&#x27;&#x27;}`;
+    if (task &amp;&amp; task.id === &#x27;T-42&#x27; &amp;&amp; scene.value !== &#x27;quiet&#x27; &amp;&amp; scene.value !== &#x27;stopped&#x27;) taskRows.push([taskLabel(&#x27;Answer&#x27;,&#x27;resolve&#x27;),&#x27;resolve&#x27;,&#x27;Answer the recorded decision&#x27;]);
+    if (live) taskRows.push([taskLabel(&#x27;Message&#x27;),&#x27;message&#x27;,&#x27;Delivered on the next turn&#x27;]);
+    if (task &amp;&amp; task.id === &#x27;T-43&#x27; &amp;&amp; scene.value === &#x27;owned&#x27;) taskRows.push([taskLabel(&#x27;Hand back&#x27;,&#x27;handback&#x27;),&#x27;handback&#x27;,&#x27;Return this role to automation&#x27;]);
+    else if (started) taskRows.push([taskLabel(&#x27;Take over&#x27;,&#x27;takeover&#x27;),&#x27;takeover&#x27;,&#x27;Stop the turn, work in the pane&#x27;]);
+    if (live) {
+      taskRows.push(task.state.includes(&#x27;Paused&#x27;) ? [taskLabel(&#x27;Resume&#x27;),&#x27;resume&#x27;,&#x27;Clear the task holds&#x27;] : [taskLabel(&#x27;Pause&#x27;),&#x27;pause&#x27;,&#x27;Stop after the current turn&#x27;]);
+      taskRows.push([taskLabel(&#x27;Cancel&#x27;),&#x27;cancel&#x27;,&#x27;Abandon this task&#x27;]);
+    }
+    const extras = [];
+    if (started) extras.push([&#x27;Pause now&#x27;,&#x27;pause-now&#x27;,&#x27;Stop the current turn, then hold&#x27;]);
+    if (live &amp;&amp; task.step === &#x27;Queued&#x27;) extras.push([&#x27;Priority&#x27;,&#x27;priority&#x27;,&#x27;Change the dispatch order&#x27;]);
+    if (started) extras.push([&#x27;Retry&#x27;,&#x27;retry&#x27;,&#x27;Re-run the current step&#x27;],[&#x27;Rung&#x27;,&#x27;rung&#x27;,&#x27;Set the level for the next turn&#x27;]);
+    if (task) extras.push([&#x27;Open session&#x27;,&#x27;session&#x27;,&#x27;Show recorded session activity&#x27;],[&#x27;Export evidence&#x27;,&#x27;export&#x27;,&#x27;Write the task evidence to a file&#x27;]);
+    if (extras.length) {
+      taskRows.push(paletteExpanded[id]
+        ? [taskLabel(&#x27;Fewer…&#x27;),&#x27;fewer&#x27;,&#x27;Hide the extra actions&#x27;]
+        : [&#x27;More…&#x27;,&#x27;more&#x27;,extras.map(([label])=&gt;label).join(&#x27; · &#x27;)]);
+      if (paletteExpanded[id]) taskRows.push(...extras.map(([label,action,meaning])=&gt;[taskLabel(label,action),action,meaning]));
+    }
+    const viewRows = task ? [
+      [&#x27;Evidence &amp; reports&#x27;,&#x27;evidence&#x27;,&#x27;Reports, verdicts and engine facts&#x27;],
+      [&#x27;Usage&#x27;,&#x27;usage&#x27;,&#x27;Recorded session values&#x27;],
+      [&#x27;Commands&#x27;,&#x27;history&#x27;,&#x27;Durable outcomes&#x27;],
+      [&#x27;Project diagnostics&#x27;,&#x27;diagnostics&#x27;,&#x27;Secondary observations&#x27;]
+    ] : [];
+    const projectRows = [[taskLabel(&#x27;Submit task&#x27;,&#x27;submit&#x27;),&#x27;submit&#x27;,&#x27;Create a new task&#x27;], [taskLabel(&#x27;Stop engine&#x27;,&#x27;stop&#x27;),&#x27;stop&#x27;,&#x27;Stop running turns, keep the state&#x27;], [&#x27;Switch task…&#x27;,&#x27;taskpicker&#x27;,&#x27;Act on another task&#x27;]];
+    let itemIndex=0;
+    const group = (title, rows) =&gt; rows.length ? `&lt;div class=&quot;shk-menu-group&quot;&gt;&lt;div class=&quot;shk-dim shk-menu-title&quot;&gt;${title}&lt;/div&gt;${rows.map(([label,action,meaning])=&gt;{const index=itemIndex++; return `&lt;button type=&quot;button&quot; class=&quot;shk-menu-item&quot; data-menu-index=&quot;${index}&quot; aria-pressed=&quot;${menuSelection[id]===index}&quot; ${action===&#x27;more&#x27;||action===&#x27;fewer&#x27;?&#x27;data-palette-expand=&quot;true&quot;&#x27;:`data-open=&quot;${action}&quot;`}&gt;&lt;span class=&quot;shk-menu-label&quot;&gt;${label}&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;${meaning}&lt;/span&gt;&lt;/button&gt;`}).join(&#x27;&#x27;)}&lt;/div&gt;` : &#x27;&#x27;;
+    return `&lt;div&gt;${group(&#x27;Task&#x27;, taskRows)}${group(&#x27;Views&#x27;, viewRows)}${group(&#x27;Extensions&#x27;, [])}${group(&#x27;Project&#x27;, projectRows)}&lt;/div&gt;&lt;div class=&quot;shk-menu-hint&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;↑↓&lt;/span&gt; &lt;span class=&quot;shk-dim&quot;&gt;select&lt;/span&gt;   &lt;span class=&quot;shk-key&quot;&gt;Enter&lt;/span&gt; &lt;span class=&quot;shk-dim&quot;&gt;open&lt;/span&gt;&lt;/div&gt;`;
+  };
+  const formRow = (label, control) =&gt; `&lt;div class=&quot;shk-form-row&quot;&gt;&lt;label&gt;${label}&lt;/label&gt;${control}&lt;/div&gt;`;
+  const actionPopup = (kind, task, id) =&gt; {
+    const guidance = {
+      message:&#x27;Queues guidance for this role’s next turn; it does not interrupt a running turn.&#x27;,
+      takeover:&#x27;Stops the running turn and holds this task while you work in the role’s pane.&#x27;,
+      handback:&#x27;Returns this role to automation; another taken-over role or a pause can still hold the task.&#x27;,
+      pause:&#x27;Holds the task before its next turn or integration effect.&#x27;,
+      resume:&#x27;Clears task holds; dependencies, slots and other scheduling limits still apply.&#x27;,
+      cancel:&#x27;Cancels only this task and keeps its branch.&#x27;,
+      &#x27;pause-now&#x27;:&#x27;Stops the current turn and cancels its step, then holds the task.&#x27;,
+      priority:&#x27;Changes dispatch order while the task is queued.&#x27;,
+      retry:&#x27;Cancels the current step and runs it again, closing any open decision.&#x27;,
+      rung:&#x27;The rung is the agent:model:effort level a role uses from its next turn.&#x27;,
+      session:&#x27;Shows the role’s recorded last message, usage and recent view lines.&#x27;,
+      stop:&#x27;Stops the engine for every task; running turns can continue when it starts again.&#x27;,
+      export:&#x27;Writes retained evidence to a local file; relative paths start at the project root.&#x27;
+    };
+    const actionLabels = {
+      message:&#x27;queue message&#x27;, takeover:&#x27;take over&#x27;, handback:&#x27;hand back&#x27;, pause:&#x27;pause&#x27;, resume:&#x27;resume&#x27;,
+      cancel:&#x27;cancel&#x27;, &#x27;pause-now&#x27;:&#x27;pause now&#x27;, priority:&#x27;set priority&#x27;, retry:&#x27;retry&#x27;, rung:&#x27;set rung&#x27;,
+      session:&#x27;open session&#x27;, stop:&#x27;stop engine&#x27;, export:&#x27;export evidence&#x27;
+    };
+    const selectedRole = modalDrafts[id]?.role ?? (task?.role === &#x27;Implementer&#x27; ? &#x27;Implementer&#x27; : &#x27;Leader&#x27;);
+    const roleField = formRow(&#x27;Role&#x27;, `&lt;select data-draft=&quot;role&quot;&gt;&lt;option${selectedRole===&#x27;Leader&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;Leader&lt;/option&gt;&lt;option${selectedRole===&#x27;Implementer&#x27;?&#x27; selected&#x27;:&#x27;&#x27;}&gt;Implementer&lt;/option&gt;&lt;/select&gt;`);
+    let body = kind === &#x27;submit&#x27; ? &#x27;&#x27; : `&lt;div class=&quot;shk-form-guidance&quot;&gt;${guidance[kind]}&lt;/div&gt;`;
+    if (kind === &#x27;message&#x27;) body += `${roleField}${formRow(&#x27;Message&#x27;, `&lt;textarea data-draft=&quot;message&quot; rows=&quot;3&quot; placeholder=&quot;Message for the next turn&quot;&gt;${esc(messageSent[id] ? &#x27;&#x27; : modalDrafts[id]?.message || &#x27;&#x27;)}&lt;/textarea&gt;`)}`;
+    else if (kind === &#x27;takeover&#x27; || kind === &#x27;handback&#x27;) body += roleField;
+    else if (kind === &#x27;priority&#x27;) body += formRow(&#x27;Priority&#x27;, `&lt;input data-draft=&quot;priority&quot; inputmode=&quot;numeric&quot; value=&quot;${esc(modalDrafts[id]?.priority ?? &#x27;0&#x27;)}&quot;&gt;`);
+    else if (kind === &#x27;rung&#x27;) body += `${roleField}${formRow(&#x27;Rung&#x27;, `&lt;input data-draft=&quot;rung&quot; placeholder=&quot;agent:model:effort&quot; value=&quot;${esc(modalDrafts[id]?.rung ?? &#x27;&#x27;)}&quot;&gt;`)}&lt;div class=&quot;shk-dim&quot;&gt;agent:model:effort applies from this role’s next turn.&lt;/div&gt;`;
+    else if (kind === &#x27;session&#x27;) body += `${roleField}${sessionOpen[id] ? &#x27;&lt;div class=&quot;shk-heading&quot;&gt;Recorded activity · Implementer&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Last message&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Updated the parser with bounded retries.&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Usage&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;18,240 tokens · $0.22&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;Recent view&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;src/retry.py · tests/test_retry.py&lt;/span&gt;&lt;/div&gt;&#x27; : &#x27;&lt;div class=&quot;shk-dim&quot;&gt;Enter opens the role’s recorded activity.&lt;/div&gt;&#x27;}`;
+    else if (kind === &#x27;submit&#x27;) {
+      const saved = (field, fallback) =&gt; modalDrafts[id]?.[field] ?? fallback;
+      const option = (field, value, label) =&gt; `&lt;option value=&quot;${value}&quot;${saved(field,&#x27;&#x27;)===value?&#x27; selected&#x27;:&#x27;&#x27;}&gt;${label}&lt;/option&gt;`;
+      body += formRow(&#x27;Request&#x27;, `&lt;textarea data-draft=&quot;request&quot; rows=&quot;4&quot; placeholder=&quot;Describe the work&quot;&gt;${esc(saved(&#x27;request&#x27;,&#x27;&#x27;))}&lt;/textarea&gt;`);
+      body += `&lt;button type=&quot;button&quot; class=&quot;shk-form-options&quot; data-options-toggle=&quot;true&quot;&gt;${submitOptionsOpen[id] ? &#x27;▾ Options&#x27; : &#x27;▸ Options&#x27;}&lt;/button&gt;`;
+      if (submitOptionsOpen[id]) body += `&lt;div&gt;${formRow(&#x27;Title&#x27;, `&lt;input data-draft=&quot;title&quot; placeholder=&quot;Task title&quot; value=&quot;${esc(saved(&#x27;title&#x27;,&#x27;&#x27;))}&quot;&gt;`)}${formRow(&#x27;Mode&#x27;, `&lt;select data-draft=&quot;mode&quot;&gt;${option(&#x27;mode&#x27;,&#x27;Auto detect&#x27;,&#x27;Auto detect&#x27;)}${option(&#x27;mode&#x27;,&#x27;Implement&#x27;,&#x27;Implement&#x27;)}${option(&#x27;mode&#x27;,&#x27;Plan&#x27;,&#x27;Plan&#x27;)}&lt;/select&gt;`)}${formRow(&#x27;Complexity&#x27;, `&lt;select data-draft=&quot;complexity&quot;&gt;${option(&#x27;complexity&#x27;,&#x27;Triage decides&#x27;,&#x27;Triage decides&#x27;)}${option(&#x27;complexity&#x27;,&#x27;Low&#x27;,&#x27;Low&#x27;)}${option(&#x27;complexity&#x27;,&#x27;Normal&#x27;,&#x27;Normal&#x27;)}${option(&#x27;complexity&#x27;,&#x27;High&#x27;,&#x27;High&#x27;)}&lt;/select&gt;`)}${formRow(&#x27;Priority&#x27;, `&lt;input data-draft=&quot;submissionPriority&quot; inputmode=&quot;numeric&quot; value=&quot;${esc(saved(&#x27;submissionPriority&#x27;,&#x27;0&#x27;))}&quot;&gt;`)}${formRow(&#x27;Dependencies&#x27;, `&lt;input data-draft=&quot;dependencies&quot; placeholder=&quot;T-1, T-2&quot; value=&quot;${esc(saved(&#x27;dependencies&#x27;,&#x27;&#x27;))}&quot;&gt;`)}${formRow(&#x27;Leader rung&#x27;, `&lt;input data-draft=&quot;leaderRung&quot; placeholder=&quot;agent:model:effort&quot; value=&quot;${esc(saved(&#x27;leaderRung&#x27;,&#x27;&#x27;))}&quot;&gt;`)}${formRow(&#x27;Implementer rung&#x27;, `&lt;input data-draft=&quot;implementerRung&quot; placeholder=&quot;agent:model:effort&quot; value=&quot;${esc(saved(&#x27;implementerRung&#x27;,&#x27;&#x27;))}&quot;&gt;`)}&lt;/div&gt;`;
+    } else if (kind === &#x27;export&#x27;) {
+      const taskId = task?.id || &#x27;T-1&#x27;;
+      const option = (field, value, label, fallback) =&gt; `&lt;option value=&quot;${value}&quot;${(modalDrafts[id]?.[field] ?? fallback)===value?&#x27; selected&#x27;:&#x27;&#x27;}&gt;${label}&lt;/option&gt;`;
+      body += `${formRow(&#x27;Destination&#x27;, `&lt;input data-draft=&quot;destination&quot; value=&quot;${esc(modalDrafts[id]?.destination ?? `${taskId}-evidence.md`)}&quot;&gt;`)}${formRow(&#x27;Format&#x27;, `&lt;select data-draft=&quot;format&quot;&gt;${option(&#x27;format&#x27;,&#x27;Markdown&#x27;,&#x27;Markdown&#x27;,&#x27;Markdown&#x27;)}${option(&#x27;format&#x27;,&#x27;JSON&#x27;,&#x27;JSON&#x27;,&#x27;Markdown&#x27;)}&lt;/select&gt;`)}${formRow(&#x27;Existing file&#x27;, `&lt;select data-draft=&quot;existingFile&quot;&gt;${option(&#x27;existingFile&#x27;,&#x27;Refuse&#x27;,&#x27;Refuse&#x27;,&#x27;Refuse&#x27;)}${option(&#x27;existingFile&#x27;,&#x27;Replace&#x27;,&#x27;Replace&#x27;,&#x27;Refuse&#x27;)}&lt;/select&gt;`)}${formRow(&#x27;Agent signals&#x27;, `&lt;select data-draft=&quot;agentSignals&quot;&gt;${option(&#x27;agentSignals&#x27;,&#x27;Exclude&#x27;,&#x27;Exclude&#x27;,&#x27;Exclude&#x27;)}${option(&#x27;agentSignals&#x27;,&#x27;Include&#x27;,&#x27;Include&#x27;,&#x27;Exclude&#x27;)}&lt;/select&gt;`)}`;
+      if (exportFinished[id]) body += `&lt;div class=&quot;shk-feedback&quot;&gt;Exported ${esc(taskId)} evidence to ${esc(modalDrafts[id]?.destination ?? `${taskId}-evidence.md`)}.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Normalized signal excerpts ${modalDrafts[id]?.agentSignals===&#x27;Include&#x27;?&#x27;are included&#x27;:&#x27;are excluded&#x27;}.&lt;/div&gt;`;
+    }
+    const title = kind === &#x27;submit&#x27; ? &#x27;Submit task&#x27; : kind === &#x27;stop&#x27; ? &#x27;Stop engine&#x27; : kind === &#x27;pause-now&#x27; ? &#x27;Pause now&#x27; : kind === &#x27;priority&#x27; ? &#x27;Priority&#x27; : kind === &#x27;retry&#x27; ? &#x27;Retry&#x27; : kind === &#x27;rung&#x27; ? &#x27;Rung&#x27; : kind === &#x27;session&#x27; ? &#x27;Open session&#x27; : kind === &#x27;export&#x27; ? &#x27;Export evidence&#x27; : kind === &#x27;takeover&#x27; ? &#x27;Take over&#x27; : kind === &#x27;handback&#x27; ? &#x27;Hand back&#x27; : kind[0].toUpperCase() + kind.slice(1);
+    const taskSuffix = task &amp;&amp; ![&#x27;submit&#x27;,&#x27;stop&#x27;].includes(kind) ? ` · ${task.id}` : &#x27;&#x27;;
+    const confirmation = actionConfirm[id] === kind;
+    const requiredValue = kind === &#x27;message&#x27; ? modalDrafts[id]?.message : kind === &#x27;submit&#x27; ? modalDrafts[id]?.request : kind === &#x27;priority&#x27; ? modalDrafts[id]?.priority ?? &#x27;0&#x27; : kind === &#x27;rung&#x27; ? modalDrafts[id]?.rung : kind === &#x27;export&#x27; ? modalDrafts[id]?.destination ?? `${task?.id || &#x27;T-1&#x27;}-evidence.md` : &#x27;ready&#x27;;
+    const disabled = !String(requiredValue ?? &#x27;&#x27;).trim() || (kind === &#x27;message&#x27; &amp;&amp; messageSent[id]);
+    const confirmLabel = kind === &#x27;cancel&#x27; ? &#x27;again to cancel&#x27; : kind === &#x27;retry&#x27; ? &#x27;again to retry&#x27; : &#x27;again to stop engine&#x27;;
+    const keyHint = messageSent[id] &amp;&amp; kind === &#x27;message&#x27;
+      ? &#x27;&lt;span class=&quot;shk-good&quot;&gt;✓&lt;/span&gt;&#x27;
+      : confirmation
+        ? `&lt;span class=&quot;shk-key&quot;&gt;Enter&lt;/span&gt; &lt;span class=&quot;shk-bad&quot;&gt;${confirmLabel}&lt;/span&gt;`
+        : `&lt;span class=&quot;shk-key${disabled?&#x27; shk-inert&#x27;:&#x27;&#x27;}&quot;&gt;${kind === &#x27;message&#x27; || kind === &#x27;submit&#x27; ? &#x27;Ctrl+S&#x27; : &#x27;Enter&#x27;}&lt;/span&gt; &lt;span class=&quot;shk-dim&quot;&gt;${kind === &#x27;submit&#x27; ? &#x27;submit task · Enter new line&#x27; : kind === &#x27;message&#x27; ? &#x27;queue message · Enter new line&#x27; : ` ${actionLabels[kind] || kind}`}&lt;/span&gt;`;
+    const confirmationMark = confirmation ? &#x27;&lt;span class=&quot;shk-good&quot;&gt;✓&lt;/span&gt;&#x27; : &#x27;&#x27;;
+    return {title: `${title}${taskSuffix}`, content: body, footer: `&lt;button type=&quot;button&quot; data-submit=&quot;${kind}&quot;${disabled &amp;&amp; !confirmation ? &#x27; disabled&#x27; : &#x27;&#x27;}&gt;${keyHint}&lt;/button&gt;${confirmationMark}`};
+  };
+  const taskPicker = (id, selectedTask) =&gt; {
+    const query = (taskSearchValue[id] || &#x27;&#x27;).trim().toLocaleLowerCase();
+    const matches = tasks.filter(task =&gt; !query || `${task.id} ${task.title}`.toLocaleLowerCase().includes(query));
+    const current = pickerSelection[id] || selectedTask;
+    const selected = matches.some(task =&gt; task.id === current) ? current : matches[0]?.id;
+    pickerSelection[id]=selected;
+    const search = taskSearchOpen[id] ? `&lt;div class=&quot;shk-form-row&quot;&gt;&lt;label&gt;Search&lt;/label&gt;&lt;input data-draft=&quot;taskSearch&quot; value=&quot;${esc(modalDrafts[id]?.taskSearch || &#x27;&#x27;)}&quot; placeholder=&quot;Task ID or title&quot;&gt;&lt;/div&gt;` : &#x27;&#x27;;
+    const rows = matches.map(task =&gt; `&lt;button type=&quot;button&quot; class=&quot;shk-picker-row&quot; data-picker-task=&quot;${task.id}&quot; aria-pressed=&quot;${task.id === selected}&quot;&gt;&lt;span class=&quot;shk-${stateClass(task)}&quot;&gt;${markerMarkup(task)} ${task.id}&lt;/span&gt; ${esc(task.title)} &lt;span class=&quot;shk-dim&quot;&gt;${esc(stateText(task))}&lt;/span&gt;&lt;/button&gt;`).join(&#x27;&#x27;);
+    return `${search}&lt;div class=&quot;shk-menu-hint&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;↑↓&lt;/span&gt; &lt;span class=&quot;shk-dim&quot;&gt;select&lt;/span&gt;   &lt;span class=&quot;shk-key&quot;&gt;Enter&lt;/span&gt; &lt;span class=&quot;shk-dim&quot;&gt;choose&lt;/span&gt;   &lt;span class=&quot;shk-key&quot;&gt;/&lt;/span&gt; &lt;span class=&quot;shk-dim&quot;&gt;search&lt;/span&gt;&lt;/div&gt;${rows || &#x27;&lt;div class=&quot;shk-dim&quot;&gt;No matching tasks.&lt;/div&gt;&#x27;}`;
   };
   const foldNames = [&#x27;Task description&#x27;, &#x27;Results&#x27;, &#x27;Decisions&#x27;, &#x27;Events&#x27;, &#x27;Agent activity&#x27;, &#x27;Usage&#x27;, &#x27;Dependencies&#x27;, &#x27;Workspace&#x27;, &#x27;Settings&#x27;];
   const foldState = {};
@@ -1827,7 +1943,12 @@ html&gt;body{padding:0}&lt;/style&gt;
   const resolveSubmit = id =&gt; {
     delete resolveState[id];
     resolveSent.add(id);
-    overlays[id] = &#x27;submitted&#x27;;
+    const returnToActions = Boolean(paletteReturn[id]);
+    showActionFeedback(id, &#x27;resolve&#x27;);
+    if (returnToActions) {
+      overlays[id] = &#x27;menu&#x27;;
+      delete paletteReturn[id];
+    } else delete overlays[id];
   };
   const resolveOf = id =&gt; {
     if (!resolveState[id]) {
@@ -1876,12 +1997,15 @@ html&gt;body{padding:0}&lt;/style&gt;
   const modal = (id, task) =&gt; {
     const kind=overlays[id];
     if (!kind) return &#x27;&#x27;;
+    const preset=actionPopupKinds.includes(kind) ? actionPopup(kind,task,id) : null;
     const resolveHeading = () =&gt; width.value===&#x27;tiny&#x27; ? &#x27;T-42 · Decision required&#x27; : `${width.value===&#x27;compact&#x27;?&#x27;Resolve&#x27;:&#x27;Resolve escalation&#x27;} · E-7 · T-42`;
-    const headings={menu:task?`Actions · ${task.id} ${task.title} · ${task.role===&#x27;—&#x27;?&#x27;Leader&#x27;:task.role}`:&#x27;Actions · Project&#x27;,widgets:&#x27;Configured widgets&#x27;,resolve:resolveHeading(),message:&#x27;Message&#x27;,takeover:&#x27;Take over&#x27;,handback:&#x27;Hand back&#x27;,projectusage:&#x27;Project usage&#x27;,commands:&#x27;Command history&#x27;,history:&#x27;Command history&#x27;,diagnostics:&#x27;Project diagnostics&#x27;,docker:&#x27;Diagnostics · docker&#x27;,disk:&#x27;Diagnostics · disk&#x27;,faults:&#x27;Diagnostics · faults&#x27;,submitted:&#x27;Preview result&#x27;,help:&#x27;Help&#x27;};
+    const headings={menu:task?`Actions · ${task.id} ${task.title} · ${task.role===&#x27;—&#x27;?&#x27;Leader&#x27;:task.role}`:&#x27;Actions · Project&#x27;,taskpicker:&#x27;Switch task&#x27;,resolve:resolveHeading(),projectusage:&#x27;Project usage&#x27;,commands:&#x27;Command history&#x27;,history:&#x27;Command history&#x27;,diagnostics:&#x27;Project diagnostics&#x27;,docker:&#x27;Diagnostics · docker&#x27;,disk:&#x27;Diagnostics · disk&#x27;,faults:&#x27;Diagnostics · faults&#x27;,help:&#x27;Help&#x27;};
+    if (preset) headings[kind]=preset.title;
     let content=&#x27;&#x27;;
     let footer=&#x27;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · &lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt;&lt;/button&gt;&#x27;;
-    if (kind===&#x27;menu&#x27;) content=menu(task);
-    if (kind===&#x27;widgets&#x27;) content=&#x27;&lt;div class=&quot;shk-heading&quot;&gt;Configured widgets · illustrative&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;resources&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Focus readout&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;docker&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Diagnostics view&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-minirow&quot;&gt;&lt;span&gt;faults&lt;/span&gt;&lt;span class=&quot;shk-space shk-dim&quot;&gt;Diagnostics view&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Example routes only · no live project configuration is read.&lt;/div&gt;&#x27;;
+    if (kind===&#x27;menu&#x27;) content=menu(task,id);
+    if (kind===&#x27;taskpicker&#x27;) content=taskPicker(id,task?.id);
+    if (preset) { content=preset.content; footer=preset.footer; }
     if (kind===&#x27;resolve&#x27; &amp;&amp; task) { content=resolveContent(id, task); footer=&#x27;&#x27;; }
     if (kind===&#x27;commands&#x27; || kind===&#x27;history&#x27;) {
       content=historyContent();
@@ -1893,9 +2017,8 @@ html&gt;body{padding:0}&lt;/style&gt;
     if (kind===&#x27;docker&#x27;) content=dockerSection(false);
     if (kind===&#x27;disk&#x27;) content=diskSection(false);
     if (kind===&#x27;faults&#x27;) content=faultsSection(scene.value===&#x27;decision&#x27;, false);
-    if (kind===&#x27;submitted&#x27;) { content=&#x27;&lt;div class=&quot;shk-feedback&quot;&gt;Preview action complete&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;A real command result appears as Pending, Applied or Rejected.&lt;/div&gt;&#x27;; footer=&#x27;&lt;button type=&quot;button&quot; data-close=&quot;true&quot;&gt;Return · &lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt;&lt;/button&gt;&#x27;; }
     if (kind===&#x27;help&#x27;) content=&#x27;&lt;div&gt;&lt;span class=&quot;shk-key&quot;&gt;Up/Down&lt;/span&gt; select a task, from any bar&lt;/div&gt;&lt;div&gt;&lt;span class=&quot;shk-key&quot;&gt;f&lt;/span&gt; cycle the task status filter · &lt;span class=&quot;shk-key&quot;&gt;/&lt;/span&gt; search&lt;/div&gt;&lt;div&gt;&lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt; close popup · &lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt; clear selection&lt;/div&gt;&lt;div&gt;&lt;span class=&quot;shk-key&quot;&gt;Ctrl+P&lt;/span&gt; actions · &lt;span class=&quot;shk-key&quot;&gt;v&lt;/span&gt; focus task details&lt;/div&gt;&lt;div&gt;&lt;span class=&quot;shk-key&quot;&gt;↓&lt;/span&gt; details · &lt;span class=&quot;shk-key&quot;&gt;?&lt;/span&gt; help&lt;/div&gt;&lt;div&gt;History: &lt;span class=&quot;shk-key&quot;&gt;←&lt;/span&gt; newer · &lt;span class=&quot;shk-key&quot;&gt;→&lt;/span&gt; older&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Page controls disable at their ends. The arrows page only while the status filter is collapsed.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;Native Select: first Esc collapses options; next Esc closes the popup.&lt;/div&gt;&lt;div class=&quot;shk-dim&quot;&gt;New task windows remain in the background until explicitly selected.&lt;/div&gt;&#x27;;
-    return `&lt;div class=&quot;shk-modal-wrap&quot;&gt;&lt;section class=&quot;shk-modal&quot; style=&quot;${modalFrame(kind)}&quot; aria-label=&quot;${headings[kind]}&quot; role=&quot;dialog&quot;&gt;&lt;div class=&quot;shk-modal-head&quot;&gt;&lt;h4&gt;${headings[kind]}${task &amp;&amp; ![&#x27;menu&#x27;,&#x27;projectusage&#x27;,&#x27;diagnostics&#x27;,&#x27;commands&#x27;,&#x27;history&#x27;,&#x27;help&#x27;,&#x27;widgets&#x27;,&#x27;submitted&#x27;,&#x27;docker&#x27;,&#x27;disk&#x27;,&#x27;faults&#x27;,&#x27;resolve&#x27;].includes(kind)?` · ${task.id}`:&#x27;&#x27;}&lt;/h4&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot; aria-label=&quot;Esc ×&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt; ×&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scroll&quot;&gt;&lt;div class=&quot;shk-modal-body&quot; tabindex=&quot;0&quot;&gt;${content}&lt;div class=&quot;shk-validation&quot; role=&quot;alert&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scrollbar&quot; aria-hidden=&quot;true&quot;&gt;&lt;div class=&quot;shk-modal-scroll-thumb&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;${footer?`&lt;div class=&quot;shk-modal-footer&quot;&gt;${footer}&lt;/div&gt;`:&#x27;&#x27;}&lt;/section&gt;&lt;/div&gt;`;
+    return `&lt;div class=&quot;shk-modal-wrap&quot;&gt;&lt;section class=&quot;shk-modal&quot; style=&quot;${modalFrame(kind)}&quot; aria-label=&quot;${headings[kind]}&quot; role=&quot;dialog&quot;&gt;&lt;div class=&quot;shk-modal-head&quot;&gt;&lt;h4&gt;${headings[kind]}${task &amp;&amp; ![&#x27;menu&#x27;,&#x27;taskpicker&#x27;,&#x27;projectusage&#x27;,&#x27;diagnostics&#x27;,&#x27;commands&#x27;,&#x27;history&#x27;,&#x27;help&#x27;,&#x27;docker&#x27;,&#x27;disk&#x27;,&#x27;faults&#x27;,&#x27;resolve&#x27;,...actionPopupKinds].includes(kind)?` · ${task.id}`:&#x27;&#x27;}&lt;/h4&gt;&lt;button type=&quot;button&quot; data-close=&quot;true&quot; aria-label=&quot;Esc ×&quot;&gt;&lt;span class=&quot;shk-key&quot;&gt;Esc&lt;/span&gt; ×&lt;/button&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-rule&quot;&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scroll&quot;&gt;&lt;div class=&quot;shk-modal-body&quot; tabindex=&quot;0&quot;&gt;${content}&lt;div class=&quot;shk-validation&quot; role=&quot;alert&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;div class=&quot;shk-modal-scrollbar&quot; aria-hidden=&quot;true&quot;&gt;&lt;div class=&quot;shk-modal-scroll-thumb&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;${footer?`&lt;div class=&quot;shk-modal-footer&quot;&gt;${footer}&lt;/div&gt;`:&#x27;&#x27;}&lt;/section&gt;&lt;/div&gt;`;
   };
   const storeModalSelection = (field,id) =&gt; {
     if (field.tagName !== &#x27;TEXTAREA&#x27;) return;
@@ -1908,7 +2031,7 @@ html&gt;body{padding:0}&lt;/style&gt;
       const wanted = focus===&#x27;box&#x27; ? &#x27;.shk-modal textarea[data-draft]&#x27; : focus===&#x27;tried&#x27; ? &#x27;.shk-modal .shk-res-tried&#x27; : &#x27;.shk-modal .shk-res-list&#x27;;
       return updated.querySelector(wanted) || updated.querySelector(&#x27;.shk-modal-body&#x27;);
     }
-    return updated.querySelector(&#x27;.shk-modal [data-draft]&#x27;) || updated.querySelector(&#x27;.shk-modal .shk-menu-item, .shk-modal .shk-res-list, .shk-modal .shk-det-list&#x27;) || updated.querySelector(&#x27;.shk-modal-body&#x27;);
+    return updated.querySelector(&#x27;.shk-modal [data-draft]&#x27;) || updated.querySelector(&#x27;.shk-modal .shk-menu-item[aria-pressed=&quot;true&quot;], .shk-modal .shk-menu-item, .shk-modal .shk-picker-row, .shk-modal .shk-res-list, .shk-modal .shk-det-list&#x27;) || updated.querySelector(&#x27;.shk-modal-body&#x27;);
   };
   const taskTarget = (updated,id) =&gt; updated.querySelector(`.shk-task-row[data-task=&quot;${selections[id]}&quot;]`) || updated.querySelector(&#x27;.shk-task-row&#x27;);
   const focusElement = (field,id) =&gt; {
@@ -1978,6 +2101,34 @@ html&gt;body{padding:0}&lt;/style&gt;
     }
     updateWallClock();
   };
+  const showActionFeedback = (id, action) =&gt; {
+    window.clearTimeout(actionFeedbackTimers[id]);
+    actionFeedback[id] = action;
+    messageSent[id] = action === &#x27;message&#x27;;
+    actionFeedbackTimers[id] = window.setTimeout(() =&gt; {
+      delete actionFeedback[id];
+      delete actionFeedbackTimers[id];
+      messageSent[id] = false;
+      render();
+    }, actionFeedbackDuration);
+  };
+  const completeAction = (id, action) =&gt; {
+    actionConfirm[id] = null;
+    if (action === &#x27;message&#x27;) {
+      messageSent[id] = true;
+      if (modalDrafts[id]) delete modalDrafts[id].message;
+      showActionFeedback(id, action);
+      return;
+    }
+    if (action === &#x27;session&#x27;) { sessionOpen[id] = true; return; }
+    if (action === &#x27;export&#x27;) { exportFinished[id] = true; return; }
+    const returnToActions = Boolean(paletteReturn[id]);
+    showActionFeedback(id, action);
+    if (returnToActions) {
+      overlays[id] = &#x27;menu&#x27;;
+      delete paletteReturn[id];
+    } else delete overlays[id];
+  };
   const saveDraft = event =&gt; {
     const field = event.target.closest?.(&#x27;.shk-modal [data-draft]&#x27;);
     const concept = field?.closest(&#x27;[data-concept]&#x27;);
@@ -1992,6 +2143,11 @@ html&gt;body{padding:0}&lt;/style&gt;
         root.querySelector(&#x27;.shk-modal [data-draft=&quot;historyFilter&quot;]&#x27;)?.focus();
       }
     }
+    if (field.dataset.draft===&#x27;taskSearch&#x27; &amp;&amp; event.type===&#x27;input&#x27;) {
+      taskSearchValue[concept.dataset.concept]=field.value;
+      render();
+    }
+    if ([&#x27;message&#x27;,&#x27;request&#x27;,&#x27;rung&#x27;,&#x27;priority&#x27;,&#x27;destination&#x27;].includes(field.dataset.draft) &amp;&amp; event.type===&#x27;input&#x27;) render();
     if (field.tagName === &#x27;TEXTAREA&#x27;) {
       storeModalSelection(field,concept.dataset.concept);
       modalFocus = {id:concept.dataset.concept, key:field.dataset.draft, start:field.selectionStart, end:field.selectionEnd, direction:field.selectionDirection};
@@ -2137,6 +2293,20 @@ html&gt;body{padding:0}&lt;/style&gt;
     }
     if (button.dataset.resolveChoice) resolveActivate(id, Number(button.dataset.resolveChoice));
     if (button.dataset.resolveTried) { resolveOf(id).tried = !resolveOf(id).tried; resolveOf(id).focus = &#x27;tried&#x27;; }
+    if (button.dataset.paletteExpand) paletteExpanded[id] = !paletteExpanded[id];
+    if (button.dataset.optionsToggle) submitOptionsOpen[id] = !submitOptionsOpen[id];
+    if (button.dataset.menuIndex) menuSelection[id]=Number(button.dataset.menuIndex);
+    if (button.dataset.pickerTask) {
+      selections[id]=button.dataset.pickerTask;
+      overlays[id]=&#x27;menu&#x27;;
+      delete paletteReturn[id];
+      paletteExpanded[id]=false;
+      menuSelection[id]=0;
+      taskSearchOpen[id]=false;
+      taskSearchValue[id]=&#x27;&#x27;;
+      delete pickerSelection[id];
+      if (modalDrafts[id]) delete modalDrafts[id].taskSearch;
+    }
     if (button.dataset.open===&#x27;taskwindow&#x27;) {
       activeWindow=&#x27;task&#x27;;
       delete overlays[id];
@@ -2150,8 +2320,10 @@ html&gt;body{padding:0}&lt;/style&gt;
         openFold(id, button.dataset.open);
       } else {
         if (button.dataset.open===&#x27;resolve&#x27;) resolveOpen(id);
+        if (overlays[id]===&#x27;menu&#x27; &amp;&amp; (button.dataset.open===&#x27;taskpicker&#x27; || button.dataset.open===&#x27;resolve&#x27; || [&#x27;message&#x27;,&#x27;takeover&#x27;,&#x27;handback&#x27;,&#x27;pause&#x27;,&#x27;resume&#x27;,&#x27;cancel&#x27;,&#x27;pause-now&#x27;,&#x27;priority&#x27;,&#x27;retry&#x27;,&#x27;rung&#x27;,&#x27;session&#x27;,&#x27;stop&#x27;,&#x27;export&#x27;,&#x27;submit&#x27;].includes(button.dataset.open))) paletteReturn[id]=&#x27;menu&#x27;;
         overlays[id]=button.dataset.open;
         if (button.dataset.open===&#x27;history&#x27; || button.dataset.open===&#x27;commands&#x27;) historyPage=0;
+        if (button.dataset.open===&#x27;taskpicker&#x27;) { taskSearchOpen[id]=false; taskSearchValue[id]=&#x27;&#x27;; pickerSelection[id]=selections[id]; }
       }
     }
     if (button.dataset.page) {
@@ -2161,15 +2333,23 @@ html&gt;body{padding:0}&lt;/style&gt;
       if (nextPage&gt;=0 &amp;&amp; nextPage&lt;pageCount) historyPage=nextPage;
     }
     if (button.dataset.historyUpdate) previewUpdateCount++;
-    if (button.dataset.close) delete overlays[id];
+    if (button.dataset.close) {
+      if (paletteReturn[id]) { overlays[id]=paletteReturn[id]; delete paletteReturn[id]; }
+      else delete overlays[id];
+    }
     if (button.dataset.submit) {
-      const field=concept.querySelector(`textarea[data-draft=&quot;${button.dataset.submit===&#x27;answer&#x27;?&#x27;answer&#x27;:&#x27;message&#x27;}&quot;]`);
-      if (field &amp;&amp; !field.value.trim()) {
+      const field=concept.querySelector(`textarea[data-draft=&quot;${button.dataset.submit===&#x27;answer&#x27;?&#x27;answer&#x27;:button.dataset.submit===&#x27;submit&#x27;?&#x27;request&#x27;:&#x27;message&#x27;}&quot;]`);
+      if ([&#x27;message&#x27;,&#x27;submit&#x27;].includes(button.dataset.submit) &amp;&amp; field &amp;&amp; !field.value.trim()) {
         concept.querySelector(&#x27;.shk-validation&#x27;).textContent=&#x27;Enter guidance before submitting.&#x27;;
         field.focus();
         return;
       }
-      overlays[id]=&#x27;submitted&#x27;;
+      const action = button.dataset.submit;
+      if (confirmActions.has(action) &amp;&amp; actionConfirm[id] !== action) actionConfirm[id] = action;
+      else {
+        if (action === &#x27;message&#x27; &amp;&amp; field) field.value = &#x27;&#x27;;
+        completeAction(id, action);
+      }
     }
     render();
     const updated=root.querySelector(`[data-concept=&quot;${id}&quot;]`);
@@ -2179,6 +2359,8 @@ html&gt;body{padding:0}&lt;/style&gt;
     } else if (button.dataset.page) {
       focusTarget=updated.querySelector(`[data-page=&quot;${button.dataset.page}&quot;]:not(:disabled)`)||updated.querySelector(`[data-page]:not(:disabled)`);
     } else if (button.dataset.historyUpdate) focusTarget=updated.querySelector(&#x27;[data-history-update]&#x27;);
+    else if (actionConfirm[id]) focusTarget=updated.querySelector(`[data-submit=&quot;${actionConfirm[id]}&quot;]`);
+    else if (button.dataset.submit===&#x27;message&#x27;) focusTarget=updated.querySelector(&#x27;.shk-modal textarea[data-draft=&quot;message&quot;]&#x27;);
     else focusTarget=overlays[id]?modalTarget(updated,id):foldTarget(updated,id)||taskTarget(updated,id);
     focusElement(focusTarget,id);
   });
@@ -2186,12 +2368,33 @@ html&gt;body{padding:0}&lt;/style&gt;
     const concept=event.target.closest(&#x27;[data-concept]&#x27;);
     if (!concept) return;
     const id=concept.dataset.concept;
+    if (actionConfirm[id] &amp;&amp; event.key !== &#x27;Enter&#x27;) { actionConfirm[id] = null; window.setTimeout(render,0); }
     const editing=[&#x27;INPUT&#x27;,&#x27;TEXTAREA&#x27;,&#x27;SELECT&#x27;].includes(event.target.tagName);
     let handled=true;
     const stayOnBar=!overlays[id] &amp;&amp; [&#x27;ArrowUp&#x27;,&#x27;ArrowDown&#x27;].includes(event.key) ? [&#x27;.shk-attention&#x27;,&#x27;.shk-usage-bar&#x27;,&#x27;.shk-resources&#x27;,&#x27;.shk-footer&#x27;].find(selector=&gt;event.target.closest(selector)) : null;
     if (event.key===&#x27;Escape&#x27; &amp;&amp; event.target.tagName===&#x27;SELECT&#x27; &amp;&amp; overlays[id] &amp;&amp; event.target.matches(&#x27;:open&#x27;)) return;
     if (event.key===&#x27;Escape&#x27; &amp;&amp; overlays[id]===&#x27;resolve&#x27; &amp;&amp; event.target.tagName===&#x27;TEXTAREA&#x27;) resolveLeaveBox(id);
+    else if (event.key===&#x27;Escape&#x27; &amp;&amp; overlays[id]===&#x27;taskpicker&#x27; &amp;&amp; taskSearchOpen[id]) { taskSearchOpen[id]=false; taskSearchValue[id]=&#x27;&#x27;; if (modalDrafts[id]) delete modalDrafts[id].taskSearch; }
+    else if (event.key===&#x27;Escape&#x27; &amp;&amp; overlays[id] &amp;&amp; paletteReturn[id]) { overlays[id]=paletteReturn[id]; delete paletteReturn[id]; }
     else if (event.key===&#x27;Escape&#x27; &amp;&amp; overlays[id]) delete overlays[id];
+    else if (overlays[id]===&#x27;taskpicker&#x27; &amp;&amp; event.key===&#x27;/&#x27; &amp;&amp; !editing) { taskSearchOpen[id]=true; }
+    else if (overlays[id]===&#x27;taskpicker&#x27; &amp;&amp; event.key===&#x27;Enter&#x27; &amp;&amp; event.target.matches(&#x27;[data-draft=&quot;taskSearch&quot;]&#x27;)) { taskSearchValue[id]=event.target.value; taskSearchOpen[id]=false; }
+    else if (event.key===&#x27;Enter&#x27; &amp;&amp; overlays[id] &amp;&amp; [&#x27;priority&#x27;,&#x27;rung&#x27;,&#x27;export&#x27;].includes(overlays[id]) &amp;&amp; event.target.tagName===&#x27;INPUT&#x27;) { event.preventDefault(); concept.querySelector(`[data-submit=&quot;${overlays[id]}&quot;]`)?.click(); }
+    else if (event.ctrlKey &amp;&amp; event.key.toLowerCase()===&#x27;s&#x27; &amp;&amp; [&#x27;message&#x27;,&#x27;submit&#x27;].includes(overlays[id])) { event.preventDefault(); concept.querySelector(`[data-submit=&quot;${overlays[id]}&quot;]`)?.click(); }
+    else if (event.key===&#x27;Enter&#x27; &amp;&amp; overlays[id] &amp;&amp; actionPopupKinds.includes(overlays[id]) &amp;&amp; ![&#x27;INPUT&#x27;,&#x27;TEXTAREA&#x27;,&#x27;SELECT&#x27;].includes(event.target.tagName)) { event.preventDefault(); concept.querySelector(`[data-submit=&quot;${overlays[id]}&quot;]`)?.click(); }
+    else if (overlays[id]===&#x27;taskpicker&#x27; &amp;&amp; event.key===&#x27;Enter&#x27; &amp;&amp; !editing) { const selected=concept.querySelector(&#x27;.shk-picker-row[aria-pressed=&quot;true&quot;]&#x27;); if (selected) { selections[id]=selected.dataset.pickerTask; overlays[id]=&#x27;menu&#x27;; delete paletteReturn[id]; paletteExpanded[id]=false; menuSelection[id]=0; taskSearchOpen[id]=false; taskSearchValue[id]=&#x27;&#x27;; delete pickerSelection[id]; if (modalDrafts[id]) delete modalDrafts[id].taskSearch; } }
+    else if (overlays[id]===&#x27;taskpicker&#x27; &amp;&amp; [&#x27;ArrowUp&#x27;,&#x27;ArrowDown&#x27;,&#x27;Home&#x27;,&#x27;End&#x27;].includes(event.key) &amp;&amp; !editing) {
+      const rows=Array.from(concept.querySelectorAll(&#x27;.shk-picker-row&#x27;));
+      const current=rows.findIndex(row=&gt;row.getAttribute(&#x27;aria-pressed&#x27;)===&#x27;true&#x27;);
+      const next=event.key===&#x27;Home&#x27;?0:event.key===&#x27;End&#x27;?rows.length-1:((current+(event.key===&#x27;ArrowDown&#x27;?1:-1)+rows.length)%rows.length);
+      if (rows.length) pickerSelection[id]=rows[next].dataset.pickerTask;
+    }
+    else if (overlays[id]===&#x27;menu&#x27; &amp;&amp; [&#x27;ArrowUp&#x27;,&#x27;ArrowDown&#x27;,&#x27;Home&#x27;,&#x27;End&#x27;].includes(event.key) &amp;&amp; !editing) {
+      const rows=Array.from(concept.querySelectorAll(&#x27;.shk-menu-item&#x27;));
+      const current=rows.findIndex(row=&gt;row.getAttribute(&#x27;aria-pressed&#x27;)===&#x27;true&#x27;);
+      const next=event.key===&#x27;Home&#x27;?0:event.key===&#x27;End&#x27;?rows.length-1:((current+(event.key===&#x27;ArrowDown&#x27;?1:-1)+rows.length)%rows.length);
+      menuSelection[id]=Number(rows[next].dataset.menuIndex);
+    }
     else if (event.key===&#x27;Escape&#x27; &amp;&amp; foldOf(id).list) { if (foldOf(id).filter.open &amp;&amp; foldOf(id).focus===4) foldOf(id).filter.open=false; else foldOf(id).list=false; }
     else if (event.key===&#x27;Escape&#x27; &amp;&amp; foldOf(id).focus!==null) foldOf(id).focus=null;
     else if (event.key===&#x27;Escape&#x27; &amp;&amp; selections[id]) selections[id]=null;

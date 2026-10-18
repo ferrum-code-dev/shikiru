@@ -189,6 +189,7 @@ _COMPACT_SHORT_WIDE_HOME_SIZE = (48, 14)
 _TINY_HOME_SIZE = (20, 8)
 _PALETTE_NARROW_SAFE_SIZE = (17, 20)
 _PALETTE_ZERO_WIDTH_SIZE = (16, 20)
+_PALETTE_APPROVED_SHORT_WIDE_SIZE = (40, 14)
 _PALETTE_ZERO_WIDTH_REPRODUCTION_SIZES = (
     _PALETTE_NARROW_SAFE_SIZE,
     _PALETTE_ZERO_WIDTH_SIZE,
@@ -3618,24 +3619,49 @@ async def _resize_contextual_message_form(
     cursor = message.cursor_location
     for width, height in (
         *_PALETTE_ZERO_WIDTH_REPRODUCTION_SIZES,
+        _PALETTE_APPROVED_SHORT_WIDE_SIZE,
         (48, 20),
         (36, 14),
         _TINY_HOME_SIZE,
     ):
         await pilot.resize_terminal(width, height)
         if (width, height) == _PALETTE_ZERO_WIDTH_SIZE:
-            await pilot.pause()
-            assert message.text == guidance
+            await wait_until(
+                lambda width=width, height=height: (
+                    (app.size.width, app.size.height) == (width, height)
+                    and message.text == guidance
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
             continue
         await wait_until(
-            lambda: app.focused is message and message.cursor_location == cursor,
+            lambda width=width, height=height: (
+                (app.size.width, app.size.height) == (width, height)
+                and app.focused is message
+                and message.cursor_location == cursor
+                and frame.content_region.contains_region(
+                    palette.query_one("#palette-submit", Button).region
+                )
+            ),
             timeout=UI_WAIT_SECONDS,
         )
         button = palette.query_one("#palette-submit", Button)
         assert button.display
-        assert frame.content_region.contains_region(button.region)
         assert button.region.right <= width
         assert button.region.bottom < height
+        await wait_until(
+            lambda button=button, frame=frame: (
+                frame.content_region.contains_region(button.region)
+                and " ".join(_rendered_text(button).split())
+                in " ".join(
+                    row.text.strip()
+                    for row in button.render_lines(
+                        Region(0, 0, button.region.width, button.region.height)
+                    )
+                )
+            ),
+            timeout=UI_WAIT_SECONDS,
+        )
     await pilot.resize_terminal(*_STANDARD_HOME_SIZE)
     await wait_until(
         lambda: app.focused is message and message.cursor_location == cursor,

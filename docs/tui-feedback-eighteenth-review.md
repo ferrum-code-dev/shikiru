@@ -1,6 +1,6 @@
 # Phase 11 eighteenth review: palette redesign and Take over in the bar
 
-Status: in progress (Tasks 241-246). Refines the [seventeenth review](tui-feedback-seventeenth-review.md) where it differs. **The TUI is the source of truth.** The operator approved the decisions below; do not redesign.
+Status: delivered (Tasks 241-246). Refines the [seventeenth review](tui-feedback-seventeenth-review.md) where it differs. **The TUI is the source of truth.** The operator approved the decisions below; do not redesign.
 
 Execution order: Task 241, then 242, 243, 244, 245, 246, one task at a time.
 

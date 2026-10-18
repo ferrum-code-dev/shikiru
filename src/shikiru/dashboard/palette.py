@@ -121,22 +121,6 @@ _TASK_ACTIONS = frozenset(
     }
 )
 _TASK_TARGET_ACTIONS = _TASK_ACTIONS | {_ACTION_PEEK, _ACTION_EXPORT}
-PALETTE_ACTIONS = (
-    ("Submit task", _ACTION_SUBMIT),
-    ("Priority", _ACTION_PRIORITIZE),
-    ("Pause", _ACTION_PAUSE),
-    ("Pause now", _ACTION_PAUSE_NOW),
-    ("Resume", _ACTION_RESUME),
-    ("Take over", _ACTION_TAKE_OVER),
-    ("Hand back", _ACTION_HAND_BACK),
-    ("Cancel", _ACTION_CANCEL),
-    ("Retry", _ACTION_RETRY),
-    ("Rung", _ACTION_RUNG),
-    ("Message", _ACTION_MESSAGE),
-    ("Open session", _ACTION_PEEK),
-    ("Export evidence", _ACTION_EXPORT),
-    ("Stop engine", _ACTION_STOP),
-)
 SUBMIT_ACTION_LABELS = {
     _ACTION_SUBMIT: "Submit task",
     _ACTION_PRIORITIZE: "Priority",
@@ -186,7 +170,6 @@ _HINT_KEY_ACTIONS = {
 _CONFIRM_TWICE_ACTIONS = frozenset(_CONFIRM_HINTS)
 _CLEAR_AFTER_QUEUE_ACTIONS = frozenset({_ACTION_MESSAGE})
 _CONFIRMED_ACTIONS = _ENTER_HINT_ACTIONS | _CLEAR_AFTER_QUEUE_ACTIONS | {_ACTION_SUBMIT}
-_PALETTE_WRAPPED_HINT_ROWS = 2
 _CONFIRMATION_GLYPH = "\N{CHECK MARK}"
 _ENTER_KEY = "enter"
 _TASK_ROLES = TASK_ACTION_ROLES
@@ -203,9 +186,6 @@ _COMPLEXITY_OPTIONS = (
     ("High", "high"),
 )
 _EMPTY = ""
-_FIELD_ACTION = "action"
-_FIELD_ACTION_SEARCH = "action-search"
-_FIELD_TASK_ID = "task-id"
 _FIELD_ROLE = "role"
 _FIELD_PRIORITY = "priority"
 _FIELD_REQUEST = "request"
@@ -327,7 +307,6 @@ _FIELD_CLASS = "palette-field"
 _ROW_CLASS = "palette-row"
 _WIDE_CLASS = "palette-wide"
 _NO_TASK_TARGET = "Choose a task target first"
-_ACTION_DISABLED_PREFIX = "unavailable: "
 
 PaneSelector = Callable[[str], Awaitable[None]]
 
@@ -436,7 +415,8 @@ class PaletteScreen(ModalScreen[str | None]):
         self._commands = commands
         self._queries = queries
         self._initial_context = initial_context
-        self._initial_action = initial_context.action or _EMPTY
+        self._action = initial_context.action or _EMPTY
+        self._task_id = initial_context.task_id or _EMPTY
         self._pane_selector = pane_selector
         self._on_change = on_change
         self._evidence_exporter = evidence_exporter
@@ -446,9 +426,7 @@ class PaletteScreen(ModalScreen[str | None]):
         self._confirmation_timer: Timer | None = None
         self._role_is_explicit = initial_context.role is not None
         self._action_states: dict[str, TaskActionAvailability] = {}
-        self._shown_action_options: tuple[tuple[str, str], ...] = ()
         self._route_error: str | None = None
-        self._route_action: str | None = None
         self._options_expanded = False
         self._action_in_flight = False
         self._confirm_armed = False
@@ -461,6 +439,7 @@ class PaletteScreen(ModalScreen[str | None]):
         self._change_worker: Worker[None] | None = None
         self._form_scroll_y = 0
         self._form_focus_id: str | None = None
+        self._layout_form_max_height = 0
         self._restored_contextual_draft_actions: set[str] = set()
 
     def compose(self) -> ComposeResult:
@@ -480,18 +459,12 @@ class PaletteScreen(ModalScreen[str | None]):
 
     def _compose_form(self) -> ComposeResult:
         with VerticalScroll(id=_PALETTE_FORM_ID, classes=POPUP_BODY_CLASS):
-            yield from self._compose_action_target_fields()
             yield Static("", id=_GUIDANCE_ID, markup=False)
             yield from self._compose_task_submission_fields()
             yield from self._compose_task_role_fields()
             yield Static("", id=_ACTION_STATE_ID, markup=False)
             with VerticalScroll(id="palette-result-scroll", classes=POPUP_BODY_CLASS):
                 yield Static("", id="palette-result", markup=False)
-
-    def _compose_action_target_fields(self) -> ComposeResult:
-        yield from self._input_field("Find action", _FIELD_ACTION_SEARCH, "message")
-        yield from self._select_field("Action", _FIELD_ACTION, PALETTE_ACTIONS)
-        yield from self._input_field("Task ID", _FIELD_TASK_ID, "T-1")
 
     def _compose_task_submission_fields(self) -> ComposeResult:
         yield from self._text_area_field("Request", "request", "Describe the work")
@@ -596,23 +569,14 @@ class PaletteScreen(ModalScreen[str | None]):
             self.query_one(f"#{_SUBMIT_ID}", Button).disabled = True
 
     def _initialize_action_route(self) -> None:
-        action_select = cast("Select[str]", self.query_one("#action", Select))
-        if self._initial_action == _EMPTY:
-            action_select.value = _ACTION_SUBMIT
-        elif self._initial_action in {action for _, action in PALETTE_ACTIONS}:
-            action_select.value = self._initial_action
-        else:
-            self._route_error = f"unknown palette action route: {self._initial_action}"
-            action_select.set_options(
-                (*PALETTE_ACTIONS, (self._initial_action, self._initial_action))
-            )
-            action_select.value = self._initial_action
+        if self._action not in SUBMIT_ACTION_LABELS:
+            action = self._action or "<missing>"
+            self._route_error = f"unknown palette action route: {action}"
 
     def _initialize_form_state(self) -> None:
-        action_select = cast("Select[str]", self.query_one("#action", Select))
         cast("Select[str]", self.query_one("#mode", Select)).value = _EMPTY
         cast("Select[str]", self.query_one("#complexity", Select)).value = _EMPTY
-        task_id = self._initial_context.task_id
+        task_id = self._task_id or None
         default_role = (
             self._queries.task_action_role(task_id).value
             if task_id is not None
@@ -626,11 +590,9 @@ class PaletteScreen(ModalScreen[str | None]):
         cast("Select[str]", self.query_one(f"#{_FIELD_ROLE}", Select)).value = role
         self.query_one("#priority", Input).value = "0"
         self.query_one("#submission-priority", Input).value = "0"
-        self.query_one(f"#{_FIELD_TASK_ID}", Input).value = self._initial_context.task_id or _EMPTY
         self._initialize_export_defaults(task_id)
-        self._route_action = self._selected_value(_FIELD_ACTION)
-        self._update_fields(action_select.value)
-        self._restore_contextual_form_draft(self._selected_value(_FIELD_ACTION))
+        self._update_fields()
+        self._restore_contextual_form_draft(self._action)
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         del parameters
@@ -638,7 +600,7 @@ class PaletteScreen(ModalScreen[str | None]):
         if hint_actions is None:
             return True
         return (
-            self._selected_value(_FIELD_ACTION) in hint_actions
+            self._action in hint_actions
             and self._hint_mode()
             and not self.query_one(f"#{_SUBMIT_ID}", Button).disabled
         )
@@ -652,7 +614,7 @@ class PaletteScreen(ModalScreen[str | None]):
         self._activate_submit()
 
     def _hint_mode(self) -> bool:
-        return self._selected_value(_FIELD_ACTION) in _HINT_LABELS
+        return self._action in _HINT_LABELS
 
     def _confirm_submitted(self, action: str) -> None:
         self._paint_result(_EMPTY)
@@ -701,9 +663,7 @@ class PaletteScreen(ModalScreen[str | None]):
     def _activate_submit(self) -> None:
         if self._action_in_flight or self._closing_after_queue:
             return
-        confirming = (
-            self._selected_value(_FIELD_ACTION) in _CONFIRM_TWICE_ACTIONS and self._hint_mode()
-        )
+        confirming = self._action in _CONFIRM_TWICE_ACTIONS and self._hint_mode()
         if confirming and not self._confirm_armed:
             self._confirm_armed = True
             self._refresh_submit()
@@ -716,7 +676,7 @@ class PaletteScreen(ModalScreen[str | None]):
         self._action_worker = self.run_worker(self._run_action(), exclusive=True)
 
     def _refresh_submit(self) -> None:
-        action = self._selected_value(_FIELD_ACTION) or _EMPTY
+        action = self._action
         submit = self.query_one(f"#{_SUBMIT_ID}", Button)
         hint = self._hint_mode()
         tiny = self.size.height <= _PALETTE_TINY_PANE_MAX_ROWS
@@ -739,8 +699,7 @@ class PaletteScreen(ModalScreen[str | None]):
         marked = self._marked(label, action)
         submit.set_reactive(Button.label, Content.from_text(marked))
         submit.refresh(layout=True)
-        wraps = hint and len(marked.plain) > submit.size.width
-        submit.styles.height = _PALETTE_WRAPPED_HINT_ROWS if wraps else "auto"
+        submit.styles.height = "auto"
 
     def _size_action_buttons(self, *, hint: bool) -> None:
         tiny = self.size.height <= _PALETTE_TINY_PANE_MAX_ROWS
@@ -797,6 +756,9 @@ class PaletteScreen(ModalScreen[str | None]):
     def _restore_form_layout(self, scroll_y: float, focused: Widget | None) -> None:
         if not self.is_mounted or not widget_is_attached(self):
             return
+        if self._fit_form_to_submit_height():
+            self.call_after_refresh(self._restore_form_layout, scroll_y, focused)
+            return
         form = self.query_one("#palette-form", VerticalScroll)
         if focused is not None and widget_is_on_screen(focused, self):
             parent = focused.parent
@@ -809,22 +771,10 @@ class PaletteScreen(ModalScreen[str | None]):
 
     async def on_select_changed(self, event: Select.Changed) -> None:
         """Refresh visible fields when a selection changes."""
-        if event.select.id == _FIELD_ACTION:
-            if (
-                self._route_error is not None
-                and isinstance(event.value, str)
-                and event.value != self._route_action
-            ):
-                self._route_error = None
-                self._route_action = None
-                self.query_one(f"#{_SUBMIT_ID}", Button).disabled = False
-                self._show_result(_EMPTY)
-            self._update_fields(event.value)
-            self._refresh_action_availability()
-        elif event.select.id == _FIELD_ROLE:
+        if event.select.id == _FIELD_ROLE:
             if not self._role_is_explicit and event.select.has_focus:
                 self._role_is_explicit = True
-            if self._selected_value(_FIELD_ACTION) in _ENTER_HINT_ACTIONS:
+            if self._action in _ENTER_HINT_ACTIONS:
                 self.set_focus(None)
             self._refresh_action_availability()
         elif event.select.id in {
@@ -832,7 +782,7 @@ class PaletteScreen(ModalScreen[str | None]):
             _FIELD_EXPORT_OVERWRITE,
             _FIELD_EXPORT_SIGNALS,
         }:
-            if event.select.has_focus and self._selected_value(_FIELD_ACTION) == _ACTION_EXPORT:
+            if event.select.has_focus and self._action == _ACTION_EXPORT:
                 self.set_focus(None)
             self._refresh_action_availability()
 
@@ -864,7 +814,7 @@ class PaletteScreen(ModalScreen[str | None]):
         self.action_toggle_options()
 
     def action_toggle_options(self) -> None:
-        if self._selected_value(_FIELD_ACTION) != _ACTION_SUBMIT:
+        if self._action != _ACTION_SUBMIT:
             return
         self._options_expanded = not self._options_expanded
         self.query_one(f"#{_OPTIONS_ID}").display = self._options_expanded
@@ -909,17 +859,39 @@ class PaletteScreen(ModalScreen[str | None]):
             if narrow_pane and not tiny_pane
             else _PALETTE_INLINE_ACTIONS_ROWS
         )
-        form.styles.max_height = max(1, self.size.height - fixed_rows - action_rows)
-        if tiny_pane:
-            self._refresh_submit()
-        else:
-            self._update_fields(self._selected_value(_FIELD_ACTION))
+        self._layout_form_max_height = max(1, self.size.height - fixed_rows - action_rows)
+        form.styles.max_height = self._layout_form_max_height
+        self._refresh_submit()
         self.query_one("#palette-title", Label).update(self._context_form_title())
         self.call_after_refresh(self._refresh_context_form_title)
 
+    def _fit_form_to_submit_height(self) -> bool:
+        if (
+            self.size.height <= _PALETTE_TINY_PANE_MAX_ROWS
+            or self.size.width > _PALETTE_SHORT_PANE_MAX_COLUMNS
+        ):
+            return False
+        button = self.query_one(f"#{_SUBMIT_ID}", Button)
+        fixed_rows = (
+            _PALETTE_FORM_COMPACT_FIXED_ROWS
+            if self.size.height <= _PALETTE_SHORT_PANE_MAX_ROWS
+            else _PALETTE_FORM_STANDARD_FIXED_ROWS
+        )
+        max_height = max(
+            1,
+            self.size.height
+            - fixed_rows
+            - max(_PALETTE_STACKED_ACTIONS_ROWS, button.region.height),
+        )
+        if max_height >= self._layout_form_max_height:
+            return False
+        self._layout_form_max_height = max_height
+        self.query_one(f"#{_PALETTE_FORM_ID}", VerticalScroll).styles.max_height = max_height
+        return True
+
     def _context_form_title(self) -> str:
-        action = self._selected_value(_FIELD_ACTION)
-        label = next((label for label, value in PALETTE_ACTIONS if value == action), "Action")
+        action = self._action
+        label = SUBMIT_ACTION_LABELS.get(action, "Actions")
         task_id = self._initial_context.task_id
         if task_id is None or action in {_ACTION_SUBMIT, _ACTION_STOP}:
             return label
@@ -939,7 +911,7 @@ class PaletteScreen(ModalScreen[str | None]):
 
     def _remember_form_draft(self) -> None:
         task_id = self._initial_context.task_id
-        action = self._selected_value(_FIELD_ACTION)
+        action = self._action
         if task_id is None or action != _ACTION_MESSAGE:
             return
         role = self._selected_value(_FIELD_ROLE)
@@ -981,13 +953,16 @@ class PaletteScreen(ModalScreen[str | None]):
     def _restore_context_form_position(self) -> None:
         if not self.is_mounted or not widget_is_attached(self):
             return
+        if self._fit_form_to_submit_height():
+            self.call_after_refresh(self._restore_context_form_position)
+            return
         form = self.query_one(f"#{_PALETTE_FORM_ID}", VerticalScroll)
         control = self.query_one(f"#{self._form_focus_id}") if self._form_focus_id else None
         if control is not None and self._is_visible_in_form(control) and control.can_focus:
             control.focus()
             form.scroll_to(y=self._form_scroll_y, animate=False, immediate=True)
             return
-        action = self._selected_value(_FIELD_ACTION)
+        action = self._action
         candidates = {
             _ACTION_SUBMIT: _FIELD_REQUEST,
             _ACTION_PRIORITIZE: _FIELD_PRIORITY,
@@ -995,7 +970,7 @@ class PaletteScreen(ModalScreen[str | None]):
             _ACTION_MESSAGE: _FIELD_MESSAGE,
             _ACTION_EXPORT: _FIELD_EXPORT_DESTINATION,
         }
-        candidate = candidates.get(action) if action is not None else None
+        candidate = candidates.get(action)
         if candidate is not None:
             field = self.query_one(f"#{candidate}")
             if self._is_visible_in_form(field) and field.can_focus:
@@ -1021,7 +996,7 @@ class PaletteScreen(ModalScreen[str | None]):
 
     async def _run_action(self) -> None:
         try:
-            if self._selected_value(_FIELD_ACTION) == _ACTION_EXPORT:
+            if self._action == _ACTION_EXPORT:
                 await self._run_evidence_export()
             else:
                 await self._run_submission()
@@ -1038,7 +1013,7 @@ class PaletteScreen(ModalScreen[str | None]):
     async def _run_evidence_export(self) -> None:
         if self._evidence_exporter is None:
             raise ShikiruError(_EXPORT_NOT_CONFIGURED)
-        task_id = self._input(_FIELD_TASK_ID).strip()
+        task_id = self._task_id.strip()
         destination = self._input(_FIELD_EXPORT_DESTINATION)
         export_format = cast("EvidenceFormat", self._value(_FIELD_EXPORT_FORMAT))
         overwrite_value = self._selected_value(_FIELD_EXPORT_OVERWRITE)
@@ -1072,9 +1047,6 @@ class PaletteScreen(ModalScreen[str | None]):
 
     def _set_export_controls_disabled(self, disabled: bool) -> None:
         for field in (
-            _FIELD_ACTION_SEARCH,
-            _FIELD_ACTION,
-            _FIELD_TASK_ID,
             _FIELD_EXPORT_FORMAT,
             _FIELD_EXPORT_OVERWRITE,
             _FIELD_EXPORT_SIGNALS,
@@ -1083,8 +1055,8 @@ class PaletteScreen(ModalScreen[str | None]):
         self.query_one(f"#{_FIELD_EXPORT_DESTINATION}", Input).disabled = disabled
 
     async def _run_submission(self) -> None:
-        action = self._value(_FIELD_ACTION)
-        task_id = self._input(_FIELD_TASK_ID).strip()
+        action = self._action
+        task_id = self._task_id.strip()
         role = self._role() if action in _FORM_ROLE_ACTIONS | {_ACTION_PEEK} else None
         self._command_action = action
         self._command_target = self._target_for_action(action, task_id, role)
@@ -1115,8 +1087,8 @@ class PaletteScreen(ModalScreen[str | None]):
             self._show_ack(ack, failure)
 
     async def _dispatch(self) -> Ack | None:
-        action = self._value(_FIELD_ACTION)
-        task_id = self._input(_FIELD_TASK_ID).strip()
+        action = self._action
+        task_id = self._task_id.strip()
         if action == _ACTION_PEEK:
             self._show_peek(task_id)
             return None
@@ -1146,7 +1118,7 @@ class PaletteScreen(ModalScreen[str | None]):
         form_identity = self._form_identity()
         if form_identity != self._submitting_form_identity:
             self._observe_pending_form(form_identity)
-        task_id = self._input(_FIELD_TASK_ID).strip()
+        task_id = self._task_id.strip()
         self._action_states = (
             {
                 state.action.value: state
@@ -1155,8 +1127,7 @@ class PaletteScreen(ModalScreen[str | None]):
             if task_id
             else {}
         )
-        self._refresh_action_options()
-        action = self._selected_value(_FIELD_ACTION)
+        action = self._action
         disabled_reason = self._disabled_reason(action, task_id)
         if action in _FORM_ROLE_ACTIONS and task_id:
             selected_action = _TASK_ACTION_BY_ID[action]
@@ -1229,8 +1200,8 @@ class PaletteScreen(ModalScreen[str | None]):
         return True
 
     def _command_for_current_form(self) -> Command | None:
-        task_id = self._input(_FIELD_TASK_ID).strip()
-        action = self._selected_value(_FIELD_ACTION)
+        task_id = self._task_id.strip()
+        action = self._action
         builders: dict[str, Callable[[], Command]] = {
             _ACTION_SUBMIT: self._submit_command,
             _ACTION_PRIORITIZE: lambda: self._commands.prepare_prioritize_task(
@@ -1268,10 +1239,10 @@ class PaletteScreen(ModalScreen[str | None]):
         )
 
     def _form_identity(self) -> tuple[str, ...]:
-        action = self._selected_value(_FIELD_ACTION) or _EMPTY
+        action = self._action
         return (
             action,
-            self._input(_FIELD_TASK_ID).strip(),
+            self._task_id.strip(),
             (self._selected_value(_FIELD_ROLE) or _EMPTY)
             if action in _FORM_ROLE_ACTIONS
             else _EMPTY,
@@ -1296,29 +1267,6 @@ class PaletteScreen(ModalScreen[str | None]):
         if role is not None:
             return f"{task_id} · {role.value}"
         return task_id or "task"
-
-    def _refresh_action_options(self) -> None:
-        search = self._input(_FIELD_ACTION_SEARCH).strip().casefold()
-        options: list[tuple[str, str]] = []
-        for label, action in PALETTE_ACTIONS:
-            reason = self._disabled_reason(action, self._input(_FIELD_TASK_ID).strip())
-            option_label = (
-                f"{label} · {_ACTION_DISABLED_PREFIX}{reason}" if reason is not None else label
-            )
-            searchable = f"{label} {action} {reason or _EMPTY}".casefold()
-            if not search or search in searchable:
-                options.append((option_label, action))
-        rendered = tuple(options)
-        if rendered == self._shown_action_options:
-            return
-        selected = self._selected_value(_FIELD_ACTION)
-        self._shown_action_options = rendered
-        action_select = cast("Select[str]", self.query_one(f"#{_FIELD_ACTION}", Select))
-        action_select.set_options(rendered)
-        if selected in {value for _, value in rendered}:
-            action_select.value = selected
-        else:
-            action_select.value = Select.BLANK
 
     def _disabled_reason(self, action: str | None, task_id: str) -> str | None:
         if action == _ACTION_EXPORT:
@@ -1368,12 +1316,9 @@ class PaletteScreen(ModalScreen[str | None]):
             )
         self._show_result("\n".join(lines))
 
-    def _update_fields(self, value: object) -> None:
-        action = value if isinstance(value, str) else _EMPTY
+    def _update_fields(self) -> None:
+        action = self._action
         groups = {
-            _FIELD_ACTION_SEARCH: False,
-            _FIELD_ACTION: False,
-            _FIELD_TASK_ID: False,
             _FIELD_EXPORT_DESTINATION: action == _ACTION_EXPORT,
             _FIELD_EXPORT_FORMAT: action == _ACTION_EXPORT,
             _FIELD_EXPORT_OVERWRITE: action == _ACTION_EXPORT,

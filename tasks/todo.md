@@ -380,4 +380,4 @@ Eighteenth-review scope: [eighteenth review](../docs/tui-feedback-eighteenth-rev
 - [x] Task 243: Actions list
 - [x] Task 244: Simple action popups in the common style
 - [x] Task 245: Submit task and Export evidence popups
-- [ ] Task 246: Delete the legacy palette form
+- [x] Task 246: Delete the legacy palette form
