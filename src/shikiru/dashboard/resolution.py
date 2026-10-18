@@ -15,7 +15,6 @@ from textual.widgets import Button, Label, Rule, Static, TextArea
 from shikiru.dashboard.extra_details import ExtraDetailsScreen
 from shikiru.dashboard.resolution_view import (
     EXTRA_DETAILS_KEY,
-    TRIED_TOGGLE_KEY,
     ResolutionLayout,
     choice_renderable,
     choose_renderable,
@@ -31,6 +30,7 @@ from shikiru.domain.escalation_panel import ChoiceKind, build_resolution_panel
 from shikiru.errors import ShikiruError
 from shikiru.operator.commands import AckStatus
 from shikiru.ui.age import format_short_age
+from shikiru.ui.fold import FOLD_TOGGLE_KEY, FoldLine
 from shikiru.ui.popup import (
     POPUP_BODY_CLASS,
     POPUP_CLOSE_CLASS,
@@ -108,27 +108,16 @@ class _ChoiceRow(Static):
         self.post_message(self.Chosen(self._index))
 
 
-class _TriedSection(Static, can_focus=True):
+class _TriedSection(FoldLine):
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("enter,space", "toggle_details", "Toggle", show=False),
         Binding("up", "back_to_choices", "Back to choices", show=False),
     ]
-
-    class Toggled(Message):
-        pass
 
     class Left(Message):
         pass
 
-    def action_toggle_details(self) -> None:
-        self.post_message(self.Toggled())
-
     def action_back_to_choices(self) -> None:
         self.post_message(self.Left())
-
-    def on_click(self, event: events.Click) -> None:
-        event.stop()
-        self.post_message(self.Toggled())
 
 
 class _AnswerBox(TextArea):
@@ -158,7 +147,7 @@ class ResolutionScreen(ModalScreen[bool]):
         Binding("up", f"{_ACTION_MOVE}(-1)", "Previous choice", show=False, priority=True),
         Binding("down", f"{_ACTION_MOVE}(1)", "Next choice", show=False, priority=True),
         Binding(_SUBMIT_KEY, _ACTION_ACTIVATE, "Send", show=False),
-        Binding(TRIED_TOGGLE_KEY, _ACTION_TOGGLE_TRIED, "Details", show=False),
+        Binding(FOLD_TOGGLE_KEY, _ACTION_TOGGLE_TRIED, "Details", show=False),
         Binding(EXTRA_DETAILS_KEY, _ACTION_EXTRA_DETAILS, "Extra details", show=False),
     ]
     DEFAULT_CSS = (

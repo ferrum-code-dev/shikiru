@@ -12,6 +12,7 @@ from rich.text import Text
 
 from shikiru.domain.attempts import AttemptItem, AttemptKind, AttemptTone
 from shikiru.domain.escalation_panel import ChoiceKind
+from shikiru.ui.fold import fold_arrow, fold_toggle_hint
 from shikiru.ui.keys import key_hint
 from shikiru.ui.section import (
     BOLD_STEEL,
@@ -44,8 +45,6 @@ TINY_MAX_ROWS = 8
 _LABEL_WIDTH = 9
 _MARK_WIDTH = 3
 _RECOMMENDED_STAR = "\N{BLACK STAR}"
-_COLLAPSED_ARROW = "\N{BLACK RIGHT-POINTING SMALL TRIANGLE}"
-_EXPANDED_ARROW = "\N{BLACK DOWN-POINTING SMALL TRIANGLE}"
 _OWN_ANSWER_LABEL = "Write your own answer\N{HORIZONTAL ELLIPSIS}"
 _ACCEPT_LABEL = "Accept"
 _RETRY_LABEL = "Retry"
@@ -64,10 +63,8 @@ _BOX_HINTS = ("Ctrl+S send", "Enter new line", "Esc back")
 _NEEDS_INPUT_MARK = "\N{LOWER RIGHT PENCIL}"
 _NEEDS_INPUT_TEXT = "needs your input"
 _DETAILS_TITLE = "Details"
-TRIED_TOGGLE_KEY = "t"
 EXTRA_DETAILS_KEY = "o"
 _EXTRA_DETAILS_LABEL = "extra details"
-_TRIED_TOGGLE_LABEL = "show/hide"
 _TURNS_LABEL = "Turns"
 _PART_SEPARATOR = " \N{MIDDLE DOT} "
 _TURN_KINDS = frozenset({AttemptKind.TURN_OK, AttemptKind.TURN_FAILED, AttemptKind.VERDICT})
@@ -249,7 +246,7 @@ def tried_renderable(
 
     An expanded section ends with the `extra details` hint when `extra_details` is set.
     """
-    arrow = _EXPANDED_ARROW if expanded else _COLLAPSED_ARROW
+    arrow = fold_arrow(expanded=expanded)
     body: RenderableType = Group()
     if expanded:
         rows = _detail_rows(items)
@@ -261,7 +258,7 @@ def tried_renderable(
     return Section(
         f"{_DETAILS_TITLE} {arrow}",
         body,
-        trailing=key_label(TRIED_TOGGLE_KEY, _TRIED_TOGGLE_LABEL),
+        trailing=fold_toggle_hint(),
         ruled=False,
     )
 
