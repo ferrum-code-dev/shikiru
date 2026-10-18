@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Input, Select, Static
+from textual.widgets._select import SelectOverlay
 
 from shikiru.agents.contracts import (
     BILLING_MODE_SUBSCRIPTION,
@@ -49,6 +50,7 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME
 from tests.support.actions import ScreenHost, popup_screen
+from tests.support.cells import rendered_select_label
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG, LEADER_RUNG_2
@@ -59,6 +61,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from textual.geometry import Region
+    from textual.pilot import Pilot
 
     from shikiru.dashboard.palette import PaletteScreen
     from shikiru.store.reader import StateReader
@@ -397,24 +400,53 @@ def _intersects_nonempty_region(viewport: Region, region: Region) -> bool:
     return visible.width > 0 and visible.height > 0
 
 
+async def _choose_export_format(
+    pilot: Pilot[None],
+    field: Select[str],
+    value: str,
+    *,
+    mouse: bool,
+) -> None:
+    if field.value != value:
+        if mouse:
+            await pilot.click(field)
+            await wait_until(lambda: field.expanded, timeout=EXPORT_WAIT_SECONDS)
+            overlay = field.query_one(SelectOverlay)
+            option_index = 0 if value == EXPORT_FORMAT_MARKDOWN else 1
+            await pilot.click(overlay, offset=(2, option_index + 1))
+        else:
+            field.focus()
+            await pilot.press("enter")
+            await wait_until(lambda: field.expanded, timeout=EXPORT_WAIT_SECONDS)
+            direction = "down" if value == EXPORT_FORMAT_JSON else "up"
+            await pilot.press(direction, "enter")
+        await wait_until(
+            lambda: field.value == value and not field.expanded,
+            timeout=EXPORT_WAIT_SECONDS,
+        )
+
+
 async def _reach_export_controls(
     screen: PaletteScreen,
+    pilot: Pilot[None],
     destination: str | None,
     export_format: str | None,
+    *,
+    mouse: bool,
 ) -> None:
     destination_field = screen.query_one("#export-destination", Input)
     format_field = cast("Select[str]", screen.query_one("#export-format", Select))
     if destination is not None:
         destination_field.value = destination
     if export_format is not None:
-        format_field.value = export_format
-    controls: tuple[Input | Select[str], ...] = (
-        destination_field,
-        format_field,
-        cast("Select[str]", screen.query_one("#export-overwrite", Select)),
-        cast("Select[str]", screen.query_one("#export-signals", Select)),
+        await _choose_export_format(pilot, format_field, export_format, mouse=mouse)
+    controls: tuple[tuple[Input | Select[str], str | None], ...] = (
+        (destination_field, None),
+        (format_field, "JSON" if format_field.value == EXPORT_FORMAT_JSON else "Markdown"),
+        (cast("Select[str]", screen.query_one("#export-overwrite", Select)), "Refuse"),
+        (cast("Select[str]", screen.query_one("#export-signals", Select)), "Exclude"),
     )
-    for control in controls:
+    for control, label in controls:
         control.focus()
         await wait_until(
             lambda control=control: _contains_nonempty_region(
@@ -422,6 +454,12 @@ async def _reach_export_controls(
             ),
             timeout=EXPORT_WAIT_SECONDS,
         )
+        if label is not None:
+            select = cast("Select[str]", control)
+            await wait_until(
+                lambda select=select, label=label: rendered_select_label(select) == label,
+                timeout=EXPORT_WAIT_SECONDS,
+            )
     destination_field.focus()
     await wait_until(
         lambda: (
@@ -486,8 +524,10 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
                 existing_file.write_text(EXISTING_CONTENT)
             await _reach_export_controls(
                 screen,
+                pilot,
                 None if write_succeeds and filename is None else destination,
                 export_format,
+                mouse=index == 2,
             )
             result = screen.query_one("#palette-result", Static)
             previous_result = str(result.content)
@@ -507,7 +547,7 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
             if write_succeeds:
                 assert output_path.is_file()
                 content = output_path.read_text()
-                if export_format is None:
+                if export_format in {None, EXPORT_FORMAT_MARKDOWN}:
                     blocks, _, _ = _markdown_json_blocks(content)
                     assert any(
                         isinstance(block, dict)

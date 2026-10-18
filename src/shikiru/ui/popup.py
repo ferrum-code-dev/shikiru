@@ -214,7 +214,9 @@ POPUP_CONTROL_CSS = """
     color: $primary-text; background: $selected-surface; text-style: reverse;
 }
 .popup-frame Button:disabled { color: $secondary-text; }
-.popup-frame SelectCurrent { border: solid $neutral-border; padding: 0 1; }
+.popup-frame SelectCurrent {
+    border: solid $neutral-border; padding: 0 1; background: $detail-surface;
+}
 .popup-frame Select:focus > SelectCurrent,
 .popup-frame Select.-expanded > SelectCurrent {
     border: solid $focus; background: $selected-surface;
@@ -226,7 +228,7 @@ POPUP_CONTROL_CSS = """
 .popup-frame TextArea { scrollbar-size-vertical: $scrollbar-width; }
 .popup-frame TextArea.popup-edit {
     height: auto; min-height: 2; max-height: 6; padding: 0;
-    border: none; border-bottom: solid $neutral-border; background: $background;
+    border: none; border-bottom: solid $neutral-border; background: $surface;
 }
 .popup-frame TextArea.popup-edit > .text-area--cursor-line { background: transparent; }
 .popup-frame TextArea.popup-edit:focus {

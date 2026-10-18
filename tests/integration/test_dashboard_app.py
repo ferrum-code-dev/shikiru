@@ -123,7 +123,7 @@ from tests.support.actions import (
     structure,
     title_text,
 )
-from tests.support.cells import foregrounds
+from tests.support.cells import foregrounds, rendered_select_label
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
@@ -162,6 +162,7 @@ TASK_PAGE_TEST_TIMELINE_PAGE_SIZE = 1
 _EXTERNAL_WIDGET_NAME = "outside-widget"
 _LATER_EXTERNAL_WIDGET_NAME = "later-widget"
 _WIDE_HOME_SIZE = (120, 40)
+_ROLE_DROPDOWN_DASHBOARD_SIZE = (135, 47)
 _HEADER_AND_COUNT_ANCHORS = ("SHIKIRU", "Tasks")
 _HEADER_ANCHORS = ("SHIKIRU",)
 _PROJECT_SESSION_NAME = "project"
@@ -490,6 +491,55 @@ async def _open_popup(
         timeout=UI_WAIT_SECONDS,
     )
     return cast("PaletteScreen", app.screen)
+
+
+async def _select_another_role_and_reach_action(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    palette: PaletteScreen,
+) -> None:
+    role = cast("Select[str]", palette.query_one("#role", Select))
+    role_label = palette.query_one("#field-role Label", Label)
+    await wait_until(
+        lambda: rendered_select_label(role) == "Implementer",
+        timeout=UI_WAIT_SECONDS,
+    )
+    assert role.region.y == role_label.region.y
+    role.focus()
+    await wait_until(lambda: app.focused is role, timeout=UI_WAIT_SECONDS)
+    await pilot.press("enter")
+    await wait_until(lambda: role.expanded, timeout=UI_WAIT_SECONDS)
+    await pilot.press("up")
+    await pilot.press("enter")
+    await wait_until(
+        lambda: (
+            role.value == Role.LEADER.value
+            and rendered_select_label(role) == "Leader"
+            and app.focused is role
+        ),
+        timeout=UI_WAIT_SECONDS,
+    )
+    await pilot.press("enter")
+    await wait_until(lambda: role.expanded, timeout=UI_WAIT_SECONDS)
+    await pilot.press("escape")
+    await wait_until(
+        lambda: not role.expanded and app.focused is role,
+        timeout=UI_WAIT_SECONDS,
+    )
+    await pilot.resize_terminal(*_PALETTE_APPROVED_SHORT_WIDE_SIZE)
+    await wait_until(
+        lambda: (
+            palette.size.width == _PALETTE_APPROVED_SHORT_WIDE_SIZE[0]
+            and palette.size.height == _PALETTE_APPROVED_SHORT_WIDE_SIZE[1]
+            and rendered_select_label(role) == "Leader"
+            and role.region.y == role_label.region.y
+        ),
+        timeout=UI_WAIT_SECONDS,
+    )
+    action_button = palette.query_one("#palette-submit", Button)
+    await pilot.press("tab")
+    await wait_until(lambda: app.focused is action_button, timeout=UI_WAIT_SECONDS)
+    assert not action_button.disabled
 
 
 def _app(
@@ -2600,8 +2650,13 @@ async def _assert_command_history_filter_shortcuts(
     preferred_region: Region,
 ) -> None:
     history_filter = cast("Select[str]", app.screen.query_one("#command-history-filter", Select))
-    history_filter.value = "all"
-    await wait_until(lambda: history_filter.value == "all", timeout=UI_WAIT_SECONDS)
+    await wait_until(
+        lambda: (
+            history_filter.value == "all"
+            and rendered_select_label(history_filter) == "All statuses"
+        ),
+        timeout=UI_WAIT_SECONDS,
+    )
     previous_button = app.screen.query_one("#command-history-previous", Button)
     previous_button.focus()
     await pilot.press("left")
@@ -2631,6 +2686,7 @@ async def _assert_command_history_filter_shortcuts(
         lambda: history_filter.value == CommandFeedbackStatus.PENDING.value,
         timeout=UI_WAIT_SECONDS,
     )
+    assert rendered_select_label(history_filter) == CommandFeedbackStatus.PENDING.value
     assert "page 1" in _rendered_text(page)
     history_filter.value = CommandFeedbackStatus.REJECTED.value
     await wait_until(
@@ -3571,24 +3627,27 @@ async def _exercise_contextual_draft_and_evidence_route(
     listing = await _wait_for_actions(app)
     context = title_text(listing)
     assert task.id in context
-    assert "Leader" in context
+    assert "Leader" not in context
     await wait_until(
-        lambda: {"Evidence & reports", "Usage", "Project diagnostics"} <= set(structure(listing)),
+        lambda: {"Command history", "Diagnostics"} <= set(structure(listing)),
         timeout=UI_WAIT_SECONDS,
     )
+    assert "Views" not in structure(listing)
     palette = await _open_popup(app, pilot, listing, "Message")
     guidance = "Retain this task scoped guidance after closing."
     await pilot.press(*guidance)
     await _resize_contextual_message_form(app, pilot, palette, guidance)
     await pilot.press("escape")
     await wait_until(lambda: app.screen is listing, timeout=UI_WAIT_SECONDS)
-    await open_row(pilot, listing, "Evidence & reports")
+    await pilot.press("escape")
+    await wait_until(lambda: app.screen is home, timeout=UI_WAIT_SECONDS)
     evidence_panel = app.query_one("#task-detail-panel", TaskDetailPanel)
-    await wait_until(
-        lambda: TASK_VIEW_EVIDENCE in evidence_panel.open_views,
-        timeout=UI_WAIT_SECONDS,
-    )
-    assert app.screen is home
+    for view_id in (TASK_VIEW_EVIDENCE, TASK_VIEW_USAGE):
+        await choose_inspector_details_entry(pilot, view_id)
+        await wait_until(
+            lambda view_id=view_id: view_id in evidence_panel.open_views,
+            timeout=UI_WAIT_SECONDS,
+        )
     assert task.id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
     assert queue.pending() == []
     list_view.focus()
@@ -3800,17 +3859,11 @@ async def _exercise_task_secondary_menu_routes(
     search = app.query_one("#task-browser-search", Input)
     list_view = app.query_one("#task-browser-list", ListView)
     await _select_home_task(app, task.id)
-    for route_label, expected_view in [
-        ("Evidence & reports", TASK_VIEW_EVIDENCE),
-        ("Usage", TASK_VIEW_USAGE),
-    ]:
-        listing = await _open_task_context_menu(app, pilot, list_view)
-        await open_row(pilot, listing, route_label)
-        detail_panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+    detail_panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+    for view_id in (TASK_VIEW_EVIDENCE, TASK_VIEW_USAGE):
+        await choose_inspector_details_entry(pilot, view_id)
         await wait_until(
-            lambda expected_view=expected_view, detail_panel=detail_panel: (
-                expected_view in detail_panel.open_views
-            ),
+            lambda view_id=view_id: view_id in detail_panel.open_views,
             timeout=UI_WAIT_SECONDS,
         )
         assert search.value == task.title
@@ -3818,7 +3871,7 @@ async def _exercise_task_secondary_menu_routes(
         assert app.screen is home_screen
 
     listing = await _open_task_context_menu(app, pilot, list_view)
-    await open_row(pilot, listing, "Commands")
+    await open_row(pilot, listing, "Command history")
     await wait_until(
         lambda: bool(app.screen.query("#command-history-page")),
         timeout=UI_WAIT_SECONDS,
@@ -3828,7 +3881,7 @@ async def _exercise_task_secondary_menu_routes(
     await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
 
     listing = await _open_task_context_menu(app, pilot, list_view)
-    await open_row(pilot, listing, "Project diagnostics")
+    await open_row(pilot, listing, "Diagnostics")
     await wait_until(
         lambda: bool(app.screen.query("#context-widget-frame")),
         timeout=UI_WAIT_SECONDS,
@@ -4242,7 +4295,7 @@ async def _no_tmux_clients(tmux: Tmux, target: str) -> bool:
     return not await tmux.list_clients(target, _TMUX_CLIENT_TTY_FORMAT)
 
 
-async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
+async def test_compact_task_evidence_fold_opens_and_returns_to_home_selection(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -4282,9 +4335,19 @@ async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
         )
         app_instances.append(app)
         async with app.run_test(size=_COMPACT_HOME_SIZE) as pilot:
-            home, list_view = await _open_compact_task_evidence_route(app, pilot, task.id)
+            home = cast("Widget", app.screen)
+            list_view = app.query_one("#task-browser-list", ListView)
+            await wait_until(
+                lambda: bool(app.query(f"#task-row-{task.id}")),
+                timeout=UI_WAIT_SECONDS,
+            )
+            await _select_home_task(app, task.id)
             evidence_panel = app.query_one("#task-detail-panel", TaskDetailPanel)
-            assert TASK_VIEW_EVIDENCE in evidence_panel.open_views
+            await choose_inspector_details_entry(pilot, TASK_VIEW_EVIDENCE)
+            await wait_until(
+                lambda: TASK_VIEW_EVIDENCE in evidence_panel.open_views,
+                timeout=UI_WAIT_SECONDS,
+            )
             assert task.id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             assert app.screen is home
             assert queue.pending() == []
@@ -4302,24 +4365,6 @@ async def test_compact_contextual_views_open_the_shared_task_detail_and_return(
             assert queue.pending() == []
     finally:
         reader.close()
-
-
-async def _open_compact_task_evidence_route(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    task_id: str,
-) -> tuple[Widget, ListView]:
-    home = cast("Widget", app.screen)
-    list_view = app.query_one("#task-browser-list", ListView)
-    await wait_until(
-        lambda: bool(app.query(f"#task-row-{task_id}")),
-        timeout=UI_WAIT_SECONDS,
-    )
-    list_view.focus()
-    await pilot.press("ctrl+p")
-    listing = await _wait_for_actions(app)
-    await open_row(pilot, listing, "Evidence & reports")
-    return home, list_view
 
 
 @pytest.mark.parametrize("widget_names", [["header"], ["escalations"]])
@@ -5213,6 +5258,12 @@ async def test_home_footer_actions_button_opens_selected_task_actions(
     tasks = TaskStore(connection, clock)
     tasks.set_slot(task.id, 0)
     tasks.apply_transition(task.id, first_step(task))
+    runs = RunStore(connection, clock)
+    panes = {Role.LEADER: "%7", Role.IMPLEMENTER: "%8"}
+    for role, pane_id in panes.items():
+        run = runs.start(task.id, role, Rung("codex", "gpt-6-luna", "high"))
+        runs.set_session(run.id, pane_id, "codex --resume")
+    tasks.set_panes(task.id, panes)
     reader = StateReader(database, SystemClock())
     queue = CommandQueue(connection, clock)
     pending_before = queue.pending()
@@ -5230,7 +5281,7 @@ async def test_home_footer_actions_button_opens_selected_task_actions(
             open_palette_context=open_palette_context,
         )
         apps.append(app)
-        async with app.run_test(size=(120, 40)) as pilot:
+        async with app.run_test(size=_ROLE_DROPDOWN_DASHBOARD_SIZE) as pilot:
             home_screen = app.screen
             identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
             await wait_until(
@@ -5241,14 +5292,16 @@ async def test_home_footer_actions_button_opens_selected_task_actions(
             assert await pilot.click("#focus-footer-actions")
             listing = await _wait_for_actions(app)
             await wait_until(
-                lambda: (
-                    title_text(listing).startswith(f"Actions \N{MIDDLE DOT} {task.id} ")
-                    and title_text(listing).endswith("\N{MIDDLE DOT} Implementer")
-                ),
+                lambda: title_text(listing) == f"Actions \N{MIDDLE DOT} {task.id} {task.title}",
                 timeout=UI_WAIT_SECONDS,
             )
             assert queue.pending() == pending_before
 
+            palette = await _open_popup(app, pilot, listing, "Take over")
+            await _select_another_role_and_reach_action(app, pilot, palette)
+
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is listing, timeout=UI_WAIT_SECONDS)
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
     finally:

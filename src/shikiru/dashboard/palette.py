@@ -55,7 +55,7 @@ from shikiru.ui.popup import (
     popup_close_label,
     prepare_popup,
 )
-from shikiru.ui.screen import widget_is_attached, widget_is_on_screen
+from shikiru.ui.screen import widget_is_attached
 from shikiru.ui.tokens import (
     AMBER,
     DUSTY_ROSE,
@@ -174,18 +174,18 @@ _CONFIRMATION_GLYPH = "\N{CHECK MARK}"
 _ENTER_KEY = "enter"
 _TASK_ROLES = TASK_ACTION_ROLES
 _ROLE_OPTIONS = tuple((role.value.title(), role.value) for role in _TASK_ROLES)
+_EMPTY = ""
 _MODE_OPTIONS = (
-    ("Auto detect", ""),
+    ("Auto detect", _EMPTY),
     ("Implement", Mode.IMPLEMENT.value),
     ("Plan", Mode.PLAN.value),
 )
 _COMPLEXITY_OPTIONS = (
-    ("Triage decides", ""),
+    ("Triage decides", _EMPTY),
     ("Low", "low"),
     ("Normal", "normal"),
     ("High", "high"),
 )
-_EMPTY = ""
 _FIELD_ROLE = "role"
 _FIELD_PRIORITY = "priority"
 _FIELD_REQUEST = "request"
@@ -216,12 +216,24 @@ _SUBMIT_ID = "palette-submit"
 _OPTIONS_FOLD_ID = "palette-options-fold"
 _OPTIONS_ID = "palette-options"
 _OPTIONS_TITLE = "Options"
-_SELECT_REQUIRED = "Select an item"
 _PALETTE_FORM_ID = "palette-form"
 _PALETTE_CLOSE = "palette-close"
 _PALETTE_ESCAPE_KEY = "escape"
 _PALETTE_SHORT_PANE_MAX_ROWS = 18
 _PALETTE_SHORT_PANE_MAX_COLUMNS = 40
+_PALETTE_WIDE_FIELD_LABEL_COLUMNS = 17
+_PALETTE_CONTROL_MIN_COLUMNS = 8
+_PALETTE_FRAME_BORDER_COLUMNS = 1
+_PALETTE_SHORT_FRAME_PADDING_COLUMNS = 1
+_PALETTE_INLINE_FRAME_HORIZONTAL_COLUMNS = 2 * (
+    _PALETTE_FRAME_BORDER_COLUMNS + _PALETTE_SHORT_FRAME_PADDING_COLUMNS
+)
+_PALETTE_STACKED_FIELDS_MAX_COLUMNS = (
+    _PALETTE_WIDE_FIELD_LABEL_COLUMNS
+    + _PALETTE_CONTROL_MIN_COLUMNS
+    + _PALETTE_INLINE_FRAME_HORIZONTAL_COLUMNS
+    - 1
+)
 _PALETTE_TINY_PANE_MAX_ROWS = 8
 _PALETTE_ACTION_BUTTON_MIN_COLUMNS = 16
 _PALETTE_COMPACT_TEXT_AREA_MAX_HEIGHT = 3
@@ -262,6 +274,10 @@ _FORM_IDENTITY_FIELDS = {
 _FORM_ROLE_ACTIONS = frozenset(
     {_ACTION_TAKE_OVER, _ACTION_HAND_BACK, _ACTION_RUNG, _ACTION_MESSAGE, _ACTION_PEEK}
 )
+_FIELD_HINT_ACTIONS = (_FORM_ROLE_ACTIONS & _ENTER_HINT_ACTIONS) | {
+    _ACTION_PRIORITIZE,
+    _ACTION_EXPORT,
+}
 _REQUIRED_FIELDS = {
     _ACTION_SUBMIT: _FIELD_REQUEST,
     _ACTION_EXPORT: _FIELD_EXPORT_DESTINATION,
@@ -331,17 +347,21 @@ class PaletteScreen(ModalScreen[str | None]):
         POPUP_CSS
         + """
     #palette-frame.short { margin: 0 1; padding: 0 1; }
-    #palette-frame.tiny { margin: 0; }
+    #palette-frame.stack-fields { padding: 1 0; }
+    #palette-frame.tiny { margin: 0; padding: 0; }
     #palette-frame.tiny #palette-close { padding: 0; }
+    #palette-frame.stack-fields .palette-row { layout: vertical; }
+    #palette-frame.stack-fields .palette-row Label { width: 100%; }
+    #palette-frame.stack-fields .palette-row SelectCurrent { padding: 0; }
     #palette-close {
         width: auto; min-width: 5; height: 1; margin: 0;
     }
     #palette-form {
         height: auto; max-height: 1fr; min-height: 0; margin-top: 0; padding-top: 0;
-        border-top: none;
+        border-top: none; background: $surface;
     }
     #field-role, #field-priority { margin-top: 1; }
-    .palette-field { height: auto; margin-bottom: 1; }
+    .palette-field { height: auto; margin-bottom: 1; background: $surface; }
     .palette-field Label { height: 1; color: $secondary-text; text-style: none; }
     .palette-field Input, .palette-field Select { width: 100%; }
     .palette-field Input:focus {
@@ -350,19 +370,18 @@ class PaletteScreen(ModalScreen[str | None]):
     }
     .palette-row { layout: horizontal; margin-bottom: 0; }
     .palette-row Label { width: 9; }
-    .palette-wide Label { width: 17; }
-    .palette-row Input, .palette-row Select { width: 1fr; min-width: 8; }
+    .palette-row Input, .palette-row Select { width: 1fr; }
     .palette-row Input {
-        height: 1; border: none; padding: 0 1; background: $background;
+        height: 1; border: none; padding: 0 1; background: $surface;
     }
     .palette-row Input:focus {
         border: none; background: $selected-surface; text-style: none;
     }
-    .palette-row SelectCurrent {
-        height: 1; border: none; padding: 0 1; background: $background;
+    .popup-frame .palette-row SelectCurrent {
+        height: 1; border: none; padding: 0 1; background: $detail-surface;
     }
-    .palette-row Select:focus > SelectCurrent,
-    .palette-row Select.-expanded > SelectCurrent {
+    .popup-frame .palette-row Select:focus > SelectCurrent,
+    .popup-frame .palette-row Select.-expanded > SelectCurrent {
         border: none; background: $selected-surface;
     }
     #palette-options-fold { height: auto; margin: 0 0 1 0; color: $secondary-text; }
@@ -394,6 +413,10 @@ class PaletteScreen(ModalScreen[str | None]):
         text-wrap: wrap; text-style: none;
     }
     #palette-submit:focus { text-style: reverse; }
+    """
+        + f"""
+    .palette-wide Label {{ width: {_PALETTE_WIDE_FIELD_LABEL_COLUMNS}; }}
+    .palette-row Input, .palette-row Select {{ min-width: {_PALETTE_CONTROL_MIN_COLUMNS}; }}
     """
     )
 
@@ -431,6 +454,7 @@ class PaletteScreen(ModalScreen[str | None]):
         self._action_in_flight = False
         self._confirm_armed = False
         self._closing_after_queue = False
+        self._result_reveal_revision = 0
         self._pending_form_commands: dict[tuple[str, ...], int] = {}
         self._submitting_form_identity: tuple[str, ...] | None = None
         self._command_action = _EMPTY
@@ -474,10 +498,15 @@ class PaletteScreen(ModalScreen[str | None]):
                 "Title (optional)", _FIELD_TITLE, "Task title", inline=True, wide=True
             )
             yield from self._select_field(
-                "Mode", _FIELD_MODE, _MODE_OPTIONS, inline=True, wide=True
+                "Mode", _FIELD_MODE, _MODE_OPTIONS, value=_EMPTY, inline=True, wide=True
             )
             yield from self._select_field(
-                "Complexity", _FIELD_COMPLEXITY, _COMPLEXITY_OPTIONS, inline=True, wide=True
+                "Complexity",
+                _FIELD_COMPLEXITY,
+                _COMPLEXITY_OPTIONS,
+                value=_EMPTY,
+                inline=True,
+                wide=True,
             )
             yield from self._input_field(
                 "Priority", _FIELD_SUBMISSION_PRIORITY, "0", inline=True, wide=True
@@ -503,12 +532,18 @@ class PaletteScreen(ModalScreen[str | None]):
             wide=True,
         )
         yield from self._select_field(
-            "Format", _FIELD_EXPORT_FORMAT, _EXPORT_FORMAT_OPTIONS, inline=True, wide=True
+            "Format",
+            _FIELD_EXPORT_FORMAT,
+            _EXPORT_FORMAT_OPTIONS,
+            value=EXPORT_FORMAT_MARKDOWN,
+            inline=True,
+            wide=True,
         )
         yield from self._select_field(
             "Existing file",
             _FIELD_EXPORT_OVERWRITE,
             _EXPORT_OVERWRITE_OPTIONS,
+            value=_EXPORT_REFUSE,
             inline=True,
             wide=True,
         )
@@ -516,6 +551,7 @@ class PaletteScreen(ModalScreen[str | None]):
             "Agent signals",
             _FIELD_EXPORT_SIGNALS,
             _EXPORT_SIGNALS_OPTIONS,
+            value=_EXPORT_SIGNALS_EXCLUDE,
             inline=True,
             wide=True,
         )
@@ -523,7 +559,7 @@ class PaletteScreen(ModalScreen[str | None]):
     def _compose_task_role_fields(self) -> ComposeResult:
         yield from self._input_field("Priority", _FIELD_PRIORITY, "0", inline=True)
         yield from self._select_field(
-            "Role", _FIELD_ROLE, _ROLE_OPTIONS, allow_blank=False, inline=True
+            "Role", _FIELD_ROLE, _ROLE_OPTIONS, value=Role.LEADER.value, inline=True
         )
         yield from self._input_field("Rung", _FIELD_RUNG, "agent:model:effort", inline=True)
         yield from self._text_area_field("Message", "message", "Message for the next turn")
@@ -547,9 +583,15 @@ class PaletteScreen(ModalScreen[str | None]):
         form = self.query_one("#palette-form", VerticalScroll)
         scroll_y = form.scroll_y
         focused = cast("App[None]", self.app).focused
+        result_revision = self._result_reveal_revision
         self._set_text_area_heights(event.size.width, event.size.height)
         self._apply_layout()
-        self.call_after_refresh(self._restore_form_layout, scroll_y, focused)
+        self.call_after_refresh(
+            self._restore_form_layout,
+            scroll_y,
+            focused,
+            result_revision,
+        )
 
     async def on_mount(self) -> None:
         """Activate the action routed from a widget and follow database changes."""
@@ -564,6 +606,7 @@ class PaletteScreen(ModalScreen[str | None]):
             group=_PALETTE_STATE_WORKER,
         )
         if self._route_error is not None:
+            self._result_reveal_revision += 1
             self._paint_result(self._route_error)
             self.call_after_refresh(self._reveal_result)
             self.query_one(f"#{_SUBMIT_ID}", Button).disabled = True
@@ -682,7 +725,7 @@ class PaletteScreen(ModalScreen[str | None]):
         tiny = self.size.height <= _PALETTE_TINY_PANE_MAX_ROWS
         self.query_one("#palette-actions").set_class(hint, _HINT_CLASS)
         self._size_action_buttons(hint=hint)
-        submit.can_focus = not hint
+        submit.can_focus = not hint or action in _FIELD_HINT_ACTIONS
         if not hint:
             compact_label = "Queue" if action == _ACTION_MESSAGE else "Submit"
             label = Text(
@@ -753,14 +796,26 @@ class PaletteScreen(ModalScreen[str | None]):
             "Select[str]", self.query_one(f"#{_FIELD_EXPORT_SIGNALS}", Select)
         ).value = _EXPORT_SIGNALS_EXCLUDE
 
-    def _restore_form_layout(self, scroll_y: float, focused: Widget | None) -> None:
+    def _restore_form_layout(
+        self,
+        scroll_y: float,
+        focused: Widget | None,
+        result_revision: int,
+    ) -> None:
         if not self.is_mounted or not widget_is_attached(self):
             return
         if self._fit_form_to_submit_height():
-            self.call_after_refresh(self._restore_form_layout, scroll_y, focused)
+            self.call_after_refresh(
+                self._restore_form_layout,
+                scroll_y,
+                focused,
+                result_revision,
+            )
+            return
+        if self._result_reveal_revision != result_revision:
             return
         form = self.query_one("#palette-form", VerticalScroll)
-        if focused is not None and widget_is_on_screen(focused, self):
+        if focused is not None and not self.query_one("#palette-result-scroll").display:
             parent = focused.parent
             while parent is not None:
                 if parent.id == _PALETTE_FORM_ID:
@@ -774,16 +829,12 @@ class PaletteScreen(ModalScreen[str | None]):
         if event.select.id == _FIELD_ROLE:
             if not self._role_is_explicit and event.select.has_focus:
                 self._role_is_explicit = True
-            if self._action in _ENTER_HINT_ACTIONS:
-                self.set_focus(None)
             self._refresh_action_availability()
         elif event.select.id in {
             _FIELD_EXPORT_FORMAT,
             _FIELD_EXPORT_OVERWRITE,
             _FIELD_EXPORT_SIGNALS,
         }:
-            if event.select.has_focus and self._action == _ACTION_EXPORT:
-                self.set_focus(None)
             self._refresh_action_availability()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
@@ -850,6 +901,10 @@ class PaletteScreen(ModalScreen[str | None]):
         actions.set_class(short_pane, "short")
         frame.set_class(short_pane, "short")
         frame.set_class(tiny_pane, "tiny")
+        frame.set_class(
+            self.size.width <= _PALETTE_STACKED_FIELDS_MAX_COLUMNS,
+            "stack-fields",
+        )
         form.set_class(tiny_pane, "tiny")
         fixed_rows = (
             _PALETTE_FORM_COMPACT_FIXED_ROWS if short_pane else _PALETTE_FORM_STANDARD_FIXED_ROWS
@@ -978,7 +1033,7 @@ class PaletteScreen(ModalScreen[str | None]):
                 form.scroll_to_widget(field, animate=False, immediate=True, force=True)
                 return
         submit = self.query_one(f"#{_SUBMIT_ID}", Button)
-        if submit.display and submit.can_focus:
+        if submit.display and submit.can_focus and not self._hint_mode():
             submit.focus()
         else:
             self.set_focus(None)
@@ -1414,6 +1469,7 @@ class PaletteScreen(ModalScreen[str | None]):
 
     def _show_result(self, text: str) -> None:
         if self._is_current_screen():
+            self._result_reveal_revision += 1
             self._paint_result(text)
             self.call_after_refresh(self._reveal_result)
 
@@ -1483,13 +1539,13 @@ class PaletteScreen(ModalScreen[str | None]):
         field_id: str,
         options: tuple[tuple[str, str], ...],
         *,
-        allow_blank: bool = True,
+        value: str,
         inline: bool = False,
         wide: bool = False,
     ) -> ComposeResult:
         with Vertical(id=f"field-{field_id}", classes=_field_classes(inline=inline, wide=wide)):
             yield Label(label)
-            yield Select(options, prompt=_SELECT_REQUIRED, allow_blank=allow_blank, id=field_id)
+            yield Select(options, value=value, allow_blank=False, id=field_id)
 
     @staticmethod
     def _input_field(

@@ -119,7 +119,14 @@ class TaskRouteChoice:
     route: TaskPaletteRoute
 
 
-PaletteReturn = TaskRouteChoice | ExtensionEntry
+@dataclass(frozen=True)
+class ProjectRouteChoice:
+    """A project destination chosen from the Actions list."""
+
+    route: TaskPaletteRoute
+
+
+PaletteReturn = TaskRouteChoice | ProjectRouteChoice | ExtensionEntry
 
 
 class PaletteAction(StrEnum):

@@ -19,6 +19,7 @@ from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
+from tests.support.cells import rendered_select_label
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
 from tests.support.waiting import wait_until
 
@@ -182,7 +183,12 @@ async def _set_caches_parallelism_and_integration(
     await _click_next(pilot)
     await pilot.click("#integration")
     await pilot.press("down", "enter")
-    assert cast("Select[str]", pilot.app.query_one("#integration", Select)).value == "pr"
+    integration = cast("Select[str]", pilot.app.query_one("#integration", Select))
+    await wait_until(
+        lambda: rendered_select_label(integration) == "Pull request",
+        timeout=GIT_COMMAND_TIMEOUT,
+    )
+    assert integration.value == "pr"
     await _click_next(pilot)
 
 

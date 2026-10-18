@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 
 class PaletteApp(CoveredScreens):
-    """Run the Actions list, without Views or Extensions, as the tmux popup entrypoint."""
+    """Run the Actions list without dashboard routes or Extensions in a tmux popup."""
 
     def __init__(
         self,

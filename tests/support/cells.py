@@ -6,6 +6,9 @@ from typing import TYPE_CHECKING
 
 from textual.color import Color
 from textual.geometry import Region
+from textual.widget import Widget
+from textual.widgets import Select, Static
+from textual.widgets._select import SelectCurrent
 
 from shikiru.ui.tokens import (
     ALERT_COLOR,
@@ -19,7 +22,6 @@ from shikiru.ui.tokens import (
 if TYPE_CHECKING:
     from rich.color import Color as RichColor
     from rich.style import Style as RichStyle
-    from textual.widget import Widget
 
 Style = tuple[bool, str | None]
 Piece = tuple[str, Style]
@@ -72,6 +74,36 @@ def painted_backgrounds(widget: Widget) -> set[str | None]:
         for strip in widget.render_lines(region)
         for segment in strip
     }
+
+
+def rendered_select_label(select: Select[str]) -> str:
+    """Read the Select's painted current option label."""
+    label = select.query_one("#label", Static)
+    text = "".join(char for row in rendered_lines(label) for char, _ in row)
+    current = select.query_one(SelectCurrent)
+    if not text or not label.visible or not current.visible:
+        return ""
+    visible = label.region
+    ancestor = label.parent
+    while isinstance(ancestor, Widget):
+        visible = visible.intersection(ancestor.content_region)
+        if visible.width <= 0 or visible.height <= 0:
+            return ""
+        ancestor = ancestor.parent
+    screen = select.screen
+    text_bottom = label.region.y + 1
+    if (
+        visible.x > label.region.x
+        or visible.right < label.region.x + len(text)
+        or visible.y > label.region.y
+        or visible.bottom < text_bottom
+    ):
+        return ""
+    for offset in range(len(text)):
+        painted, _ = screen.get_widget_and_offset_at(label.region.x + offset, label.region.y)
+        if painted is not label:
+            return ""
+    return text
 
 
 def rendered_lines(widget: Widget) -> list[list[Cell]]:

@@ -381,3 +381,9 @@ Eighteenth-review scope: [eighteenth review](../docs/tui-feedback-eighteenth-rev
 - [x] Task 244: Simple action popups in the common style
 - [x] Task 245: Submit task and Export evidence popups
 - [x] Task 246: Delete the legacy palette form
+
+
+Nineteenth-review scope: [operator follow-up](../docs/tui-feedback-nineteenth-review.md).
+
+- [x] Task 247: Usable dropdowns, popup surfaces and Actions groups
+- [ ] Task 248: Engine-state-aware Start and Stop actions

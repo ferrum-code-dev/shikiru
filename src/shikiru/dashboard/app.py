@@ -29,6 +29,7 @@ from shikiru.dashboard.contract import (
     PaletteDraft,
     PaletteRequest,
     PaletteReturn,
+    ProjectRouteChoice,
     TaskBrowserFilter,
     TaskPaletteRoute,
     WidgetContext,
@@ -64,7 +65,6 @@ from shikiru.ui.keys import key_hint
 from shikiru.ui.popup import (
     POPUP_BODY_CLASS,
     POPUP_CLOSE_CLASS,
-    POPUP_CONTROL_CSS,
     POPUP_CSS,
     POPUP_FRAME_CLASS,
     POPUP_HEADER_CLASS,
@@ -132,6 +132,8 @@ _COMMAND_HISTORY_COPY = "command-history-copy"
 _COMMAND_HISTORY_WORKER = "command-history-updates"
 _COMMAND_HISTORY_SCROLL = "command-history-scroll"
 _COMMAND_HISTORY_FILTER = "command-history-filter"
+_COMMAND_HISTORY_FILTER_ROW = "command-history-filter-row"
+_COMMAND_HISTORY_FILTER_LABEL = "command-history-filter-label"
 _COMMAND_HISTORY_PREVIOUS = "command-history-previous"
 _COMMAND_HISTORY_NEXT = "command-history-next"
 _COMMAND_HISTORY_PAGE = "command-history-page"
@@ -493,7 +495,11 @@ class _CommandHistoryScreen(ModalScreen[None]):
     DEFAULT_CSS = (
         POPUP_CSS
         + """
-    #command-history-filter { width: 100%; height: 3; }
+    #command-history-filter-row { width: 100%; height: 3; }
+    #command-history-filter-label {
+        width: 9; height: 3; color: $secondary-text; content-align: left middle;
+    }
+    #command-history-filter { width: 1fr; height: 3; }
     #command-history-scroll { min-height: 0; }
     #command-history-copy { height: auto; padding: 0; }
     #command-history-page { height: 1; }
@@ -502,7 +508,7 @@ class _CommandHistoryScreen(ModalScreen[None]):
         width: auto; min-width: 1; height: 1; margin: 0; padding: 0; border: none;
     }
     #command-history-frame.compact { margin: 0 1; padding: 0 1; }
-    #command-history-frame.tiny #command-history-filter,
+    #command-history-frame.tiny #command-history-filter-row,
     #command-history-frame.tiny #command-history-page { display: none; }
     """
     )
@@ -529,14 +535,17 @@ class _CommandHistoryScreen(ModalScreen[None]):
                     popup_close_label(), id=_COMMAND_HISTORY_CLOSE, classes=POPUP_CLOSE_CLASS
                 )
             yield Rule(classes=POPUP_RULE_CLASS)
-            yield Select(
-                (
-                    ("All statuses", _COMMAND_HISTORY_ALL),
-                    *((status.value, status.value) for status in CommandFeedbackStatus),
-                ),
-                value=_COMMAND_HISTORY_ALL,
-                id=_COMMAND_HISTORY_FILTER,
-            )
+            with Horizontal(id=_COMMAND_HISTORY_FILTER_ROW):
+                yield Label("Status", id=_COMMAND_HISTORY_FILTER_LABEL)
+                yield Select(
+                    (
+                        ("All statuses", _COMMAND_HISTORY_ALL),
+                        *((status.value, status.value) for status in CommandFeedbackStatus),
+                    ),
+                    value=_COMMAND_HISTORY_ALL,
+                    allow_blank=False,
+                    id=_COMMAND_HISTORY_FILTER,
+                )
             with VerticalScroll(id=_COMMAND_HISTORY_SCROLL, classes=POPUP_BODY_CLASS):
                 yield Static("Loading command history…", id=_COMMAND_HISTORY_COPY, markup=False)
             yield Label("", id=_COMMAND_HISTORY_PAGE, classes=POPUP_SECONDARY_CLASS)
@@ -631,7 +640,7 @@ class _CommandHistoryScreen(ModalScreen[None]):
     async def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id != _COMMAND_HISTORY_FILTER:
             return
-        selected = event.value if isinstance(event.value, str) else _COMMAND_HISTORY_ALL
+        selected = cast("str", event.value)
         self._status = None if selected == _COMMAND_HISTORY_ALL else CommandFeedbackStatus(selected)
         self._offset = 0
         self._display_history()
@@ -875,9 +884,7 @@ class DashboardApp(CoveredScreens):
     """Present the configured Home focus or one shared task detail view."""
 
     ENABLE_COMMAND_PALETTE = False
-    CSS = (
-        POPUP_CONTROL_CSS
-        + """
+    CSS = """
     Screen { color: $primary-text; }
     #focus-root {
         height: 100%; border: solid $neutral-border; padding: 0 1;
@@ -950,7 +957,6 @@ class DashboardApp(CoveredScreens):
         content-align: right middle; text-align: right;
     }
     """
-    )
 
     def __init__(
         self,
@@ -1297,10 +1303,24 @@ class DashboardApp(CoveredScreens):
                     self._open_contextual_view(choice.choice_id),
                     group=TASK_PALETTE_ROUTE_WORKER,
                 )
+            elif isinstance(choice, ProjectRouteChoice):
+                self.run_worker(
+                    self._open_project_palette_route(choice.route),
+                    group=TASK_PALETTE_ROUTE_WORKER,
+                )
             elif choice is not None:
                 self.route_task_palette(choice.task_id, choice.route)
 
         return on_return
+
+    async def _open_project_palette_route(self, route: TaskPaletteRoute) -> None:
+        if route is TaskPaletteRoute.COMMANDS:
+            await self._open_contextual_view(FOCUS_COMMAND_HISTORY)
+        elif route is TaskPaletteRoute.DIAGNOSTICS:
+            await self._open_contextual_view(FOCUS_PROJECT_DIAGNOSTICS_VIEW)
+        else:
+            message = f"unsupported project palette route: {route.value}"
+            raise ValueError(message)
 
     async def _open_task_palette_route(self, task_id: str, route: TaskPaletteRoute) -> None:
         if self._focus_task is not None and self._focus_task != task_id:

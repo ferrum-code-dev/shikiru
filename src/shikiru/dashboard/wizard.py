@@ -345,6 +345,7 @@ class InitWizardApp(App[InitWizardResult | None]):
             yield Select(
                 INTEGRATION_OPTIONS,
                 value=self._orchestration_defaults.integration,
+                allow_blank=False,
                 id="integration",
             )
 

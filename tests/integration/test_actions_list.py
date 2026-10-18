@@ -13,8 +13,8 @@ from shikiru.dashboard.actions_list import ActionItem, ActionsListScreen
 from shikiru.dashboard.contract import (
     ExtensionEntry,
     PaletteRequest,
+    ProjectRouteChoice,
     TaskPaletteRoute,
-    TaskRouteChoice,
 )
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.palette_app import PaletteApp
@@ -66,9 +66,16 @@ _MORE = "More\N{HORIZONTAL ELLIPSIS}"
 _FEWER = "Fewer\N{HORIZONTAL ELLIPSIS}"
 _SWITCH = "Switch task\N{HORIZONTAL ELLIPSIS}"
 _PROJECT_ROWS = ["# Project", "Submit task", "Stop engine", _SWITCH]
-_VIEW_ROWS = ["# Views", "Evidence & reports", "Usage", "Commands", "Project diagnostics"]
+_DASHBOARD_PROJECT_ROWS = [
+    "# Project",
+    "Submit task",
+    "Stop engine",
+    "Command history",
+    "Diagnostics",
+    _SWITCH,
+]
 _EXTENSION_ROWS = ["# Extensions", "Extra view"]
-_EXTRA_ROWS = ["Pause now", "Priority", "Retry", "Rung", "Open session", "Export evidence"]
+_EXTRA_ROWS = ["Pause now", "Priority", "Retry", "Rung", "Export evidence"]
 
 
 def _start_run(connection: Connection, clock: FakeClock, task_id: str, role: Role) -> int:
@@ -110,7 +117,7 @@ _DASHBOARD: dict[str, Any] = {
     "project_diagnostics_available": True,
     "extensions": (_EXTENSION,),
 }
-_TAIL = [*_VIEW_ROWS, *_EXTENSION_ROWS, *_PROJECT_ROWS]
+_TAIL = [*_EXTENSION_ROWS, *_DASHBOARD_PROJECT_ROWS]
 
 
 @dataclass(frozen=True)
@@ -118,7 +125,6 @@ class _Case:
     prepare: Callable[[Connection, FakeClock, str, Path], None]
     flags: dict[str, Any]
     expected: list[str]
-    role: str = "Leader"
 
 
 _CASES = (
@@ -128,7 +134,6 @@ _CASES = (
             _running,
             _DASHBOARD,
             ["# Task", "Message", "Take over", "Pause", "Cancel", _MORE, *_TAIL],
-            role="Implementer",
         ),
         id="running-with-a-live-session",
     ),
@@ -175,7 +180,7 @@ async def test_actions_list_offers_only_what_applies_to_the_task_now(
 
     async with host.run_test(size=_APP_SIZE) as pilot:
         await wait_until(lambda: structure(screen) == case.expected, timeout=UI_WAIT_SECONDS)
-        expected_title = f"Actions {_DOT} {task.id} Fix the login flow {_DOT} {case.role}"
+        expected_title = f"Actions {_DOT} {task.id} Fix the login flow"
         assert title_text(screen) == expected_title
         assert selected_label(screen) == case.expected[1]
         await pilot.press("up")
@@ -194,7 +199,8 @@ async def test_actions_list_without_a_task_offers_the_project_group(
 
     async with host.run_test(size=_APP_SIZE):
         await wait_until(
-            lambda: structure(screen) == [*_EXTENSION_ROWS, *_PROJECT_ROWS], timeout=UI_WAIT_SECONDS
+            lambda: structure(screen) == [*_EXTENSION_ROWS, *_DASHBOARD_PROJECT_ROWS],
+            timeout=UI_WAIT_SECONDS,
         )
         assert title_text(screen) == f"Actions {_DOT} Project"
 
@@ -297,7 +303,9 @@ async def test_actions_list_opens_popups_returns_to_the_list_and_switches_task(
 
         await open_row(pilot, listing, _MORE)
         await wait_until(lambda: _FEWER in structure(listing), timeout=UI_WAIT_SECONDS)
-        assert structure(listing)[structure(listing).index(_FEWER) + 1 :][:6] == _EXTRA_ROWS
+        visible_rows = structure(listing)
+        extras_start = visible_rows.index(_FEWER) + 1
+        assert visible_rows[extras_start : extras_start + len(_EXTRA_ROWS)] == _EXTRA_ROWS
         await pilot.press("enter")
         await wait_until(lambda: _MORE in structure(listing), timeout=UI_WAIT_SECONDS)
         assert "Pause now" not in structure(listing)
@@ -314,7 +322,7 @@ async def test_actions_list_opens_popups_returns_to_the_list_and_switches_task(
         await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
 
 
-async def test_actions_list_returns_views_extensions_and_answers_decisions(
+async def test_actions_list_returns_project_routes_extensions_and_answers_decisions(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
     clock = FakeClock(_START)
@@ -336,7 +344,8 @@ async def test_actions_list_returns_views_extensions_and_answers_decisions(
         return ScreenHost(screen), screen
 
     for label, expected in (
-        ("Usage", TaskRouteChoice(task.id, TaskPaletteRoute.USAGE)),
+        ("Command history", ProjectRouteChoice(TaskPaletteRoute.COMMANDS)),
+        ("Diagnostics", ProjectRouteChoice(TaskPaletteRoute.DIAGNOSTICS)),
         ("Extra view", _EXTENSION),
     ):
         host, screen = listing(PaletteRequest(task_id=task.id))

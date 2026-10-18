@@ -40,7 +40,13 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import FORMAT_PANE_ID, Tmux, exact_target
 from tests.support.actions import ScreenHost, actions_screen, open_action, popup_screen, row_line
-from tests.support.cells import CYAN_BOLD, DISABLED_KEY, GREY, rendered_lines
+from tests.support.cells import (
+    CYAN_BOLD,
+    DISABLED_KEY,
+    GREY,
+    rendered_lines,
+    rendered_select_label,
+)
 from tests.support.clock import FakeClock
 from tests.support.escalations import (
     operator_services,
@@ -72,6 +78,7 @@ if TYPE_CHECKING:
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _POLL_SECONDS = 0.25
 _APP_SIZE = (120, 32)
+_TINY_APP_SIZE = (20, 8)
 _LIVE_RUNG = Rung(agent="codex", model="sol", effort="high")
 _NATIVE_VISUAL_REVIEW_DIR_ENV = "SHIKIRU_NATIVE_VISUAL_REVIEW_DIR"
 _CONFIRMED_GLYPH = "\N{CHECK MARK}"
@@ -158,11 +165,12 @@ async def test_palette_context_targets_message_and_rung_without_id_entry(
     app = _palette_app(reader, commands, queries, _selection_must_not_run, initial_context=context)
 
     async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
         screen = _screen(app)
-        assert cast("Select[str]", screen.query_one("#role", Select)).value == (
-            Role.IMPLEMENTER.value
+        role = cast("Select[str]", screen.query_one("#role", Select))
+        await wait_until(
+            lambda: rendered_select_label(role) == "Implementer", timeout=UI_WAIT_SECONDS
         )
+        assert role.value == Role.IMPLEMENTER.value
         screen.query_one("#message", TextArea).text = "Check the failing integration path."
         await pilot.click("#palette-submit")
         await _wait_for_confirmation(screen)
@@ -228,9 +236,11 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
     )
 
     async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
         screen = _screen(app)
         role = cast("Select[str]", screen.query_one("#role", Select))
+        await wait_until(
+            lambda: rendered_select_label(role) == "Implementer", timeout=UI_WAIT_SECONDS
+        )
         assert role.value == Role.IMPLEMENTER.value
         assert role.query_one(SelectOverlay).option_count == len(TASK_ACTION_ROLES)
         message = screen.query_one("#message", TextArea)
@@ -744,7 +754,35 @@ async def _fill_submit(pilot: Pilot[None], screen: PaletteScreen) -> None:
         lambda: screen.query_one("#palette-options").display,
         timeout=UI_WAIT_SECONDS,
     )
-    screen.query_one("#mode", Select).value = Mode.IMPLEMENT.value
+    mode = cast("Select[str]", screen.query_one("#mode", Select))
+    complexity = cast("Select[str]", screen.query_one("#complexity", Select))
+    assert mode.value == ""
+    assert complexity.value == ""
+    assert rendered_select_label(mode) == "Auto detect"
+    assert rendered_select_label(complexity) == "Triage decides"
+    mode.focus()
+    await pilot.press("enter", "down", "enter")
+    await wait_until(lambda: rendered_select_label(mode) == "Implement", timeout=UI_WAIT_SECONDS)
+    await pilot.resize_terminal(*_TINY_APP_SIZE)
+    await wait_until(
+        lambda: screen.size.width == _TINY_APP_SIZE[0] and screen.size.height == _TINY_APP_SIZE[1],
+        timeout=UI_WAIT_SECONDS,
+    )
+    mode.focus()
+    await wait_until(
+        lambda: rendered_select_label(mode) == "Implement",
+        timeout=UI_WAIT_SECONDS,
+    )
+    complexity.focus()
+    await wait_until(
+        lambda: rendered_select_label(complexity) == "Triage decides",
+        timeout=UI_WAIT_SECONDS,
+    )
+    await pilot.resize_terminal(*_APP_SIZE)
+    await wait_until(
+        lambda: screen.size.width == _APP_SIZE[0] and screen.size.height == _APP_SIZE[1],
+        timeout=UI_WAIT_SECONDS,
+    )
     screen.query_one("#submission-priority", Input).value = "17"
     screen.query_one("#dependencies", Input).value = "T-8, T-9"
     screen.query_one("#leader-rung", Input).value = "codex:sol:high"
@@ -757,6 +795,7 @@ def _is_typed_submit(command: Command) -> bool:
         command.request,
         command.title,
         command.mode,
+        command.complexity,
         command.priority,
         command.depends_on,
         command.leader,
@@ -765,6 +804,7 @@ def _is_typed_submit(command: Command) -> bool:
         "first line\nsecond line",
         "Palette",
         Mode.IMPLEMENT,
+        None,
         17,
         ["T-8", "T-9"],
         _LIVE_RUNG,
@@ -1022,7 +1062,6 @@ async def test_popup_pane_context_selects_its_recorded_task_and_role(
     )
 
 
-@pytest.mark.usefixtures("colour_terminal")
 @pytest.mark.parametrize(
     ("task_exists", "expected"),
     [(True, "role pane is unavailable"), (False, "task no longer exists")],
@@ -1044,14 +1083,14 @@ async def test_palette_disables_takeover_without_task_or_role_pane(
     )
 
     async with app.run_test(size=_APP_SIZE) as pilot:
-        await pilot.pause()
-        screen = _screen(app)
+        screen = await _mounted_palette(app)
         hint = screen.query_one("#palette-submit", Button)
-        assert hint.disabled
-        assert expected in _static_text(screen, "#palette-action-state")
-        assert _hint_key_style(hint, "Enter") == {DISABLED_KEY}
+        await wait_until(
+            lambda: hint.disabled and expected in _static_text(screen, "#palette-action-state"),
+            timeout=UI_WAIT_SECONDS,
+        )
         await pilot.press("enter")
-        assert not queue.pending()
+        await wait_until(lambda: not queue.pending(), timeout=UI_WAIT_SECONDS)
 
 
 _SIMPLE_POPUP_ROLE = Role.IMPLEMENTER
@@ -1117,7 +1156,6 @@ _ONE_ENTER_POPUPS = (
         _enter_rung,
         blank=True,
     ),
-    _SimplePopup("peek", "open session", frozenset({"role"}), None),
 )
 _TWO_ENTER_POPUPS = (
     _SimplePopup(
@@ -1142,10 +1180,9 @@ async def _exercise_simple_popup(
     }
     assert shown == case.rows, case.action
     assert str(hint.label) == f"Enter {case.verb}", case.action
-    inert = DISABLED_KEY if case.blank else CYAN_BOLD
-    await wait_until(lambda: _hint_key_style(hint, "Enter") == {inert}, timeout=UI_WAIT_SECONDS)
+    await wait_until(lambda: hint.disabled is case.blank, timeout=UI_WAIT_SECONDS)
     case.edit(popup)
-    await wait_until(lambda: _hint_key_style(hint, "Enter") == {CYAN_BOLD}, timeout=UI_WAIT_SECONDS)
+    await wait_until(lambda: not hint.disabled, timeout=UI_WAIT_SECONDS)
     before = len(queue.pending())
     if case.armed is not None:
         await pilot.press("enter")
@@ -1173,7 +1210,6 @@ async def _exercise_simple_popup(
     await wait_until(lambda: host.screen is listing, timeout=UI_WAIT_SECONDS)
 
 
-@pytest.mark.usefixtures("colour_terminal")
 @pytest.mark.parametrize(
     "cases",
     [
@@ -1181,7 +1217,7 @@ async def _exercise_simple_popup(
         pytest.param(_TWO_ENTER_POPUPS, id="confirm-with-a-second-enter"),
     ],
 )
-async def test_simple_action_popups_share_the_common_style_and_close_after_queueing(
+async def test_simple_action_popups_execute_from_keyboard_and_close_after_queueing(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,

@@ -19,6 +19,7 @@ from shikiru.dashboard.contract import (
     PaletteAction,
     PaletteRequest,
     PaletteReturn,
+    ProjectRouteChoice,
     TaskPaletteRoute,
     TaskRouteChoice,
 )
@@ -76,7 +77,6 @@ ACTIONS_HINT = "actions-hint"
 ACTIONS_HEADING = "Actions"
 PROJECT_CONTEXT = "Project"
 TASK_GROUP = "Task"
-VIEWS_GROUP = "Views"
 EXTENSIONS_GROUP = "Extensions"
 PROJECT_GROUP = "Project"
 ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
@@ -84,10 +84,8 @@ MORE_LABEL = f"More{ELLIPSIS}"
 FEWER_LABEL = f"Fewer{ELLIPSIS}"
 SWITCH_LABEL = f"Switch task{ELLIPSIS}"
 ANSWER_LABEL = "Answer"
-EVIDENCE_LABEL = "Evidence & reports"
-USAGE_LABEL = "Usage"
-COMMANDS_LABEL = "Commands"
-DIAGNOSTICS_LABEL = "Project diagnostics"
+COMMAND_HISTORY_LABEL = "Command history"
+DIAGNOSTICS_LABEL = "Diagnostics"
 ANSWER_ROW = "answer"
 MORE_ROW = "more"
 SWITCH_ROW = "switch-task"
@@ -106,21 +104,16 @@ MEANINGS: dict[str, str] = {
     PaletteAction.PRIORITIZE: "Change the dispatch order",
     PaletteAction.RETRY: "Re-run the current step",
     PaletteAction.RUNG: "Set the level for the next turn",
-    PaletteAction.PEEK: "Show recorded session activity",
     PaletteAction.EXPORT: "Write the task evidence to a file",
     PaletteAction.SUBMIT: "Create a new task",
     PaletteAction.STOP: "Stop running turns, keep the state",
-    TaskPaletteRoute.EVIDENCE: "Reports, verdicts and engine facts",
-    TaskPaletteRoute.USAGE: "Recorded session values",
-    TaskPaletteRoute.COMMANDS: "Durable outcomes",
-    TaskPaletteRoute.DIAGNOSTICS: "Secondary observations",
+    TaskPaletteRoute.COMMANDS: "Pending, applied and rejected commands",
+    TaskPaletteRoute.DIAGNOSTICS: "Project health and resources",
     SWITCH_ROW: "Act on another task",
     FEWER_LABEL: "Hide the extra actions",
 }
 ROUTE_LABELS = {
-    TaskPaletteRoute.EVIDENCE: EVIDENCE_LABEL,
-    TaskPaletteRoute.USAGE: USAGE_LABEL,
-    TaskPaletteRoute.COMMANDS: COMMANDS_LABEL,
+    TaskPaletteRoute.COMMANDS: COMMAND_HISTORY_LABEL,
     TaskPaletteRoute.DIAGNOSTICS: DIAGNOSTICS_LABEL,
 }
 PRIMARY_TASK_ACTIONS = (
@@ -136,7 +129,6 @@ EXTRA_TASK_ACTIONS = (
     PaletteAction.PRIORITIZE,
     PaletteAction.RETRY,
     PaletteAction.RUNG,
-    PaletteAction.PEEK,
     PaletteAction.EXPORT,
 )
 ROLE_ACTIONS = frozenset(
@@ -204,7 +196,7 @@ class ListContext:
     task_actions: frozenset[PaletteAction]
     answerable: bool
     expanded: bool
-    routes: bool
+    project_routes: bool
     diagnostics: bool
     extensions: tuple[ExtensionEntry, ...]
 
@@ -247,14 +239,6 @@ def _more_row(expanded: bool, extras: tuple[PaletteAction, ...]) -> ActionRow:
     )
 
 
-def _views_group(context: ListContext) -> ActionGroup:
-    routes = (TaskPaletteRoute.EVIDENCE, TaskPaletteRoute.USAGE, TaskPaletteRoute.COMMANDS)
-    rows = tuple(_route_row(route) for route in routes if context.has_task and context.routes)
-    if context.has_task and context.diagnostics:
-        rows += (_route_row(TaskPaletteRoute.DIAGNOSTICS),)
-    return ActionGroup(VIEWS_GROUP, rows, _widest(rows))
-
-
 def _extensions_group(context: ListContext) -> ActionGroup:
     rows = tuple(
         ActionRow(f"{EXTENSION_ROW_PREFIX}{index}", extension.label)
@@ -263,22 +247,26 @@ def _extensions_group(context: ListContext) -> ActionGroup:
     return ActionGroup(EXTENSIONS_GROUP, rows, _widest(rows))
 
 
-def _project_group() -> ActionGroup:
-    rows = (
+def _project_group(context: ListContext) -> ActionGroup:
+    rows = [
         _action_row(PaletteAction.SUBMIT),
         _action_row(PaletteAction.STOP),
-        ActionRow(SWITCH_ROW, SWITCH_LABEL, MEANINGS[SWITCH_ROW]),
-    )
-    return ActionGroup(PROJECT_GROUP, rows, _widest(rows))
+    ]
+    if context.project_routes:
+        rows.append(_route_row(TaskPaletteRoute.COMMANDS))
+    if context.diagnostics:
+        rows.append(_route_row(TaskPaletteRoute.DIAGNOSTICS))
+    rows.append(ActionRow(SWITCH_ROW, SWITCH_LABEL, MEANINGS[SWITCH_ROW]))
+    action_rows = tuple(rows)
+    return ActionGroup(PROJECT_GROUP, action_rows, _widest(action_rows))
 
 
 def action_groups(context: ListContext) -> tuple[ActionGroup, ...]:
-    """Return the non-empty groups of the Actions list: Task, Views, Extensions, Project."""
+    """Return the non-empty Task, Extensions and Project groups."""
     groups = (
         _task_group(context),
-        _views_group(context),
         _extensions_group(context),
-        _project_group(),
+        _project_group(context),
     )
     return tuple(group for group in groups if group.rows)
 
@@ -300,23 +288,20 @@ def row_text(row: ActionRow, label_width: int, width: int, *, confirmed: bool = 
     return Text.assemble(head, meaning, no_wrap=True, overflow="ellipsis")
 
 
-def list_title(
-    task_id: str | None, task_title: str, role: str | None, width: int | None = None
-) -> str:
-    """Return `Actions · T-n title · Role`, or `Actions · Project`; the title shrinks to fit."""
+def list_title(task_id: str | None, task_title: str, width: int | None = None) -> str:
+    """Return `Actions · T-n title` or `Actions · Project`; the title shrinks to fit."""
     if task_id is None:
         return f"{ACTIONS_HEADING}{GROUP_SEPARATOR}{PROJECT_CONTEXT}"
-    suffix = f"{GROUP_SEPARATOR}{role.title()}" if role else ""
     head = f"{ACTIONS_HEADING}{GROUP_SEPARATOR}{task_id}"
     title = task_title.replace("\n", " ")
-    room = None if not width else width - cell_len(head) - cell_len(suffix) - 1
+    room = None if not width else width - cell_len(head) - 1
     if room is not None and cell_len(title) > room:
         if room < MIN_TASK_TITLE_CELLS:
-            return f"{head}{suffix}"
+            return head
         shown = Text(title)
         shown.truncate(room, overflow="ellipsis")
         title = shown.plain
-    return f"{head} {title}{suffix}"
+    return f"{head} {title}"
 
 
 class _RowText:
@@ -514,7 +499,7 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
             task_actions=self._task_actions(task_id) if task_exists else frozenset(),
             answerable=task_exists and self._answerable_escalation_id() is not None,
             expanded=self._expanded,
-            routes=self._task_routes_available,
+            project_routes=self._task_routes_available,
             diagnostics=self._project_diagnostics_available,
             extensions=self._extensions,
         )
@@ -627,12 +612,9 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         task = self._queries.get_task_state(task_id) if task_id is not None else None
         title = self.query_one(f"#{ACTIONS_TITLE}", Label)
         if task_id is None or task is None:
-            title.update(list_title(None, "", None))
+            title.update(list_title(None, ""))
             return
-        title.update(list_title(task_id, task.title, self._display_role(task_id), title.size.width))
-
-    def _display_role(self, task_id: str) -> str:
-        return self._request.role or self._queries.task_action_role(task_id).value
+        title.update(list_title(task_id, task.title, title.size.width))
 
     def action_move(self, step: int) -> None:
         """Move the selection by `step` rows, wrapping from the last row to the first."""
@@ -679,10 +661,13 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
             action = PaletteAction(key.removeprefix(ACTION_ROW_PREFIX))
             self._push_over(self._open_popup(self._popup_request(action)), self._popup_closed)
         elif key.startswith(ROUTE_ROW_PREFIX):
-            task_id = self._request.task_id
-            if task_id is not None:
-                route = TaskPaletteRoute(key.removeprefix(ROUTE_ROW_PREFIX))
-                self._finish(TaskRouteChoice(task_id, route))
+            route = TaskPaletteRoute(key.removeprefix(ROUTE_ROW_PREFIX))
+            if route in {TaskPaletteRoute.COMMANDS, TaskPaletteRoute.DIAGNOSTICS}:
+                self._finish(ProjectRouteChoice(route))
+            else:
+                task_id = self._request.task_id
+                if task_id is not None:
+                    self._finish(TaskRouteChoice(task_id, route))
         elif key.startswith(EXTENSION_ROW_PREFIX):
             self._finish(self._extensions[int(key.removeprefix(EXTENSION_ROW_PREFIX))])
 
