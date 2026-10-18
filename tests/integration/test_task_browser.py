@@ -708,7 +708,9 @@ async def test_history_load_more_reconciles_a_new_task_before_watch_poll(
             list_view = widget.query_one("#task-browser-list", ListView)
             await wait_until(lambda: len(list_view.children) == PAGE_SIZE, timeout=5.0)
             list_view.focus()
+            await pilot.pause()
             list_view.index = READING_INDEX
+            await pilot.pause()
             await wait_until(lambda: selected.id in _visible_task_ids(list_view), timeout=5.0)
             visible_before = _visible_task_ids(list_view)
             assert selected.id in visible_before
