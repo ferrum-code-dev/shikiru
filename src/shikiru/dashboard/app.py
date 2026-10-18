@@ -9,7 +9,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
 from rich.text import Text
-from textual.app import App
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widget import Widget
@@ -35,6 +34,7 @@ from shikiru.dashboard.contract import (
     WidgetContext,
     WidgetPlacement,
 )
+from shikiru.dashboard.covered import CoveredScreens
 from shikiru.dashboard.detail import (
     COMPACT_INSPECTOR_CLASS,
     TASK_DETAIL_ESCAPE,
@@ -871,7 +871,7 @@ class _HomeFooter(Grid):
         yield _CommandStatusLine(self._views, self._on_change)
 
 
-class DashboardApp(App[None]):
+class DashboardApp(CoveredScreens):
     """Present the configured Home focus or one shared task detail view."""
 
     ENABLE_COMMAND_PALETTE = False

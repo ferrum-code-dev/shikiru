@@ -5,7 +5,6 @@ from __future__ import annotations
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
-from textual.app import App
 from textual.widgets import Label, ListView, Static
 
 from shikiru.dashboard.actions_list import (
@@ -15,6 +14,7 @@ from shikiru.dashboard.actions_list import (
     ActionsListScreen,
     GroupTitleItem,
 )
+from shikiru.dashboard.covered import CoveredScreens
 from shikiru.dashboard.palette import SUBMIT_ACTION_LABELS, PaletteScreen
 from shikiru.ui.theme import install_theme
 from tests.support.cells import rendered_lines
@@ -41,7 +41,7 @@ PENDING = "pending"
 GROUP_MARK = "# "
 
 
-class ScreenHost(App[None]):
+class ScreenHost(CoveredScreens):
     """Run one screen and exit when it is dismissed, keeping its result."""
 
     def __init__(self, screen: ModalScreen[Any]) -> None:

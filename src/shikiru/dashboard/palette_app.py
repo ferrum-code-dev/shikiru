@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from textual.app import App
 from textual.widgets import Static
 
 from shikiru.dashboard.actions_list import ActionsListScreen
 from shikiru.dashboard.contract import PaletteRequest
+from shikiru.dashboard.covered import CoveredScreens
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.palette_drafts import PaletteDrafts
 from shikiru.ui.theme import install_theme
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from shikiru.operator.queries import OperatorQueries
 
 
-class PaletteApp(App[None]):
+class PaletteApp(CoveredScreens):
     """Run the Actions list, without Views or Extensions, as the tmux popup entrypoint."""
 
     def __init__(

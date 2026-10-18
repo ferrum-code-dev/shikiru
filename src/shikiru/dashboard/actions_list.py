@@ -22,6 +22,7 @@ from shikiru.dashboard.contract import (
     TaskPaletteRoute,
     TaskRouteChoice,
 )
+from shikiru.dashboard.covered import Coverable
 from shikiru.dashboard.palette import SUBMIT_ACTION_LABELS
 from shikiru.dashboard.task_picker import TaskPickerScreen
 from shikiru.domain.commands import ResolutionKind
@@ -372,7 +373,7 @@ class _ActionList(ListView):
         (heading if isinstance(heading, GroupTitleItem) else item).scroll_visible(animate=False)
 
 
-class ActionsListScreen(ModalScreen[PaletteReturn | None]):
+class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
     """Show the grouped Actions list; rows open popups, views, extensions or another task."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -678,15 +679,14 @@ class ActionsListScreen(ModalScreen[PaletteReturn | None]):
     def _push_over[Result](
         self, screen: Screen[Result], callback: Callable[[Result | None], None]
     ) -> None:
-        frame = self.query_one(f"#{ACTIONS_FRAME}", PopupFrame)
-        frame.visible = False
+        self.covered = True
 
-        def restored(result: Result | None) -> None:
-            frame.visible = True
-            self._list.focus()
+        def uncovered(result: Result | None) -> None:
+            self.covered = False
+            self.refresh(layout=True)
             callback(result)
 
-        self._host.push_screen(screen, restored)
+        self._host.push_screen(screen, uncovered)
 
     def _popup_request(self, action: PaletteAction) -> PaletteRequest:
         return replace(self._request, action=action.value, role=self._role_for(action))
