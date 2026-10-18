@@ -437,11 +437,13 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         self._extensions = extensions
         self._resolution_screen = resolution_screen
         self._expanded = False
+        self._finishing = False
         self._confirmed: str | None = None
         self._confirmation_timer: Timer | None = None
         self._shown: tuple[tuple[str, str], ...] | None = None
         self._groups: tuple[ActionGroup, ...] = ()
         self._change_worker: Worker[None] | None = None
+        self._sync_worker: Worker[None] | None = None
 
     def compose(self) -> ComposeResult:
         """Render the header, the grouped rows and the hint line."""
@@ -569,8 +571,16 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         else:
             self._select_row(position)
 
+    def _finish(self, result: PaletteReturn | None) -> None:
+        self._finishing = True
+        if self._sync_worker is not None:
+            self._sync_worker.cancel()
+        self.dismiss(result)
+
     def _schedule_sync(self, *, select_first: bool = False) -> None:
-        self.run_worker(
+        if self._finishing:
+            return
+        self._sync_worker = self.run_worker(
             partial(self._sync, select_first=select_first), group=SYNC_WORKER, exclusive=True
         )
 
@@ -643,12 +653,12 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
 
     def action_close(self) -> None:
         """Close the list without choosing anything."""
-        self.dismiss(None)
+        self._finish(None)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Close the list from its close control."""
         if event.button.id == ACTIONS_CLOSE_BUTTON:
-            self.dismiss(None)
+            self._finish(None)
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Open what the chosen row names."""
@@ -672,9 +682,9 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
             task_id = self._request.task_id
             if task_id is not None:
                 route = TaskPaletteRoute(key.removeprefix(ROUTE_ROW_PREFIX))
-                self.dismiss(TaskRouteChoice(task_id, route))
+                self._finish(TaskRouteChoice(task_id, route))
         elif key.startswith(EXTENSION_ROW_PREFIX):
-            self.dismiss(self._extensions[int(key.removeprefix(EXTENSION_ROW_PREFIX))])
+            self._finish(self._extensions[int(key.removeprefix(EXTENSION_ROW_PREFIX))])
 
     def _push_over[Result](
         self, screen: Screen[Result], callback: Callable[[Result | None], None]
@@ -744,7 +754,7 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
 
     def _resolution_closed(self, sent: bool | None) -> None:
         if sent:
-            self.dismiss(None)
+            self._finish(None)
 
     async def _refresh_after_database_change(self) -> None:
         if self.is_attached:
