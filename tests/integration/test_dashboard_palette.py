@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from textual.pilot import Pilot
 
     from shikiru.dashboard.actions_list import ActionsListScreen
+    from shikiru.dashboard.palette_app import PaletteApp
     from shikiru.domain.commands import Command
     from shikiru.operator.queries import OperatorQueries
     from shikiru.store.database import Database
@@ -249,6 +250,7 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
         assert role.value == Role.IMPLEMENTER.value
         assert role.query_one(SelectOverlay).option_count == len(TASK_ACTION_ROLES)
         message = screen.query_one("#message", TextArea)
+        await pilot.press("tab")
         await wait_until(lambda: app.focused is message, timeout=UI_WAIT_SECONDS)
         submit = screen.query_one("#palette-submit", Button)
         await _wait_for_hint_key(submit, DISABLED_KEY)
@@ -364,7 +366,6 @@ async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
         assert queue.pending() == []
         await pilot.press("escape")
         await wait_until(lambda: "again" not in str(submit.label), timeout=UI_WAIT_SECONDS)
-        assert _hint_key_style(submit, "Enter") == {CYAN_BOLD}
         assert app.screen is screen
         await pilot.press("enter", "enter", "enter")
         await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
@@ -398,7 +399,7 @@ async def test_task_detail_pause_and_cancel_are_confirmed_with_enter(
         screen = await _mounted_palette(app)
         submit = screen.query_one("#palette-submit", Button)
         await wait_until(lambda: not submit.disabled, timeout=UI_WAIT_SECONDS)
-        assert not submit.can_focus
+        await wait_until(lambda: app.focused is submit, timeout=UI_WAIT_SECONDS)
         assert _no_static_scrollbar(screen)
         await pilot.press("enter", "enter", "enter")
         await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
@@ -913,6 +914,7 @@ async def test_palette_takeover_queues_a_task_role_command_and_selects_the_pane_
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         screen = await _mounted_palette(app)
+        await _focus_role_action_hint(app, pilot, screen)
         await pilot.press("enter")
         await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         queued = queue.pending()
@@ -980,6 +982,7 @@ async def test_completed_takeover_selects_the_role_pane_and_its_window(
 
     async with app.run_test(size=_APP_SIZE) as pilot:
         await _mounted_palette(app)
+        await _focus_role_action_hint(app, pilot, _screen(app))
         await pilot.press("enter")
         await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
         queued = queue.pending()
@@ -1186,6 +1189,8 @@ async def _exercise_simple_popup(
     assert str(hint.label) == f"Enter {case.verb}", case.action
     await wait_until(lambda: hint.disabled is case.blank, timeout=UI_WAIT_SECONDS)
     case.edit(popup)
+    if case.action in {"take-over", "hand-back"}:
+        await _focus_role_action_hint(host, pilot, popup)
     await wait_until(lambda: not hint.disabled, timeout=UI_WAIT_SECONDS)
     before = len(queue.pending())
     if case.armed is not None:
@@ -1194,6 +1199,7 @@ async def _exercise_simple_popup(
         assert len(queue.pending()) == before, case.action
         await pilot.press("x")
         await wait_until(lambda: str(hint.label) == f"Enter {case.verb}", timeout=UI_WAIT_SECONDS)
+        assert host.focused is hint
         await pilot.press("enter")
         await wait_until(lambda: str(hint.label) == case.armed, timeout=UI_WAIT_SECONDS)
         assert len(queue.pending()) == before, case.action
@@ -1212,6 +1218,18 @@ async def _exercise_simple_popup(
             lambda: _CONFIRMED_GLYPH in row_line(listing, label), timeout=UI_WAIT_SECONDS
         )
     await wait_until(lambda: host.screen is listing, timeout=UI_WAIT_SECONDS)
+
+
+async def _focus_role_action_hint(
+    app: PaletteApp | ScreenHost,
+    pilot: Pilot[None],
+    popup: PaletteScreen,
+) -> None:
+    role = cast("Select[str]", popup.query_one("#role", Select))
+    submit = popup.query_one("#palette-submit", Button)
+    await wait_until(lambda: app.focused is role, timeout=UI_WAIT_SECONDS)
+    await pilot.press("tab")
+    await wait_until(lambda: app.focused is submit, timeout=UI_WAIT_SECONDS)
 
 
 @pytest.mark.parametrize(

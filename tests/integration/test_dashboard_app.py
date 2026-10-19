@@ -119,6 +119,7 @@ from shikiru.ui.compact import format_cpu_pct
 from shikiru.ui.tokens import PRIMARY_TEXT_COLOR, STEEL_BLUE
 from tests.support.actions import (
     actions_screen,
+    assert_role_focus_and_tab_order,
     open_row,
     popup_screen,
     structure,
@@ -492,55 +493,6 @@ async def _open_popup(
         timeout=UI_WAIT_SECONDS,
     )
     return cast("PaletteScreen", app.screen)
-
-
-async def _select_another_role_and_reach_action(
-    app: DashboardApp,
-    pilot: Pilot[None],
-    palette: PaletteScreen,
-) -> None:
-    role = cast("Select[str]", palette.query_one("#role", Select))
-    role_label = palette.query_one("#field-role Label", Label)
-    await wait_until(
-        lambda: rendered_select_label(role) == "Implementer",
-        timeout=UI_WAIT_SECONDS,
-    )
-    assert role.region.y == role_label.region.y
-    role.focus()
-    await wait_until(lambda: app.focused is role, timeout=UI_WAIT_SECONDS)
-    await pilot.press("enter")
-    await wait_until(lambda: role.expanded, timeout=UI_WAIT_SECONDS)
-    await pilot.press("up")
-    await pilot.press("enter")
-    await wait_until(
-        lambda: (
-            role.value == Role.LEADER.value
-            and rendered_select_label(role) == "Leader"
-            and app.focused is role
-        ),
-        timeout=UI_WAIT_SECONDS,
-    )
-    await pilot.press("enter")
-    await wait_until(lambda: role.expanded, timeout=UI_WAIT_SECONDS)
-    await pilot.press("escape")
-    await wait_until(
-        lambda: not role.expanded and app.focused is role,
-        timeout=UI_WAIT_SECONDS,
-    )
-    await pilot.resize_terminal(*_PALETTE_APPROVED_SHORT_WIDE_SIZE)
-    await wait_until(
-        lambda: (
-            palette.size.width == _PALETTE_APPROVED_SHORT_WIDE_SIZE[0]
-            and palette.size.height == _PALETTE_APPROVED_SHORT_WIDE_SIZE[1]
-            and rendered_select_label(role) == "Leader"
-            and role.region.y == role_label.region.y
-        ),
-        timeout=UI_WAIT_SECONDS,
-    )
-    action_button = palette.query_one("#palette-submit", Button)
-    await pilot.press("tab")
-    await wait_until(lambda: app.focused is action_button, timeout=UI_WAIT_SECONDS)
-    assert not action_button.disabled
 
 
 def _app(
@@ -3627,6 +3579,7 @@ async def _exercise_contextual_draft_and_evidence_route(
     )
     assert "Views" not in structure(listing)
     palette = await _open_popup(app, pilot, listing, "Message")
+    await _focus_message_editor(app, pilot, palette)
     guidance = "Retain this task scoped guidance after closing."
     await pilot.press(*guidance)
     await _resize_contextual_message_form(app, pilot, palette, guidance)
@@ -3649,7 +3602,10 @@ async def _exercise_contextual_draft_and_evidence_route(
     assert task.id in title_text(listing)
     palette = await _open_popup(app, pilot, listing, "Message")
     await wait_until(
-        lambda: palette.query_one("#message", TextArea).text == guidance,
+        lambda: (
+            palette.query_one("#message", TextArea).text == guidance
+            and app.focused is palette.query_one("#role", Select)
+        ),
         timeout=UI_WAIT_SECONDS,
     )
     await pilot.click("#palette-close")
@@ -3720,6 +3676,18 @@ async def _resize_contextual_message_form(
         timeout=UI_WAIT_SECONDS,
     )
     assert message.text == guidance
+
+
+async def _focus_message_editor(
+    app: DashboardApp,
+    pilot: Pilot[None],
+    palette: PaletteScreen,
+) -> None:
+    role = cast("Select[str]", palette.query_one("#role", Select))
+    message = palette.query_one("#message", TextArea)
+    await wait_until(lambda: app.focused is role, timeout=UI_WAIT_SECONDS)
+    await pilot.press("tab")
+    await wait_until(lambda: app.focused is message, timeout=UI_WAIT_SECONDS)
 
 
 async def _resize_blank_palette_text_area(
@@ -3962,10 +3930,7 @@ async def _open_and_close_task_message_draft(
     palette = await _open_popup(app, pilot, listing, "Message")
     guidance = "Keep this task's message after a different decision route."
     message = palette.query_one("#message", TextArea)
-    await wait_until(
-        lambda: app.focused is message,
-        timeout=UI_WAIT_SECONDS,
-    )
+    await _focus_message_editor(app, pilot, palette)
     await pilot.press(*guidance)
     await wait_until(lambda: message.text == guidance, timeout=UI_WAIT_SECONDS)
     await pilot.press("escape")
@@ -4052,7 +4017,10 @@ async def test_contextual_message_draft_survives_back_and_action_change(
             listing = await _wait_for_actions(app)
             message_palette = await _open_popup(app, pilot, listing, "Message")
             await wait_until(
-                lambda: message_palette.query_one("#message", TextArea).text == guidance,
+                lambda: (
+                    message_palette.query_one("#message", TextArea).text == guidance
+                    and app.focused is message_palette.query_one("#role", Select)
+                ),
                 timeout=UI_WAIT_SECONDS,
             )
             assert cast("Select[str]", message_palette.query_one("#role", Select)).value == (
@@ -4108,7 +4076,11 @@ async def _exercise_back_and_action_change_draft(
     message = palette.query_one("#message", TextArea)
     role = cast("Select[str]", palette.query_one("#role", Select))
     await wait_until(
-        lambda: message.text == guidance and role.value == Role.IMPLEMENTER.value,
+        lambda: (
+            message.text == guidance
+            and role.value == Role.IMPLEMENTER.value
+            and app.focused is role
+        ),
         timeout=UI_WAIT_SECONDS,
     )
     await _close_palette_to_caller(app, pilot, listing, queue)
@@ -5240,13 +5212,7 @@ async def test_dashboard_palette_lists_and_opens_external_widgets_under_extensio
         reader.close()
 
 
-async def test_home_footer_actions_button_opens_selected_task_actions(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+def _seed_mounted_role_focus_tasks(connection: Connection, clock: SystemClock) -> tuple[Task, Task]:
     task = seed_task(connection, clock, title="Home contextual action", mode=Mode.IMPLEMENT)
     tasks = TaskStore(connection, clock)
     tasks.set_slot(task.id, 0)
@@ -5257,6 +5223,28 @@ async def test_home_footer_actions_button_opens_selected_task_actions(
         run = runs.start(task.id, role, Rung("codex", "gpt-6-luna", "high"))
         runs.set_session(run.id, pane_id, "codex --resume")
     tasks.set_panes(task.id, panes)
+    owned_task = seed_task(connection, clock, title="Owned contextual action")
+    owned_run = runs.start(owned_task.id, Role.LEADER, Rung("codex", "gpt-6-luna", "high"))
+    runs.set_session(owned_run.id, "%9", "codex --resume")
+    runs.mark_taken_over(owned_run.id)
+    owned_implementer_run = runs.start(
+        owned_task.id, Role.IMPLEMENTER, Rung("codex", "gpt-6-luna", "high")
+    )
+    runs.set_session(owned_implementer_run.id, "%10", "codex --resume")
+    runs.mark_taken_over(owned_implementer_run.id)
+    tasks.set_panes(owned_task.id, {Role.LEADER: "%9", Role.IMPLEMENTER: "%10"})
+    tasks.set_holds(owned_task.id, frozenset({Hold.PAUSED}))
+    return task, owned_task
+
+
+async def test_mounted_role_action_popups_focus_role_and_keep_tab_order(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    task, owned_task = _seed_mounted_role_focus_tasks(connection, clock)
     reader = StateReader(database, SystemClock())
     queue = CommandQueue(connection, clock)
     pending_before = queue.pending()
@@ -5276,27 +5264,59 @@ async def test_home_footer_actions_button_opens_selected_task_actions(
         apps.append(app)
         async with app.run_test(size=_ROLE_DROPDOWN_DASHBOARD_SIZE) as pilot:
             home_screen = app.screen
-            identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-            await wait_until(
-                lambda: task.title in _rendered_text(identity),
-                timeout=UI_WAIT_SECONDS,
+            listing = await _open_home_task_action_menu(app, pilot, task)
+            message = await _open_popup(app, pilot, listing, "Message")
+            await assert_role_focus_and_tab_order(
+                app,
+                pilot,
+                message,
+                message.query_one("#message", TextArea),
             )
-
-            assert await pilot.click("#focus-footer-actions")
-            listing = await _wait_for_actions(app)
-            await wait_until(
-                lambda: title_text(listing) == f"Actions \N{MIDDLE DOT} {task.id} {task.title}",
-                timeout=UI_WAIT_SECONDS,
-            )
-            assert queue.pending() == pending_before
+            await pilot.press("escape")
+            await wait_until(lambda: app.screen is listing, timeout=UI_WAIT_SECONDS)
 
             palette = await _open_popup(app, pilot, listing, "Take over")
-            await _select_another_role_and_reach_action(app, pilot, palette)
-
+            role = cast("Select[str]", palette.query_one("#role", Select))
+            role_label = palette.query_one("#field-role Label", Label)
+            await wait_until(
+                lambda: rendered_select_label(role) == "Implementer",
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert role.region.y == role_label.region.y
+            await assert_role_focus_and_tab_order(
+                app,
+                pilot,
+                palette,
+                palette.query_one("#palette-submit", Button),
+            )
+            await wait_until(
+                lambda: role.value == Role.LEADER.value and rendered_select_label(role) == "Leader",
+                timeout=UI_WAIT_SECONDS,
+            )
+            await pilot.resize_terminal(*_PALETTE_APPROVED_SHORT_WIDE_SIZE)
+            await wait_until(
+                lambda: (
+                    palette.size.width == _PALETTE_APPROVED_SHORT_WIDE_SIZE[0]
+                    and palette.size.height == _PALETTE_APPROVED_SHORT_WIDE_SIZE[1]
+                    and rendered_select_label(role) == "Leader"
+                    and role.region.y == role_label.region.y
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
             await pilot.press("escape")
             await wait_until(lambda: app.screen is listing, timeout=UI_WAIT_SECONDS)
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
+
+            listing = await _open_home_task_action_menu(app, pilot, owned_task)
+            hand_back = await _open_popup(app, pilot, listing, "Hand back")
+            await assert_role_focus_and_tab_order(
+                app,
+                pilot,
+                hand_back,
+                hand_back.query_one("#palette-submit", Button),
+            )
+            assert queue.pending() == pending_before
     finally:
         reader.close()
 

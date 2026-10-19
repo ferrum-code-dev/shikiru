@@ -387,3 +387,5 @@ Nineteenth-review scope: [operator follow-up](../docs/tui-feedback-nineteenth-re
 
 - [x] Task 247: Usable dropdowns, popup surfaces and Actions groups
 - [x] Task 248: Engine-state-aware Start and Stop actions
+
+- [x] Task 249: Popup entry focus and dashboard survival after engine stop

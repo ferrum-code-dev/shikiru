@@ -206,6 +206,17 @@ _FIELD_LEADER_RUNG = "leader-rung"
 _FIELD_IMPLEMENTER_RUNG = "implementer-rung"
 _FIELD_RUNG = "rung"
 _FIELD_MESSAGE = "message"
+_ROLE_FIRST_ACTIONS = frozenset({_ACTION_MESSAGE, _ACTION_TAKE_OVER, _ACTION_HAND_BACK})
+_INITIAL_FIELD_BY_ACTION = {
+    _ACTION_SUBMIT: _FIELD_REQUEST,
+    _ACTION_PRIORITIZE: _FIELD_PRIORITY,
+    _ACTION_RUNG: _FIELD_RUNG,
+    _ACTION_MESSAGE: _FIELD_ROLE,
+    _ACTION_TAKE_OVER: _FIELD_ROLE,
+    _ACTION_HAND_BACK: _FIELD_ROLE,
+    _ACTION_PEEK: _FIELD_ROLE,
+    _ACTION_EXPORT: _FIELD_EXPORT_DESTINATION,
+}
 _EXPORT_FORMAT_OPTIONS = (
     ("Markdown", EXPORT_FORMAT_MARKDOWN),
     ("JSON", EXPORT_FORMAT_JSON),
@@ -282,10 +293,6 @@ _FORM_IDENTITY_FIELDS = {
 _FORM_ROLE_ACTIONS = frozenset(
     {_ACTION_TAKE_OVER, _ACTION_HAND_BACK, _ACTION_RUNG, _ACTION_MESSAGE, _ACTION_PEEK}
 )
-_FIELD_HINT_ACTIONS = (_FORM_ROLE_ACTIONS & _ENTER_HINT_ACTIONS) | {
-    _ACTION_PRIORITIZE,
-    _ACTION_EXPORT,
-}
 _REQUIRED_FIELDS = {
     _ACTION_SUBMIT: _FIELD_REQUEST,
     _ACTION_EXPORT: _FIELD_EXPORT_DESTINATION,
@@ -352,6 +359,7 @@ def _default_export_destination(task_id: str) -> str:
 class PaletteScreen(ModalScreen[str | None]):
     """Show one preset action popup; it dismisses with the action name once it queued it."""
 
+    AUTO_FOCUS = ""
     BINDINGS: ClassVar[list[Binding]] = [
         Binding(_ENTER_KEY, "confirm", "Confirm", show=False),
         Binding("ctrl+s", "queue", "Queue", show=False),
@@ -373,6 +381,7 @@ class PaletteScreen(ModalScreen[str | None]):
         height: auto; max-height: 1fr; min-height: 0; margin-top: 0; padding-top: 0;
         border-top: none; background: $surface;
     }
+    #field-export-destination { margin-top: 1; }
     #field-role, #field-priority { margin-top: 1; }
     .palette-field { height: auto; margin-bottom: 1; background: $surface; }
     .palette-field Label { height: 1; color: $secondary-text; text-style: none; }
@@ -740,7 +749,7 @@ class PaletteScreen(ModalScreen[str | None]):
         tiny = self.size.height <= _PALETTE_TINY_PANE_MAX_ROWS
         self.query_one("#palette-actions").set_class(hint, _HINT_CLASS)
         self._size_action_buttons(hint=hint)
-        submit.can_focus = not hint or action in _FIELD_HINT_ACTIONS
+        submit.can_focus = not hint or action in _ENTER_HINT_ACTIONS
         if not hint:
             compact_label = "Queue" if action == _ACTION_MESSAGE else "Submit"
             label = Text(
@@ -770,6 +779,13 @@ class PaletteScreen(ModalScreen[str | None]):
         button.styles.line_pad = 0 if hint else None
 
     async def on_key(self, event: events.Key) -> None:
+        if event.key == _ENTER_KEY:
+            submit = self.query_one(f"#{_SUBMIT_ID}", Button)
+            if self._confirm_armed or (self._hint_mode() and self.focused is submit):
+                event.stop()
+                event.prevent_default()
+                self._activate_submit()
+                return
         if self._confirm_armed and event.key != _ENTER_KEY:
             self._confirm_armed = False
             self._refresh_submit()
@@ -1028,28 +1044,26 @@ class PaletteScreen(ModalScreen[str | None]):
             return
         form = self.query_one(f"#{_PALETTE_FORM_ID}", VerticalScroll)
         control = self.query_one(f"#{self._form_focus_id}") if self._form_focus_id else None
-        if control is not None and self._is_visible_in_form(control) and control.can_focus:
-            control.focus()
+        action = self._action
+        if (
+            action not in _ROLE_FIRST_ACTIONS
+            and control is not None
+            and self._is_visible_in_form(control)
+            and control.can_focus
+        ):
+            self.set_focus(control)
             form.scroll_to(y=self._form_scroll_y, animate=False, immediate=True)
             return
-        action = self._action
-        candidates = {
-            _ACTION_SUBMIT: _FIELD_REQUEST,
-            _ACTION_PRIORITIZE: _FIELD_PRIORITY,
-            _ACTION_RUNG: _FIELD_RUNG,
-            _ACTION_MESSAGE: _FIELD_MESSAGE,
-            _ACTION_EXPORT: _FIELD_EXPORT_DESTINATION,
-        }
-        candidate = candidates.get(action)
+        candidate = _INITIAL_FIELD_BY_ACTION.get(action)
         if candidate is not None:
             field = self.query_one(f"#{candidate}")
             if self._is_visible_in_form(field) and field.can_focus:
-                field.focus()
+                self.set_focus(field)
                 form.scroll_to_widget(field, animate=False, immediate=True, force=True)
                 return
         submit = self.query_one(f"#{_SUBMIT_ID}", Button)
-        if submit.display and submit.can_focus and not self._hint_mode():
-            submit.focus()
+        if submit.display and submit.can_focus:
+            self.set_focus(submit)
         else:
             self.set_focus(None)
 

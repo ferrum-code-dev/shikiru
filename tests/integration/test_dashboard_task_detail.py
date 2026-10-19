@@ -446,7 +446,14 @@ async def _submit_detail_command(
     dashboard_screen = app.screen
     palette = await _open_action_popup(app, pilot, action)
     if role is not None:
-        palette.query_one("#role", Select).value = role.value
+        role_field = cast("Select[str]", palette.query_one("#role", Select))
+        await wait_until(lambda: app.focused is role_field, timeout=UI_WAIT_SECONDS)
+        role_field.value = role.value
+        await pilot.press("tab")
+        await wait_until(
+            lambda: app.focused is palette.query_one("#palette-submit", Button),
+            timeout=UI_WAIT_SECONDS,
+        )
     await wait_until(
         lambda: not palette.query_one("#palette-submit", Button).disabled, timeout=UI_WAIT_SECONDS
     )

@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
-from textual.widgets import Label, ListView, Static
+from textual.widgets import Label, ListView, Select, Static
 
 from shikiru.dashboard.actions_list import (
     ACTIONS_LIST,
@@ -16,6 +16,7 @@ from shikiru.dashboard.actions_list import (
 )
 from shikiru.dashboard.covered import CoveredScreens
 from shikiru.dashboard.palette import SUBMIT_ACTION_LABELS, PaletteScreen
+from shikiru.domain.tasks import Role
 from shikiru.ui.theme import install_theme
 from tests.support.cells import rendered_lines
 from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, wait_until
@@ -23,8 +24,10 @@ from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
+    from textual.app import App
     from textual.pilot import Pilot
     from textual.screen import ModalScreen
+    from textual.widget import Widget
 
     from shikiru.dashboard.contract import (
         ExtensionEntry,
@@ -192,3 +195,35 @@ async def open_action(pilot: Pilot[None], screen: ActionsListScreen, action: str
 def title_text(screen: ModalScreen[Any]) -> str:
     """Return the popup title text of an Actions list or preset popup."""
     return str(screen.query_one(".popup-title", Label).content)
+
+
+async def assert_role_focus_and_tab_order(
+    app: App[None],
+    pilot: Pilot[None],
+    palette: PaletteScreen,
+    next_control: Widget,
+) -> None:
+    role = cast("Select[str]", palette.query_one("#role", Select))
+    await wait_until(lambda: app.focused is role, timeout=UI_WAIT_SECONDS)
+    initial_role = role.value
+    await pilot.press("enter")
+    await wait_until(lambda: role.expanded, timeout=UI_WAIT_SECONDS)
+    await pilot.press("down" if initial_role == Role.LEADER.value else "up")
+    await pilot.press("enter")
+    await wait_until(
+        lambda: role.value != initial_role and app.focused is role,
+        timeout=UI_WAIT_SECONDS,
+    )
+    await pilot.press("enter")
+    await wait_until(lambda: role.expanded, timeout=UI_WAIT_SECONDS)
+    await pilot.press("escape")
+    await wait_until(
+        lambda: not role.expanded and app.focused is role,
+        timeout=UI_WAIT_SECONDS,
+    )
+    await pilot.press("tab")
+    await wait_until(
+        lambda: app.focused is not role and app.focused is not None,
+        timeout=UI_WAIT_SECONDS,
+    )
+    assert app.focused is next_control

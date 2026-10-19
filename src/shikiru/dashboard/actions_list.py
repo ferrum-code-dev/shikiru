@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from functools import partial
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from rich.cells import cell_len
@@ -432,7 +431,10 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         self._shown: tuple[tuple[str, str], ...] | None = None
         self._groups: tuple[ActionGroup, ...] = ()
         self._change_worker: Worker[None] | None = None
-        self._sync_worker: Worker[None] | None = None
+        self._sync_active = False
+        self._sync_pending = False
+        self._sync_select_first = False
+        self._finish_result: PaletteReturn | None = None
         self._engine_state_timer: Timer | None = None
         self._engine_up: bool | None = None
 
@@ -581,16 +583,31 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
 
     def _finish(self, result: PaletteReturn | None) -> None:
         self._finishing = True
-        if self._sync_worker is not None:
-            self._sync_worker.cancel()
-        self.dismiss(result)
+        self._finish_result = result
+        if not self._sync_active:
+            self.dismiss(result)
 
     def _schedule_sync(self, *, select_first: bool = False) -> None:
         if self._finishing:
             return
-        self._sync_worker = self.run_worker(
-            partial(self._sync, select_first=select_first), group=SYNC_WORKER, exclusive=True
-        )
+        self._sync_pending = True
+        self._sync_select_first = self._sync_select_first or select_first
+        if self._sync_active:
+            return
+        self._sync_active = True
+        self.run_worker(self._sync_until_current, group=SYNC_WORKER)
+
+    async def _sync_until_current(self) -> None:
+        try:
+            while self._sync_pending and not self._finishing:
+                select_first = self._sync_select_first
+                self._sync_pending = False
+                self._sync_select_first = False
+                await self._sync(select_first=select_first)
+            if self._finishing:
+                self.dismiss(self._finish_result)
+        finally:
+            self._sync_active = False
 
     def _selected_position(self) -> int:
         indices = self._selectable
