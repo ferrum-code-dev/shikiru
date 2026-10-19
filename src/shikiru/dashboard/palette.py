@@ -1100,10 +1100,9 @@ class PaletteScreen(ModalScreen[str | None]):
         if self._start_engine is None:
             raise ShikiruError(_START_NOT_CONFIGURED)
         self._show_result("Starting engine…")
-        result = await self._start_engine()
+        await self._start_engine()
         if self._is_current_screen():
-            outcome = "started" if result.started else "already running"
-            self._show_result(f"Engine {outcome} · {result.session}")
+            self._confirm_submitted(_ACTION_START)
 
     async def _run_evidence_export(self) -> None:
         if self._evidence_exporter is None:

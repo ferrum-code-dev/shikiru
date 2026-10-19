@@ -394,4 +394,4 @@ Twenty-first-review scope: [operator follow-up](../docs/tui-feedback-twenty-firs
 
 - [x] Task 250: Smaller task picker with twenty-task pages
 - [x] Task 251: Effective rung changes for escalated sessions
-- [ ] Task 252: Close the Start engine popup on success
+- [x] Task 252: Close the Start engine popup on success

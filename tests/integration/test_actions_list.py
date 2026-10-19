@@ -485,6 +485,10 @@ async def _start_project_from_actions(
     listing: ActionsListScreen,
     lock_path: Path,
     start_attempts: list[StartResult | None],
+    *,
+    services: OperatorServices,
+    already_running: bool = False,
+    startup_gate: tuple[asyncio.Event, asyncio.Event] | None = None,
 ) -> None:
     await open_row(pilot, listing, "Start engine")
     popup = await _wait_for_popup(app)
@@ -493,20 +497,39 @@ async def _start_project_from_actions(
         timeout=UI_WAIT_SECONDS,
     )
     start_count = len(start_attempts)
-    await pilot.press("enter", "enter")
+    history_size = services.queries.command_history().total_count
+    await pilot.press("enter")
+    if startup_gate is not None:
+        entered, release = startup_gate
+        try:
+            await wait_until(entered.is_set, timeout=UI_WAIT_SECONDS)
+            await pilot.press("enter")
+            await wait_until(
+                lambda: (
+                    app.screen is popup
+                    and len(start_attempts) == start_count + 1
+                    and popup.query_one("#palette-submit", Button).disabled
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert len(start_attempts) == start_count + 1
+        finally:
+            release.set()
     await wait_until(
         lambda: (
             len(start_attempts) == start_count + 1
             and start_attempts[-1] is not None
             and engine_is_running(lock_path)
-            and popup.query_one("#palette-submit", Button).disabled
+            and app.screen is listing
+            and "Stop engine" in structure(listing)
         ),
         timeout=UI_WAIT_SECONDS,
     )
     result = start_attempts[-1]
     assert result is not None
-    assert result.started
+    assert result.started is not already_running
     assert result.session == exact_target(session_name("task248-overridden"))
+    assert services.queries.command_history().total_count == history_size
 
 
 async def _stop_project_from_actions(
@@ -592,7 +615,9 @@ async def _show_start_failure(
 
 
 async def _retry_project_start(
+    app: PaletteApp,
     pilot: Pilot[None],
+    listing: ActionsListScreen,
     *,
     config: Path,
     lock_path: Path,
@@ -607,6 +632,7 @@ async def _retry_project_start(
             len(start_attempts) == start_count + 1
             and start_attempts[-1] is not None
             and engine_is_running(lock_path)
+            and app.screen is listing
         ),
         timeout=UI_WAIT_SECONDS,
     )
@@ -614,13 +640,14 @@ async def _retry_project_start(
     assert result is not None
     assert result.started
     assert result.session == target
+    await wait_until(lambda: "Stop engine" in structure(listing), timeout=UI_WAIT_SECONDS)
 
 
-async def test_standalone_project_actions_start_stop_and_report_start_failure(
+async def _prepare_lifecycle_project(
     tmp_path: Path,
     tmux_server: TmuxServer,
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
+) -> tuple[Path, Path]:
     prepared = await prepare_project(tmp_path)
     environment = tmux_environment(prepared.root, tmux_server)
     monkeypatch.setenv("PATH", environment["PATH"])
@@ -628,20 +655,37 @@ async def test_standalone_project_actions_start_stop_and_report_start_failure(
     config = project_config_path(prepared.root)
     config.parent.mkdir(exist_ok=True)
     config.write_text(_LIFECYCLE_CONFIG)
+    return prepared.root, config
+
+
+async def test_standalone_project_actions_start_stop_and_report_start_failure(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_root, config = await _prepare_lifecycle_project(tmp_path, tmux_server, monkeypatch)
     clock = SystemClock()
-    settings = load_settings(prepared.root)
-    services = build_operator(prepared.root, settings, clock=clock)
+    settings = load_settings(project_root)
+    services = build_operator(project_root, settings, clock=clock)
     lifecycle = build_lifecycle()
-    lock_path = engine_lock_path(prepared.root)
-    start_project_engine = build_project_starter(prepared.root, (_PROJECT_NAME_OVERRIDE,))
+    lock_path = engine_lock_path(project_root)
+    start_project_engine = build_project_starter(project_root, (_PROJECT_NAME_OVERRIDE,))
     start_attempts: list[StartResult | None] = []
+    startup_gate = (asyncio.Event(), asyncio.Event())
 
     async def start_engine() -> StartResult:
         attempt = len(start_attempts)
         start_attempts.append(None)
-        start_attempts[attempt] = await start_project_engine()
-        result = start_attempts[attempt]
-        assert result is not None
+        if attempt == 0:
+            startup_gate[0].set()
+            await startup_gate[1].wait()
+        if attempt == 1:
+            concurrent_start = await lifecycle.start(
+                project_root, (_PROJECT_NAME_OVERRIDE,), attach=False
+            )
+            assert concurrent_start.started
+        result = await start_project_engine()
+        start_attempts[attempt] = result
         return result
 
     app = PaletteApp(
@@ -663,11 +707,18 @@ async def test_standalone_project_actions_start_stop_and_report_start_failure(
         async with app.run_test(size=_APP_SIZE) as pilot:
             listing = await _wait_for_list(app)
             await wait_until(lambda: "Start engine" in structure(listing), timeout=UI_WAIT_SECONDS)
-            await _start_project_from_actions(app, pilot, listing, lock_path, start_attempts)
+            await _start_project_from_actions(
+                app,
+                pilot,
+                listing,
+                lock_path,
+                start_attempts,
+                services=services,
+                startup_gate=startup_gate,
+            )
             assert await tmux.target_exists(target)
 
             async with attach_tmux_client(tmux_server, target) as client:
-                await pilot.press("escape")
                 await wait_until(
                     lambda: "Stop engine" in structure(listing), timeout=UI_WAIT_SECONDS
                 )
@@ -678,8 +729,15 @@ async def test_standalone_project_actions_start_stop_and_report_start_failure(
                 await wait_until(
                     lambda: "Start engine" in structure(listing), timeout=UI_WAIT_SECONDS
                 )
-                await _start_project_from_actions(app, pilot, listing, lock_path, start_attempts)
-                await pilot.press("escape")
+                await _start_project_from_actions(
+                    app,
+                    pilot,
+                    listing,
+                    lock_path,
+                    start_attempts,
+                    services=services,
+                    already_running=True,
+                )
                 await wait_until(
                     lambda: "Stop engine" in structure(listing), timeout=UI_WAIT_SECONDS
                 )
@@ -687,7 +745,7 @@ async def test_standalone_project_actions_start_stop_and_report_start_failure(
                     app,
                     pilot,
                     listing,
-                    prepared.root,
+                    project_root,
                     lifecycle=lifecycle,
                     services=services,
                     target=target,
@@ -705,7 +763,9 @@ async def test_standalone_project_actions_start_stop_and_report_start_failure(
                     history_size=history_size,
                 )
                 await _retry_project_start(
+                    app,
                     pilot,
+                    listing,
                     config=config,
                     lock_path=lock_path,
                     start_attempts=start_attempts,
@@ -714,7 +774,7 @@ async def test_standalone_project_actions_start_stop_and_report_start_failure(
                 assert await tmux.target_exists(target)
     finally:
         if engine_is_running(lock_path):
-            await lifecycle.stop(prepared.root, (), kill_session=False)
+            await lifecycle.stop(project_root, (), kill_session=False)
         services.close()
 
 
@@ -813,7 +873,6 @@ async def _restart_engine_through_dashboard(
     )
     await tmux_server.run("send-keys", "-t", pane_id, _ENTER_TMUX_KEY)
     await wait_until(lambda: engine_is_running(lock_path), timeout=UI_WAIT_SECONDS)
-    await tmux_server.run("send-keys", "-t", pane_id, _ESCAPE_TMUX_KEY)
     await wait_until(
         lambda: _pane_shows_all(tmux_server, pane_id, _STOP_ENGINE, expected_title),
         timeout=UI_WAIT_SECONDS,
