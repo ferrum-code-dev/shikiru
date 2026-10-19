@@ -395,3 +395,20 @@ Twenty-first-review scope: [operator follow-up](../docs/tui-feedback-twenty-firs
 - [x] Task 250: Smaller task picker with twenty-task pages
 - [x] Task 251: Effective rung changes for escalated sessions
 - [x] Task 252: Close the Start engine popup on success
+
+CLI visual direction proposals:
+
+- [x] Task 253: Compare five CLI visual directions
+
+- [x] Task 254: Build interactive CLI assessment mocks
+
+- [x] Task 255: Refine Focus ledger output and preserve existing help
+
+Migration note (2026-10-19): the user requested continued work directly on `main`. The completed proposal records were moved here from the isolated worktree and renumbered 253–255 to preserve existing main-branch task IDs. The design artifacts were copied byte for byte; the former worktree-isolation requirements above record the historical design phase.
+
+Focus ledger CLI implementation (main; sequential, with lead review between tasks):
+
+- [ ] Task 256: Shared CLI presentation, help and concise command outcomes
+- [ ] Task 257: Concise session discovery and Doctor results
+- [ ] Task 258: Focused project and task status reports
+- [ ] Task 259: Align initializer and attachment picker; verify the complete CLI
