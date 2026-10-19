@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
-from textual.widgets import TextArea
+from textual.widgets import Button, Static, TextArea
 
 from shikiru.agents.contracts import Rung
+from shikiru.bootstrap import build_lifecycle, build_operator, build_project_starter
+from shikiru.clock import SystemClock
+from shikiru.config.loader import load_settings
 from shikiru.dashboard.actions_list import ActionItem, ActionsListScreen
 from shikiru.dashboard.contract import (
     ExtensionEntry,
@@ -22,8 +26,13 @@ from shikiru.dashboard.resolution import ResolutionScreen
 from shikiru.dashboard.task_picker import TaskPickerScreen
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Hold, Role, Status, Step
+from shikiru.engine.daemon import engine_is_running
+from shikiru.operator.commands import AckStatus
+from shikiru.paths import engine_lock_path, project_config_path
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.tmux.client import Tmux, exact_target
+from shikiru.tmux.session import session_name
 from shikiru.ui.tokens import SELECTED_SURFACE_COLOR
 from tests.support.actions import (
     PENDING,
@@ -36,9 +45,11 @@ from tests.support.actions import (
     structure,
     title_text,
 )
+from tests.support.cli_project import prepare_project, tmux_environment
 from tests.support.clock import FakeClock
 from tests.support.escalations import operator_services, resolution_factory, seed_escalation
 from tests.support.store import seed_task
+from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import (
     ACTION_CONFIRMATION_EXPIRY_SECONDS,
     UI_WAIT_SECONDS,
@@ -51,9 +62,12 @@ if TYPE_CHECKING:
 
     from textual.pilot import Pilot
 
+    from shikiru.operator.lifecycle import ProjectLifecycle, StartResult
+    from shikiru.operator.services import OperatorServices
     from shikiru.store.commands import CommandQueue
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
+    from tests.support.tmux import AttachedTmuxClient, TmuxServer
 
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _APP_SIZE = (100, 40)
@@ -65,17 +79,35 @@ _CONFIRMED_GLYPH = "\N{CHECK MARK}"
 _MORE = "More\N{HORIZONTAL ELLIPSIS}"
 _FEWER = "Fewer\N{HORIZONTAL ELLIPSIS}"
 _SWITCH = "Switch task\N{HORIZONTAL ELLIPSIS}"
-_PROJECT_ROWS = ["# Project", "Submit task", "Stop engine", _SWITCH]
+_PROJECT_ROWS = ["# Project", "Submit task", "Start engine", _SWITCH]
 _DASHBOARD_PROJECT_ROWS = [
     "# Project",
     "Submit task",
-    "Stop engine",
+    "Start engine",
     "Command history",
     "Diagnostics",
     _SWITCH,
 ]
 _EXTENSION_ROWS = ["# Extensions", "Extra view"]
 _EXTRA_ROWS = ["Pause now", "Priority", "Retry", "Rung", "Export evidence"]
+_LIFECYCLE_CONFIG = """
+[project]
+name = "task248"
+
+[agents.fake]
+
+[roles.leader]
+ladder = [{agent = "fake", model = "default"}]
+
+[roles.implementer]
+escalate_after = 2
+ladder = [{agent = "fake", model = "default"}]
+
+[roles.helper]
+ladder = [{agent = "fake", model = "default"}]
+"""
+_INVALID_LIFECYCLE_CONFIG = f"{_LIFECYCLE_CONFIG}\n[agents.fake.options]\nunexpected = true\n"
+_PROJECT_NAME_OVERRIDE = "project.name=task248-overridden"
 
 
 def _start_run(connection: Connection, clock: FakeClock, task_id: str, role: Role) -> int:
@@ -320,6 +352,245 @@ async def test_actions_list_opens_popups_returns_to_the_list_and_switches_task(
 
         await pilot.press("escape")
         await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
+
+
+async def _start_project_from_actions(
+    app: PaletteApp,
+    pilot: Pilot[None],
+    listing: ActionsListScreen,
+    lock_path: Path,
+    start_attempts: list[StartResult | None],
+) -> None:
+    await open_row(pilot, listing, "Start engine")
+    popup = await _wait_for_popup(app)
+    await wait_until(
+        lambda: not popup.query_one("#palette-submit", Button).disabled,
+        timeout=UI_WAIT_SECONDS,
+    )
+    start_count = len(start_attempts)
+    await pilot.press("enter", "enter")
+    await wait_until(
+        lambda: (
+            len(start_attempts) == start_count + 1
+            and start_attempts[-1] is not None
+            and engine_is_running(lock_path)
+            and popup.query_one("#palette-submit", Button).disabled
+        ),
+        timeout=UI_WAIT_SECONDS,
+    )
+    result = start_attempts[-1]
+    assert result is not None
+    assert result.started
+    assert result.session == exact_target(session_name("task248-overridden"))
+
+
+async def _stop_project_from_actions(
+    app: PaletteApp,
+    pilot: Pilot[None],
+    listing: ActionsListScreen,
+    lock_path: Path,
+) -> None:
+    await open_row(pilot, listing, "Stop engine")
+    popup = await _wait_for_popup(app)
+    await pilot.press("enter")
+    await wait_until(
+        lambda: (
+            "Enter again to stop engine" in str(popup.query_one("#palette-submit", Button).label)
+        ),
+        timeout=UI_WAIT_SECONDS,
+    )
+    await pilot.press("enter")
+    await wait_until(lambda: not engine_is_running(lock_path), timeout=UI_WAIT_SECONDS)
+    await wait_until(lambda: app.screen is listing, timeout=UI_WAIT_SECONDS)
+
+
+async def _refuse_stale_stop(
+    app: PaletteApp,
+    pilot: Pilot[None],
+    listing: ActionsListScreen,
+    root: Path,
+    *,
+    lifecycle: ProjectLifecycle,
+    services: OperatorServices,
+    target: str,
+    tmux: Tmux,
+    client: AttachedTmuxClient,
+) -> None:
+    await open_row(pilot, listing, "Stop engine")
+    popup = await _wait_for_popup(app)
+    button = popup.query_one("#palette-submit", Button)
+    await wait_until(lambda: not button.disabled, timeout=UI_WAIT_SECONDS)
+    stopped = await lifecycle.stop(root, (), kill_session=False)
+    assert stopped.status is AckStatus.DONE
+    history_size = services.queries.command_history().total_count
+    await pilot.press("enter")
+    await wait_until(
+        lambda: "Enter again to stop engine" in str(button.label), timeout=UI_WAIT_SECONDS
+    )
+    await pilot.press("enter")
+    await wait_until(
+        lambda: bool(str(popup.query_one("#palette-result", Static).content)),
+        timeout=UI_WAIT_SECONDS,
+    )
+    assert services.queries.command_history().total_count == history_size
+    assert await tmux.target_exists(target)
+    assert client.process.returncode is None
+    await pilot.press("escape")
+    await wait_until(lambda: "Start engine" in structure(listing), timeout=UI_WAIT_SECONDS)
+
+
+async def _show_start_failure(
+    app: PaletteApp,
+    pilot: Pilot[None],
+    listing: ActionsListScreen,
+    *,
+    config: Path,
+    lock_path: Path,
+    services: OperatorServices,
+    history_size: int,
+) -> None:
+    await asyncio.to_thread(config.write_text, _INVALID_LIFECYCLE_CONFIG)
+    await open_row(pilot, listing, "Start engine")
+    popup = await _wait_for_popup(app)
+    button = popup.query_one("#palette-submit", Button)
+    await pilot.press("enter")
+    await wait_until(
+        lambda: (
+            "invalid options for the fake agent"
+            in str(popup.query_one("#palette-result", Static).content)
+        ),
+        timeout=UI_WAIT_SECONDS,
+    )
+    assert not engine_is_running(lock_path)
+    assert services.queries.command_history().total_count == history_size
+    await wait_until(lambda: not button.disabled, timeout=UI_WAIT_SECONDS)
+
+
+async def _retry_project_start(
+    pilot: Pilot[None],
+    *,
+    config: Path,
+    lock_path: Path,
+    start_attempts: list[StartResult | None],
+    target: str,
+) -> None:
+    start_count = len(start_attempts)
+    await asyncio.to_thread(config.write_text, _LIFECYCLE_CONFIG)
+    await pilot.press("enter")
+    await wait_until(
+        lambda: (
+            len(start_attempts) == start_count + 1
+            and start_attempts[-1] is not None
+            and engine_is_running(lock_path)
+        ),
+        timeout=UI_WAIT_SECONDS,
+    )
+    result = start_attempts[-1]
+    assert result is not None
+    assert result.started
+    assert result.session == target
+
+
+async def test_standalone_project_actions_start_stop_and_report_start_failure(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    prepared = await prepare_project(tmp_path)
+    environment = tmux_environment(prepared.root, tmux_server)
+    monkeypatch.setenv("PATH", environment["PATH"])
+    monkeypatch.setenv("NO_COLOR", "1")
+    config = project_config_path(prepared.root)
+    config.parent.mkdir(exist_ok=True)
+    config.write_text(_LIFECYCLE_CONFIG)
+    clock = SystemClock()
+    settings = load_settings(prepared.root)
+    services = build_operator(prepared.root, settings, clock=clock)
+    lifecycle = build_lifecycle()
+    lock_path = engine_lock_path(prepared.root)
+    start_project_engine = build_project_starter(prepared.root, (_PROJECT_NAME_OVERRIDE,))
+    start_attempts: list[StartResult | None] = []
+
+    async def start_engine() -> StartResult:
+        attempt = len(start_attempts)
+        start_attempts.append(None)
+        start_attempts[attempt] = await start_project_engine()
+        result = start_attempts[attempt]
+        assert result is not None
+        return result
+
+    app = PaletteApp(
+        services.commands,
+        services.queries,
+        _no_pane_selection,
+        on_change=services.reader.watch,
+        action_confirmation_seconds=settings.dashboard.action_confirmation_seconds,
+        engine_state_refresh_hz=settings.dashboard.motion.refresh_hz,
+        start_engine=start_engine,
+    )
+    target = exact_target(session_name("task248-overridden"))
+    tmux = Tmux(
+        tmux_server.runner,
+        socket=tmux_server.socket_name,
+        env=tmux_server.env,
+    )
+    try:
+        async with app.run_test(size=_APP_SIZE) as pilot:
+            listing = await _wait_for_list(app)
+            await wait_until(lambda: "Start engine" in structure(listing), timeout=UI_WAIT_SECONDS)
+            await _start_project_from_actions(app, pilot, listing, lock_path, start_attempts)
+            assert await tmux.target_exists(target)
+
+            async with attach_tmux_client(tmux_server, target) as client:
+                await pilot.press("escape")
+                await wait_until(
+                    lambda: "Stop engine" in structure(listing), timeout=UI_WAIT_SECONDS
+                )
+                await _stop_project_from_actions(app, pilot, listing, lock_path)
+                assert await tmux.target_exists(target)
+                assert client.process.returncode is None
+
+                await wait_until(
+                    lambda: "Start engine" in structure(listing), timeout=UI_WAIT_SECONDS
+                )
+                await _start_project_from_actions(app, pilot, listing, lock_path, start_attempts)
+                await pilot.press("escape")
+                await wait_until(
+                    lambda: "Stop engine" in structure(listing), timeout=UI_WAIT_SECONDS
+                )
+                await _refuse_stale_stop(
+                    app,
+                    pilot,
+                    listing,
+                    prepared.root,
+                    lifecycle=lifecycle,
+                    services=services,
+                    target=target,
+                    tmux=tmux,
+                    client=client,
+                )
+                history_size = services.queries.command_history().total_count
+                await _show_start_failure(
+                    app,
+                    pilot,
+                    listing,
+                    config=config,
+                    lock_path=lock_path,
+                    services=services,
+                    history_size=history_size,
+                )
+                await _retry_project_start(
+                    pilot,
+                    config=config,
+                    lock_path=lock_path,
+                    start_attempts=start_attempts,
+                    target=target,
+                )
+                assert await tmux.target_exists(target)
+    finally:
+        if engine_is_running(lock_path):
+            await lifecycle.stop(prepared.root, (), kill_session=False)
+        services.close()
 
 
 async def test_actions_list_returns_project_routes_extensions_and_answers_decisions(

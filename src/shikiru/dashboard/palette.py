@@ -17,7 +17,11 @@ from textual.widgets import Button, Input, Label, Rule, Select, Static, TextArea
 
 from shikiru.agents.contracts import parse_rung
 from shikiru.config.settings import ComplexityName
-from shikiru.dashboard.contract import PaletteAction, PaletteDraft, PaletteRequest
+from shikiru.dashboard.contract import (
+    PaletteAction,
+    PaletteDraft,
+    PaletteRequest,
+)
 from shikiru.domain.commands import (
     COMMAND_REJECTED_FALLBACK,
     CommandKind,
@@ -36,6 +40,7 @@ from shikiru.operator.evidence_export import (
     EXPORT_FORMAT_MARKDOWN,
     TaskEvidenceExporter,
 )
+from shikiru.operator.lifecycle import StartResult
 from shikiru.operator.queries import (
     TASK_ACTION_ROLES,
     OperatorTaskAction,
@@ -95,6 +100,7 @@ _ACTION_RUNG = PaletteAction.RUNG.value
 _ACTION_MESSAGE = PaletteAction.MESSAGE.value
 _ACTION_PEEK = PaletteAction.PEEK.value
 _ACTION_STOP = PaletteAction.STOP.value
+_ACTION_START = PaletteAction.START.value
 _ACTION_EXPORT = PaletteAction.EXPORT.value
 _FIELD_EXPORT_DESTINATION = "export-destination"
 _FIELD_EXPORT_FORMAT = "export-format"
@@ -136,6 +142,7 @@ SUBMIT_ACTION_LABELS = {
     _ACTION_PEEK: "Open session",
     _ACTION_EXPORT: "Export evidence",
     _ACTION_STOP: "Stop engine",
+    _ACTION_START: "Start engine",
 }
 _ENTER_HINT_VERBS = {
     _ACTION_EXPORT: "export evidence",
@@ -150,6 +157,7 @@ _ENTER_HINT_VERBS = {
     _ACTION_RUNG: "set rung",
     _ACTION_PEEK: "open session",
     _ACTION_STOP: "stop engine",
+    _ACTION_START: "start engine",
 }
 _ENTER_HINT_ACTIONS = frozenset(_ENTER_HINT_VERBS)
 _HINT_LABELS = {
@@ -313,6 +321,7 @@ _ACTION_GUIDANCE = {
         "Stops the engine for every task. Running turns are stopped and continue when the "
         "engine starts again."
     ),
+    _ACTION_START: "Starts the engine and ensures its session without attaching.",
     _ACTION_EXPORT: (
         "Writes retained evidence to a local file; relative paths start at the project root, and "
         "parent folders must exist."
@@ -325,6 +334,10 @@ _WIDE_CLASS = "palette-wide"
 _NO_TASK_TARGET = "Choose a task target first"
 
 PaneSelector = Callable[[str], Awaitable[None]]
+StartEngine = Callable[[], Awaitable[StartResult]]
+_START_NOT_CONFIGURED = "project start is not configured"
+_ENGINE_ALREADY_RUNNING = "engine is already running"
+_ENGINE_ALREADY_STOPPED = "engine is already stopped"
 
 
 def _field_classes(*, inline: bool, wide: bool = False) -> str:
@@ -429,6 +442,7 @@ class PaletteScreen(ModalScreen[str | None]):
         on_change: OnChangeRegistration,
         action_confirmation_seconds: float,
         initial_context: PaletteRequest,
+        start_engine: StartEngine | None = None,
         evidence_exporter: TaskEvidenceExporter | None = None,
         remember_contextual_draft: Callable[[PaletteDraft], None] | None = None,
     ) -> None:
@@ -442,6 +456,7 @@ class PaletteScreen(ModalScreen[str | None]):
         self._task_id = initial_context.task_id or _EMPTY
         self._pane_selector = pane_selector
         self._on_change = on_change
+        self._start_engine = start_engine
         self._evidence_exporter = evidence_exporter
         self._remember_contextual_draft = remember_contextual_draft
         self._action_confirmation_seconds = action_confirmation_seconds
@@ -948,7 +963,7 @@ class PaletteScreen(ModalScreen[str | None]):
         action = self._action
         label = SUBMIT_ACTION_LABELS.get(action, "Actions")
         task_id = self._initial_context.task_id
-        if task_id is None or action in {_ACTION_SUBMIT, _ACTION_STOP}:
+        if task_id is None or action in {_ACTION_SUBMIT, _ACTION_STOP, _ACTION_START}:
             return label
         return f"{label} \N{MIDDLE DOT} {task_id}"
 
@@ -1051,7 +1066,9 @@ class PaletteScreen(ModalScreen[str | None]):
 
     async def _run_action(self) -> None:
         try:
-            if self._action == _ACTION_EXPORT:
+            if self._action == _ACTION_START:
+                await self._run_project_start()
+            elif self._action == _ACTION_EXPORT:
                 await self._run_evidence_export()
             else:
                 await self._run_submission()
@@ -1064,6 +1081,15 @@ class PaletteScreen(ModalScreen[str | None]):
             self._action_worker = None
             if self._is_current_screen():
                 self._refresh_action_availability()
+
+    async def _run_project_start(self) -> None:
+        if self._start_engine is None:
+            raise ShikiruError(_START_NOT_CONFIGURED)
+        self._show_result("Starting engine…")
+        result = await self._start_engine()
+        if self._is_current_screen():
+            outcome = "started" if result.started else "already running"
+            self._show_result(f"Engine {outcome} · {result.session}")
 
     async def _run_evidence_export(self) -> None:
         if self._evidence_exporter is None:
@@ -1147,6 +1173,8 @@ class PaletteScreen(ModalScreen[str | None]):
         if action == _ACTION_PEEK:
             self._show_peek(task_id)
             return None
+        if action == _ACTION_STOP and not self._queries.engine_is_up():
+            raise ValueError(_ENGINE_ALREADY_STOPPED)
         if action in _TASK_ACTIONS:
             self._validate_task_action(action, task_id)
         command = self._command_for_current_form()
@@ -1317,13 +1345,15 @@ class PaletteScreen(ModalScreen[str | None]):
         raise TypeError(message)
 
     def _target_for_action(self, action: str, task_id: str, role: Role | None) -> str:
-        if action in {_ACTION_SUBMIT, _ACTION_STOP}:
+        if action in {_ACTION_SUBMIT, _ACTION_STOP, _ACTION_START}:
             return "project"
         if role is not None:
             return f"{task_id} · {role.value}"
         return task_id or "task"
 
     def _disabled_reason(self, action: str | None, task_id: str) -> str | None:
+        if action in {_ACTION_START, _ACTION_STOP}:
+            return self._project_engine_disabled_reason(action)
         if action == _ACTION_EXPORT:
             return (
                 _NO_TASK_TARGET
@@ -1332,14 +1362,20 @@ class PaletteScreen(ModalScreen[str | None]):
                 if self._evidence_exporter is None
                 else None
             )
-        if action not in _TASK_TARGET_ACTIONS:
-            return None
-        if not task_id:
-            return _NO_TASK_TARGET
-        state = self._action_states.get(action)
-        if state is None:
-            return _NO_TASK_TARGET
-        return state.disabled_reason
+        if action in _TASK_TARGET_ACTIONS:
+            state = self._action_states.get(action)
+            return state.disabled_reason if state is not None and task_id else _NO_TASK_TARGET
+        return None
+
+    def _project_engine_disabled_reason(self, action: str) -> str | None:
+        engine_up = self._queries.engine_is_up()
+        if action == _ACTION_START and self._start_engine is None:
+            return _START_NOT_CONFIGURED
+        if action == _ACTION_START and engine_up:
+            return _ENGINE_ALREADY_RUNNING
+        if action == _ACTION_STOP and not engine_up:
+            return _ENGINE_ALREADY_STOPPED
+        return None
 
     async def _select_role_pane(self, task_id: str, role: Role) -> str | None:
         detail = self._queries.get_task(task_id)
@@ -1416,7 +1452,7 @@ class PaletteScreen(ModalScreen[str | None]):
             if ack.message == QUEUED_MESSAGE:
                 details = "queued while the engine was stopped"
             elif ack.message == ACK_TIMEOUT_MESSAGE:
-                engine_state = "running" if self._queries.command_history().engine_up else "stopped"
+                engine_state = "running" if self._queries.engine_is_up() else "stopped"
                 details = (
                     f"acknowledgement wait elapsed; engine is currently {engine_state}; "
                     "still pending"
@@ -1447,7 +1483,7 @@ class PaletteScreen(ModalScreen[str | None]):
             details = command_rejection_cause(entry.result)
         else:
             label = "Pending"
-            engine_state = "running" if self._queries.command_history().engine_up else "stopped"
+            engine_state = "running" if self._queries.engine_is_up() else "stopped"
             details = (
                 f"command remains pending; engine currently {engine_state}; "
                 "original acknowledgement wait context unknown"

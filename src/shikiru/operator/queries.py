@@ -447,6 +447,10 @@ class OperatorQueries:
             task=task_detail,
         )
 
+    def engine_is_up(self) -> bool:
+        """Return whether this project's engine currently holds its lock."""
+        return self._engine_up()
+
     def _engine_output(self) -> str | None:
         path = engine_output_path(self._project_root)
         if self._engine_up() or not path.is_file() or path.stat().st_size == 0:

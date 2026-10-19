@@ -107,6 +107,7 @@ MEANINGS: dict[str, str] = {
     PaletteAction.EXPORT: "Write the task evidence to a file",
     PaletteAction.SUBMIT: "Create a new task",
     PaletteAction.STOP: "Stop running turns, keep the state",
+    PaletteAction.START: "Start the engine and keep the project session",
     TaskPaletteRoute.COMMANDS: "Pending, applied and rejected commands",
     TaskPaletteRoute.DIAGNOSTICS: "Project health and resources",
     SWITCH_ROW: "Act on another task",
@@ -198,6 +199,7 @@ class ListContext:
     expanded: bool
     project_routes: bool
     diagnostics: bool
+    engine_up: bool
     extensions: tuple[ExtensionEntry, ...]
 
 
@@ -250,7 +252,7 @@ def _extensions_group(context: ListContext) -> ActionGroup:
 def _project_group(context: ListContext) -> ActionGroup:
     rows = [
         _action_row(PaletteAction.SUBMIT),
-        _action_row(PaletteAction.STOP),
+        _action_row(PaletteAction.STOP if context.engine_up else PaletteAction.START),
     ]
     if context.project_routes:
         rows.append(_route_row(TaskPaletteRoute.COMMANDS))
@@ -404,6 +406,7 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         *,
         on_change: OnChangeRegistration,
         action_confirmation_seconds: float,
+        engine_state_refresh_hz: int | None = None,
         task_routes_available: bool = False,
         project_diagnostics_available: bool = False,
         extensions: tuple[ExtensionEntry, ...] = (),
@@ -417,6 +420,7 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         self._request = replace(request, action=None)
         self._on_change = on_change
         self._confirmation_seconds = action_confirmation_seconds
+        self._engine_state_refresh_hz = engine_state_refresh_hz
         self._task_routes_available = task_routes_available
         self._project_diagnostics_available = project_diagnostics_available
         self._extensions = extensions
@@ -429,6 +433,8 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         self._groups: tuple[ActionGroup, ...] = ()
         self._change_worker: Worker[None] | None = None
         self._sync_worker: Worker[None] | None = None
+        self._engine_state_timer: Timer | None = None
+        self._engine_up: bool | None = None
 
     def compose(self) -> ComposeResult:
         """Render the header, the grouped rows and the hint line."""
@@ -451,6 +457,10 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         self._change_worker = self.run_worker(
             self._on_change(self._refresh_after_database_change), group=CHANGE_WORKER
         )
+        if self._engine_state_refresh_hz is not None:
+            self._engine_state_timer = self.set_interval(
+                1 / self._engine_state_refresh_hz, self._refresh_engine_state
+            )
 
     def on_unmount(self) -> None:
         """Stop following database changes and the confirmation timer."""
@@ -458,6 +468,8 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
             self._change_worker.cancel()
         if self._confirmation_timer is not None:
             self._confirmation_timer.stop()
+        if self._engine_state_timer is not None:
+            self._engine_state_timer.stop()
 
     def on_resize(self, event: events.Resize) -> None:
         """Refit the frame, the title and the hint to the new size."""
@@ -494,6 +506,8 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
     def _list_context(self) -> ListContext:
         task_id = self._request.task_id
         task_exists = task_id is not None and self._queries.get_task_state(task_id) is not None
+        engine_up = self._queries.engine_is_up()
+        self._engine_up = engine_up
         return ListContext(
             has_task=task_exists,
             task_actions=self._task_actions(task_id) if task_exists else frozenset(),
@@ -501,8 +515,17 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
             expanded=self._expanded,
             project_routes=self._task_routes_available,
             diagnostics=self._project_diagnostics_available,
+            engine_up=engine_up,
             extensions=self._extensions,
         )
+
+    def _refresh_engine_state(self) -> None:
+        if self.covered or not self.is_attached:
+            return
+        engine_up = self._queries.engine_is_up()
+        if engine_up != self._engine_up:
+            self._engine_up = engine_up
+            self._schedule_sync()
 
     def _task_actions(self, task_id: str | None) -> frozenset[PaletteAction]:
         if task_id is None:
@@ -703,6 +726,7 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         return None
 
     def _popup_closed(self, queued: str | None) -> None:
+        self._schedule_sync()
         if queued is None:
             return
         self._confirmed = queued
@@ -711,7 +735,6 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         self._confirmation_timer = self.set_timer(
             self._confirmation_seconds, self._end_confirmation
         )
-        self._schedule_sync()
 
     def _end_confirmation(self) -> None:
         if self._confirmation_timer is not None:

@@ -97,9 +97,10 @@ from shikiru.domain.reports import (
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Task
+from shikiru.engine.daemon import EngineLock, engine_is_running
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.queries import OperatorQueries
-from shikiru.paths import turns_dir
+from shikiru.paths import engine_lock_path, turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.queue import TASK_MARKER_CURRENT
 from shikiru.process import (
@@ -472,7 +473,7 @@ def _palette_screen_for_app(
 _PROJECT_ONLY_ROWS = [
     "# Project",
     "Submit task",
-    "Stop engine",
+    "Start engine",
     "Switch task\N{HORIZONTAL ELLIPSIS}",
 ]
 
@@ -2084,7 +2085,7 @@ async def test_home_bar_shows_the_first_decision_of_a_task_and_the_next_once_it_
         reader.close()
 
 
-async def test_queued_stop_engine_stays_visible_in_dashboard_history(
+async def test_dashboard_engine_action_tracks_lock_and_refuses_a_stale_stop(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -2093,31 +2094,44 @@ async def test_queued_stop_engine_stays_visible_in_dashboard_history(
     clock = SystemClock()
     reader = StateReader(database, clock)
     settings = load_settings(project_dir)
-    services = StubServices()
+    lock_path = engine_lock_path(project_dir)
+    lock = EngineLock(lock_path)
+    lock.acquire()
+
+    def engine_up() -> bool:
+        return engine_is_running(lock_path)
+
     queue = CommandQueue(connection, clock)
-    commands = OperatorCommands(queue, clock, engine_up=services.engine_up)
+    commands = OperatorCommands(queue, clock, engine_up=engine_up)
     queries = OperatorQueries(
         reader,
         project=settings.project.name,
         project_root=project_dir,
-        engine_up=services.engine_up,
+        engine_up=engine_up,
         max_parallel=settings.orchestration.max_parallel,
         clock=clock,
     )
     active_apps: list[DashboardApp] = []
 
     async def open_palette_context(request: PaletteRequest) -> None:
-        del request
-        await active_apps[0].push_screen(
-            PaletteScreen(
+        if request.action is None:
+            screen = actions_screen(
                 commands,
                 queries,
+                reader,
                 _unexpected_pane_selection,
-                action_confirmation_seconds=ACTION_CONFIRMATION_SECONDS,
-                on_change=reader.watch,
-                initial_context=PaletteRequest(action="stop"),
+                request,
+                engine_state_refresh_hz=settings.dashboard.motion.refresh_hz,
             )
-        )
+        else:
+            screen = popup_screen(
+                commands,
+                queries,
+                reader,
+                _unexpected_pane_selection,
+                request,
+            )
+        await active_apps[0].push_screen(screen)
 
     try:
         first_app = _app(
@@ -2128,52 +2142,31 @@ async def test_queued_stop_engine_stays_visible_in_dashboard_history(
         )
         active_apps[:] = [first_app]
         async with first_app.run_test(size=(120, 40)) as pilot:
-            dashboard_screen = first_app.screen
             await pilot.press("ctrl+p")
+            listing = await _wait_for_actions(first_app)
+            await wait_until(lambda: "Stop engine" in structure(listing), timeout=UI_WAIT_SECONDS)
+            lock.release()
+            await wait_until(lambda: "Start engine" in structure(listing), timeout=UI_WAIT_SECONDS)
+            lock.acquire()
+            await wait_until(lambda: "Stop engine" in structure(listing), timeout=UI_WAIT_SECONDS)
+            await open_row(pilot, listing, "Stop engine")
             await wait_until(
                 lambda: isinstance(first_app.screen, PaletteScreen), timeout=UI_WAIT_SECONDS
             )
+            popup = cast("PaletteScreen", first_app.screen)
+            stop_button = popup.query_one("#palette-submit", Button)
+            await wait_until(lambda: not stop_button.disabled, timeout=UI_WAIT_SECONDS)
+            lock.release()
             await pilot.press("enter")
+            await pilot.press("enter")
+            await wait_until(
+                lambda: bool(_rendered_text(popup.query_one("#palette-result", Static))),
+                timeout=UI_WAIT_SECONDS,
+            )
             assert queue.pending() == []
-            await pilot.press("enter")
-            await wait_until(lambda: len(queue.pending()) == 1, timeout=UI_WAIT_SECONDS)
-            pending_id = queue.pending()[0].id
-            assert isinstance(queue.pending()[0].command, Stop)
-            queued_at = reader.command_history(limit=1).entries[0].ts
-            queued_time = datetime.fromisoformat(queued_at)
-            summary_time = f"queued {queued_time.month}/{queued_time.day} {queued_time:%H:%M}Z"
-            await wait_until(lambda: first_app.screen is dashboard_screen, timeout=UI_WAIT_SECONDS)
-            status = first_app.query_one("#workspace-command-status", Button)
-            await wait_until(
-                lambda: (
-                    status.display
-                    and "Pending: Stop " in _rendered_text(status)
-                    and summary_time in _rendered_text(status)
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
-            await pilot.click(status)
-            await wait_until(
-                lambda: bool(first_app.screen.query("#command-history-page")),
-                timeout=UI_WAIT_SECONDS,
-            )
-            history_screen = first_app.screen
-            history_copy = history_screen.query_one("#command-history-copy", Static)
-            await pilot.pause()
-            assert "Loading" not in _rendered_text(history_copy), type(history_screen).__name__
-            assert f"#{pending_id} · Pending" in _rendered_text(history_copy)
-            assert summary_time in _rendered_text(history_copy)
-            await pilot.press("escape")
-            await wait_until(lambda: first_app.screen is dashboard_screen, timeout=UI_WAIT_SECONDS)
-            queue.mark_done(pending_id, {"stopping": True})
-            await wait_until(
-                lambda: (
-                    "Applied: Stop " in _rendered_text(status)
-                    and "shutdown requested" in _rendered_text(status)
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
     finally:
+        if engine_up():
+            lock.release()
         reader.close()
 
 

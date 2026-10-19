@@ -386,4 +386,4 @@ Eighteenth-review scope: [eighteenth review](../docs/tui-feedback-eighteenth-rev
 Nineteenth-review scope: [operator follow-up](../docs/tui-feedback-nineteenth-review.md).
 
 - [x] Task 247: Usable dropdowns, popup surfaces and Actions groups
-- [ ] Task 248: Engine-state-aware Start and Stop actions
+- [x] Task 248: Engine-state-aware Start and Stop actions

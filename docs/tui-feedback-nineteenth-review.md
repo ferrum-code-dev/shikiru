@@ -1,6 +1,6 @@
 # Operator palette usability follow-up
 
-Status: in progress (Tasks 247–248). Refines the eighteenth review and design 06 where it differs. The working TUI is the priority; the HTML is an illustrative reference and exact parity is not required.
+Status: complete (Tasks 247–248). Refines the eighteenth review and design 06 where it differs. The working TUI is the priority; the HTML is an illustrative reference and exact parity is not required.
 
 Execution order: Task 247, then Task 248, with independent review and required checks before each commit.
 

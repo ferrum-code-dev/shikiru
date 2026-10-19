@@ -22,7 +22,6 @@ from shikiru.domain.commands import (
     Retry,
     Say,
     SetRung,
-    Stop,
     Submit,
     TakeOver,
 )
@@ -39,7 +38,13 @@ from shikiru.store.commands import CommandQueue
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import FORMAT_PANE_ID, Tmux, exact_target
-from tests.support.actions import ScreenHost, actions_screen, open_action, popup_screen, row_line
+from tests.support.actions import (
+    ScreenHost,
+    actions_screen,
+    open_action,
+    popup_screen,
+    row_line,
+)
 from tests.support.cells import (
     CYAN_BOLD,
     DISABLED_KEY,
@@ -1161,7 +1166,6 @@ _TWO_ENTER_POPUPS = (
     _SimplePopup(
         "retry", "retry", frozenset(), Retry(task_id=_FIRST_TASK), armed="Enter again to retry"
     ),
-    _SimplePopup("stop", "stop engine", frozenset(), Stop(), armed="Enter again to stop engine"),
 )
 
 

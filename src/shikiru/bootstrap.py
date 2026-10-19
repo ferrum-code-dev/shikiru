@@ -86,7 +86,7 @@ from shikiru.operator.doctor import Doctor
 from shikiru.operator.events import EventFeed
 from shikiru.operator.evidence_export import TaskEvidenceExporter
 from shikiru.operator.evidence_writer import LocalEvidenceWriter
-from shikiru.operator.lifecycle import ProjectLifecycle, home_command
+from shikiru.operator.lifecycle import ProjectLifecycle, StartResult, home_command
 from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.operator.probe import AgentProbe
 from shikiru.operator.queries import OperatorQueries
@@ -137,6 +137,8 @@ if TYPE_CHECKING:
 
     from shikiru.config.settings import LoggingConfig, Settings
     from shikiru.engine.integration import IntegrationCoordinator
+
+    StartEngine = Callable[[], Awaitable[StartResult]]
 
 
 DASHBOARD_RESOURCES_WIDGET = "resources"
@@ -312,6 +314,16 @@ def build_session_tools(
     )
 
 
+def build_project_starter(project_root: Path, overrides: Sequence[str]) -> StartEngine:
+    """Build a lifecycle callback that starts this project without attaching a client."""
+    lifecycle = build_lifecycle()
+
+    async def start_engine() -> StartResult:
+        return await lifecycle.start(project_root, overrides, attach=False)
+
+    return start_engine
+
+
 async def run_dashboard(
     project_root: Path,
     overrides: Sequence[str],
@@ -427,6 +439,12 @@ async def run_dashboard(
                     on_change=services.reader.watch,
                     action_confirmation_seconds=settings.dashboard.action_confirmation_seconds,
                     initial_context=dashboard.attach_palette_drafts(popup_request),
+                    start_engine=(
+                        build_project_starter(project_root, overrides)
+                        if popup_request.action
+                        == dashboard_contract_module.PaletteAction.START.value
+                        else None
+                    ),
                     evidence_exporter=evidence_exporter,
                     remember_contextual_draft=dashboard.remember_contextual_palette_draft,
                 )
@@ -444,6 +462,7 @@ async def run_dashboard(
                 request,
                 on_change=services.reader.watch,
                 action_confirmation_seconds=settings.dashboard.action_confirmation_seconds,
+                engine_state_refresh_hz=settings.dashboard.motion.refresh_hz,
                 task_routes_available=True,
                 project_diagnostics_available=(
                     DASHBOARD_RESOURCES_WIDGET in settings.dashboard.widgets
@@ -497,6 +516,7 @@ async def run_palette(
     palette_request = import_module("shikiru.dashboard.contract").PaletteRequest
     clock = build_clock()
     settings = load_settings(project_root, overrides)
+    start_engine = build_project_starter(project_root, overrides)
     services = build_operator(project_root, settings, clock=clock)
     try:
         evidence_exporter = TaskEvidenceExporter(
@@ -529,6 +549,8 @@ async def run_palette(
             Tmux(SubprocessRunner()).select_pane,
             on_change=services.reader.watch,
             action_confirmation_seconds=settings.dashboard.action_confirmation_seconds,
+            engine_state_refresh_hz=settings.dashboard.motion.refresh_hz,
+            start_engine=start_engine,
             initial_context=initial_context,
             evidence_exporter=evidence_exporter,
             resolution_screen=resolution_screen,

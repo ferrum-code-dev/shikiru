@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from textual.screen import ModalScreen
 
     from shikiru.dashboard.contract import OnChangeRegistration, ResolutionScreenFactory
-    from shikiru.dashboard.palette import PaneSelector
+    from shikiru.dashboard.palette import PaneSelector, StartEngine
     from shikiru.operator.commands import OperatorCommands
     from shikiru.operator.evidence_export import TaskEvidenceExporter
     from shikiru.operator.queries import OperatorQueries
@@ -35,6 +35,8 @@ class PaletteApp(CoveredScreens):
         *,
         on_change: OnChangeRegistration,
         action_confirmation_seconds: float,
+        engine_state_refresh_hz: int | None = None,
+        start_engine: StartEngine | None = None,
         initial_context: PaletteRequest | None = None,
         evidence_exporter: TaskEvidenceExporter | None = None,
         resolution_screen: ResolutionScreenFactory | None = None,
@@ -47,6 +49,8 @@ class PaletteApp(CoveredScreens):
         self._pane_selector = pane_selector
         self._on_change = on_change
         self._action_confirmation_seconds = action_confirmation_seconds
+        self._engine_state_refresh_hz = engine_state_refresh_hz
+        self._start_engine = start_engine
         self._initial_context = initial_context or PaletteRequest()
         self._evidence_exporter = evidence_exporter
         self._resolution_screen = resolution_screen
@@ -65,6 +69,7 @@ class PaletteApp(CoveredScreens):
                 self._initial_context,
                 on_change=self._on_change,
                 action_confirmation_seconds=self._action_confirmation_seconds,
+                engine_state_refresh_hz=self._engine_state_refresh_hz,
                 resolution_screen=self._resolution_screen,
             ),
             lambda _: self.exit(),
@@ -78,6 +83,7 @@ class PaletteApp(CoveredScreens):
             on_change=self._on_change,
             action_confirmation_seconds=self._action_confirmation_seconds,
             initial_context=self._drafts.attach(request),
+            start_engine=self._start_engine,
             evidence_exporter=self._evidence_exporter,
             remember_contextual_draft=self._drafts.remember,
         )

@@ -1951,7 +1951,7 @@ async def _assert_responsive_task_actions(
     assert rows.region.x >= 0
     assert rows.region.right <= app.size.width
     await wait_until(
-        lambda: {"Submit task", "Stop engine"} <= set(structure(listing)), timeout=UI_WAIT_SECONDS
+        lambda: {"Submit task", "Start engine"} <= set(structure(listing)), timeout=UI_WAIT_SECONDS
     )
     await pilot.press("escape")
     await wait_until(lambda: not isinstance(app.screen, ActionsListScreen), timeout=UI_WAIT_SECONDS)

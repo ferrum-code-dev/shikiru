@@ -32,6 +32,7 @@ if TYPE_CHECKING:
         PaletteRequest,
         ResolutionScreenFactory,
     )
+    from shikiru.dashboard.palette import StartEngine
     from shikiru.operator.commands import OperatorCommands
     from shikiru.operator.evidence_export import TaskEvidenceExporter
     from shikiru.operator.queries import OperatorQueries
@@ -66,6 +67,7 @@ def popup_screen(
     request: PaletteRequest,
     *,
     action_confirmation_seconds: float = ACTION_CONFIRMATION_SECONDS,
+    start_engine: StartEngine | None = None,
     evidence_exporter: TaskEvidenceExporter | None = None,
     remember_contextual_draft: Callable[[PaletteDraft], None] | None = None,
     attach_drafts: Callable[[PaletteRequest], PaletteRequest] | None = None,
@@ -78,6 +80,7 @@ def popup_screen(
         on_change=reader.watch,
         action_confirmation_seconds=action_confirmation_seconds,
         initial_context=request if attach_drafts is None else attach_drafts(request),
+        start_engine=start_engine,
         evidence_exporter=evidence_exporter,
         remember_contextual_draft=remember_contextual_draft,
     )
@@ -91,6 +94,8 @@ def actions_screen(
     request: PaletteRequest,
     *,
     action_confirmation_seconds: float = ACTION_CONFIRMATION_SECONDS,
+    engine_state_refresh_hz: int | None = None,
+    start_engine: StartEngine | None = None,
     evidence_exporter: TaskEvidenceExporter | None = None,
     remember_contextual_draft: Callable[[PaletteDraft], None] | None = None,
     attach_drafts: Callable[[PaletteRequest], PaletteRequest] | None = None,
@@ -109,6 +114,7 @@ def actions_screen(
             reader,
             pane_selector,
             action_confirmation_seconds=action_confirmation_seconds,
+            start_engine=start_engine,
             evidence_exporter=evidence_exporter,
             remember_contextual_draft=remember_contextual_draft,
             attach_drafts=attach_drafts,
@@ -116,6 +122,7 @@ def actions_screen(
         request,
         on_change=reader.watch,
         action_confirmation_seconds=action_confirmation_seconds,
+        engine_state_refresh_hz=engine_state_refresh_hz,
         task_routes_available=task_routes_available,
         project_diagnostics_available=project_diagnostics_available,
         extensions=extensions,

@@ -145,6 +145,7 @@ class PaletteAction(StrEnum):
     MESSAGE = "message"
     PEEK = "peek"
     STOP = "stop"
+    START = "start"
     EXPORT = "export"
 
 
