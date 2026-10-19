@@ -230,7 +230,8 @@ def list_sessions(
     if state.json_output or json_output:
         typer.echo(json.dumps([row.model_dump(mode="json") for row in rows]))
     else:
-        human_console().print(session_rows_renderable(rows))
+        console = human_console()
+        console.print(session_rows_renderable(rows, host=host, console=console))
 
 
 @app.command()
@@ -339,7 +340,8 @@ def doctor(
     if state.json_output:
         typer.echo(report.model_dump_json())
     else:
-        human_console().print(doctor_renderable(report))
+        console = human_console()
+        console.print(doctor_renderable(report, width=console.size.width))
     if not report.ok:
         raise typer.Exit(code=EXIT_GENERIC_ERROR)
 

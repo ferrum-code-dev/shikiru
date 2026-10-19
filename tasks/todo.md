@@ -409,6 +409,6 @@ Migration note (2026-10-19): the user requested continued work directly on `main
 Focus ledger CLI implementation (main; sequential, with lead review between tasks):
 
 - [x] Task 256: Shared CLI presentation, help and concise command outcomes
-- [ ] Task 257: Concise session discovery and Doctor results
+- [x] Task 257: Concise session discovery and Doctor results
 - [ ] Task 258: Focused project and task status reports
 - [ ] Task 259: Align initializer and attachment picker; verify the complete CLI

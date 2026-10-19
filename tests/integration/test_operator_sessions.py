@@ -217,10 +217,46 @@ async def test_lister_reads_two_projects_progress_and_liveness_without_mutations
 
 
 @pytest.mark.asyncio
-async def test_lister_treats_an_absent_tmux_server_as_empty(tmp_path: Path) -> None:
-    tmux = Tmux(SubprocessRunner(), socket=f"shikiru-missing-{tmp_path.name}")
+async def test_cli_lists_an_absent_tmux_server_as_empty(tmp_path: Path) -> None:
+    socket = f"shikiru-missing-{tmp_path.name}"
+    tmux = Tmux(SubprocessRunner(), socket=socket)
 
     assert await tmux.list_sessions() == []
+
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    real_tmux = shutil.which("tmux")
+    assert real_tmux is not None
+    env = {
+        **os.environ,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+        REAL_TMUX_ENV: real_tmux,
+        TMUX_SOCKET_ENV: socket,
+        "COLUMNS": "80",
+        "NO_COLOR": "1",
+    }
+    runner = SubprocessRunner()
+    human = await runner.run(
+        [sys.executable, "-m", "shikiru", "ls"],
+        timeout=10,
+        cwd=tmp_path,
+        env=env,
+        check=False,
+    )
+    structured = await runner.run(
+        [sys.executable, "-m", "shikiru", "--json", "ls"],
+        timeout=10,
+        cwd=tmp_path,
+        env=env,
+        check=False,
+    )
+
+    assert human.returncode == 0
+    assert human.stderr == ""
+    assert "No Shikiru sessions found." in human.stdout
+    assert structured.returncode == 0
+    assert structured.stderr == ""
+    assert json.loads(structured.stdout) == []
 
 
 @pytest.mark.asyncio
@@ -299,8 +335,8 @@ async def test_cli_local_and_remote_ls_work_without_an_initialized_current_proje
     _fake_tmux(bin_dir)
     capture = tmp_path / "ssh-list-argv.json"
     remote_row = SessionRow(
-        session=f"{SESSION_PREFIX}remote",
-        project_dir="/remote project",
+        session=f"{SESSION_PREFIX}remote [literal]",
+        project_dir="/remote project/[literal]",
         engine_state="up",
         running=3,
         queued=2,
@@ -332,28 +368,59 @@ print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
             ["ls", "--host", "remote.example", "--json"],
             env=env,
         )
+        remote_argv = capture.read_text()
+        remote_human_result = await asyncio.to_thread(
+            runner.invoke,
+            app,
+            ["ls", "--host", "remote.example"],
+            env=env,
+        )
     finally:
         engine_lock.release()
 
     local_rows = json.loads(local_result.stdout)
     assert local_result.exit_code == 0
-    assert local_rows[0]["session"] == session
-    assert local_rows[0]["project_dir"] == str(project)
-    assert local_rows[0]["engine_state"] == "up"
-    assert local_rows[0]["running"] == 1
-    assert local_rows[0]["queued"] == 1
+    assert all(
+        local_rows[0][field] == value
+        for field, value in (
+            ("session", session),
+            ("project_dir", str(project)),
+            ("engine_state", "up"),
+            ("running", 1),
+            ("queued", 1),
+        )
+    )
     assert human_result.exit_code == 0
-    assert session in human_result.stdout
-    assert f"/{project.name}" in human_result.stdout
+    assert all(
+        fact in human_result.stdout
+        for fact in (
+            session,
+            f"/{project.name}",
+            "Engine up",
+            "running 1",
+            "queued 1",
+            "escalated 0",
+        )
+    )
     assert remote_result.exit_code == 0
     assert json.loads(remote_result.stdout) == [remote_row.model_dump(mode="json")]
-    assert json.loads(capture.read_text()) == [
+    assert json.loads(remote_argv) == [
         "--",
         "remote.example",
         "shikiru",
         "ls",
         "--json",
     ]
+    assert remote_human_result.exit_code == 0
+    assert remote_human_result.stdout.count("remote.example") == 1
+    remote_text = "".join(remote_human_result.stdout.split())
+    assert all(
+        "".join(value.split()) in remote_text
+        for value in (remote_row.session, remote_row.project_dir)
+    )
+    assert all(
+        fact in remote_human_result.stdout for fact in ("running 3", "queued 2", "escalated 1")
+    )
     capture_before_invalid_host = capture.read_text()
     invalid_timeout_result = await asyncio.to_thread(
         runner.invoke,

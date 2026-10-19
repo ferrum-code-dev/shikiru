@@ -75,6 +75,7 @@ async def test_doctor_reports_core_and_configured_plugin_checks(tmp_path: Path) 
     root = await _project(tmp_path)
 
     code, stdout, stderr = await _cli(root, "--json", "doctor")
+    human_code, human_stdout, human_stderr = await _cli(root, "doctor")
 
     assert stderr == ""
     report = json.loads(stdout)
@@ -107,6 +108,12 @@ async def test_doctor_reports_core_and_configured_plugin_checks(tmp_path: Path) 
     assert all(check["ok"] for check in checks.values())
     assert code == 0
     assert (root / ".shikiru" / "state.db").is_file()
+    assert human_code == 0
+    assert human_stderr == ""
+    human_text = "".join(human_stdout.split())
+    for check in checks.values():
+        assert check["name"] in human_stdout
+        assert "".join(str(check["detail"]).split()) in human_text
 
 
 FAKE_VERSION_SCRIPT = """#!/bin/sh
@@ -187,9 +194,12 @@ async def test_doctor_fails_a_project_root_inside_a_repository(tmp_path: Path) -
 async def test_doctor_names_invalid_configuration_and_keeps_diagnostics_json_safe(
     tmp_path: Path,
 ) -> None:
-    root = await _project(tmp_path, '[project\nname = "broken"\n')
+    project = tmp_path / "[literal]"
+    project.mkdir()
+    root = await _project(project, '[project\nname = "broken"\n')
 
     code, stdout, stderr = await _cli(root, "--json", "doctor")
+    human_code, human_stdout, human_stderr = await _cli(root, "doctor")
 
     assert code == 1
     assert stderr == ""
@@ -199,6 +209,12 @@ async def test_doctor_names_invalid_configuration_and_keeps_diagnostics_json_saf
     assert config_checks[0]["ok"] is False
     assert report["ok"] is False
     assert "broken" not in stdout
+    assert human_code == 1
+    assert human_stderr == ""
+    human_text = "".join(human_stdout.split())
+    config_detail = config_checks[0]["detail"]
+    assert "".join(str(config_detail).split()) in human_text
+    assert "[literal]" in human_stdout
 
 
 async def test_doctor_keeps_unsupported_cow_as_a_passing_degraded_check(
@@ -292,9 +308,15 @@ async def test_doctor_probe_names_the_failing_rung(tmp_path: Path) -> None:
 
 async def test_doctor_probe_failure_shows_the_stream_tail_and_stderr(tmp_path: Path) -> None:
     root = await _project(tmp_path)
+    human_project = tmp_path / "human"
+    human_project.mkdir()
+    human_root = await _project(human_project)
 
     code, stdout, _ = await _cli(
         root, "--json", "doctor", "--probe", SHIKIRU_FAKE_SCRIPT='[{"kind": "crash"}]'
+    )
+    human_code, human_stdout, human_stderr = await _cli(
+        human_root, "doctor", "--probe", SHIKIRU_FAKE_SCRIPT='[{"kind": "crash"}]'
     )
 
     probe = _probe_checks(stdout)["probe:fake:default"]
@@ -302,3 +324,8 @@ async def test_doctor_probe_failure_shows_the_stream_tail_and_stderr(tmp_path: P
     assert probe["ok"] is False
     assert '"event":"session_started"' in str(probe["detail"])
     assert CRASH_STDERR in str(probe["detail"])
+    assert human_code == 1
+    assert human_stderr == ""
+    human_text = "".join(human_stdout.split())
+    assert '"event":"session_started"' in human_text
+    assert "".join(CRASH_STDERR.split()) in human_text

@@ -34,6 +34,8 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 
 **Output**:
 - Human command output uses the shared Focus ledger palette and renderables (§6) with open sections and unframed outcomes; it inherits the terminal's font and background.
+- `ls` uses open session rows with the full session identity, project directory, engine state and running, queued and escalated counts. A supplied remote host appears once; narrow output wraps complete row facts under their session, and an empty result is explicit.
+- `doctor` uses one open row per check with its outcome, name and full detail, then an aggregate result. Probe failures retain the stream tail and stderr; an `engine-output` check is informational and remains passing.
 - Native Typer help keeps its existing layout, wording, ordering, defaults and wrapping; the shared semantic palette changes its styles only. Hidden process entrypoints stay hidden.
 - `init --yes` prints the absolute config path and warns that generated model fields are placeholders to review before starting. `start` says whether it started or reused the engine and names the ensured session. Successful `stop` says the engine stopped or was already stopped and whether the session was left unchanged or closed by the request. A pending acknowledgement keeps its command ID and reason without claiming an effect; a rejection keeps its command ID and cause.
 - Domain errors preserve their cause and relevant context. When the project is not initialized, the CLI names the missing project state and directs the Operator to run `shikiru init` from the repository root.
@@ -235,7 +237,7 @@ The ordered `dashboard.widgets` list and its shipped default remain unchanged. P
 
 ### 5.6 `ls` and `attach`
 
-`SessionLister` returns one row per project, for the local host or for `H`; `ls` prints the rows, `attach` picks one from them.
+`SessionLister` returns one row per project, for the local host or for `H`; `ls` prints the rows, `attach` picks one from them. Human `ls` output keeps each complete session identity, directory, engine state and running, queued and escalated counts together in an open row. A remote host is shown once above its rows. Long facts wrap without truncation, and an empty listing is stated explicitly; JSON continues to contain only the existing row schema.
 
 - **Rows**: `tmux list-sessions` filtered by the `[shikiru] ` prefix and each session's `SHIKIRU_PROJECT_DIR`; engine liveness comes from the project's `engine.lock`, while running, queued and escalated counts come from its DB. `ls` opens each DB with SQLite read-only mode and never changes its schema, progress or other project state. SQLite may create or update WAL and shared-memory coordination sidecars while reading a WAL database; a newly created WAL file is empty, and existing database or WAL contents remain unchanged.
 - **`attach`**: exactly one row, or a matching `NAME` → `os.execvp("tmux", ["tmux", "attach", "-t", "=[shikiru] NAME"])` (`switch-client` when inside tmux). Otherwise an inline selectable list of the same rows.

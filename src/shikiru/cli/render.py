@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from rich.console import Group
@@ -29,7 +30,15 @@ from shikiru.ui.glyphs import (
     GLYPH_STALLED,
     GLYPH_STOPPED,
 )
-from shikiru.ui.section import BOLD_PRIMARY, BOLD_STEEL, grey
+from shikiru.ui.section import (
+    BOLD_PRIMARY,
+    BOLD_STEEL,
+    WrappedGroups,
+    grey,
+    labelled_rows,
+    number,
+    row_name,
+)
 from shikiru.ui.size import format_size
 from shikiru.ui.status import status_visual
 from shikiru.ui.strip import TaskStrip
@@ -44,8 +53,6 @@ from shikiru.ui.tokens import (
 )
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from rich.console import Console, RenderableType
 
     from shikiru.agents.contracts import CostBasis
@@ -65,12 +72,11 @@ TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 USAGE_TABLE_TITLE = "Usage"
 QUOTA_TABLE_TITLE = "Quota windows"
 REPORTS_TABLE_TITLE = "Reports and verdicts"
-DOCTOR_PANEL_TITLE = "Shikiru doctor"
 DOCTOR_OK_LABEL = "ok"
 DOCTOR_FAIL_LABEL = "fail"
+DOCTOR_OUTCOME_LABEL_WIDTH = len(f"{GLYPH_STOPPED} {DOCTOR_FAIL_LABEL}")
 NO_ROWS = "none"
 NO_VALUE = "—"
-SESSIONS_TABLE_TITLE = "Shikiru sessions"
 STOPPED_RESULT_FIELD = "stopped"
 STOPPING_RESULT_FIELD = "stopping"
 
@@ -78,12 +84,10 @@ STOPPING_RESULT_FIELD = "stopping"
 def init_renderable(config_path: Path, *, console: Console) -> RenderableType:
     """Render `init --yes` with its config path and model-review warning."""
     absolute_path = config_path.resolve()
-    path_text = grey(str(absolute_path))
-    if supports_osc8(console):
-        path_text.stylize(Style(link=absolute_path.as_uri()))
+    config_text = _path_text(absolute_path, linked=supports_osc8(console))
     result = _outcome_line(GLYPH_DONE, "Initialized", SUCCESS_COLOR)
     result.append(" ")
-    result.append_text(path_text)
+    result.append_text(config_text)
     result.no_wrap = True
     warning = Text.assemble(
         (GLYPH_STALLED, f"{STYLE_BOLD} {AMBER}"),
@@ -209,42 +213,83 @@ def ack_renderable(
     return text
 
 
-def doctor_renderable(report: DoctorReport) -> Table:
-    """Render environment diagnostics as a compact check table."""
-    table = Table(title=DOCTOR_PANEL_TITLE)
-    table.add_column("Status")
-    table.add_column("Check")
-    table.add_column("Detail")
+def doctor_renderable(report: DoctorReport, *, width: int) -> RenderableType:
+    """Render each diagnostic with its complete detail and an aggregate result."""
+    rows: list[tuple[Text, tuple[Text, ...]]] = []
     for check in report.checks:
-        table.add_row(
-            DOCTOR_OK_LABEL if check.ok else DOCTOR_FAIL_LABEL,
-            check.name,
-            check.detail,
+        if check.ok:
+            outcome = _outcome_line(GLYPH_DONE, DOCTOR_OK_LABEL, SUCCESS_COLOR)
+        else:
+            outcome = _outcome_line(GLYPH_STOPPED, DOCTOR_FAIL_LABEL, ALERT_COLOR)
+        rows.append(
+            (
+                outcome,
+                (row_name(check.name), Text(check.detail, style=PRIMARY_TEXT_COLOR)),
+            )
         )
-    return table
+    checks = labelled_rows(rows, width, DOCTOR_OUTCOME_LABEL_WIDTH)
+    if report.ok:
+        result = _outcome_line(GLYPH_DONE, "Doctor passed", SUCCESS_COLOR)
+        result.append(" · ", style=SECONDARY_TEXT_COLOR)
+        result.append(f"{len(report.checks)} checks", style=BOLD_PRIMARY)
+    else:
+        failed_checks = sum(not check.ok for check in report.checks)
+        result = _outcome_line(GLYPH_STOPPED, "Doctor failed", ALERT_COLOR)
+        result.append(" · ", style=SECONDARY_TEXT_COLOR)
+        result.append(
+            f"{failed_checks} of {len(report.checks)} checks failed",
+            style=PRIMARY_TEXT_COLOR,
+        )
+    return Group(checks, result)
 
 
-def session_rows_renderable(rows: list[SessionRow]) -> Table:
-    """Render session locations and progress counts as a Rich table."""
-    table = Table(title=SESSIONS_TABLE_TITLE)
-    table.add_column("Session", overflow="fold")
-    table.add_column("Project directory", overflow="fold")
-    table.add_column("Engine")
-    table.add_column("Running")
-    table.add_column("Queued")
-    table.add_column("Escalated")
-    for row in rows:
-        table.add_row(
-            Text(row.session, overflow="fold"),
-            Text(row.project_dir, overflow="fold"),
-            row.engine_state,
-            str(row.running),
-            str(row.queued),
-            str(row.escalated),
-        )
+def session_rows_renderable(
+    rows: list[SessionRow], *, host: str | None, console: Console
+) -> RenderableType:
+    """Render each session's identity, project and current progress as an open row."""
+    heading = Text("Sessions", style=BOLD_STEEL)
+    if host is not None:
+        heading.append(" · remote host ", style=SECONDARY_TEXT_COLOR)
+        heading.append(host, style=BOLD_PRIMARY)
     if not rows:
-        table.add_row(NO_ROWS, NO_VALUE, NO_VALUE, NO_VALUE, NO_VALUE, NO_VALUE)
-    return table
+        return Group(heading, Text("No Shikiru sessions found.", style=SECONDARY_TEXT_COLOR))
+    values: list[RenderableType] = [heading]
+    for row in rows:
+        path = _path_text(
+            Path(row.project_dir),
+            linked=host is None and supports_osc8(console),
+        )
+        path_text = Text("  ")
+        path_text.append_text(path)
+        facts = (
+            _session_engine(row.engine_state),
+            _session_count("running", row.running),
+            _session_count("queued", row.queued),
+            _session_count("escalated", row.escalated),
+        )
+        values.extend((row_name(row.session), path_text, WrappedGroups(facts)))
+    return Group(*values)
+
+
+def _path_text(path: Path, *, linked: bool) -> Text:
+    text = Text(str(path), style=SECONDARY_TEXT_COLOR, overflow="fold")
+    if linked:
+        text.stylize(Style(link=path.as_uri()))
+    return text
+
+
+def _session_count(label: str, count: int) -> Text:
+    return Text.assemble((f"{label} ", SECONDARY_TEXT_COLOR), number(str(count)))
+
+
+def _session_engine(engine_state: Literal["up", "down"]) -> Text:
+    engine = Text.assemble((GLYPH_ENGINE, BOLD_STEEL), (" Engine ", SECONDARY_TEXT_COLOR))
+    match engine_state:
+        case "up":
+            engine.append(engine_state, style=f"{STYLE_BOLD} {SUCCESS_COLOR}")
+        case "down":
+            engine.append(engine_state, style=f"{STYLE_BOLD} {ALERT_COLOR}")
+    return engine
 
 
 def _tasks_table(tasks: list[TaskSummary], title: str, *, include_priority: bool) -> Table:
