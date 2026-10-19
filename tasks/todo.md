@@ -389,3 +389,9 @@ Nineteenth-review scope: [operator follow-up](../docs/tui-feedback-nineteenth-re
 - [x] Task 248: Engine-state-aware Start and Stop actions
 
 - [x] Task 249: Popup entry focus and dashboard survival after engine stop
+
+Twenty-first-review scope: [operator follow-up](../docs/tui-feedback-twenty-first-review.md).
+
+- [x] Task 250: Smaller task picker with twenty-task pages
+- [ ] Task 251: Effective rung changes for escalated sessions
+- [ ] Task 252: Close the Start engine popup on success

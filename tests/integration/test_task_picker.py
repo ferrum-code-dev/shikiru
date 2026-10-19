@@ -4,11 +4,10 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 from textual.app import App
-from textual.widgets import ListView
+from textual.widgets import Input, ListView
 
 from shikiru.dashboard.task_picker import (
     PICKER_LIST,
-    PICKER_PAGE_LIMIT,
     PICKER_SEARCH,
     PickerRow,
     TaskPickerScreen,
@@ -30,9 +29,13 @@ if TYPE_CHECKING:
 
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _APP_SIZE = (100, 30)
-_TASK_COUNT = PICKER_PAGE_LIMIT + 10
+_FIRST_PAGE_COUNT = 20
+_SECOND_PAGE_COUNT = 40
+_TASK_COUNT = 47
 _CURRENT = 3
-_MATCHES = (10, 20)
+_SELECTED = 5
+_SEARCH_INTERVAL = 2
+_SEARCH_MATCHES = tuple(range(1, _TASK_COUNT, _SEARCH_INTERVAL))
 _MATCH_TITLE = "Zebra crossing"
 _PENDING = "pending"
 
@@ -75,7 +78,9 @@ async def test_task_picker_searches_pages_and_chooses_a_task(
     clock = FakeClock(_START)
     tasks = [
         seed_task(
-            connection, clock, title="Zebra crossing" if index in _MATCHES else f"Job {index}"
+            connection,
+            clock,
+            title=_MATCH_TITLE if index in _SEARCH_MATCHES else f"Job {index}",
         )
         for index in range(_TASK_COUNT)
     ]
@@ -84,12 +89,21 @@ async def test_task_picker_searches_pages_and_chooses_a_task(
     host = _Host(queries, ids[_CURRENT])
 
     async with host.run_test(size=_APP_SIZE) as pilot:
-        await wait_until(lambda: len(_list(host).children) == PICKER_PAGE_LIMIT, UI_WAIT_SECONDS)
-        assert _selected(host) == ids[_CURRENT]
+        await wait_until(lambda: len(_list(host).children) == _FIRST_PAGE_COUNT, UI_WAIT_SECONDS)
+        assert (_ids(host), _selected(host)) == (ids[:_FIRST_PAGE_COUNT], ids[_CURRENT])
+
+        await pilot.press("down", "down")
+        await wait_until(lambda: _selected(host) == ids[_SELECTED], UI_WAIT_SECONDS)
+        await pilot.press("m")
+        await wait_until(lambda: len(_list(host).children) == _SECOND_PAGE_COUNT, UI_WAIT_SECONDS)
+        assert _ids(host) == ids[:_SECOND_PAGE_COUNT]
+        assert _selected(host) == ids[_SELECTED]
 
         await pilot.press("m")
-        await wait_until(lambda: len(_list(host).children) == _TASK_COUNT, UI_WAIT_SECONDS)
-        assert _selected(host) == ids[_CURRENT]
+        await wait_until(lambda: _ids(host) == ids, UI_WAIT_SECONDS)
+        assert _selected(host) == ids[_SELECTED]
+        await pilot.press("m")
+        assert _ids(host) == ids
 
         await pilot.press("end")
         await wait_until(lambda: _selected(host) == ids[-1], UI_WAIT_SECONDS)
@@ -97,21 +111,35 @@ async def test_task_picker_searches_pages_and_chooses_a_task(
         await wait_until(lambda: _selected(host) == ids[1], UI_WAIT_SECONDS)
 
         await _type_search(pilot, host, "zebra")
-        await wait_until(lambda: _ids(host) == [ids[i] for i in _MATCHES], UI_WAIT_SECONDS)
-        assert _selected(host) == ids[_MATCHES[0]]
+        expected_matches = [ids[index] for index in _SEARCH_MATCHES]
+        await wait_until(
+            lambda: _ids(host) == expected_matches[:_FIRST_PAGE_COUNT], UI_WAIT_SECONDS
+        )
+        assert _selected(host) == ids[_CURRENT]
 
+        await pilot.press("enter")
+        await wait_until(lambda: not host.picker.query(f"#{PICKER_SEARCH}"), UI_WAIT_SECONDS)
+        await pilot.press("m")
+        await wait_until(lambda: _ids(host) == expected_matches, UI_WAIT_SECONDS)
+        assert _selected(host) == ids[_CURRENT]
+
+        await pilot.press("/")
+        await wait_until(lambda: bool(host.picker.query(f"#{PICKER_SEARCH}")), UI_WAIT_SECONDS)
+        assert host.picker.query_one(f"#{PICKER_SEARCH}", Input).value == "zebra"
+        assert (_ids(host), _selected(host)) == (expected_matches, ids[_CURRENT])
         await pilot.press("escape")
-        await wait_until(lambda: len(_list(host).children) == PICKER_PAGE_LIMIT, UI_WAIT_SECONDS)
+        await wait_until(lambda: _ids(host) == ids[:_FIRST_PAGE_COUNT], UI_WAIT_SECONDS)
         assert not host.picker.query(f"#{PICKER_SEARCH}")
+        assert _selected(host) == ids[_CURRENT]
         assert host.result == _PENDING
 
         await pilot.press("escape")
         await wait_until(lambda: host.result is None, UI_WAIT_SECONDS)
 
-    chooser = _Host(queries, ids[_CURRENT])
+    chooser = _Host(queries, ids[0])
     async with chooser.run_test(size=_APP_SIZE) as pilot:
-        await wait_until(lambda: len(_list(chooser).children) == PICKER_PAGE_LIMIT, UI_WAIT_SECONDS)
+        await wait_until(lambda: len(_list(chooser).children) == _FIRST_PAGE_COUNT, UI_WAIT_SECONDS)
         await _type_search(pilot, chooser, "zebra")
-        await wait_until(lambda: len(_list(chooser).children) == len(_MATCHES), UI_WAIT_SECONDS)
+        await wait_until(lambda: len(_list(chooser).children) == _FIRST_PAGE_COUNT, UI_WAIT_SECONDS)
         await pilot.press("enter", "down", "enter")
-        await wait_until(lambda: chooser.result == ids[_MATCHES[1]], UI_WAIT_SECONDS)
+        await wait_until(lambda: chooser.result == ids[_SEARCH_MATCHES[1]], UI_WAIT_SECONDS)

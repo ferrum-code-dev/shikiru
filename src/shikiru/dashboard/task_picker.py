@@ -43,13 +43,17 @@ PICKER_SEARCH = "task-picker-search"
 PICKER_LIST = "task-picker-list"
 PICKER_EMPTY = "task-picker-empty"
 PICKER_HINT = "task-picker-hint"
-PICKER_PAGE_LIMIT = 50
+PICKER_PAGE_LIMIT = 20
+PICKER_VISIBLE_ROWS = 10
 SEARCH_KEY = "/"
 SEARCH_LABEL = "search"
 HINT_GAP = "   "
+TINY_HINT_GAP = " "
 COMPACT_CLASS = "compact"
+TINY_CLASS = "tiny"
 COMPACT_MAX_COLUMNS = 48
 COMPACT_MAX_ROWS = 20
+TINY_MAX_COLUMNS = 32
 TINY_MAX_ROWS = 10
 MIN_TITLE_CELLS = 8
 NAME_GAP = " "
@@ -137,6 +141,8 @@ class TaskPickerScreen(ModalScreen[str | None]):
     #{PICKER_EMPTY} {{ height: auto; color: $muted-text; }}
     #{PICKER_HINT} {{ height: auto; margin-top: 1; }}
     #{PICKER_FRAME}.{COMPACT_CLASS} {{ margin: 0 1; padding: 0 1; }}
+    #{PICKER_FRAME}.{TINY_CLASS} #{PICKER_SEARCH} {{ margin-bottom: 0; }}
+    #{PICKER_FRAME}.{TINY_CLASS} #{PICKER_HINT} {{ margin-top: 0; }}
     """
     )
 
@@ -163,20 +169,46 @@ class TaskPickerScreen(ModalScreen[str | None]):
     async def on_mount(self) -> None:
         """Load the first page, select the current task and size the popup."""
         await self._reload()
-        self._apply_compact_layout(self.size.width, self.size.height)
         self._list.focus()
-        self.call_after_refresh(self.query_one(f"#{PICKER_FRAME}", PopupFrame).content_ready)
 
     def on_resize(self, event: events.Resize) -> None:
         self._apply_compact_layout(event.size.width, event.size.height)
-        frame = self.query_one(f"#{PICKER_FRAME}", PopupFrame)
-        frame.reset_preferred_size()
-        self.call_after_refresh(frame.content_ready)
 
     def _apply_compact_layout(self, width: int, height: int) -> None:
         frame = self.query_one(f"#{PICKER_FRAME}", PopupFrame)
-        frame.set_class(width <= COMPACT_MAX_COLUMNS or height <= COMPACT_MAX_ROWS, COMPACT_CLASS)
+        compact = width <= COMPACT_MAX_COLUMNS or height <= COMPACT_MAX_ROWS
+        tiny = height <= TINY_MAX_ROWS
+        frame.set_class(compact, COMPACT_CLASS)
+        frame.set_class(tiny, TINY_CLASS)
+        frame.styles.max_height = max(1, height - frame.styles.margin.height)
+        self._list.styles.height = min(PICKER_VISIBLE_ROWS, len(self._tasks))
         self._paint_hint()
+        frame.reset_preferred_size()
+        self.call_after_refresh(self._fit_content_to_viewport)
+
+    def _fit_content_to_viewport(self) -> None:
+        frame = self.query_one(f"#{PICKER_FRAME}", PopupFrame)
+        height = self.size.height
+        fixed_height = sum(
+            child.region.height + child.styles.margin.height
+            for child in frame.children
+            if child is not self._list and child.display
+        )
+        available_rows = max(
+            0,
+            height - frame.styles.margin.height - frame.styles.gutter.height - fixed_height,
+        )
+        list_height = min(PICKER_VISIBLE_ROWS, len(self._tasks), available_rows)
+        self._list.styles.height = list_height
+        content_height = fixed_height + list_height + frame.styles.gutter.height
+        frame.styles.max_height = max(
+            1,
+            min(height - frame.styles.margin.height, content_height),
+        )
+        frame.content_ready()
+
+    def _keys_only(self, width: int, height: int) -> bool:
+        return width <= TINY_MAX_COLUMNS or height <= TINY_MAX_ROWS
 
     @property
     def _list(self) -> ListView:
@@ -203,7 +235,7 @@ class TaskPickerScreen(ModalScreen[str | None]):
         if self._list.index is None and self._tasks:
             self._list.index = self._index_of(preselect)
         self._paint_empty(page.project_count)
-        self._paint_hint()
+        self._apply_compact_layout(self.size.width, self.size.height)
 
     def _index_of(self, task_id: str | None) -> int:
         return next((index for index, task in enumerate(self._tasks) if task.id == task_id), 0)
@@ -213,25 +245,39 @@ class TaskPickerScreen(ModalScreen[str | None]):
         empty.display = not self._tasks
         if self._tasks:
             return
-        empty.update("No tasks yet." if project_count == 0 else f"No tasks match {self._search!r}.")
+        message = "No tasks" if project_count == 0 else "No matches"
+        empty.update(message)
 
     def _paint_hint(self) -> None:
         if not self.is_attached:
             return
         has_rows = bool(self._tasks)
-        keys_only = self.size.height <= TINY_MAX_ROWS
+        keys_only = self._keys_only(self.size.width, self.size.height)
         choose = (
             key_hint("Enter keep filter")
             if self._search_open
             else key_hint("Enter choose", enabled=has_rows)
         )
-        groups = (
+        groups = self._hint_groups(has_rows, choose, keys_only)
+        gap = TINY_HINT_GAP if keys_only else HINT_GAP
+        self.query_one(f"#{PICKER_HINT}", Static).update(WrappedGroups(groups, gap))
+
+    def _hint_groups(self, has_rows: bool, choose: Text, keys_only: bool) -> tuple[Text, ...]:
+        if keys_only:
+            return (
+                key_hint("↑↓", enabled=has_rows),
+                Text.assemble(
+                    key_hint("Enter", enabled=has_rows or self._search_open),
+                    key_label(SEARCH_KEY, ""),
+                    self._load_more_hint(keys_only=True),
+                ),
+            )
+        return (
             key_hint("↑↓ select", enabled=has_rows),
             choose,
             key_label(SEARCH_KEY, SEARCH_LABEL),
-            self._load_more_hint(keys_only=keys_only),
+            self._load_more_hint(keys_only=False),
         )
-        self.query_one(f"#{PICKER_HINT}", Static).update(WrappedGroups(groups, HINT_GAP))
 
     def _load_more_hint(self, *, keys_only: bool) -> Text:
         if self._has_more:
@@ -261,10 +307,14 @@ class TaskPickerScreen(ModalScreen[str | None]):
     async def action_open_search(self) -> None:
         """Show the search field under the title and focus it."""
         if not self._search_open:
-            search = Input(placeholder="Search task ID or title", id=PICKER_SEARCH)
+            search = Input(
+                value=self._search,
+                placeholder="Search task ID or title",
+                id=PICKER_SEARCH,
+            )
             await self.mount(search, before=f"#{PICKER_EMPTY}")
         self.query_one(f"#{PICKER_SEARCH}", Input).focus()
-        self._paint_hint()
+        self._apply_compact_layout(self.size.width, self.size.height)
 
     async def action_load_more(self) -> None:
         """Append the next bounded page, keeping the selection."""
@@ -282,12 +332,15 @@ class TaskPickerScreen(ModalScreen[str | None]):
 
     async def _close_search(self) -> None:
         await self.query_one(f"#{PICKER_SEARCH}", Input).remove()
+        self._apply_compact_layout(self.size.width, self.size.height)
         self._list.focus()
-        self._paint_hint()
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         """Narrow the list to tasks whose ID or title match the typed text."""
-        self._search = event.value.strip()
+        search = event.value.strip()
+        if search == self._search:
+            return
+        self._search = search
         await self._reload()
 
     async def on_input_submitted(self) -> None:
