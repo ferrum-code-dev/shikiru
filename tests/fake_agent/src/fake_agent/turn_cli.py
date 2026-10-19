@@ -40,13 +40,15 @@ from fake_agent.turns import (
     COMPACTION_PRE_TOKENS,
     CONTINUE_PROMPT,
     FAKE_COMPACT_AT_PCT_ENV_VAR,
+    FAKE_PROCESS_CAPTURE_FILENAME,
+    FAKE_PROCESS_CAPTURE_MARKER,
     FAKE_SESSION_ID_ENV_VAR,
     INPUT_TOKENS_PER_TURN,
     OUTPUT_TOKENS_PER_TURN,
     THRESHOLD_REACHED_EVENT,
     WORK_CONTEXT_USAGE_PERCENT,
 )
-from shikiru.agents.contracts import ToolOutcome, role_dir, shikiru_command
+from shikiru.agents.contracts import RUN_DIR_ENV_VAR, ToolOutcome, role_dir, shikiru_command
 from shikiru.agents.testing.resume import RESUME_RECALL_PROMPT
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
 
@@ -71,6 +73,7 @@ _SESSION_ID_ARGUMENT = "--session-id"
 _PROMPT_ARGUMENT = "--prompt"
 _MODEL_ARGUMENT = "--model"
 _EFFORT_ARGUMENT = "--effort"
+_CAPTURE_PROCESSES_ARGUMENT = "--capture-processes-to"
 _WAIT_PROMPT = "wait for the next instruction"
 _REPORT_COMMAND_TIMEOUT_SECONDS = 10.0
 CRASH_STDERR = "fake agent crashed as scripted"
@@ -280,6 +283,10 @@ def _parser() -> argparse.ArgumentParser:
             command_parser.add_argument(_PROMPT_ARGUMENT, required=True)
             command_parser.add_argument(_MODEL_ARGUMENT, required=True)
             command_parser.add_argument(_EFFORT_ARGUMENT)
+        if name == "interactive":
+            command_parser.add_argument(_MODEL_ARGUMENT, required=True)
+            command_parser.add_argument(_EFFORT_ARGUMENT)
+            command_parser.add_argument(_CAPTURE_PROCESSES_ARGUMENT)
     return parser
 
 
@@ -287,6 +294,29 @@ def main() -> None:
     """Run one headless turn, one compaction, or the interactive take-over REPL."""
     args = _parser().parse_args()
     os.environ[FAKE_SESSION_ID_ENV_VAR] = args.session_id
+    run_directory = os.environ.get(RUN_DIR_ENV_VAR)
+    capture_path = None
+    if args.command == "interactive":
+        capture_path = (
+            Path(args.capture_processes_to) if args.capture_processes_to is not None else None
+        )
+    elif args.command == "turn" and run_directory is not None:
+        run_path = Path(run_directory)
+        if (run_path / FAKE_PROCESS_CAPTURE_MARKER).is_file():
+            capture_path = run_path / FAKE_PROCESS_CAPTURE_FILENAME
+    if capture_path is not None:
+        with capture_path.open("a", encoding="utf-8") as capture_file:
+            capture_file.write(
+                json.dumps(
+                    {
+                        "command": args.command,
+                        "session_id": args.session_id,
+                        "model": args.model,
+                        "effort": args.effort,
+                    }
+                )
+                + "\n"
+            )
     if args.command == "turn":
         compact_at_pct = float(os.environ[FAKE_COMPACT_AT_PCT_ENV_VAR])
         sys.exit(asyncio.run(_run_turn(args.session_id, args.prompt, compact_at_pct)))

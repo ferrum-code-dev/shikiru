@@ -15,11 +15,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from fake_agent.turns import FAKE_PROCESS_CAPTURE_FILENAME, FAKE_PROCESS_CAPTURE_MARKER
 
-from shikiru.agents.contracts import Rung, role_dir
+from shikiru.agents.contracts import FailureKind, Rung, role_dir
 from shikiru.bootstrap import build_engine
 from shikiru.config.loader import validate_project_config_text
 from shikiru.config.settings import (
+    AgentConfig,
     LoggingConfig,
     RepoConfig,
 )
@@ -101,6 +103,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
 
     from shikiru.agents.registry import AgentRegistry
+    from shikiru.config.settings import Settings
     from shikiru.domain.commands import Command
     from shikiru.domain.runs import Run
     from shikiru.process import ProcessResult
@@ -129,6 +132,45 @@ class _ResolutionCase:
     expected_command_status: CommandStatus
     expected_escalation_status: EscalationStatus
     expected_override: Rung | None = None
+
+
+@dataclass(frozen=True)
+class _TakeoverRungCase:
+    selected_rung: Rung
+    interactive_model: str
+    interactive_effort: str | None
+    next_rung: Rung | None
+    resumed_agent: str
+    resumed_model: str
+    preserves_session: bool
+
+
+_TAKEOVER_RUNG_CASES = (
+    pytest.param(
+        _TakeoverRungCase(
+            selected_rung=Rung(agent="fake", model="fake-2", effort="high"),
+            interactive_model="fake-2",
+            interactive_effort="high",
+            next_rung=Rung(agent="fake", model="fake-3", effort="low"),
+            resumed_agent="fake",
+            resumed_model="fake-3",
+            preserves_session=True,
+        ),
+        id="same-agent-model-and-effort-apply-to-takeover-and-next-turn",
+    ),
+    pytest.param(
+        _TakeoverRungCase(
+            selected_rung=Rung(agent="fake2", model="fake-next", effort="high"),
+            interactive_model=FAKE_RUNG.model,
+            interactive_effort=FAKE_RUNG.effort,
+            next_rung=None,
+            resumed_agent="fake2",
+            resumed_model="fake-next",
+            preserves_session=False,
+        ),
+        id="different-agent-takeover-keeps-owned-session-for-next-turn-handoff",
+    ),
+)
 
 
 async def _append_and_wait(
@@ -1097,6 +1139,197 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
         connection.close()
 
 
+@pytest.mark.parametrize("case", _TAKEOVER_RUNG_CASES)
+async def test_an_escalated_rung_change_reaches_the_interactive_and_next_turn_processes(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    case: _TakeoverRungCase,
+) -> None:
+    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
+    implementer = settings.roles.implementer.model_copy(update={"ladder": [FAKE_RUNG]})
+    agents = {**settings.agents, "fake2": AgentConfig()}
+    settings = settings.model_copy(
+        update={
+            "roles": settings.roles.model_copy(update={"implementer": implementer}),
+            "agents": agents,
+        }
+    )
+    async with _operator_session(
+        tmp_path,
+        tmux_server,
+        titled=True,
+        settings=settings,
+        implementer_script=[
+            {"kind": "accept"},
+            {"kind": "fail", "failure_kind": FailureKind.AUTH.value},
+            {"kind": "accept"},
+        ],
+        leader_script=[{"kind": "changes_requested"}],
+    ) as (operator, task_id, original_run):
+        await operator.advance_until(lambda: operator.task(task_id).status is Status.ESCALATED)
+        original_session_id = original_run.session_id
+        assert original_session_id is not None
+        run_directory = run_dir(operator.project_root, task_id)
+        capture = run_directory / FAKE_PROCESS_CAPTURE_FILENAME
+
+        await _select_takeover_rung(operator, task_id, case)
+        (run_directory / FAKE_PROCESS_CAPTURE_MARKER).touch()
+
+        taken = await operator.send(TakeOver(task_id=task_id, role=Role.IMPLEMENTER))
+        assert taken.status is CommandStatus.DONE
+        pane_pid, invocations = await _assert_taken_over_rung(
+            operator=operator,
+            tmux_server=tmux_server,
+            task_id=task_id,
+            original_run=original_run,
+            original_session_id=original_session_id,
+            case=case,
+            capture=capture,
+        )
+
+        if case.next_rung is not None:
+            next_rung = case.next_rung
+            changed_again = await operator.send(
+                SetRung(task_id=task_id, role=Role.IMPLEMENTER, rung=next_rung)
+            )
+            assert changed_again.status is CommandStatus.DONE
+
+            async def title_keeps_effective_and_pending_rungs() -> bool:
+                title = await operator.pane_title(task_id, Role.IMPLEMENTER)
+                return (
+                    f"fake:{case.interactive_model}/high" in title
+                    and f"next {next_rung.agent}:{next_rung.model}/low" in title
+                )
+
+            await wait_until(title_keeps_effective_and_pending_rungs, _TAKEOVER_REPL_WAIT_SECONDS)
+            assert await operator.pane_pid(task_id, Role.IMPLEMENTER) == pane_pid
+            assert [
+                json.loads(line) for line in capture.read_text(encoding="utf-8").splitlines()
+            ] == invocations
+
+        handed_back = await operator.send(HandBack(task_id=task_id, role=Role.IMPLEMENTER))
+        assert handed_back.status is CommandStatus.DONE
+        [escalation] = EscalationStore(operator.connection, operator.clock).list_open()
+        turns_before_retry = operator.turns(task_id)
+        retried = await operator.send(
+            Resolve(escalation_id=escalation.id, resolution=RetryResolution())
+        )
+        assert retried.status is CommandStatus.DONE
+
+        expected_resume_rung = case.next_rung or case.selected_rung
+        expected_agent = case.resumed_agent
+        expected_model = case.resumed_model
+        view_path = run_dir(operator.project_root, task_id) / "implementer" / "view.jsonl"
+
+        def resumed_turn_started() -> bool:
+            if operator.turns(task_id) <= turns_before_retry or not view_path.is_file():
+                return False
+            return any(
+                (row := json.loads(line))["signal"] == "SessionStarted"
+                and row["rung"]
+                == {
+                    "agent": expected_resume_rung.agent,
+                    "model": expected_resume_rung.model,
+                    "effort": expected_resume_rung.effort,
+                }
+                for line in view_path.read_text(encoding="utf-8").splitlines()
+            )
+
+        await operator.advance_until(resumed_turn_started)
+        resumed_run = max(
+            (
+                run
+                for run in operator.runs.for_task(task_id)
+                if run.role is Role.IMPLEMENTER and run.agent == expected_agent
+            ),
+            key=lambda run: run.id,
+        )
+        expected_session_id = (
+            original_session_id if case.preserves_session else resumed_run.session_id
+        )
+        assert expected_session_id is not None
+
+        def resumed_process_started() -> bool:
+            return any(
+                (invocation := json.loads(line))["command"] == "turn"
+                and invocation["session_id"] == expected_session_id
+                and invocation["model"] == expected_model
+                and invocation["effort"] == expected_resume_rung.effort
+                for line in capture.read_text(encoding="utf-8").splitlines()
+            )
+
+        await wait_until(resumed_process_started, _TAKEOVER_REPL_WAIT_SECONDS)
+        assert resumed_run.model == expected_model
+        if case.preserves_session:
+            assert resumed_run.id == original_run.id
+            assert resumed_run.session_id == original_session_id
+        else:
+            assert resumed_run.id != original_run.id
+            assert resumed_run.session_id != original_session_id
+
+
+async def _assert_taken_over_rung(
+    operator: _Operator,
+    *,
+    tmux_server: TmuxServer,
+    task_id: str,
+    original_run: Run,
+    original_session_id: str,
+    case: _TakeoverRungCase,
+    capture: Path,
+) -> tuple[str, list[dict[str, Any]]]:
+    expected_invocation = {
+        "command": "interactive",
+        "session_id": original_session_id,
+        "model": case.interactive_model,
+        "effort": case.interactive_effort,
+    }
+
+    def interactive_invocation_started() -> bool:
+        if not capture.is_file():
+            return False
+        capture_text = capture.read_text(encoding="utf-8")
+        if not capture_text.endswith("\n"):
+            return False
+        return expected_invocation in [json.loads(line) for line in capture_text.splitlines()]
+
+    await wait_until(interactive_invocation_started, _TAKEOVER_REPL_WAIT_SECONDS)
+    pane = operator.task(task_id).panes[Role.IMPLEMENTER]
+    await _wait_for_repl(tmux_server, pane)
+    capture_text = await asyncio.to_thread(capture.read_text, encoding="utf-8")
+    invocations = [json.loads(line) for line in capture_text.splitlines()]
+    owned = operator.runs.get_taken_over(task_id, Role.IMPLEMENTER)
+    assert owned is not None
+    expected_live_rung = (
+        case.selected_rung if case.selected_rung.agent == original_run.agent else FAKE_RUNG
+    )
+    assert (owned.agent, owned.model, owned.effort, owned.session_id) == (
+        original_run.agent,
+        expected_live_rung.model,
+        expected_live_rung.effort,
+        original_session_id,
+    )
+    pane_pid = await operator.pane_pid(task_id, Role.IMPLEMENTER)
+    current_title = await operator.pane_title(task_id, Role.IMPLEMENTER)
+    assert f"fake:{expected_live_rung.model}/" in current_title
+    if case.selected_rung.agent != original_run.agent:
+        assert (
+            f"next {case.selected_rung.agent}:{case.selected_rung.model}/"
+            f"{case.selected_rung.effort}"
+        ) in current_title
+    return pane_pid, invocations
+
+
+async def _select_takeover_rung(operator: _Operator, task_id: str, case: _TakeoverRungCase) -> None:
+    changed = await operator.send(
+        SetRung(task_id=task_id, role=Role.IMPLEMENTER, rung=case.selected_rung)
+    )
+    assert changed.status is CommandStatus.DONE
+    before_takeover = await operator.pane_title(task_id, Role.IMPLEMENTER)
+    assert "fake:fake-1/" in before_takeover
+    assert f"next {case.selected_rung.agent}:{case.selected_rung.model}/high" in before_takeover
+
+
 def _failed_report_row(signal_path: Path) -> dict[str, Any] | None:
     if not signal_path.is_file():
         return None
@@ -1375,21 +1608,36 @@ async def _operator_session(
     *,
     tmux_override: Tmux | None = None,
     titled: bool = False,
+    settings: Settings | None = None,
+    implementer_script: list[dict[str, object]] | None = None,
+    leader_script: list[dict[str, object]] | None = None,
 ) -> AsyncGenerator[tuple[_Operator, str, Run]]:
     await init_project_repo(tmp_path)
-    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "stall"}, {"kind": "accept"}])
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        implementer_script
+        if implementer_script is not None
+        else [{"kind": "stall"}, {"kind": "accept"}],
+    )
+    if leader_script is not None:
+        await set_role_script(tmux_server, Role.LEADER, leader_script)
     clock = FakeClock(TASK_CREATED_AT)
     tmux = tmux_override if tmux_override is not None else build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
+    resolved_settings = settings or engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     if titled:
         packaged_titles = validate_project_config_text(MINIMAL_PROJECT_CONFIG).dashboard.titles
-        settings = settings.model_copy(
-            update={"dashboard": settings.dashboard.model_copy(update={"titles": packaged_titles})}
+        resolved_settings = resolved_settings.model_copy(
+            update={
+                "dashboard": resolved_settings.dashboard.model_copy(
+                    update={"titles": packaged_titles}
+                )
+            }
         )
     engine = build_engine(
         tmp_path,
-        settings,
+        resolved_settings,
         clock=clock,
         tmux=tmux,
         registry=build_registry(),

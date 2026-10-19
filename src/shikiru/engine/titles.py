@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED, Usage
+from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED, Rung, Usage
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.levels import usage_level
 from shikiru.domain.runs import NO_USAGE, RunStatus, context_title, cost_title
@@ -109,6 +109,11 @@ def _flag_segments(task: Task, *, taken_over: bool) -> tuple[tuple[str, str], ..
     return tuple(segments)
 
 
+def _rung_label(rung: Rung) -> str:
+    effort = f"/{rung.effort}" if rung.effort is not None else ""
+    return f"{rung.agent}:{rung.model}{effort}"
+
+
 class TaskTitles:
     """Sets `task`'s window/pane titles and window state from `dashboard.titles` (06 §5.3).
 
@@ -140,9 +145,17 @@ class TaskTitles:
         )
 
     async def _refresh_pane(self, task: Task, role: Role, pane_id: str) -> None:
-        rung = pick_rung(task, role, self._settings)
+        configured_rung = pick_rung(task, role, self._settings)
         run = self._active_run(task.id, role)
         taken_over = run is not None and run.status is RunStatus.TAKEN_OVER
+        effective_rung = (
+            Rung(agent=run.agent, model=run.model, effort=run.effort)
+            if run is not None
+            else configured_rung
+        )
+        pending_rung = (
+            f" · next {_rung_label(configured_rung)}" if effective_rung != configured_rung else ""
+        )
         usage = run.usage if run is not None else NO_USAGE
         usage_reported = run.usage_reported if run is not None else None
         template = getattr(self._settings.dashboard.titles, role.value)
@@ -153,9 +166,10 @@ class TaskTitles:
             "role": role.value,
             "role_label": role.value.capitalize(),
             "glyph": GLYPH_OPERATOR if taken_over else ROLE_GLYPHS[role],
-            "agent": rung.agent,
-            "model": rung.model,
-            "effort": rung.effort if rung.effort is not None else "",
+            "agent": effective_rung.agent,
+            "model": effective_rung.model,
+            "effort": effective_rung.effort if effective_rung.effort is not None else "",
+            "pending_rung": pending_rung,
             "iteration": task.iteration,
             "step": task.step.value if task.step is not None else "",
             "status": task.status.value,
@@ -181,6 +195,7 @@ class TaskTitles:
                 "agent": PRIMARY_TEXT_COLOR,
                 "model": PRIMARY_TEXT_COLOR,
                 "effort": SECONDARY_TEXT_COLOR,
+                "pending_rung": SECONDARY_TEXT_COLOR,
                 "iteration": SECONDARY_TEXT_COLOR,
                 "context": self._context_color(usage, usage_reported),
                 "cost": cost_color,

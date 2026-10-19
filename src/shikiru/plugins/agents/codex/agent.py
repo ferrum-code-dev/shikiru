@@ -27,10 +27,13 @@ from shikiru.plugins.agents.codex.options import (
     CODEX_BUNDLED_MODELS_ARGV,
     CODEX_COMMAND,
     CODEX_HOME_ENV_VAR,
+    CONFIG_FLAG,
     GIT_DIRS_ARGV,
     GIT_DIRS_TIMEOUT_SECONDS,
     LOGIN_STATUS_ARGV,
+    MODEL_FLAG,
     NO_DAEMON_FLAG,
+    REASONING_EFFORT_CONFIG,
     RESUME_SUBCOMMAND,
     TESTED_CODEX_VERSION,
     VERSION_ARGV,
@@ -42,7 +45,7 @@ from shikiru.plugins.agents.codex.turn import CodexTurnSequence, context_window
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from shikiru.agents.contracts import AgentContext, HeadlessAgent, Turn, TurnSpec
+    from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung, Turn, TurnSpec
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
 
@@ -135,16 +138,21 @@ class CodexAgent:
             ),
         )
 
-    def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]:
-        """Return Codex's interactive resume command for a headless session."""
+    def interactive_command(self, session_id: str, run_dir: Path, rung: Rung) -> Sequence[str]:
+        """Return Codex's interactive resume command for a headless session and rung."""
         del run_dir
-        return (
+        argv = [
             CODEX_COMMAND,
             RESUME_SUBCOMMAND,
             NO_DAEMON_FLAG,
             session_id,
-            *self._options.args,
-        )
+            MODEL_FLAG,
+            rung.model,
+        ]
+        if rung.effort is not None:
+            argv.extend((CONFIG_FLAG, f'{REASONING_EFFORT_CONFIG}="{rung.effort}"'))
+        argv.extend(self._options.args)
+        return tuple(argv)
 
     async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
         """Check Codex's binary, version, native access and each model's context window."""

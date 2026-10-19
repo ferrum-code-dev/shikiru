@@ -93,8 +93,8 @@ class _FakeAgentAdapter:
     async def start_turn(self, spec: TurnSpec) -> Turn:
         return await self._delegate.start_turn(spec)
 
-    def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]:
-        return self._delegate.interactive_command(session_id, run_dir)
+    def interactive_command(self, session_id: str, run_dir: Path, rung: Rung) -> Sequence[str]:
+        return self._delegate.interactive_command(session_id, run_dir, rung)
 
     async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
         return await self._delegate.doctor(models)
@@ -197,6 +197,7 @@ async def test_legacy_agent_session_keeps_unknown_metadata_and_fake_behavior(
         agent=agents.get(_TEST_AGENT_NAME),
         session_id="legacy-session",
         run_dir=run_dir(engine_env.project_root, task.id),
+        rung=selection.rung,
     )
     [stored] = engine_env.runs.for_task(task.id)
 

@@ -302,10 +302,11 @@ class Agent(Protocol):
         """Start one new or resumed agent turn."""
         ...
 
-    def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]:
-        """Return the command that resumes `session_id` for an operator take-over.
+    def interactive_command(self, session_id: str, run_dir: Path, rung: Rung) -> Sequence[str]:
+        """Return the command that resumes `session_id` on `rung` for an operator take-over.
 
-        `run_dir` is the task's run directory; the command runs in the task root.
+        `rung.agent` owns `session_id`; `run_dir` is the task's run directory, and the command
+        runs in the task root.
         """
         ...
 

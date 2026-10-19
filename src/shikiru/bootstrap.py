@@ -883,6 +883,7 @@ def build_engine(
         events=events,
         project_root=project_root,
         project_name=resolved_settings.project.name,
+        settings=resolved_settings,
         cancel_task=task_supervisor.cancel_task,
         start_task=task_supervisor.start_task,
         refresh_titles=titles.refresh,

@@ -327,6 +327,8 @@ class TestFakeAgentContract(AgentContractSuite):
                     "interactive",
                     "--session-id",
                     _RESUMED_SESSION_ID,
+                    "--model",
+                    resumed_spec.rung.model,
                 ),
             ),
             InvocationCase(

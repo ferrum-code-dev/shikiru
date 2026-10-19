@@ -393,5 +393,5 @@ Nineteenth-review scope: [operator follow-up](../docs/tui-feedback-nineteenth-re
 Twenty-first-review scope: [operator follow-up](../docs/tui-feedback-twenty-first-review.md).
 
 - [x] Task 250: Smaller task picker with twenty-task pages
-- [ ] Task 251: Effective rung changes for escalated sessions
+- [x] Task 251: Effective rung changes for escalated sessions
 - [ ] Task 252: Close the Start engine popup on success

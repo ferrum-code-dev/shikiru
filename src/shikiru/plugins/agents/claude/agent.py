@@ -23,6 +23,8 @@ from shikiru.plugins.agents.claude.headless import ClaudeHeadless
 from shikiru.plugins.agents.claude.options import (
     ADD_DIR_FLAG,
     CLAUDE_COMMAND,
+    EFFORT_FLAG,
+    MODEL_FLAG,
     RESUME_FLAG,
     ClaudeOptions,
 )
@@ -32,7 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from shikiru.agents.contracts import AgentContext, HeadlessAgent, Turn, TurnSpec
+    from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung, Turn, TurnSpec
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
 
@@ -78,16 +80,13 @@ class ClaudeAgent:
             environment=self._turn_environment,
         )
 
-    def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]:
-        """Return Claude's interactive resume command for a headless session."""
-        return (
-            CLAUDE_COMMAND,
-            RESUME_FLAG,
-            session_id,
-            ADD_DIR_FLAG,
-            str(run_dir),
-            *self._options.args,
-        )
+    def interactive_command(self, session_id: str, run_dir: Path, rung: Rung) -> Sequence[str]:
+        """Return Claude's interactive resume command for a headless session and rung."""
+        argv = [CLAUDE_COMMAND, RESUME_FLAG, session_id, MODEL_FLAG, rung.model]
+        if rung.effort is not None:
+            argv.extend((EFFORT_FLAG, rung.effort))
+        argv.extend((ADD_DIR_FLAG, str(run_dir), *self._options.args))
+        return tuple(argv)
 
     async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
         """Check Claude's binary, version and authentication."""

@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from shikiru.agents.contracts import Agent, CheckResult, Turn, TurnSpec
+    from shikiru.agents.contracts import Agent, CheckResult, Rung, Turn, TurnSpec
 
 _TIMEOUT = timedelta(seconds=30)
 _VALID_TRIAGE: dict[str, Any] = {
@@ -106,8 +106,8 @@ class _AgentWithoutHeadless:
         del spec
         raise AssertionError
 
-    def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]:
-        del session_id, run_dir
+    def interactive_command(self, session_id: str, run_dir: Path, rung: Rung) -> Sequence[str]:
+        del session_id, run_dir, rung
         return ()
 
     async def doctor(self, models: Sequence[str]) -> list[CheckResult]:

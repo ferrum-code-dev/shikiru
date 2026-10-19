@@ -11,9 +11,11 @@ Agents are **code plugins**. The engine depends only on this module, and each pl
 
 Rungs select only `{agent, model, effort}`. Agent options are a plugin-owned extension point, including access options when a plugin has a concrete agent-specific need for them. Core Shikiru has no provider-access configuration or credential handling. For the current Claude and Codex plugins, the Operator configures access through each agent's native project or user files and environment, and the plugins pass the Operator's environment to their child processes.
 
+**Plugin migration.** `Agent.interactive_command` receives the effective `Rung` in addition to the session id and run directory. Agent plugins must accept this argument and apply its model and effort when the rung belongs to the session's agent; there is no fallback to an older command signature or model.
+
 **Turn model (D1).** Every turn is one agent process running headless on a session: the first turn creates the session, every later turn resumes it, also after a model change, a stall, a quota wait, an operator take-over or an engine restart. The process reads nothing from stdin (it is closed), shows no dialogs, and exits when the turn ends. Its structured output stream is the only signal source: no hooks, no screen.
 
-**Interactive sessions (take over, 03 §9).** `interactive_command` runs the agent's own TUI on the role's session while the Operator has that role taken over; the TUI process lives only in the role's tmux pane. When that pane is lost, or the Operator exits the TUI, the role is handed back and its next headless turn resumes the same session (verified for Claude, §4; Codex's interactive resume is in §5). A taken-over role is never restored as taken over after a respawn: the Operator takes over again to continue interactively.
+**Interactive sessions (take over, 03 §9).** `interactive_command` runs the agent's own TUI on the role's session while the Operator has that role taken over; the TUI process lives only in the role's tmux pane. It receives the effective rung, so a same-agent model or effort change applies when the interactive process starts. The current TUI keeps its settings while it is running. A rung for another agent cannot resume this session: take-over stays with the session's agent, and the next headless turn starts the configured agent in a fresh session under the normal report hand-off rule. When the pane is lost, or the Operator exits the TUI, the role is handed back and its next headless turn resumes the same session (verified for Claude, §4; Codex's interactive resume is in §5). A taken-over role is never restored as taken over after a respawn: the Operator takes over again to continue interactively.
 
 ```python
 @dataclass(frozen=True)
@@ -67,7 +69,7 @@ class Agent(Protocol):
     """An agent CLI plugin."""
     name: str
     async def start_turn(self, spec: TurnSpec) -> Turn: ...
-    def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]: ...   # take over (03 §9); also the resume command
+    def interactive_command(self, session_id: str, run_dir: Path, rung: Rung) -> Sequence[str]: ...   # take over (03 §9); effective same-agent model and effort
     async def doctor(self, models: Sequence[str]) -> list[CheckResult]: ...   # binary, version, native access; models: the ladders' models for this agent
     def headless(self) -> HeadlessAgent | None: ...
 
@@ -147,7 +149,7 @@ Small, tested building blocks for plugins:
 1. Each recorded stream (stdout lines, stderr, exit code, plus session-log excerpts when the plugin reads them) replays through the parser to the expected signal sequence and satisfies obligations 1–5.
 2. Recorded error streams map to the expected `FailureKind` and `resets_at`; unmapped text yields `UNKNOWN`.
 3. Recorded compaction output yields `Compacted`. Scenarios exercise threshold crossing within one turn and repeated compaction within one turn, each continuing to one `TurnEnded`. A context failure followed by compaction and a rerun yields one `Turn` ending in `TurnEnded`; a failed compaction or a second context failure yields `TurnFailed(OTHER)`.
-4. Argv for a new turn, a resumed turn, a model change and the compaction setting; Operator-provided environment pass-through; `interactive_command`.
+4. Argv for a new turn, a resumed turn, a model change and the compaction setting; Operator-provided environment pass-through; `interactive_command` with the session id and same-agent model/effort.
 
 **Live checks** (`SHIKIRU_E2E=1`, scratch repository):
 1. A first turn whose prompt points at a prompt file → `SessionStarted`, a valid report through `shikiru report`, `TurnEnded`.
@@ -215,7 +217,7 @@ The plugin chooses the uuid of a new session. A model change is the next `--resu
 - Recovery: on a context failure, `/compact` and the same prompt once more. *Verify* that `/compact` succeeds on an overflowed session; if it does not, the turn fails with `OTHER`.
 
 **Other**:
-- `interactive_command`: `claude --resume <id> --add-dir <run_dir> <args>` (verified: its turns land in the same session, and the next headless `--resume` sees them).
+- `interactive_command`: `claude --resume <id> --model <m> --effort <e> --add-dir <run_dir> <args>` (omit `--effort` when unset; verified: its turns land in the same session, and the next headless `--resume` sees them).
 - `headless().ask`: `claude -p --output-format json --json-schema <s> --model <m> --effort <e> --safe-mode --tools "" --no-session-persistence` → `structured_output`.
 
 ## 5. Codex plugin (`plugins/agents/codex`) — verified with 0.159.2
@@ -275,7 +277,7 @@ After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thr
 **Usage**: tokens from `turn.completed.usage` (cumulative for the thread on resume, so already session totals); context from the rollout; no cost is reported anywhere → `cost_usd = None`, `cost_basis = "unknown"`.
 
 **Other**:
-- `interactive_command`: `codex resume --no-daemon <id> <args>`. The TUI otherwise resumes the thread in the shared app-server daemon, which keeps the thread's writer after the TUI exits, so the next headless `exec resume` fails with "already has an active writer" (verified 0.157.1). An untrusted worktree shows Codex's trust dialog (trust or quit); quitting hands back.
+- `interactive_command`: `codex resume --no-daemon <id> -m <m> -c model_reasoning_effort="<e>" <args>` (omit the effort override when unset). The TUI otherwise resumes the thread in the shared app-server daemon, which keeps the thread's writer after the TUI exits, so the next headless `exec resume` fails with "already has an active writer" (verified 0.157.1). An untrusted worktree shows Codex's trust dialog (trust or quit); quitting hands back.
 - `headless().ask`: `codex exec --ephemeral --json --output-schema <file> -m <m> -c model_reasoning_effort="<e>" -s read-only --skip-git-repo-check` → the final `agent_message`.
 - Turns inherit the Operator's process environment, with `TurnSpec.env` overriding it for that turn. Headless calls and doctor inherit the process environment unchanged. Codex uses `CODEX_HOME` from that environment; Shikiru uses the same home to read model caches and rollout files.
 - Doctor checks `codex login status` for the built-in provider. When `$CODEX_HOME/config.toml` selects a configured custom provider, the login check reports that provider access is Operator-managed and unverified; the CLI login status does not establish custom-provider access.

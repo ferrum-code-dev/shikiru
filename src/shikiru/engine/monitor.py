@@ -131,6 +131,7 @@ class TurnMonitor:
                     agent=agent,
                     task=task,
                     role=role,
+                    rung=rung,
                     run_id=run_id,
                     run_dir=run_dir,
                     tool_running=tool_running,
@@ -155,13 +156,18 @@ class TurnMonitor:
         agent: Agent,
         task: Task,
         role: Role,
+        rung: Rung,
         run_id: int,
         run_dir: Path,
         tool_running: bool,
     ) -> tuple[bool, TurnEnded | TurnFailed | None]:
         if isinstance(signal, SessionStarted):
             self._sessions.record_session_started(
-                run_id=run_id, agent=agent, session_id=signal.session_id, run_dir=run_dir
+                run_id=run_id,
+                agent=agent,
+                session_id=signal.session_id,
+                run_dir=run_dir,
+                rung=rung,
             )
             await self._refresh_titles(task)
         elif isinstance(signal, Message):

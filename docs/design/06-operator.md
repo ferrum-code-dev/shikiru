@@ -95,12 +95,14 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 ### 5.3 Titles and decorations
 
 - **Titles** use the `dashboard.titles` templates. Task window names use `dashboard.titles.window` unchanged, without a Shikiru or project prefix. The packaged shell title is `Project folder · {cwd}`; an explicit title override is preserved. Fields:
-  - `task_id`, `title`, `project`, `role`, `role_label`, `glyph`, `agent`, `model`, `effort`
+  - `task_id`, `title`, `project`, `role`, `role_label`, `glyph`, `agent`, `model`, `effort`: effective settings of the recorded role session when one exists, otherwise the selected rung
+  - `pending_rung`: an optional `· next agent:model/effort` suffix when the configured rung differs from the effective session
   - `iteration`, `step`, `status`
   - `context`, `cost`: preformatted (`42%`, `$1.84`), `–` when the agent reports no value (04 §1)
   - `context` colour: classified on the whole percentage the title shows (39.6 shows `40%`, so it is amber): sage below `dashboard.titles.context_warn_pct` (40), amber from there below `context_alert_pct` (60), dusty rose at 60 and above, using the §6.1 palette. Unreported context stays secondary grey with `–`. These pane-title thresholds are separate from the subscription-limit gauges (`dashboard.gauges`: 50/90, §6.1).
   - `flags`: glyph-prefixed hold and state words for existing templates; `flags_text`: the same readable words without glyphs, including `operator` while a role is taken over
   - `active`, `queued`, `max_parallel`, `cwd`
+- When the configured rung names another agent, Take over remains on the agent that owns the current session. The pending title suffix shows the selected agent; that agent starts in a fresh session at the next automated turn, with the report hand-off described in 03 §4.1.
 - Role pane titles are re-applied from stored state whenever `LayoutGuard` creates or rebuilds panes, without waiting for a usage report or a task transition; no title state is persisted.
 - Packaged Leader and Implementer titles use the role word and `flags_text` without role or state glyph prefixes. The `glyph` and `flags` fields retain their existing values, so an explicit custom template that uses them keeps its chosen glyphs; Shikiru does not rewrite project configuration.
 - A role that is handed back, or rebuilt after its pane was lost, is titled as a view again: the `operator` flag, the `glyph` field and the `@shk_color`/`@shk_glyph` pane state return to the role's own values (or the `pause` state, while paused). The task's `intervention` hold, while another role is still taken over, keeps the `operator` flag in its role titles (03 §9).

@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from shikiru.agents.contracts import AgentContext, HeadlessAgent, Turn, TurnSpec
+    from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung, Turn, TurnSpec
     from shikiru.process import SubprocessRunner
 
 REPL_COMMAND = "fake-agent-repl"
@@ -69,9 +69,9 @@ class FakeAgent:
         """Build the fake CLI process sequence for contract scenarios."""
         return self._headless_turns.process_sequence(spec)
 
-    def interactive_command(self, session_id: str, run_dir: Path) -> Sequence[str]:
+    def interactive_command(self, session_id: str, run_dir: Path, rung: Rung) -> Sequence[str]:
         """Return the optional fake REPL command for a future operator take-over."""
-        return self._headless_turns.interactive_command(session_id, run_dir)
+        return self._headless_turns.interactive_command(session_id, run_dir, rung)
 
     async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
         """Report the fake CLI as available."""

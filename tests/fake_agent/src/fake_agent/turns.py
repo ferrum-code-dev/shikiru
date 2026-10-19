@@ -40,10 +40,13 @@ if TYPE_CHECKING:
     from pathlib import Path
     from typing import Any
 
+    from shikiru.agents.contracts import Rung
     from shikiru.process import SubprocessRunner
 
 FAKE_SESSION_ID_ENV_VAR = "SHIKIRU_FAKE_SESSION_ID"
 FAKE_COMPACT_AT_PCT_ENV_VAR = "SHIKIRU_FAKE_COMPACT_AT_PCT"
+FAKE_PROCESS_CAPTURE_FILENAME = ".fake-processes.jsonl"
+FAKE_PROCESS_CAPTURE_MARKER = ".fake-process-capture"
 _CLI_MODULE = "fake_agent.turn_cli"
 _TURN_SUBCOMMAND = "turn"
 _COMPACT_SUBCOMMAND = "compact"
@@ -51,6 +54,7 @@ _SESSION_ARGUMENT = "--session-id"
 _PROMPT_ARGUMENT = "--prompt"
 _MODEL_ARGUMENT = "--model"
 _EFFORT_ARGUMENT = "--effort"
+_CAPTURE_PROCESSES_ARGUMENT = "--capture-processes-to"
 INITIAL_CONTEXT_USAGE_PERCENT = 40.0
 WORK_CONTEXT_USAGE_PERCENT = 20.0
 COMPACTED_CONTEXT_USAGE_PERCENT = 10.0
@@ -258,16 +262,22 @@ class FakeHeadlessTurnAgent:
             new_session_id=self._new_session_id,
         )
 
-    def interactive_command(self, session_id: str, run_dir: Path) -> tuple[str, ...]:
-        del run_dir
-        return (
+    def interactive_command(self, session_id: str, run_dir: Path, rung: Rung) -> tuple[str, ...]:
+        argv = [
             sys.executable,
             "-m",
             _CLI_MODULE,
             "interactive",
             _SESSION_ARGUMENT,
             session_id,
-        )
+            _MODEL_ARGUMENT,
+            rung.model,
+        ]
+        if rung.effort is not None:
+            argv.extend((_EFFORT_ARGUMENT, rung.effort))
+        if (run_dir / FAKE_PROCESS_CAPTURE_MARKER).is_file():
+            argv.extend((_CAPTURE_PROCESSES_ARGUMENT, str(run_dir / FAKE_PROCESS_CAPTURE_FILENAME)))
+        return tuple(argv)
 
     def headless(self) -> FakeHeadlessAgent:
         return FakeHeadlessAgent(self._asks)

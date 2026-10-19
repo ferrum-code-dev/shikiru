@@ -315,7 +315,7 @@ class AgentContractSuite:
                 _expect(
                     tuple(
                         restarted.interactive_command(
-                            case.interactive_session_id, case.spec.run_dir
+                            case.interactive_session_id, case.spec.run_dir, case.spec.rung
                         )
                     )
                     == case.expected_interactive_command,

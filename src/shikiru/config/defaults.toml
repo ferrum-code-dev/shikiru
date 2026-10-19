@@ -86,8 +86,8 @@ panes = [
 
 [dashboard.titles]
 window = "{task_id} {title:.24}"
-leader = "{role_label} · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags_text}"
-implementer = "{role_label} · {agent}:{model}/{effort} · iter {iteration} · ctx {context} · {cost} {flags_text}"
+leader = "{role_label} · {agent}:{model}/{effort}{pending_rung} · iter {iteration} · ctx {context} · {cost} {flags_text}"
+implementer = "{role_label} · {agent}:{model}/{effort}{pending_rung} · iter {iteration} · ctx {context} · {cost} {flags_text}"
 system = "Shikiru · {project} · {active}/{max_parallel} active · {queued} queued"
 shell = "Project folder · {cwd}"
 context_warn_pct = 40

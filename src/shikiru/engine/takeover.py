@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import shlex
 from typing import TYPE_CHECKING, NoReturn
 
+from shikiru.agents.contracts import Rung
 from shikiru.domain.commands import COMMAND_ID_KEY
 from shikiru.domain.events import EventKind
+from shikiru.domain.ladder import pick_rung
 from shikiru.domain.tasks import Hold, Role, Status, Task
 from shikiru.engine.turns import turn_environment
 from shikiru.errors import PROCESS_FAILURES, CommandRejectedError
@@ -18,6 +21,8 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
     from pathlib import Path
 
+    from shikiru.config.settings import Settings
+    from shikiru.domain.runs import Run
     from shikiru.engine.agents import AgentPool
     from shikiru.engine.layout_guard import LayoutGuard
     from shikiru.store.events import EventLog
@@ -49,6 +54,7 @@ class Takeover:
         events: EventLog,
         project_root: Path,
         project_name: str,
+        settings: Settings,
         cancel_task: Callable[[str], Awaitable[None]],
         start_task: Callable[[str], Awaitable[None]],
         refresh_titles: Callable[[Task], Awaitable[None]],
@@ -64,6 +70,7 @@ class Takeover:
         self._events = events
         self._project_root = project_root
         self._project_name = project_name
+        self._settings = settings
         self._cancel_task = cancel_task
         self._start_task = start_task
         self._refresh_titles = refresh_titles
@@ -106,24 +113,34 @@ class Takeover:
             raise CommandRejectedError(message)
         try:
             await self._ensure_interactive(
-                self._current(task.id), role, owned.agent, owned.session_id, command_id
+                self._current(task.id), role, owned, owned.session_id, command_id
             )
         except PROCESS_FAILURES as error:
             await self._release_unstarted(task, role, owned.id, error)
         await self._refresh_titles(self._current(task.id))
 
     async def _ensure_interactive(
-        self, task: Task, role: Role, agent: str, session_id: str, command_id: int
+        self, task: Task, role: Role, run: Run, session_id: str, command_id: int
     ) -> None:
         pane = _role_pane(task, role)
         if await self._interactive_is_live(pane, command_id):
             return
+        configured_rung = pick_rung(task, role, self._settings)
+        rung = (
+            configured_rung
+            if configured_rung.agent == run.agent
+            else Rung(agent=run.agent, model=run.model, effort=run.effort)
+        )
         root = task_root(self._project_root, task.id)
         task_run_dir = run_dir(self._project_root, task.id)
-        argv = self._agents.get(agent).interactive_command(session_id, task_run_dir)
+        argv = self._agents.get(run.agent).interactive_command(session_id, task_run_dir, rung)
         env = turn_environment(task, role, task_run_dir, self._project_name)
         await self._tmux.respawn_pane(pane, argv, env=env, cwd=root)
         pid = await self._tmux.display(pane, FORMAT_PANE_PID)
+        with self._atomically():
+            if (run.model, run.effort) != (rung.model, rung.effort):
+                self._runs.set_rung(run.id, rung)
+            self._runs.set_session(run.id, session_id, shlex.join(argv))
         await self._tmux.set_pane_option(pane, TAKEOVER_PANE_OPTION, _live_marker(command_id, pid))
 
     async def _interactive_is_live(self, pane: str, command_id: int) -> bool:

@@ -72,10 +72,10 @@ class SessionManager:
         return SessionSelection(rung, None, history_exists, run)
 
     def record_session_started(
-        self, *, run_id: int, agent: Agent, session_id: str, run_dir: Path
+        self, *, run_id: int, agent: Agent, session_id: str, run_dir: Path, rung: Rung
     ) -> None:
         """Persist the session id and the command an operator can use to resume it."""
-        command = shlex.join(agent.interactive_command(session_id, run_dir))
+        command = shlex.join(agent.interactive_command(session_id, run_dir, rung))
         self._runs.set_session(run_id, session_id, command)
 
     def close_task(self, task_id: str) -> None:

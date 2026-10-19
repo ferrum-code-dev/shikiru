@@ -127,11 +127,11 @@ A turn is one agent process (D1, 04 §1): `Agent.start_turn(spec)` spawns it as 
 | Situation | Next turn |
 |---|---|
 | Run with a `session_id`, same rung | Resume it |
-| Rung change, same agent | Resume it with the new model and effort |
+| Rung change, same agent | Resume it with the new model and effort on the next headless turn or interactive take-over |
 | No session yet, or a different agent | New session. If the task already has reports, the first turn is `handoff` (request, latest reports, facts) |
 
 - **Turn environment**: Shikiru adds `SHIKIRU_PROJECT`, `SHIKIRU_TASK`, `SHIKIRU_ROLE`, `SHIKIRU_RUN_DIR` and `SHIKIRU_SLOT` to the Operator's inherited environment. Agent-native access settings and environment remain under Operator control and pass to child processes unchanged.
-- The run row is created with the session; `session_id` and the resume command (`interactive_command`, shell-quoted) are stored when `SessionStarted` arrives.
+- The run row is created with the session; `session_id` and the resume command (`interactive_command`, shell-quoted with the effective rung) are stored when `SessionStarted` arrives and refreshed after an interactive resume.
 - **Task end**: nothing to exit; the run is closed.
 
 ### 4.2 TurnMonitor
@@ -356,7 +356,7 @@ Every action is scoped to **one task**. Other tasks, including parallel ones on 
 **Take over** (`TakeOver(task, role)`, by `Takeover`):
 1. If a turn is running on the task, `turn.stop()` and cancel the current step; the session persists.
 2. Set the `intervention` hold on **that task**, mark the run `taken_over` and append `taken_over`, in one transaction (§7 replay).
-3. Respawn the role's pane in the task root with the plugin's `interactive_command(session_id, run dir)`, with the turn environment of §4.1. The Operator answers any dialog the TUI shows. With no session yet, take over is rejected.
+3. Respawn the role's pane in the task root with the plugin's `interactive_command(session_id, run dir, rung)`, with the turn environment of §4.1. If the configured rung uses the session's agent, the interactive resume receives that model and effort and records them as the run's effective settings. If the configured rung names another agent, the take-over stays with the current session and its agent; the next headless turn starts the new agent in a fresh session and uses the normal report hand-off from §4.1. The title shows the effective session rung and the configured next rung when they differ. The Operator answers any dialog the TUI shows. With no session yet, take over is rejected.
    If the respawn fails (a tmux error or timeout), the take over is released in one transaction (the run is live again, `intervention` is dropped when no other role of the task is taken over, `takeover_lost` is appended and notified), the step's flow restarts, and the command is rejected with a message that the pane could not be started and that nothing is held: a rejected command never leaves a hold behind. The Operator retries with a new `take_over`.
 - **While held**: no turns start for the task. The pane border turns operator magenta and the title shows the `operator` flag (06 §5.3).
 
