@@ -93,6 +93,23 @@ async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) 
     code, stdout, stderr = await _cli(tmp_path, "stop")
     assert code == 0
     assert stderr == ""
+    assert "Applied" in stdout
+    assert "command 0" in stdout
+    assert "already stopped" in stdout.lower()
+    assert "session unchanged" in stdout
+    assert "\x1b[" not in stdout
+
+
+async def test_cli_uninitialized_project_error_keeps_recovery_and_exit_code(
+    tmp_path: Path,
+) -> None:
+    code, stdout, stderr = await _cli(tmp_path, "status")
+
+    assert code == 3
+    assert stdout == ""
+    assert str(tmp_path) in stderr
+    assert "shikiru init" in stderr
+    assert "\x1b[" not in stderr
 
 
 async def test_cli_json_init_submit_status_and_stop(tmp_path: Path) -> None:

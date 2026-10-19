@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Literal
 
 from rich.console import Group
 from rich.panel import Panel
+from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
@@ -16,21 +17,42 @@ from shikiru.domain.reports import (
     TriageReport,
     Verdict,
 )
+from shikiru.errors import NotInitialisedError, ShikiruError
+from shikiru.operator.commands import AckStatus
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import format_age
-from shikiru.ui.glyphs import GLYPH_ENGINE
+from shikiru.ui.console import supports_osc8
+from shikiru.ui.glyphs import (
+    GLYPH_DONE,
+    GLYPH_ENGINE,
+    GLYPH_PENDING,
+    GLYPH_STALLED,
+    GLYPH_STOPPED,
+)
+from shikiru.ui.section import BOLD_PRIMARY, BOLD_STEEL, grey
 from shikiru.ui.size import format_size
 from shikiru.ui.status import status_visual
 from shikiru.ui.strip import TaskStrip
-from shikiru.ui.tokens import ALERT_COLOR, ENGINE_COLOR, STYLE_BOLD
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    AMBER,
+    ENGINE_COLOR,
+    PRIMARY_TEXT_COLOR,
+    SECONDARY_TEXT_COLOR,
+    STYLE_BOLD,
+    SUCCESS_COLOR,
+)
 
 if TYPE_CHECKING:
-    from rich.console import RenderableType
+    from pathlib import Path
+
+    from rich.console import Console, RenderableType
 
     from shikiru.agents.contracts import CostBasis
     from shikiru.config.settings import Settings
     from shikiru.operator.commands import Ack
     from shikiru.operator.doctor import DoctorReport
+    from shikiru.operator.lifecycle import StartResult
     from shikiru.operator.queries import StatusView, TaskDetail, TaskSummary
     from shikiru.operator.sessions import SessionRow
 
@@ -43,13 +65,54 @@ TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 USAGE_TABLE_TITLE = "Usage"
 QUOTA_TABLE_TITLE = "Quota windows"
 REPORTS_TABLE_TITLE = "Reports and verdicts"
-ACK_PANEL_TITLE = "Command"
 DOCTOR_PANEL_TITLE = "Shikiru doctor"
 DOCTOR_OK_LABEL = "ok"
 DOCTOR_FAIL_LABEL = "fail"
 NO_ROWS = "none"
 NO_VALUE = "—"
 SESSIONS_TABLE_TITLE = "Shikiru sessions"
+STOPPED_RESULT_FIELD = "stopped"
+STOPPING_RESULT_FIELD = "stopping"
+
+
+def init_renderable(config_path: Path, *, console: Console) -> RenderableType:
+    """Render `init --yes` with its config path and model-review warning."""
+    absolute_path = config_path.resolve()
+    path_text = grey(str(absolute_path))
+    if supports_osc8(console):
+        path_text.stylize(Style(link=absolute_path.as_uri()))
+    result = _outcome_line(GLYPH_DONE, "Initialized", SUCCESS_COLOR)
+    result.append(" ")
+    result.append_text(path_text)
+    result.no_wrap = True
+    warning = Text.assemble(
+        (GLYPH_STALLED, f"{STYLE_BOLD} {AMBER}"),
+        (" Generated model fields are placeholders; ", AMBER),
+        ("edit role ladders and run ", PRIMARY_TEXT_COLOR),
+        ("shikiru doctor", BOLD_STEEL),
+        (" before start.", PRIMARY_TEXT_COLOR),
+    )
+    return Group(result, warning)
+
+
+def start_renderable(result: StartResult) -> Text:
+    """Render the known engine and session effects of `start`."""
+    label = "Engine started" if result.started else "Engine already running"
+    text = _outcome_line(GLYPH_DONE, label, SUCCESS_COLOR)
+    text.append(" · Session ensured ", style=SECONDARY_TEXT_COLOR)
+    text.append(result.session, style=BOLD_PRIMARY)
+    return text
+
+
+def error_renderable(error: ShikiruError) -> RenderableType:
+    """Render a domain error with its cause and any known recovery action."""
+    text = Text()
+    text.append(GLYPH_STOPPED, style=f"{STYLE_BOLD} {ALERT_COLOR}")
+    text.append(" ")
+    text.append(str(error), style=PRIMARY_TEXT_COLOR)
+    if isinstance(error, NotInitialisedError):
+        return Group(text, grey("Run shikiru init in the repository root."))
+    return text
 
 
 def status_renderable(view: StatusView, *, settings: Settings, width: int) -> RenderableType:
@@ -123,12 +186,27 @@ def task_detail_renderable(detail: TaskDetail, *, settings: Settings, width: int
     )
 
 
-def ack_renderable(ack: Ack) -> RenderableType:
-    """Render a command acknowledgement."""
-    text = f"{ack.status.value} · command {ack.id}"
-    if ack.message:
-        text = f"{text}\n{ack.message}"
-    return Panel(text, title=ACK_PANEL_TITLE)
+def ack_renderable(
+    ack: Ack, *, stopping: bool = False, kill_session: bool = False
+) -> RenderableType:
+    """Render an acknowledgement and any known stop effects."""
+    match ack.status:
+        case AckStatus.DONE:
+            label, glyph, color = "Applied", GLYPH_DONE, SUCCESS_COLOR
+        case AckStatus.QUEUED:
+            label, glyph, color = "Pending", GLYPH_PENDING, AMBER
+        case AckStatus.REJECTED:
+            label, glyph, color = "Rejected", GLYPH_STOPPED, ALERT_COLOR
+    text = _outcome_line(glyph, label, color)
+    text.append(" · command ", style=SECONDARY_TEXT_COLOR)
+    text.append(str(ack.id), style=BOLD_PRIMARY)
+    stop_effect = _stop_effect(ack, kill_session) if stopping else None
+    if stop_effect is not None:
+        text.append(f" · {stop_effect}", style=SECONDARY_TEXT_COLOR)
+    elif ack.message:
+        text.append(" · ", style=SECONDARY_TEXT_COLOR)
+        text.append(ack.message, style=PRIMARY_TEXT_COLOR)
+    return text
 
 
 def doctor_renderable(report: DoctorReport) -> Table:
@@ -301,6 +379,27 @@ def _cost_basis(cost_basis: CostBasis | Literal["mixed"]) -> str:
 
 def _slot(task: TaskSummary) -> str:
     return str(task.slot) if task.slot is not None else NO_VALUE
+
+
+def _outcome_line(glyph: str, label: str, color: str) -> Text:
+    text = Text()
+    text.append(glyph, style=f"{STYLE_BOLD} {color}")
+    text.append(" ")
+    text.append(label, style=f"{STYLE_BOLD} {color}")
+    return text
+
+
+def _stop_effect(ack: Ack, kill_session: bool) -> str | None:
+    if ack.status is not AckStatus.DONE or ack.result is None:
+        return None
+    if ack.result.get(STOPPED_RESULT_FIELD) is False:
+        engine_effect = "Engine already stopped"
+    elif ack.result.get(STOPPING_RESULT_FIELD) is True:
+        engine_effect = "Engine stopped"
+    else:
+        return None
+    session_effect = "session closed" if kill_session else "session unchanged"
+    return f"{engine_effect} · {session_effect}"
 
 
 def _stack(blocks: list[RenderableType]) -> RenderableType:

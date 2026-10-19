@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
 import typer
+import typer.rich_utils as typer_rich_utils
 from pydantic import BaseModel
-from rich.console import Console
 
 from shikiru.agents.contracts import parse_rung
 from shikiru.bootstrap import (
@@ -30,7 +30,10 @@ from shikiru.cli.context import CliState, project_root, state_from
 from shikiru.cli.render import (
     ack_renderable,
     doctor_renderable,
+    error_renderable,
+    init_renderable,
     session_rows_renderable,
+    start_renderable,
     status_renderable,
 )
 from shikiru.cli.report import report_command
@@ -52,10 +55,22 @@ from shikiru.operator.lifecycle import (
     PACKAGE_NAME,
 )
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
+from shikiru.ui.console import human_console
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    NEUTRAL_BORDER_COLOR,
+    PRIMARY_TEXT_COLOR,
+    SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
+    STYLE_BOLD,
+    STYLE_DIM,
+)
 from shikiru.view_log import CLI_VIEW_COMMAND
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable
+
+    from rich.console import RenderableType
 
     from shikiru.config.settings import Settings
     from shikiru.operator.services import OperatorServices
@@ -67,6 +82,35 @@ ATTACH_OPTION = typer.Option("--attach", help="Attach to the tmux session after 
 KILL_SESSION_OPTION = typer.Option("--kill-session", help="Kill the project tmux session.")
 WATCH_OPTION = typer.Option("--watch")
 PROBE_OPTION = typer.Option("--probe", help="Run live agent contract checks.")
+
+
+def _configure_typer_help_palette() -> None:
+    typer_rich_utils.STYLE_OPTION = f"{STYLE_BOLD} {STEEL_BLUE}"
+    typer_rich_utils.STYLE_SWITCH = f"{STYLE_BOLD} {STEEL_BLUE}"
+    typer_rich_utils.STYLE_NEGATIVE_OPTION = f"{STYLE_BOLD} {ALERT_COLOR}"
+    typer_rich_utils.STYLE_NEGATIVE_SWITCH = f"{STYLE_BOLD} {ALERT_COLOR}"
+    typer_rich_utils.STYLE_TYPES = SECONDARY_TEXT_COLOR
+    typer_rich_utils.STYLE_TYPES_SEPARATOR = f"{STYLE_DIM} {SECONDARY_TEXT_COLOR}"
+    typer_rich_utils.STYLE_USAGE = STEEL_BLUE
+    typer_rich_utils.STYLE_USAGE_COMMAND = f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}"
+    typer_rich_utils.STYLE_DEPRECATED = ALERT_COLOR
+    typer_rich_utils.STYLE_DEPRECATED_COMMAND = f"{STYLE_DIM} {SECONDARY_TEXT_COLOR}"
+    typer_rich_utils.STYLE_HELPTEXT_FIRST_LINE = PRIMARY_TEXT_COLOR
+    typer_rich_utils.STYLE_HELPTEXT = f"{STYLE_DIM} {SECONDARY_TEXT_COLOR}"
+    typer_rich_utils.STYLE_OPTION_HELP = PRIMARY_TEXT_COLOR
+    typer_rich_utils.STYLE_OPTION_DEFAULT = f"{STYLE_DIM} {SECONDARY_TEXT_COLOR}"
+    typer_rich_utils.STYLE_OPTION_ENVVAR = f"{STYLE_DIM} {SECONDARY_TEXT_COLOR}"
+    typer_rich_utils.STYLE_REQUIRED_SHORT = ALERT_COLOR
+    typer_rich_utils.STYLE_REQUIRED_LONG = f"{STYLE_DIM} {ALERT_COLOR}"
+    typer_rich_utils.STYLE_OPTIONS_PANEL_BORDER = f"{STYLE_DIM} {NEUTRAL_BORDER_COLOR}"
+    typer_rich_utils.STYLE_COMMANDS_PANEL_BORDER = f"{STYLE_DIM} {NEUTRAL_BORDER_COLOR}"
+    typer_rich_utils.STYLE_COMMANDS_TABLE_FIRST_COLUMN = f"{STYLE_BOLD} {STEEL_BLUE}"
+    typer_rich_utils.STYLE_ERRORS_PANEL_BORDER = ALERT_COLOR
+    typer_rich_utils.STYLE_ERRORS_SUGGESTION = f"{STYLE_DIM} {SECONDARY_TEXT_COLOR}"
+    typer_rich_utils.STYLE_ABORTED = ALERT_COLOR
+
+
+_configure_typer_help_palette()
 
 app = typer.Typer(name=PACKAGE_NAME, no_args_is_help=True)
 app.command(name="report", hidden=True)(report_command)
@@ -125,13 +169,16 @@ def init(
             config_path = result.config_path
     except ShikiruError as error:
         _fail(error)
-    message = f"initialized {config_path}"
-    if yes:
-        message += (
-            "; review the generated default model placeholders, edit role ladders as needed, "
-            "and run `shikiru doctor` before `shikiru start`"
+    value = {"config": str(config_path)}
+    if yes and not state.json_output:
+        console = human_console()
+        console.print(init_renderable(config_path, console=console))
+    else:
+        _emit_value(
+            state,
+            value,
+            f"initialized {config_path}",
         )
-    _emit_value(state, {"config": str(config_path)}, message)
 
 
 @app.command()
@@ -147,8 +194,7 @@ def start(
         result = _run(build_lifecycle().start(root, state.overrides, attach=attach))
     except ShikiruError as error:
         _fail(error)
-    human = "engine started" if result.started else "engine already running"
-    _emit_value(state, result, human)
+    _emit_value(state, result, start_renderable(result))
 
 
 @app.command()
@@ -164,7 +210,7 @@ def stop(
         result = _run(build_lifecycle().stop(root, state.overrides, kill_session=kill_session))
     except ShikiruError as error:
         _fail(error)
-    emit_ack(state, result)
+    emit_ack(state, result, stopping=True, kill_session=kill_session)
 
 
 @app.command(name="ls")
@@ -184,7 +230,7 @@ def list_sessions(
     if state.json_output or json_output:
         typer.echo(json.dumps([row.model_dump(mode="json") for row in rows]))
     else:
-        Console().print(session_rows_renderable(rows))
+        human_console().print(session_rows_renderable(rows))
 
 
 @app.command()
@@ -293,7 +339,7 @@ def doctor(
     if state.json_output:
         typer.echo(report.model_dump_json())
     else:
-        Console().print(doctor_renderable(report))
+        human_console().print(doctor_renderable(report))
     if not report.ok:
         raise typer.Exit(code=EXIT_GENERIC_ERROR)
 
@@ -379,7 +425,7 @@ async def _status_loop(
         if state.json_output:
             typer.echo(view.model_dump_json())
         else:
-            console = Console()
+            console = human_console()
             console.print(status_renderable(view, settings=settings, width=console.width))
 
     render()
@@ -391,24 +437,30 @@ async def _status_loop(
         await services.reader.watch(on_change)
 
 
-def emit_ack(state: CliState, ack: Ack) -> None:
+def emit_ack(
+    state: CliState,
+    ack: Ack,
+    *,
+    stopping: bool = False,
+    kill_session: bool = False,
+) -> None:
     """Render an acknowledgement and map rejected commands to their exit code."""
     if state.json_output:
         typer.echo(ack.model_dump_json())
     else:
-        Console().print(ack_renderable(ack))
+        human_console().print(ack_renderable(ack, stopping=stopping, kill_session=kill_session))
     if ack.status is AckStatus.REJECTED:
         raise typer.Exit(code=EXIT_COMMAND_REJECTED)
 
 
-def _emit_value(state: CliState, value: object, human: str) -> None:
+def _emit_value(state: CliState, value: object, human: str | RenderableType) -> None:
     if state.json_output:
         if isinstance(value, BaseModel):
             typer.echo(value.model_dump_json())
         else:
             typer.echo(json.dumps(value, default=str))
     elif human:
-        typer.echo(human)
+        human_console().print(human)
 
 
 def _run[T](operation: Awaitable[T]) -> T:
@@ -416,5 +468,5 @@ def _run[T](operation: Awaitable[T]) -> T:
 
 
 def _fail(error: ShikiruError) -> NoReturn:
-    typer.echo(str(error), err=True)
+    human_console(stderr=True).print(error_renderable(error))
     raise typer.Exit(code=error.exit_code)

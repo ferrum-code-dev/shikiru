@@ -33,11 +33,14 @@ The CLI gets an Operator into a project, in and out of its session, and back out
 | hidden: `engine`, `dash`, `palette`, `view`, `report` | Process entrypoints. `view T-n ROLE` is the live view a role pane runs (§5.1) |
 
 **Output**:
-- Human output uses the `ui` renderables and tokens (§6): panels, tables, strips.
-- Spinners show on long operations.
-- OSC 8 links for paths.
-- `NO_COLOR` and non-TTY output switch to monochrome.
-- `--json` prints pydantic models.
+- Human command output uses the shared Focus ledger palette and renderables (§6) with open sections and unframed outcomes; it inherits the terminal's font and background.
+- Native Typer help keeps its existing layout, wording, ordering, defaults and wrapping; the shared semantic palette changes its styles only. Hidden process entrypoints stay hidden.
+- `init --yes` prints the absolute config path and warns that generated model fields are placeholders to review before starting. `start` says whether it started or reused the engine and names the ensured session. Successful `stop` says the engine stopped or was already stopped and whether the session was left unchanged or closed by the request. A pending acknowledgement keeps its command ID and reason without claiming an effect; a rejection keeps its command ID and cause.
+- Domain errors preserve their cause and relevant context. When the project is not initialized, the CLI names the missing project state and directs the Operator to run `shikiru init` from the repository root.
+- Known local paths use OSC 8 links only in terminals known to support them; the full literal path remains readable when links are unavailable.
+- `NO_COLOR`, `TERM=dumb` and non-TTY output are monochrome and linear, without cursor control. Bold and dim meaning remains readable under `NO_COLOR`; reduced-color terminals use Rich's automatic color support.
+- `--json`, bare task IDs and versions, MCP stdio, pane streams and evidence exports keep their existing machine-readable output. Human renderables treat path, error, task and other stored values as literal text, not Rich markup.
+- Long human operations may use Rich's existing progress facilities only on interactive human output, with completion and error cleanup; protocol stdout never contains progress.
 
 ## 3. `init` wizard
 
