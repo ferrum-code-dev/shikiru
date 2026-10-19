@@ -82,14 +82,21 @@ STOPPED_RESULT_FIELD = "stopped"
 STOPPING_RESULT_FIELD = "stopping"
 
 
-def init_renderable(config_path: Path, *, console: Console) -> RenderableType:
-    """Render `init --yes` with its config path and model-review warning."""
+def init_renderable(
+    config_path: Path,
+    *,
+    console: Console,
+    include_placeholder_warning: bool,
+) -> RenderableType:
+    """Render the config path and the applicable model-review warning."""
     absolute_path = config_path.resolve()
     config_text = _path_text(absolute_path, linked=supports_osc8(console))
     result = _outcome_line(GLYPH_DONE, "Initialized", SUCCESS_COLOR)
     result.append(" ")
     result.append_text(config_text)
     result.no_wrap = True
+    if not include_placeholder_warning:
+        return result
     warning = Text.assemble(
         (GLYPH_STALLED, f"{STYLE_BOLD} {AMBER}"),
         (" Generated model fields are placeholders; ", AMBER),

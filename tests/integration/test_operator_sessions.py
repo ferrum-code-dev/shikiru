@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
-from textual.widgets import ListView
+from textual.widgets import ListView, Static
 from typer.testing import CliRunner
 
 from shikiru.cli.app import app
@@ -28,8 +28,10 @@ from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR, SESSION_PREFIX
+from tests.support.cells import styles, visible_widget_text
 from tests.support.clock import FakeClock
 from tests.support.store import seed_task
+from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -593,15 +595,18 @@ async def test_attach_rejects_an_option_like_name_without_using_it_as_a_target()
 
 
 @pytest.mark.asyncio
-async def test_session_picker_can_scroll_to_and_select_rows_beyond_small_viewport() -> None:
+async def test_session_picker_can_scroll_to_and_select_rows_beyond_small_viewport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NO_COLOR", "1")
     rows = tuple(
         SessionRow(
             session=f"{SESSION_PREFIX}project-{index}",
-            project_dir=f"/projects/project-{index}",
+            project_dir=(f"/projects/alpha/beta/gamma/delta/epsilon/zeta/project-{index}"),
             engine_state="up",
             running=index,
-            queued=0,
-            escalated=0,
+            queued=2,
+            escalated=3,
         )
         for index in range(5)
     )
@@ -609,14 +614,55 @@ async def test_session_picker_can_scroll_to_and_select_rows_beyond_small_viewpor
 
     async with app_instance.run_test(size=(72, 12)) as pilot:
         picker = app_instance.query_one("#session-picker-list", ListView)
+        selected_row = picker.children[-1].query_one(Static)
         picker.focus()
         for _ in rows[1:]:
             await pilot.press("down")
         assert picker.index == len(rows) - 1
         assert picker.scroll_y > 0
+        await pilot.resize_terminal(40, 8)
+        await wait_until(
+            lambda: (
+                0 < picker.size.width <= 40
+                and picker.region.bottom <= app_instance.size.height
+                and rows[-1].session in visible_widget_text(selected_row, picker)
+            ),
+            timeout=1,
+        )
+        visible_after_resize = visible_widget_text(selected_row, picker)
+        assert "alpha/beta/gamma" in visible_after_resize
+        assert "up" in visible_after_resize
+        assert "running 4" in visible_after_resize
+        assert "queued 2" in visible_after_resize
+        assert all(style[0] for style in styles(selected_row, rows[-1].session))
+        await pilot.press("pagedown")
+        await wait_until(
+            lambda: "escalated 3" in visible_widget_text(selected_row, picker), timeout=1
+        )
+        assert picker.index == len(rows) - 1
         await pilot.press("enter")
+        await wait_until(lambda: app_instance.return_value == rows[-1], timeout=1)
 
     assert app_instance.return_value == rows[-1]
+
+
+@pytest.mark.asyncio
+async def test_session_picker_click_returns_the_exact_literal_session_row() -> None:
+    row = SessionRow(
+        session=f"{SESSION_PREFIX}O'Brien [group]",
+        project_dir="/projects/O'Brien [group]",
+        engine_state="up",
+        running=1,
+        queued=2,
+        escalated=3,
+    )
+    app_instance = SessionPicker((row,))
+
+    async with app_instance.run_test(size=(40, 12)) as pilot:
+        await pilot.click("#session-picker-list > ListItem")
+        await wait_until(lambda: app_instance.return_value == row, timeout=1)
+
+    assert app_instance.return_value == row
 
 
 @pytest.mark.asyncio

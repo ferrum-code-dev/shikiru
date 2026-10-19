@@ -1,8 +1,8 @@
 # CLI visual directions
 
-This is a design proposal for review, not a description of a shipped CLI redesign. It offers five composition systems for the whole human CLI, using Shikiru's existing colors, glyphs and terminal typography. The [interactive comparison](design/references/cli-style-options.html) is a browser prototype using the same sample data for each direction. The self-contained HTML page includes working browser mock flows for setup, submission, status, diagnostics and attachment, with shared in-memory state across all five compositions. It executes no shell commands, reads no projects and changes no configuration. This design task changes no runtime behavior. Samples are illustrative excerpts; they do not replace the information required by [Operator interfaces](design/06-operator.md).
+This document records the five visual directions and the selected Focus ledger policy. Native application behavior is normative in [Operator interfaces](design/06-operator.md); this document and the [interactive comparison](design/references/cli-style-options.html) provide design rationale and examples. The self-contained HTML page is an offline browser prototype using sample data and mock flows for setup, submission, status, diagnostics and attachment. It runs no shell commands, reads no projects and changes no configuration. Its output, interactions and browser rendering do not override native CLI behavior.
 
-**Selected: Focus ledger (2026-10-18).** The user chose this direction and requested concise, command-specific output while retaining every necessary detail. Existing Typer help keeps its layout, wording, ordering and defaults; only its palette and text attributes change. The HTML defaults to the refined Focus ledger; the earlier alternatives remain available for comparison. These are design alternatives, not five proposed application themes.
+**Selected: Focus ledger (2026-10-18).** The user chose this direction and requested concise, command-specific output while retaining every necessary detail. Existing Typer help keeps its layout, wording, ordering and defaults; only its palette and text attributes change. The HTML defaults to the refined Focus ledger; the earlier alternatives remain available for comparison. These are design alternatives, not five proposed application themes. Native CLI and TUI behavior follows the operator design; the HTML stays illustrative.
 
 | Direction | Primary structure | Main strength | Main cost |
 |---|---|---|---|
@@ -16,7 +16,7 @@ Focus ledger balances frequent `ls` and `status` reading with short lifecycle ou
 
 ## Selected output policy
 
-The 2026-10-18 feedback refines the original composition sketches below. Shorten output by removing repeated framing and grouping related facts. Keep required evidence within the responsibility of its command, with conditional detail when it is present. Add no new verbosity flags for this design work.
+The 2026-10-18 feedback refines the original composition sketches below. Shorten output by removing repeated framing and grouping related facts. Keep required evidence within the responsibility of its command, with conditional detail when it is present. Add no new verbosity flags for this design work. The selected native behavior is recorded in [Operator interfaces](design/06-operator.md).
 
 | Command | Concise output scope |
 |---|---|
@@ -26,15 +26,15 @@ The 2026-10-18 feedback refines the original composition sketches below. Shorten
 | `status T-n` | Task identity once, current state and blocker, report/verdict, timeline, branch and sessions when available. Keep evidence relevant to that task rather than repeating project-wide usage. |
 | `doctor` | One row per check, with outcome, name and detail; actionable failure cause and an aggregate result. `--probe` adds probe checks. |
 | `start` / `stop` | One outcome or acknowledgement, command identity when present and known engine/session effect. Preserve pending/rejected distinctions and relevant failure diagnostics. No repeated brand masthead or result panel. |
-| `init` | Existing seven-step interaction; Finish shows the written absolute config path and Doctor results. `--yes` adds its required placeholder/review warning. |
+| `init` | Existing seven-step interaction; Finish shows the written absolute config path and Doctor results. The human post-wizard result shares the init success treatment without a placeholder warning; `--yes` adds its required placeholder/review warning. |
 | Errors | Cause, relevant context and a known recovery action; preserve error exits and any necessary startup-output evidence. |
 | Submit/version/JSON/MCP | Existing bare task ID, bare version or protocol payload. No extra presentation text. |
 
-The mock help views are captured from the actual CLI at 24, 32, 40, 60 and 80 columns and retain their complete text. Their semantic palette mapping preserves bold/dim attributes. Help does not use the prototype's generic heading, grouping or framing helpers.
+The preview's help examples were captured from the actual CLI at 24, 32, 40, 60 and 80 columns and retain their complete text. They are reference captures; native Typer help is authoritative and preserves its current layout, wording, order, defaults and wrapping. Help does not use the prototype's generic heading, grouping or framing helpers.
 
 ## Shared visual contract
 
-The source of truth is the current [shared palette](../src/shikiru/palette.py), [glyph registry](../src/shikiru/ui/glyphs.py), [UI tokens](../src/shikiru/ui/tokens.py), [operator design](design/06-operator.md#61-tokens-and-glyphs) and [approved Focus Steel reference](design/references/focus-steel-approved.html). These proposed directions vary composition while preserving brand colors and command behavior. The contracts below describe intended implementation after selection, not capabilities delivered by the preview.
+The source of truth is the current [shared palette](../src/shikiru/palette.py), [glyph registry](../src/shikiru/ui/glyphs.py), [UI tokens](../src/shikiru/ui/tokens.py), [operator design](design/06-operator.md#61-tokens-and-glyphs) and [approved Focus Steel reference](design/references/focus-steel-approved.html). These compositions vary layout while preserving shared colors and command behavior. This contract guides the native implementation; the preview only illustrates it.
 
 | Token | Exact color | Treatment |
 |---|---|---|
@@ -287,7 +287,7 @@ One rectangular frame encloses a whole command result. Internal rules divide sec
 
 ## Command and state coverage
 
-The selected direction must eventually cover the following surface. The browser preview shows representative states; it does not implement this matrix. Composition may change after selection; payloads, side effects, acknowledgements and command eligibility remain unchanged.
+This matrix records the selected native presentation boundaries. The browser preview shows representative states but does not implement or override the matrix. Composition changes preserve payloads, side effects, acknowledgements and command eligibility.
 
 | Surface | Required treatment in every direction |
 |---|---|
@@ -295,8 +295,8 @@ The selected direction must eventually cover the following surface. The browser 
 | Root and command help | Preserve the implemented Typer Usage, Arguments, Options and Commands layout, exact descriptions, order, defaults and responsive wrapping. Apply shared colors and text attributes only. Add no masthead, new command groups or enclosing frame. Hidden commands stay hidden. Usage errors retain their cause, relevant usage and exit 2. |
 | Version | Preserve the bare version result; no masthead or report chrome. |
 | `ls`, `--host H` | Preserve session/project identity, directory, engine state and running/queued/escalated counts. Show remote host context when relevant. Counts retain their existing meanings; do not relabel escalated tasks as Home's grouped attention count. |
-| `attach [NAME]`, `--host H` | Direct attachment has no decorative interstitial. Multiple matches use the inline picker with the same project facts and selected-surface treatment. No new permanent navigation UI. |
-| `init` | Seven-step inline Textual wizard: repository, agents, trackers, caches, parallelism, integration mode and finish. Preserve model choices, validation, focus and doctor behavior. |
+| `attach [NAME]`, `--host H` | Direct attachment has no decorative interstitial. Multiple matches use the inline picker with the same session facts as `ls`, selected-surface highlighting and a monochrome focus cue. Keyboard and click selection, cancellation and compact resizing preserve access to all rows and controls. |
+| `init` | Seven-step inline Textual wizard: repository, agents, trackers, caches, parallelism, integration mode and finish. Preserve model choices, validation, drafts, focus and Doctor behavior. Finish shows the absolute written path and all real Doctor results with full details, including failures. |
 | `init --yes` | Show written config path, editable default-model placeholder warning and the required review/doctor next step. Writing config does not establish that the project is ready to start. |
 | `start`, `--attach` | Distinguish newly started from already running. Progress labels describe actual operations. Preserve session collision hints, lock readiness and early-exit diagnostics including engine output. Attachment remains the final transition. |
 | `stop`, `--kill-session` | Preserve the acknowledgement and command ID where currently returned. Do not report success before the existing shutdown guarantee. Clearly describe whether the session was retained or closed when known. |
@@ -308,16 +308,16 @@ The selected direction must eventually cover the following surface. The browser 
 | Command outcomes | Keep pending/applied/rejected distinct. Engine-down queueing and elapsed acknowledgement wait have different explanations; timeout is not rejection. Preserve returned result/error and command identity where available. |
 | Errors | Diagnostic errors show a readable cause and actionable recovery when known, on stderr. Rejected command acknowledgements retain their existing stdout path. Preserve exit codes: 0 success, 1 error, 2 usage, 3 not initialized, 4 command rejected. Do not introduce a new structured-error protocol as part of visual work. |
 | Empty and unavailable data | State explicit empty cases such as no sessions, no queued tasks or no open escalations. Missing usage is unknown, never zero. Distinguish unavailable/error from an empty successful query. |
-| Non-TTY and `NO_COLOR` | Monochrome output, readable words and glyphs, no dependence on color. Preserve useful weight cues where terminal capabilities allow. Non-TTY has no painted surfaces, animations, cursor control or OSC links. Do not require ANSI for alignment or meaning. |
+| One-shot `NO_COLOR`, `TERM=dumb` and non-TTY | One-shot human reports are monochrome and linear, with readable words and glyphs and no dependence on color. Preserve useful weight cues where terminal capabilities allow; non-TTY reports have no painted surfaces, animations, cursor control or OSC links. This does not describe inline Textual wizard/picker screens, which remain interactive. Do not require ANSI for alignment or meaning. |
 | JSON | Existing raw model data only: no masthead, panels, styling, glyph decoration or success prose. Preserve field names and types. Current JSON watch output is successive model documents; changing its framing is a separate protocol task. Existing errors are not silently converted into invented JSON objects. |
 | `mcp` | Stdio remains exclusively the MCP transport; no branded output or progress on protocol stdout. |
 | Hidden `engine`, `dash`, `palette`, `view`, `report` | Preserve their process-entrypoint and protocol contracts. Do not wrap pane streams or exported reports in new command chrome, or expose hidden entrypoints through redesigned help. Existing shared UI token improvements may flow through intentionally. |
 
-The normative operator design requests OSC 8 path links, but the current CLI does not implement them. Any implementation belongs to the later selected-design task and must check terminal support; browser links prove no OSC 8 behavior. Static narrow output wraps complete facts into labeled lines; the preview's compact switch illustrates that requirement and is not a new CLI option. For visual comparison, all five use the same sample facts within each command. Each `ls` excerpt includes both projects. Each status excerpt shows engine up, slots 2/4, three queued tasks, one escalation, T-12 verifying with the Leader, T-15 paused with the Implementer, and E-3 open for four minutes. Each initializer excerpt shows the same repository and unchosen agent models at step 2 of 7. Layout and grouping distinguish the options.
+The native CLI uses OSC 8 path links only when the terminal is known to support them and always retains the full literal path; browser links do not prove terminal support. Static narrow output wraps complete facts into labeled lines; the preview's compact switch illustrates that requirement and is not a CLI option. For visual comparison, all five use the same sample facts within each command. Each `ls` excerpt includes both projects. Each status excerpt shows engine up, slots 2/4, three queued tasks, one escalation, T-12 verifying with the Leader, T-15 paused with the Implementer, and E-3 open for four minutes. Each initializer excerpt shows the same repository and unchosen agent models at step 2 of 7. Layout and grouping distinguish the options.
 
 ## Initial snapshot preview verification
 
-The comparison includes 35 command/state examples, all five compositions, requested terminal widths of 80/60/40 columns, truecolor, approximate 256/16-color palettes, `NO_COLOR` and linear non-TTY output. The reduced-color views are approximations; actual ANSI colors depend on the terminal palette. Wizard fields and attachment rows are illustrative, and watch shows one static frame. Remote host context comes from the requested host argument; the JSON row schema gains no host field.
+The comparison includes 35 command/state examples, all five compositions, requested terminal widths of 80/60/40 columns, truecolor, approximate 256/16-color palettes, `NO_COLOR` and linear non-TTY one-shot reports. The reduced-color views are approximations; actual ANSI colors depend on the terminal palette. Wizard fields and attachment rows are illustrative interactive flows, and watch shows one static frame. Remote host context comes from the requested host argument; the JSON row schema gains no host field.
 
 Proposed human wording uses the operator design's Applied/Pending/Rejected labels while raw acknowledgement status values remain `done`/`queued`/`rejected`. Stop while already down completes as already stopped; a stop acknowledgement wait can remain pending while the engine is up. `start --attach` replaces the CLI with tmux and prints no CLI success result afterwards. Session-retained/closed confirmations illustrate information available after successful lifecycle completion, rather than current CLI wording.
 
@@ -338,10 +338,8 @@ Controls above the terminal are assessment controls, not proposed CLI flags or a
 
 Interactive follow-up verification: final browser checks passed 175 assertions across all five flows, including validation, focus, state persistence, shared lifecycle state, task progression and keyboard/click attachment. Sweeps of 2,625 composition/command/width/output combinations at 360- and 736-pixel content widths reported no script errors or horizontal overflow; desktop and narrow monochrome screenshots were visually reviewed. These are offline prototype checks, not application integration tests.
 
-## Implementation after selection
+## Native implementation status
 
-With Focus ledger selected, a separately scoped runtime implementation task can be planned; this proposal changes neither application code nor normative operator behavior. That task should establish the chosen shared identity/section/row/outcome primitives in `ui`, apply them to human CLI renderers and help, and align the existing init wizard and attachment picker without changing their interaction contracts. Wiring stays in `bootstrap.py`; command/query logic stays in the operator layer.
-
-Review real terminal output at wide and compact widths, in truecolor, reduced-color terminals, `NO_COLOR` and non-TTY captures. Verify outcomes at command boundaries, especially bare task IDs, error exits, JSON purity, MCP stdout and unknown/empty states. Tests should protect observable behavior and accessibility cues rather than wording or layout snapshots. Preserve current user edits in `docs/design/06-operator.md`; update normative documentation only when the selected implementation is delivered. Run `uv run poe check` before any implementation commit, as required by the repository conventions.
+Tasks 256–259 delivered the shared human CLI presentation, help palette and layout preservation, concise session and Doctor output, Focus project/task status, and the Focus-themed initializer and attachment picker. Task 259 was accepted on 2026-10-20 after full normal and TERM=dumb NO_COLOR=1 gates. The [operator design](design/06-operator.md) is the normative record of native behavior. The HTML remains an offline assessment prototype; its mock data and browser flows are not evidence of runtime behavior.
 
 Focus ledger refinement verification (2026-10-18): wide and narrow browser runs each passed 320 checks and a 2,625-combination sweep, with no script errors or horizontal overflow. The checks compare all three help examples against actual CLI captures in color, monochrome and non-TTY modes across requested widths, preserve the five mock flows and machine-output contracts, and verify concise unframed lifecycle results. Only proposal files and task tracking changed.

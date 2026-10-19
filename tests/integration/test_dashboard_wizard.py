@@ -19,7 +19,10 @@ from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
-from tests.support.cells import rendered_select_label
+from tests.support.cells import (
+    rendered_select_label,
+    visible_widget_text,
+)
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
 from tests.support.waiting import wait_until
 
@@ -147,6 +150,13 @@ async def _click_next(pilot: Pilot[InitWizardResult | None]) -> None:
     await pilot.click("#wizard-next")
 
 
+async def _click_back(pilot: Pilot[InitWizardResult | None], page_id: str) -> None:
+    button = pilot.app.query_one("#wizard-back")
+    await wait_until(lambda: not button.has_class("-active"), timeout=1)
+    await pilot.click("#wizard-back")
+    await wait_until(lambda: pilot.app.query_one(page_id).display, timeout=1)
+
+
 async def _focus_with_tab(pilot: Pilot[InitWizardResult | None], selector: str) -> None:
     target = pilot.app.query_one(selector)
     for _ in range(12):
@@ -159,7 +169,12 @@ async def _focus_with_tab(pilot: Pilot[InitWizardResult | None], selector: str) 
 async def _set_agents_and_trackers(pilot: Pilot[InitWizardResult | None], tmp_path: Path) -> None:
     await _click_next(pilot)
     await _click_next(pilot)
-    assert str(pilot.app.query_one("#wizard-error", Static).render()).strip()
+    error = pilot.app.query_one("#wizard-error", Static)
+    error_text = str(error.render()).strip()
+    assert error_text
+    shell = pilot.app.query_one("#wizard-shell")
+    visible_error = visible_widget_text(error, shell)
+    assert " ".join(error_text.split()) in " ".join(visible_error.split())
     assert not (tmp_path / ".shikiru" / "config.toml").exists()
     await _replace_input(pilot, "#leader-ladder", "missing:model:high")
     await _click_next(pilot)
@@ -201,9 +216,13 @@ async def _assert_doctor_viewport(
     assert report.region.y < body.region.bottom
     assert report.region.bottom > body.region.y
     body.focus()
+    await pilot.press("home")
+    await wait_until(lambda: body.scroll_y == 0, timeout=1)
+    assert report_content in visible_widget_text(report, body)
     await pilot.press("end")
     await wait_until(lambda: body.scroll_y == body.max_scroll_y, timeout=1)
     assert report.region.bottom <= body.region.bottom
+    assert visible_widget_text(report, body).strip()
 
 
 def _private_doctor_runtime(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
@@ -225,6 +244,16 @@ async def test_init_wizard_walkthrough_saves_choices_and_shows_doctor(
         assert app.query_one("#wizard-page-0").display
         assert app.query_one("#wizard-next").region.bottom <= app.size.height
         await _set_agents_and_trackers(pilot, tmp_path)
+        await _click_back(pilot, "#wizard-page-2")
+        assert app.query_one("#wizard-page-2").display
+        assert pilot.app.query_one("#trackers", Input).value == "tasks/plan.md, docs/todo.md"
+        await _click_back(pilot, "#wizard-page-1")
+        assert app.query_one("#wizard-page-1").display
+        assert pilot.app.query_one("#leader-ladder", Input).value == "fake:smoke:low"
+        assert pilot.app.query_one("#implementer-ladder", Input).value == "fake:strong:high"
+        assert pilot.app.query_one("#helper-ladder", Input).value == "fake:smoke:low"
+        await _click_next(pilot)
+        await _click_next(pilot)
         await _set_caches_parallelism_and_integration(pilot)
         assert app.query_one("#wizard-page-6").display
         assert app.query_one("#leader-ladder", Input).value == "fake:smoke:low"
@@ -238,6 +267,7 @@ async def test_init_wizard_walkthrough_saves_choices_and_shows_doctor(
             lambda: bool(str(app.query_one("#doctor-report", Static).render())), timeout=60
         )
         await _assert_doctor_viewport(pilot, "PASS · repository:")
+        assert str(config_path.resolve()) in str(app.query_one("#doctor-report", Static).render())
         await pilot.click("#wizard-finish")
 
     result = cast("InitWizardResult", app.return_value)
@@ -257,7 +287,7 @@ async def test_init_wizard_walkthrough_saves_choices_and_shows_doctor(
     assert probe_directories == []
 
 
-async def test_init_wizard_keyboard_focus_lands_on_run_doctor_when_next_leaves(
+async def test_init_wizard_keeps_run_doctor_focus_after_compact_resize(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     await _git_project(tmp_path)
@@ -265,12 +295,63 @@ async def test_init_wizard_keyboard_focus_lands_on_run_doctor_when_next_leaves(
     app = await _app(tmp_path)
 
     async with app.run_test(size=(64, 20)) as pilot:
-        await _set_agents_and_trackers(pilot, tmp_path)
+        await _click_next(pilot)
+        visible_model = "fake:compact-visible:high"
+        await _replace_input(pilot, "#leader-ladder", visible_model)
+        await _replace_input(pilot, "#implementer-ladder", "fake:strong:high")
+        await _replace_input(pilot, "#helper-ladder", "fake:smoke:low")
+        leader_ladder = app.query_one("#leader-ladder", Input)
+        assert await pilot.click("#leader-ladder")
+        await pilot.resize_terminal(40, 12)
+        body = app.query_one("#wizard-body")
+        await wait_until(
+            lambda: (
+                leader_ladder.content_region.height > 0
+                and body.content_region.height > 0
+                and visible_model in visible_widget_text(leader_ladder, body)
+            ),
+            timeout=1,
+        )
+        assert app.focused is leader_ladder
+        await _replace_input(pilot, "#leader-ladder", "fake:")
+        await _click_next(pilot)
+        error = app.query_one("#wizard-error", Static)
+        shell = app.query_one("#wizard-shell")
+
+        def validation_is_visible() -> bool:
+            error_text = str(error.render()).strip()
+            visible_error = visible_widget_text(error, shell)
+            return (
+                bool(error_text)
+                and " ".join(error_text.split()) in " ".join(visible_error.split())
+                and "fake:" in visible_widget_text(leader_ladder, body)
+            )
+
+        await wait_until(validation_is_visible, timeout=1)
+        assert app.focused is leader_ladder
+        await _replace_input(pilot, "#leader-ladder", visible_model)
+        await _click_next(pilot)
+        await _replace_input(pilot, "#trackers", "tasks/plan.md, docs/todo.md")
+        await _click_next(pilot)
         await _set_caches_parallelism_and_integration(pilot)
         assert app.query_one("#wizard-page-6").display
-        await pilot.pause()
-
-        assert app.focused is app.query_one("#wizard-finish")
+        finish_button = app.query_one("#wizard-finish")
+        await wait_until(lambda: app.focused is finish_button, timeout=1)
+        await pilot.resize_terminal(40, 12)
+        navigation_buttons = tuple(
+            app.query_one(selector)
+            for selector in ("#wizard-back", "#wizard-finish", "#wizard-cancel")
+        )
+        await wait_until(
+            lambda: all(
+                button.region.width > 0
+                and button.region.right <= app.size.width
+                and button.region.bottom <= app.size.height
+                for button in navigation_buttons
+            ),
+            timeout=1,
+        )
+        assert app.focused is finish_button
 
 
 async def test_init_wizard_keeps_config_and_exposes_failed_doctor_report(
@@ -309,6 +390,7 @@ async def test_init_wizard_keeps_config_and_exposes_failed_doctor_report(
         )
 
         await _assert_doctor_viewport(pilot, "FAIL · tmux:")
+        assert str(config_path.resolve()) in str(app.query_one("#doctor-report", Static).render())
         await pilot.click("#wizard-finish")
 
     result = cast("InitWizardResult", app.return_value)

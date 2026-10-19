@@ -169,9 +169,15 @@ def init(
     except ShikiruError as error:
         _fail(error)
     value = {"config": str(config_path)}
-    if yes and not state.json_output:
+    if not state.json_output:
         console = human_console()
-        console.print(init_renderable(config_path, console=console))
+        console.print(
+            init_renderable(
+                config_path,
+                console=console,
+                include_placeholder_warning=yes,
+            )
+        )
     else:
         _emit_value(
             state,

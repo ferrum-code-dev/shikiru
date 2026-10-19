@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, cast
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, Select, Static
@@ -15,10 +16,21 @@ from shikiru.operator.detectors import (
     InitWizardResult,
     ProjectDetectors,
 )
+from shikiru.ui.keys import key_hint
+from shikiru.ui.popup import POPUP_BUTTON_CSS, POPUP_CONTROL_CSS
+from shikiru.ui.theme import install_theme
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    PRIMARY_TEXT_COLOR,
+    SECONDARY_TEXT_COLOR,
+    STYLE_BOLD,
+    SUCCESS_COLOR,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from textual import events
     from textual.binding import BindingType
 
     from shikiru.config.settings import OrchestrationConfig
@@ -49,29 +61,93 @@ INTEGRATION_OPTIONS = (
 WIZARD_TITLE = "Initialize Shikiru"
 DOCTOR_SUCCESS = "Doctor passed."
 DOCTOR_FAILURE = "Doctor found issues; review the checks below."
+WIZARD_TITLE_MINIMUM_HEIGHT = 9
 
 
 def _step_label(step: str) -> str:
-    return f"Step {WIZARD_STEPS.index(step) + 1} of {len(WIZARD_STEPS)} · {step}"
+    return (
+        f"Step {WIZARD_STEPS.index(step) + 1} of {len(WIZARD_STEPS)} · {step[0].lower()}{step[1:]}"
+    )
+
+
+class InitWizardBody(VerticalScroll):
+    def on_resize(self, event: events.Resize) -> None:
+        del event
+        self.call_after_refresh(self._reveal_focused_control)
+
+    def _reveal_focused_control(self) -> None:
+        focused = self.screen.focused
+        if focused is not None and self in focused.ancestors:
+            self.scroll_to_widget(focused, animate=False)
+
+
+class InitWizardShell(Vertical):
+    def on_mount(self) -> None:
+        self._set_compact_height()
+
+    def on_resize(self, event: events.Resize) -> None:
+        del event
+        self._set_compact_height()
+
+    def _set_compact_height(self) -> None:
+        if self.screen.size.height < WIZARD_TITLE_MINIMUM_HEIGHT:
+            self.add_class("wizard-tiny")
+        else:
+            self.remove_class("wizard-tiny")
 
 
 class InitWizardApp(App[InitWizardResult | None]):
     """Guide an operator through project setup and show the final Doctor checks."""
 
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "cancel", "Cancel")]
-    CSS = """
-    Screen { height: 80%; }
-    #wizard-shell { height: 100%; padding: 0 1; }
-    #wizard-title { height: 1; content-align: center middle; }
-    #wizard-body { height: 1fr; border: round $accent; }
-    .wizard-page { height: auto; padding: 1; }
-    .wizard-page Label { height: 1; }
-    .wizard-page Input, .wizard-page Select { width: 100%; margin-bottom: 1; }
-    .wizard-page Static { height: auto; }
-    #wizard-error { color: $error; height: auto; max-height: 3; }
-    #wizard-navigation { height: 3; align: center middle; }
-    #wizard-navigation Button { min-width: 12; margin: 0 1; }
+    CSS = (
+        POPUP_BUTTON_CSS
+        + POPUP_CONTROL_CSS
+        + """
+    Screen { width: 100%; height: 100%; align: center middle; background: $background; }
+    #wizard-shell {
+        width: 100%; max-width: 100; height: 100%; min-height: 0; padding: 0 1;
+        background: $background; color: $primary-text;
+    }
+    #wizard-title {
+        height: 1; color: $steel-blue; text-style: bold;
+        content-align: center middle;
+    }
+    #wizard-body {
+        height: 1fr; min-height: 0; border: solid $neutral-border; padding: 0 1;
+        background: $surface; color: $primary-text;
+        scrollbar-size-vertical: $scrollbar-width;
+    }
+    .wizard-page { height: auto; padding: 0 1; }
+    .wizard-page Label { height: auto; color: $secondary-text; }
+    .wizard-page Input {
+        width: 100%; height: 2; margin-bottom: 1; border: none;
+        border-bottom: solid $neutral-border; padding: 0 1;
+        background: $surface; color: $primary-text;
+    }
+    .wizard-page Input:focus {
+        border-bottom: solid $focus; background: $selected-surface; text-style: reverse;
+    }
+    .wizard-page Select { width: 100%; margin-bottom: 1; }
+    .wizard-page Static { height: auto; color: $primary-text; }
+    #wizard-finish-hint, #cow-result { color: $secondary-text; }
+    #wizard-error {
+        height: auto; margin-top: 1; color: $dusty-rose; text-style: bold;
+    }
+    #wizard-navigation-hint {
+        height: 1; color: $secondary-text; content-align: center middle;
+    }
+    #wizard-shell.wizard-tiny #wizard-title { display: none; }
+    #wizard-navigation { height: 1; min-height: 1; align: center middle; }
+    #wizard-navigation Button {
+        width: auto; min-width: 0; height: 1; min-height: 1;
+        margin: 0; padding: 0 1; border: none;
+    }
+    #wizard-navigation Button:focus {
+        color: $primary-text; background: $selected-surface; text-style: reverse;
+    }
     """
+    )
 
     def __init__(
         self,
@@ -84,6 +160,7 @@ class InitWizardApp(App[InitWizardResult | None]):
     ) -> None:
         """Keep the detected project and injected services for the seven setup steps."""
         super().__init__()
+        install_theme(self)
         self._root = project_root.resolve()
         self._project = project
         self._detectors = detectors
@@ -96,9 +173,9 @@ class InitWizardApp(App[InitWizardResult | None]):
         self._error = ""
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="wizard-shell"):
+        with InitWizardShell(id="wizard-shell", classes="popup-frame"):
             yield Label(WIZARD_TITLE, id="wizard-title")
-            with VerticalScroll(id="wizard-body"):
+            with InitWizardBody(id="wizard-body"):
                 yield from self._repository_page()
                 yield from self._agents_page()
                 yield from self._trackers_page()
@@ -107,6 +184,10 @@ class InitWizardApp(App[InitWizardResult | None]):
                 yield from self._integration_page()
                 yield from self._finish_page()
             yield Static("", id="wizard-error", markup=False)
+            yield Static(
+                key_hint("Tab move · Enter activate · Esc cancel"),
+                id="wizard-navigation-hint",
+            )
             with Horizontal(id="wizard-navigation"):
                 yield Button("Back", id="wizard-back")
                 yield Button("Next", variant="primary", id="wizard-next")
@@ -179,7 +260,7 @@ class InitWizardApp(App[InitWizardResult | None]):
             self._error = str(error)
             self._update_pages()
             return
-        self._config_path = config_path
+        self._config_path = config_path.resolve()
         try:
             self._doctor_report = await self._doctor.run()
             self._error = ""
@@ -211,19 +292,32 @@ class InitWizardApp(App[InitWizardResult | None]):
             raw = self.query_one(f"#{role}-ladder", Input).value
             entries = self._split_entries(raw)
             if not entries:
+                self._focus_ladder(role)
                 message = f"{role} ladder must contain at least one rung"
                 raise ConfigError(message)
-            rungs = tuple(parse_rung(entry) for entry in entries)
+            try:
+                rungs = tuple(parse_rung(entry) for entry in entries)
+            except ConfigError, ValueError:
+                self._focus_ladder(role)
+                raise
             unknown_agents = sorted({rung.agent for rung in rungs} - allowed_agents)
             if unknown_agents:
+                self._focus_ladder(role)
                 names = ", ".join(unknown_agents)
                 message = f"{role} ladder uses plugins that did not pass detection: {names}"
                 raise ConfigError(message)
             if role == Role.HELPER.value and len(rungs) != 1:
+                self._focus_ladder(role)
                 message = "helper ladder must contain exactly one rung"
                 raise ConfigError(message)
             ladders[role] = rungs
         return ladders
+
+    def _focus_ladder(self, role: str) -> None:
+        field = self.query_one(f"#{role}-ladder", Input)
+        field.focus()
+        body = self.query_one("#wizard-body", InitWizardBody)
+        body.scroll_to_widget(field, animate=False)
 
     def _read_paths(self, field: str) -> tuple[str, ...]:
         value = self.query_one(f"#{field}", Input).value
@@ -254,6 +348,7 @@ class InitWizardApp(App[InitWizardResult | None]):
     def _update_pages(self) -> None:
         for index in range(len(WIZARD_STEPS)):
             self.query_one(f"#wizard-page-{index}").display = index == self._step
+        self.query_one("#wizard-body", InitWizardBody).scroll_home(animate=False)
         back = self.query_one("#wizard-back", Button)
         back.disabled = self._step == 0 or self._config_path is not None
         next_button = self.query_one("#wizard-next", Button)
@@ -273,19 +368,31 @@ class InitWizardApp(App[InitWizardResult | None]):
         self.query_one("#doctor-report", Static).update(self._doctor_summary())
         self._update_error()
 
-    def _doctor_summary(self) -> str:
+    def _doctor_summary(self) -> Text:
+        summary = Text()
         if self._doctor_report is None:
             if self._config_path is not None:
-                return (
-                    f"Configuration written to {self._config_path}. Doctor did not return a report."
+                summary.append(
+                    f"Configuration written to {self._config_path}. "
+                    "Doctor did not return a report.",
+                    style=PRIMARY_TEXT_COLOR,
                 )
-            return ""
+            return summary
         heading = DOCTOR_SUCCESS if self._doctor_report.ok else DOCTOR_FAILURE
-        checks = "\n".join(
-            f"{'PASS' if check.ok else 'FAIL'} · {check.name}: {check.detail}"
-            for check in self._doctor_report.checks
-        )
-        return f"{heading}\nConfig: {self._config_path}\n{checks}"
+        heading_color = SUCCESS_COLOR if self._doctor_report.ok else ALERT_COLOR
+        summary.append(heading, style=f"{STYLE_BOLD} {heading_color}")
+        summary.append("\nConfig: ", style=SECONDARY_TEXT_COLOR)
+        summary.append(str(self._config_path), style=PRIMARY_TEXT_COLOR)
+        for check in self._doctor_report.checks:
+            outcome = "PASS" if check.ok else "FAIL"
+            outcome_color = SUCCESS_COLOR if check.ok else ALERT_COLOR
+            summary.append("\n")
+            summary.append(outcome, style=f"{STYLE_BOLD} {outcome_color}")
+            summary.append(" · ", style=SECONDARY_TEXT_COLOR)
+            summary.append(check.name, style=PRIMARY_TEXT_COLOR)
+            summary.append(": ", style=SECONDARY_TEXT_COLOR)
+            summary.append(check.detail, style=PRIMARY_TEXT_COLOR)
+        return summary
 
     def _update_error(self) -> None:
         error = self.query_one("#wizard-error", Static)
@@ -330,7 +437,11 @@ class InitWizardApp(App[InitWizardResult | None]):
                 "Detected ignored cache directories; edit the glob patterns.", markup=False
             )
             yield Input(value=", ".join(self._project.caches), id="caches")
-            yield Static("Checking copy-on-write on this project filesystem…", id="cow-result")
+            yield Static(
+                "Checking copy-on-write on this project filesystem…",
+                id="cow-result",
+                markup=False,
+            )
 
     def _parallelism_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-4", classes="wizard-page"):

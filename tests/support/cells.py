@@ -118,6 +118,22 @@ def rendered_lines(widget: Widget) -> list[list[Cell]]:
     return rendered
 
 
+def visible_widget_text(widget: Widget, viewport: Widget) -> str:
+    """Read the widget's painted text where it intersects a scrolling viewport."""
+    visible = widget.region.intersection(viewport.content_region)
+    if visible.width <= 0 or visible.height <= 0:
+        return ""
+    lines = rendered_lines(widget)
+    first_line = visible.y - widget.region.y
+    last_line = first_line + visible.height
+    first_cell = visible.x - widget.region.x
+    last_cell = first_cell + visible.width
+    return "\n".join(
+        "".join(char for char, _ in cells[first_cell:last_cell])
+        for cells in lines[first_line:last_line]
+    )
+
+
 def styles(widget: Widget, needle: str) -> list[Style]:
     """Return the bold flag and foreground of each cell of the first occurrence of `needle`."""
     for cells in rendered_lines(widget):

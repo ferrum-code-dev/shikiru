@@ -14,11 +14,22 @@ from shikiru.ui.keys import key_hint
 from shikiru.ui.theme import install_theme
 
 if TYPE_CHECKING:
+    from textual import events
     from textual.binding import BindingType
 
 PICKER_TITLE = "Attach to a Shikiru session"
-PICKER_HINT = "Select a session and press Enter. Esc cancels."
+PICKER_HINT = "↑↓ move · Enter attach · Esc cancel"
 PICKER_CANCELLED = "session selection was cancelled"
+
+
+class SessionPickerList(ListView):
+    def on_resize(self, event: events.Resize) -> None:
+        del event
+        self.call_after_refresh(self._reveal_selected_row)
+
+    def _reveal_selected_row(self) -> None:
+        if self.index is not None:
+            self.scroll_to_widget(self.children[self.index], animate=False)
 
 
 class SessionPicker(App[SessionRow | None]):
@@ -26,14 +37,34 @@ class SessionPicker(App[SessionRow | None]):
 
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "cancel", "Cancel")]
     CSS = """
-    Screen { height: 80%; align: center middle; }
-    #session-picker {
-        width: 90%; max-width: 100; height: auto; max-height: 80%;
-        border: round $accent; padding: 1 2;
+    Screen {
+        width: 100%; height: 100%; align: center middle; background: $background;
     }
-    #session-picker-list { height: auto; max-height: 1fr; }
-    #session-picker-list > ListItem.-highlight {
-        background: $selected-surface; color: $primary-text; text-style: none;
+    #session-picker {
+        width: 100%; max-width: 100; height: 100%; max-height: 100%; min-height: 0;
+        margin: 0; border: solid $steel-blue; padding: 0;
+        background: $surface; color: $primary-text;
+    }
+    #session-picker > Label {
+        height: 1; color: $primary-text; text-style: bold;
+    }
+    #session-picker > Static { height: 1; color: $secondary-text; }
+    #session-picker-list {
+        width: 100%; height: 1fr; min-height: 0; max-height: 1fr; padding: 0;
+        background: $surface; scrollbar-size-vertical: $scrollbar-width;
+    }
+    #session-picker-list > ListItem {
+        width: 100%; height: auto; padding: 0; border: none;
+        background: $surface; color: $primary-text;
+    }
+    #session-picker-list > ListItem.-hovered { background: $surface; }
+    #session-picker-list > ListItem > Static {
+        width: 100%; height: auto; padding: 0; background: transparent;
+        color: $primary-text; text-wrap: wrap;
+    }
+    #session-picker-list > ListItem.-highlight,
+    #session-picker-list > ListItem.-highlight > Static {
+        background: $selected-surface; color: $primary-text; text-style: bold;
     }
     """
 
@@ -48,7 +79,7 @@ class SessionPicker(App[SessionRow | None]):
         with Vertical(id="session-picker"):
             yield Label(PICKER_TITLE)
             yield Static(key_hint(PICKER_HINT))
-            yield ListView(
+            yield SessionPickerList(
                 *(
                     ListItem(
                         Static(
