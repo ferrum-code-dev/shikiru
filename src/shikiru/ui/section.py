@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 
 GROUP_SEPARATOR = " · "
 LABEL_GAP = 1
+MIN_VALUE_WIDTH = 24
 VALUE_OVERFLOW = "fold"
 HEADING_MIN_GAP = 1
 STACKED_BELOW_WIDTH = 32
@@ -116,9 +117,17 @@ def labelled_rows(
     rows: list[Row], width: int, label_width: int, stack_below: int = STACKED_BELOW_WIDTH
 ) -> RenderableType:
     """Lay rows out as a label column and wrapped values, stacked below `stack_below` cells."""
-    if width < stack_below:
-        return Group(*_stacked_lines(rows, width))
     value_width = width - label_width - LABEL_GAP
+    if width < stack_below and label_width <= width - LABEL_GAP:
+        return Group(*_stacked_lines(rows, width))
+    if value_width < MIN_VALUE_WIDTH:
+        grid = Table.grid()
+        grid.add_column(width=width, overflow=VALUE_OVERFLOW)
+        for label, groups in rows:
+            if label.plain:
+                grid.add_row(label)
+            grid.add_row(wrap_groups(groups, width))
+        return grid
     grid = Table.grid()
     grid.add_column(width=label_width + LABEL_GAP, no_wrap=True)
     grid.add_column(width=value_width, overflow=VALUE_OVERFLOW)

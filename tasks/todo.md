@@ -410,5 +410,5 @@ Focus ledger CLI implementation (main; sequential, with lead review between task
 
 - [x] Task 256: Shared CLI presentation, help and concise command outcomes
 - [x] Task 257: Concise session discovery and Doctor results
-- [ ] Task 258: Focused project and task status reports
+- [x] Task 258: Focused project and task status reports
 - [ ] Task 259: Align initializer and attachment picker; verify the complete CLI

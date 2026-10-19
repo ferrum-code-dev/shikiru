@@ -79,6 +79,19 @@ async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) 
     assert stderr == ""
     assert str(tmp_path / ".shikiru" / "config.toml") in stdout
 
+    code, stdout, stderr = await _cli(tmp_path, "status")
+    assert code == 0
+    assert stderr == ""
+    assert "engine down" in stdout
+    assert "queued 0" in stdout
+    assert all(section not in stdout for section in ("Tasks", "Queue", "Escalations", "Faults"))
+    empty_status = stdout
+
+    code, stdout, stderr = await _cli(tmp_path, "status", "T-999")
+    assert code == 0
+    assert stderr == ""
+    assert stdout == empty_status
+
     code, stdout, stderr = await _cli(tmp_path, "submit", "human task")
     assert code == 0
     assert stderr == ""

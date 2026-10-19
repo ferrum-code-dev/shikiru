@@ -72,7 +72,6 @@ if TYPE_CHECKING:
 
     from rich.console import RenderableType
 
-    from shikiru.config.settings import Settings
     from shikiru.operator.services import OperatorServices
 
 PROJECT_OPTION = typer.Option("--project", help="Project directory.")
@@ -317,7 +316,7 @@ def status(
         settings = load_settings(root, state.overrides)
         services = build_operator(root, settings)
         try:
-            _run(_status_loop(services, state, task_id, watch, settings=settings))
+            _run(_status_loop(services, state, task_id, watch))
         finally:
             services.close()
     except ShikiruError as error:
@@ -419,8 +418,6 @@ async def _status_loop(
     state: CliState,
     task_id: str | None,
     watch: bool,
-    *,
-    settings: Settings,
 ) -> None:
     def render() -> None:
         view = services.queries.status(task_id)
@@ -428,7 +425,7 @@ async def _status_loop(
             typer.echo(view.model_dump_json())
         else:
             console = human_console()
-            console.print(status_renderable(view, settings=settings, width=console.width))
+            console.print(status_renderable(view, width=console.width))
 
     render()
     if watch:

@@ -6,11 +6,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from shikiru.agents.contracts import QuotaWindow, Usage
+from shikiru.cli.render import status_renderable
 from shikiru.domain.commands import COMMAND_POLL_SECONDS, CommandStatus, Prioritize
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import ConsultAnswer
 from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import EscalationReason, RepoState, Role, Status, Step
+from shikiru.domain.tasks import EscalationReason, Hold, RepoState, Role, Status, Step
 from shikiru.errors import DatabaseError
 from shikiru.operator.commands import (
     COMMAND_ACK_WAIT_SECONDS,
@@ -24,12 +26,14 @@ from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database, transaction
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
+from shikiru.store.quotas import QuotaStore
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.view_log import view_log_path
 from shikiru.workspace.reports import InvalidTurnReportError
 from tests.support.clock import FakeClock
 from tests.support.factories import LEADER_RUNG, LEADER_RUNG_2
+from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
@@ -165,14 +169,57 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
     tmp_path: Path,
 ) -> None:
     clock = FakeClock(START)
-    task = seed_task(connection, clock, title="detail")
-    TaskStore(connection, clock).set_repo(
-        task.id, RepoState(base="main", base_ref="main", base_sha="a", branch="shikiru/T-1-detail")
+    task = seed_task(connection, clock, title="literal [bold red] detail")
+    other = seed_task(connection, clock, title="other project task")
+    tasks = TaskStore(connection, clock)
+    tasks.apply_transition(
+        task.id,
+        Transition.stay(task, step=Step.TRIAGE, status=Status.ESCALATED),
     )
-    EventLog(connection, clock).append(
+    tasks.set_slot(task.id, 1)
+    tasks.set_holds(task.id, frozenset({Hold.INTERVENTION}))
+    branch = "shikiru/" + "very-long-branch-name-" * 5
+    base_sha = "a" * 40
+    tasks.set_repo(
+        task.id,
+        RepoState(base="main", base_ref="refs/heads/main", base_sha=base_sha, branch=branch),
+    )
+    tasks.apply_transition(
+        other.id,
+        Transition.stay(other, step=Step.TRIAGE, status=Status.RUNNING),
+    )
+    tasks.set_slot(other.id, 0)
+    events = EventLog(connection, clock)
+    events.append(
         EventKind.TASK_QUEUED,
         task_id=task.id,
         message="queued",
+    )
+    events.append(
+        EventKind.ESCALATION,
+        task_id=task.id,
+        message="decision required: Keep the parser strict?",
+    )
+    EscalationStore(connection, clock).open(
+        task.id,
+        step=Step.TRIAGE,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline="Keep the parser strict?",
+        packet_path="runs/T-1/escalations/E-1.md",
+        options=(),
+    )
+    runs = RunStore(connection, clock)
+    task_run = runs.start(task.id, Role.LEADER, LEADER_RUNG)
+    runs.set_session(task_run.id, "session-with-a-long-id", None)
+    usage_run = runs.start(other.id, Role.LEADER, LEADER_RUNG_2)
+    runs.record_usage(usage_run.id, Usage(100, 50, 0, 0, 0.42, "billed", None))
+    estimate_run = runs.start(other.id, Role.IMPLEMENTER, LEADER_RUNG_2)
+    runs.record_usage(estimate_run.id, Usage(30, 10, 0, 0, 0.21, "api_equivalent", None))
+    runs.start(other.id, Role.HELPER, LEADER_RUNG_2)
+    connection.execute("UPDATE runs SET usage_reported = NULL WHERE id = ?", (usage_run.id,))
+    QuotaStore(connection).record(
+        "codex",
+        QuotaWindow(name="5h", used_pct=42.5, resets_at=None, observed_at=START),
     )
     turn_dir = tmp_path / ".shikiru" / "runs" / task.id / "turns" / "01-triage-i0"
     turn_dir.mkdir(parents=True)
@@ -181,11 +228,15 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
         '{"title":"triage","mode":"implement","complexity":"normal",'
         '"acceptance_criteria":[],"references":[]}'
     )
+    engine_output = tmp_path / ".shikiru" / "logs" / "engine.out"
+    engine_output.parent.mkdir(parents=True)
+    engine_output.write_text("startup failed")
 
-    detail = _queries(tmp_path, reader).get_task(task.id)
+    queries = _queries(tmp_path, reader, clock)
+    detail = queries.get_task(task.id)
 
     assert detail is not None
-    assert len(detail.events) == 1
+    assert len(detail.events) == 2
     assert detail.model_dump(mode="json")["reports"] == [
         {
             "turn": "01-triage-i0",
@@ -200,8 +251,73 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
             },
         }
     ]
-    assert detail.branches == ["shikiru/T-1-detail"]
-    assert detail.sessions == []
+    task_view = queries.status(task.id)
+    project_outputs = {
+        width: plain_text(status_renderable(queries.status(), width=width), width=width)
+        for width in (80, 60, 40)
+    }
+    task_outputs = {
+        width: plain_text(status_renderable(task_view, width=width), width=width)
+        for width in (80, 60, 40)
+    }
+    project_compact = {width: "".join(output.split()) for width, output in project_outputs.items()}
+    task_compact = {width: "".join(output.split()) for width, output in task_outputs.items()}
+
+    project_facts = (
+        "T-1",
+        "T-2",
+        "in 130",
+        "out 60",
+        "legacy token runs 1",
+        "reported runs 1",
+        "runs without token data 1",
+        "$0.42",
+        "billed",
+        "$0.21",
+        "API-equivalent estimate",
+        "legacy billed runs 1",
+        "runs without cost 1",
+        "reset unknown",
+        "observed 2026-01-01T00:00:00+00:00",
+        str(engine_output),
+    )
+    missing_project_facts = {
+        width: [
+            "".join(fact.split()) for fact in project_facts if "".join(fact.split()) not in output
+        ]
+        for width, output in project_compact.items()
+    }
+    assert all(not facts for facts in missing_project_facts.values()), missing_project_facts
+    task_facts = (
+        "T-1 · literal [bold red] detail",
+        "escalated",
+        "role Leader",
+        "intervention",
+        "Keep the parser strict?",
+        "01-triage-i0 · triage · triage",
+        "task_queued · queued",
+        branch,
+        "base sha a",
+        "refs/heads/main",
+        base_sha,
+        "Leader",
+        "session-with-a-long-id",
+        "claude/opus",
+        "live",
+    )
+    missing_task_facts = {
+        width: ["".join(fact.split()) for fact in task_facts if "".join(fact.split()) not in output]
+        for width, output in task_compact.items()
+    }
+    assert all(not facts for facts in missing_task_facts.values()), missing_task_facts
+    assert all(
+        not any(
+            "".join(fact.split()) in output
+            for fact in ("T-2", "codex", "reset unknown", str(engine_output))
+        )
+        and "acting" not in output
+        for output in task_compact.values()
+    )
 
 
 async def test_task_detail_uses_a_valid_helper_rebuild_when_agent_report_is_invalid(

@@ -18,7 +18,7 @@ from shikiru.operator.queries import OperatorQueries
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from tests.support.clock import FakeClock
-from tests.support.factories import TASK_CREATED_AT, make_settings
+from tests.support.factories import TASK_CREATED_AT
 from tests.support.render import RENDER_WIDTH, plain_text
 from tests.support.store import seed_task
 
@@ -82,9 +82,13 @@ async def test_status_shows_an_open_fault_streak_until_the_engine_recovers(
     assert (streak.scope, streak.error, streak.task_id) == (_SCOPE, "CommandFailed", None)
     assert streak.recoverable
     assert streak.repeat > 1
-    human = plain_text(status_renderable(view, settings=make_settings(), width=RENDER_WIDTH))
+    human = plain_text(status_renderable(view, width=RENDER_WIDTH))
     assert _SCOPE in human
     assert "CommandFailed" in human
+    assert streak.first_seen.isoformat() in human
+    assert streak.last_seen.isoformat() in human
+    assert f"repeats {streak.repeat}" in human
+    assert "recoverable yes" in human
 
     ticks.error = None
     await guard.attempt(ticks.tick)
@@ -92,9 +96,7 @@ async def test_status_shows_an_open_fault_streak_until_the_engine_recovers(
 
     recovered = queries.status()
     assert recovered.faults == []
-    assert _SCOPE not in plain_text(
-        status_renderable(recovered, settings=make_settings(), width=RENDER_WIDTH)
-    )
+    assert _SCOPE not in plain_text(status_renderable(recovered, width=RENDER_WIDTH))
 
 
 async def test_a_task_fault_streak_closes_when_its_isolated_block_succeeds(
@@ -144,5 +146,5 @@ async def test_status_shows_the_age_of_the_oldest_unresolved_escalation(
     view = queries.status()
 
     assert view.oldest_escalation_age_seconds == timedelta(hours=2, minutes=1).total_seconds()
-    human = plain_text(status_renderable(view, settings=make_settings(), width=RENDER_WIDTH))
+    human = plain_text(status_renderable(view, width=RENDER_WIDTH))
     assert "2:01:00" in human

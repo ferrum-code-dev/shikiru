@@ -16,7 +16,7 @@ from shikiru.operator.queries import (
     TaskSummary,
     UsageView,
 )
-from tests.support.factories import make_settings, make_task
+from tests.support.factories import make_task
 from tests.support.render import RENDER_WIDTH, plain_text
 
 OBSERVED_AT = datetime(2026, 1, 1, tzinfo=UTC)
@@ -44,7 +44,7 @@ def _summary(
     )
 
 
-def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None:
+def test_project_status_and_task_status_keep_their_own_scope() -> None:
     active = _summary("T-active", Status.RUNNING, slot=0)
     queued = _summary("T-queued", Status.QUEUED, priority=5, wait_reason="dependency")
     detail = TaskDetail(
@@ -78,6 +78,10 @@ def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None
                 cache_write_tokens=0,
                 cost_usd=0.42,
                 cost_basis="api_equivalent",
+                run_count=1,
+                usage_reported_runs=1,
+                api_equivalent_cost_usd=0.42,
+                api_equivalent_cost_runs=1,
             )
         ],
         faults=[],
@@ -96,12 +100,24 @@ def test_human_status_separates_active_queue_usage_quotas_and_verdicts() -> None
         task=detail,
     )
 
-    output = plain_text(status_renderable(view, settings=make_settings(), width=RENDER_WIDTH))
+    project_output = plain_text(
+        status_renderable(view.model_copy(update={"task": None}), width=RENDER_WIDTH)
+    )
+    task_output = plain_text(status_renderable(view, width=RENDER_WIDTH))
 
-    assert "T-active" in output
-    assert "T-queued" in output
-    assert "dependency" in output
-    assert "5h" in output
-    assert "accept" in output
-    assert "Reviewed" in output
-    assert "5.0 MiB" in output
+    assert "T-active" in project_output
+    assert "T-queued" in project_output
+    assert "dependency" in project_output
+    assert "priority 5" in project_output
+    assert "5h" in project_output
+    assert "5.0 MiB" in project_output
+    assert all(
+        fact in project_output for fact in ("in 100", "out 50", "$0.42", "API-equivalent estimate")
+    )
+    assert "T-detail · Add retry to parser" in task_output
+    assert "accept" in task_output
+    assert "Reviewed" in task_output
+    assert "T-active" not in task_output
+    assert "T-queued" not in task_output
+    assert "codex" not in task_output
+    assert "5h" not in task_output

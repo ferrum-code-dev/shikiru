@@ -5,23 +5,27 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from rich.cells import cell_len
 from rich.console import Group
-from rich.panel import Panel
 from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
+from shikiru.domain.escalation import escalation_reason_label
 from shikiru.domain.reports import (
+    SEVERITY_BLOCKER,
     ConsultAnswer,
     ImplementationReport,
     PlanReport,
     TriageReport,
     Verdict,
 )
+from shikiru.domain.steps import ACTING_ROLE, Step
+from shikiru.domain.tasks import Status
 from shikiru.errors import NotInitialisedError, ShikiruError
 from shikiru.operator.commands import AckStatus
-from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import format_age
+from shikiru.ui.compact import compact_count
 from shikiru.ui.console import supports_osc8
 from shikiru.ui.glyphs import (
     GLYPH_DONE,
@@ -33,6 +37,7 @@ from shikiru.ui.glyphs import (
 from shikiru.ui.section import (
     BOLD_PRIMARY,
     BOLD_STEEL,
+    Section,
     WrappedGroups,
     grey,
     labelled_rows,
@@ -41,12 +46,12 @@ from shikiru.ui.section import (
 )
 from shikiru.ui.size import format_size
 from shikiru.ui.status import status_visual
-from shikiru.ui.strip import TaskStrip
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
     ENGINE_COLOR,
     PRIMARY_TEXT_COLOR,
+    SAGE,
     SECONDARY_TEXT_COLOR,
     STYLE_BOLD,
     SUCCESS_COLOR,
@@ -55,28 +60,24 @@ from shikiru.ui.tokens import (
 if TYPE_CHECKING:
     from rich.console import Console, RenderableType
 
-    from shikiru.agents.contracts import CostBasis
-    from shikiru.config.settings import Settings
     from shikiru.operator.commands import Ack
     from shikiru.operator.doctor import DoctorReport
     from shikiru.operator.lifecycle import StartResult
-    from shikiru.operator.queries import StatusView, TaskDetail, TaskSummary
+    from shikiru.operator.queries import (
+        EscalationView,
+        StatusView,
+        TaskDetail,
+        TaskSummary,
+        UsageView,
+    )
     from shikiru.operator.sessions import SessionRow
 
-STATUS_PANEL_TITLE = "Shikiru status"
-ACTIVE_TABLE_TITLE = "Active tasks"
-QUEUE_TABLE_TITLE = "Queue"
-ESCALATIONS_TABLE_TITLE = "Open escalations"
-FAULTS_TABLE_TITLE = "Engine faults"
-TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
-USAGE_TABLE_TITLE = "Usage"
-QUOTA_TABLE_TITLE = "Quota windows"
-REPORTS_TABLE_TITLE = "Reports and verdicts"
+STATUS_ROW_STACKED_BELOW_WIDTH = 60
+DATETIME_TIMESPEC_SECONDS = "seconds"
+STATUS_COST_FORMAT = ".2f"
 DOCTOR_OK_LABEL = "ok"
 DOCTOR_FAIL_LABEL = "fail"
 DOCTOR_OUTCOME_LABEL_WIDTH = len(f"{GLYPH_STOPPED} {DOCTOR_FAIL_LABEL}")
-NO_ROWS = "none"
-NO_VALUE = "—"
 STOPPED_RESULT_FIELD = "stopped"
 STOPPING_RESULT_FIELD = "stopping"
 
@@ -119,75 +120,108 @@ def error_renderable(error: ShikiruError) -> RenderableType:
     return text
 
 
-def status_renderable(view: StatusView, *, settings: Settings, width: int) -> RenderableType:
-    """Render an operator status model as Rich panels and tables."""
-    engine_style = f"{STYLE_BOLD} {ENGINE_COLOR if view.engine_up else ALERT_COLOR}"
-    summary = Text.assemble(
-        (f"{GLYPH_ENGINE} engine ", f"{STYLE_BOLD} {ENGINE_COLOR}"),
-        ("up" if view.engine_up else "down", engine_style),
-        ("  slots ", STYLE_BOLD),
-        f"{view.slots.active}/{view.slots.maximum}",
-        ("  queued ", STYLE_BOLD),
-        str(len(view.queued_tasks)),
-        ("  escalations ", STYLE_BOLD),
-        str(len(view.escalations)),
-    )
-    if view.oldest_escalation_age_seconds is not None:
-        summary.append("  oldest ", STYLE_BOLD)
-        summary.append(format_age(view.oldest_escalation_age_seconds))
-    summary.append("  runs ", STYLE_BOLD)
-    summary.append(
-        f"{view.run_directories.directories} dirs, {format_size(view.run_directories.size_bytes)}"
-    )
-    if view.engine_output is not None:
-        summary.append(f"\nlast engine output: {view.engine_output}")
-    blocks: list[RenderableType] = [Panel(summary, title=STATUS_PANEL_TITLE)]
-    blocks.append(_tasks_table(view.active_tasks, ACTIVE_TABLE_TITLE, include_priority=False))
-    blocks.append(_tasks_table(view.queued_tasks, QUEUE_TABLE_TITLE, include_priority=True))
-    if view.faults:
-        blocks.append(_faults_table(view))
-    if view.escalations:
-        blocks.append(_escalations_table(view))
-    if view.usage:
-        blocks.append(_usage_table(view))
-    if view.quotas:
-        blocks.append(_quota_table(view))
+def status_renderable(view: StatusView, *, width: int) -> RenderableType:
+    """Render project or task status as open, width-wrapping rows."""
     if view.task is not None:
-        blocks.append(task_detail_renderable(view.task, settings=settings, width=width))
-    return _stack(blocks)
+        return _task_status_renderable(view.task, view.escalations, width=width)
+
+    return _project_status_renderable(view, width=width)
 
 
-def task_detail_renderable(detail: TaskDetail, *, settings: Settings, width: int) -> RenderableType:
-    """Render one task's timeline, reports, branches and sessions."""
-    table = Table(title=f"{detail.task.id} · {detail.task.title}")
-    table.add_column("Time")
-    table.add_column("Event")
-    table.add_column("Message")
-    for event in detail.events:
-        table.add_row(event.ts.isoformat(), event.kind.value, event.message)
-    if not detail.events:
-        table.add_row(NO_VALUE, NO_VALUE, NO_ROWS)
-    branches = ", ".join(detail.branches) if detail.branches else NO_ROWS
-    sessions = ", ".join(
-        f"{run.role.value}:{run.status.value} · {run.agent}/{run.model}" for run in detail.sessions
-    )
-    return _stack(
-        [
-            TaskStrip(task_strip_data(detail.task, settings)).render(width),
-            table,
-            _reports_table(detail),
-            Panel(
-                "\n".join(
-                    (
-                        f"status: {detail.task.status.value}",
-                        f"branches: {branches}",
-                        f"sessions: {sessions or NO_ROWS}",
-                    )
-                ),
-                title=detail.task.id,
-            ),
+def _project_status_renderable(view: StatusView, *, width: int) -> RenderableType:
+    engine_style = f"{STYLE_BOLD} {ENGINE_COLOR if view.engine_up else ALERT_COLOR}"
+    summary = [
+        Text(view.project, style=BOLD_PRIMARY),
+        Text.assemble(
+            (f"{GLYPH_ENGINE} engine ", f"{STYLE_BOLD} {ENGINE_COLOR}"),
+            ("up" if view.engine_up else "down", engine_style),
+        ),
+        _fact("slots", f"{view.slots.active}/{view.slots.maximum}", BOLD_PRIMARY),
+        _fact("queued", str(len(view.queued_tasks)), BOLD_PRIMARY),
+        _fact("escalations", str(len(view.escalations)), BOLD_PRIMARY),
+    ]
+    if view.oldest_escalation_age_seconds is not None:
+        summary.append(
+            _fact("oldest", format_age(view.oldest_escalation_age_seconds), BOLD_PRIMARY)
+        )
+    summary.append(_fact("run dirs", str(view.run_directories.directories), BOLD_PRIMARY))
+    summary.append(_fact("size", format_size(view.run_directories.size_bytes)))
+    return Group(WrappedGroups(tuple(summary)), *_project_status_sections(view, width=width))
+
+
+def _project_status_sections(view: StatusView, *, width: int) -> list[RenderableType]:
+    blocks: list[RenderableType] = []
+    if view.engine_output is not None:
+        path_row = [
+            (
+                row_name("last engine output"),
+                (Text(view.engine_output, style=SECONDARY_TEXT_COLOR, overflow="fold"),),
+            )
         ]
+        blocks.append(_status_rows(path_row, width=width))
+    if view.active_tasks:
+        blocks.append(_task_section("Tasks", view.active_tasks, width=width))
+    if view.queued_tasks:
+        blocks.append(_task_section("Queue", view.queued_tasks, width=width))
+    if view.faults:
+        blocks.append(_fault_section(view, width=width))
+    if view.escalations:
+        blocks.append(_escalation_section(view, width=width))
+    if view.usage:
+        blocks.append(_status_section("Usage", _usage_rows(view.usage), width=width))
+    quota_rows = _quota_rows(view)
+    if quota_rows:
+        blocks.append(_status_section("Quota", quota_rows, width=width))
+    return blocks
+
+
+def _task_status_renderable(
+    detail: TaskDetail, escalations: list[EscalationView], *, width: int
+) -> RenderableType:
+    task = detail.task
+    identity = Text.assemble(
+        (task.id, BOLD_PRIMARY), (" · ", SECONDARY_TEXT_COLOR), (task.title, PRIMARY_TEXT_COLOR)
     )
+    visual = status_visual(task.status)
+    state = Text(f"{visual.glyph} {task.status.value}", style=visual.style)
+    groups = [state]
+    if task.step is not None:
+        role = ACTING_ROLE[task.step]
+        groups.extend(
+            (
+                _fact("step", task.step.value, BOLD_STEEL),
+                _fact("role", role.value.title(), BOLD_STEEL),
+            )
+        )
+    body: list[RenderableType] = [
+        _status_text_rows([identity], width=width),
+        WrappedGroups(tuple(groups)),
+    ]
+
+    blockers = _task_blocker_rows(detail, escalations)
+    if blockers:
+        body.append(_status_rows(blockers, width=width))
+    report_rows = _report_rows(detail)
+    if report_rows:
+        body.append(_status_text_section("Reports", report_rows, width=width))
+    timeline_rows = _timeline_rows(detail)
+    if timeline_rows:
+        body.append(_status_text_section("Timeline", timeline_rows, width=width))
+    branch_rows = _branch_rows(detail)
+    if branch_rows:
+        body.append(_status_section("Branches", branch_rows, width=width))
+    session_rows = _session_rows(detail)
+    if session_rows:
+        body.append(_status_section("Sessions", session_rows, width=width))
+    if detail.evidence_errors:
+        body.append(
+            _status_text_section(
+                "Evidence",
+                [Text(error, style=AMBER) for error in detail.evidence_errors],
+                width=width,
+            )
+        )
+    return Group(*body)
 
 
 def ack_renderable(
@@ -292,106 +326,281 @@ def _session_engine(engine_state: Literal["up", "down"]) -> Text:
     return engine
 
 
-def _tasks_table(tasks: list[TaskSummary], title: str, *, include_priority: bool) -> Table:
-    table = Table(title=title)
-    table.add_column("Task")
-    table.add_column("Status")
-    table.add_column("Step")
-    table.add_column("Wait")
-    table.add_column("Priority" if include_priority else "Slot")
-    for task in tasks:
-        visual = status_visual(task.status)
-        status = Text(f"{visual.glyph} {task.status.value}", style=visual.style)
-        row = [task.id, status, task.step or NO_VALUE, task.wait_reason or NO_VALUE]
-        row.append(str(task.priority) if include_priority else _slot(task))
-        table.add_row(*row)
-    if not tasks:
-        table.add_row(NO_ROWS, NO_VALUE, NO_VALUE, NO_VALUE, NO_VALUE)
+def _task_section(title: str, tasks: list[TaskSummary], *, width: int) -> Section:
+    rows = [(row_name(task.id), _task_groups(task)) for task in tasks]
+    return _status_section(title, rows, width=width)
+
+
+def _status_section(
+    title: str, rows: list[tuple[Text, tuple[Text, ...]]], *, width: int
+) -> Section:
+    return _section(title, _status_rows(rows, width=width))
+
+
+def _status_text_section(title: str, rows: list[Text], *, width: int) -> Section:
+    return _section(title, _status_text_rows(rows, width=width))
+
+
+def _section(title: str, body: RenderableType) -> Section:
+    return Section(title, body, ruled=False, title_style=BOLD_STEEL)
+
+
+def _status_rows(rows: list[tuple[Text, tuple[Text, ...]]], *, width: int) -> RenderableType:
+    return labelled_rows(
+        rows, width, _task_label_width(rows), stack_below=STATUS_ROW_STACKED_BELOW_WIDTH
+    )
+
+
+def _status_text_rows(rows: list[Text], *, width: int) -> RenderableType:
+    table = Table.grid(padding=0)
+    table.add_column(width=width, overflow="fold")
+    for row in rows:
+        table.add_row(row)
     return table
 
 
-def _escalations_table(view: StatusView) -> Table:
-    table = Table(title=ESCALATIONS_TABLE_TITLE)
-    table.add_column("Id")
-    table.add_column("Task")
-    table.add_column("Reason")
-    table.add_column("Headline")
-    for item in view.escalations:
-        table.add_row(
-            item.escalation.id,
-            item.escalation.task_id,
-            item.escalation.reason.value,
-            item.escalation.headline,
+def _fact(label: str, value: str, value_style: str = PRIMARY_TEXT_COLOR) -> Text:
+    return Text.assemble((f"{label} ", SECONDARY_TEXT_COLOR), (value, value_style))
+
+
+def _task_groups(task: TaskSummary) -> tuple[Text, ...]:
+    visual = status_visual(task.status)
+    groups = [Text(f"{visual.glyph} {task.status.value}", style=visual.style)]
+    groups.append(Text(task.title, style=PRIMARY_TEXT_COLOR, overflow="fold"))
+    if task.step is not None:
+        step = Step(task.step)
+        role = ACTING_ROLE[step]
+        groups.extend(
+            (_fact("step", step.value, BOLD_STEEL), _fact("role", role.value.title(), BOLD_STEEL))
         )
-    return table
+    if task.slot is not None:
+        groups.append(_fact("slot", str(task.slot), BOLD_PRIMARY))
+    if task.wait_reason is not None:
+        groups.append(_fact("wait", task.wait_reason, AMBER))
+    if task.holds:
+        holds = ", ".join(sorted(task.holds))
+        groups.append(_fact("holds", holds, AMBER))
+    if task.status is Status.QUEUED:
+        groups.append(_fact("priority", str(task.priority), BOLD_PRIMARY))
+    return tuple(groups)
 
 
-def _faults_table(view: StatusView) -> Table:
-    table = Table(title=FAULTS_TABLE_TITLE)
-    for column in ("Scope", "Task", "Error", "First seen", "Last seen", "Repeats", "Recoverable"):
-        table.add_column(column)
+def _fault_section(view: StatusView, *, width: int) -> Section:
+    rows: list[tuple[Text, tuple[Text, ...]]] = []
     for fault in view.faults:
-        table.add_row(
-            fault.scope,
-            fault.task_id or NO_VALUE,
-            fault.error,
-            fault.first_seen.strftime(TIMESTAMP_FORMAT),
-            fault.last_seen.strftime(TIMESTAMP_FORMAT),
-            str(fault.repeat),
-            "yes" if fault.recoverable else "no",
+        scope = fault.scope if fault.task_id is None else f"{fault.scope} · {fault.task_id}"
+        recoverable = "yes" if fault.recoverable else "no"
+        rows.append(
+            (
+                row_name(scope),
+                (
+                    _fact("error", fault.error),
+                    _fact("first", fault.first_seen.isoformat()),
+                    _fact("last", fault.last_seen.isoformat()),
+                    _fact("repeats", str(fault.repeat), BOLD_PRIMARY),
+                    _fact("recoverable", recoverable, BOLD_PRIMARY),
+                ),
+            )
         )
-    return table
+    return _status_section("Faults", rows, width=width)
 
 
-def _usage_table(view: StatusView) -> Table:
-    table = Table(title=USAGE_TABLE_TITLE)
-    table.add_column("Agent")
-    table.add_column("Input")
-    table.add_column("Output")
-    table.add_column("Cost")
-    table.add_column("Basis")
-    for usage in view.usage:
-        cost = NO_VALUE if usage.cost_usd is None else f"${usage.cost_usd:.2f}"
-        table.add_row(
-            usage.agent,
-            str(usage.input_tokens),
-            str(usage.output_tokens),
-            cost,
-            _cost_basis(usage.cost_basis),
+def _escalation_section(view: StatusView, *, width: int) -> Section:
+    rows = [
+        (
+            row_name(item.escalation.id),
+            (
+                _fact("task", item.escalation.task_id, BOLD_PRIMARY),
+                Text(escalation_reason_label(item.escalation.reason), style=AMBER),
+                Text(item.escalation.headline, style=PRIMARY_TEXT_COLOR, overflow="fold"),
+            ),
         )
-    return table
+        for item in view.escalations
+    ]
+    return _status_section("Escalations", rows, width=width)
 
 
-def _quota_table(view: StatusView) -> Table:
-    table = Table(title=QUOTA_TABLE_TITLE)
-    table.add_column("Agent")
-    table.add_column("Window")
-    table.add_column("Used")
-    table.add_column("Resets")
-    table.add_column("Observed")
+def _usage_rows(usages: list[UsageView]) -> list[tuple[Text, tuple[Text, ...]]]:
+    return [(row_name(usage.agent), _usage_groups(usage)) for usage in usages]
+
+
+def _usage_groups(usage: UsageView) -> tuple[Text, ...]:
+    run_noun = "run" if usage.run_count == 1 else "runs"
+    groups = [
+        Text.assemble((str(usage.run_count), BOLD_PRIMARY), (f" {run_noun}", SECONDARY_TEXT_COLOR))
+    ]
+    known_token_runs = usage.usage_reported_runs + usage.legacy_token_runs
+    unknown_token_runs = usage.run_count - known_token_runs
+    if known_token_runs:
+        groups.extend(
+            (
+                _fact("in", compact_count(usage.input_tokens), BOLD_STEEL),
+                _fact("out", compact_count(usage.output_tokens), BOLD_STEEL),
+            )
+        )
+        if usage.usage_reported_runs:
+            groups.append(_fact("reported runs", str(usage.usage_reported_runs)))
+        if usage.legacy_token_runs:
+            groups.append(_fact("legacy token runs", str(usage.legacy_token_runs), AMBER))
+    if unknown_token_runs:
+        groups.append(_fact("runs without token data", str(unknown_token_runs)))
+    if usage.billed_cost_runs and usage.billed_cost_usd is not None:
+        groups.append(_cost_basis_group(usage.billed_cost_usd, "billed", SAGE))
+    if usage.api_equivalent_cost_runs and usage.api_equivalent_cost_usd is not None:
+        groups.append(
+            _cost_basis_group(usage.api_equivalent_cost_usd, "API-equivalent estimate", AMBER)
+        )
+    if usage.legacy_billed_cost_runs:
+        groups.append(_fact("legacy billed runs", str(usage.legacy_billed_cost_runs), AMBER))
+    if usage.legacy_api_equivalent_cost_runs:
+        groups.append(
+            _fact("legacy estimate runs", str(usage.legacy_api_equivalent_cost_runs), AMBER)
+        )
+    if usage.unknown_cost_runs:
+        groups.append(_fact("runs without cost", str(usage.unknown_cost_runs)))
+    return tuple(groups)
+
+
+def _cost_basis_group(amount: float, basis: str, style: str) -> Text:
+    return Text.assemble(
+        (f"${amount:{STATUS_COST_FORMAT}}", style),
+        (f" {basis}", SECONDARY_TEXT_COLOR),
+    )
+
+
+def _quota_rows(view: StatusView) -> list[tuple[Text, tuple[Text, ...]]]:
+    rows: list[tuple[Text, tuple[Text, ...]]] = []
     for agent, windows in sorted(view.quotas.items()):
         for window in windows:
-            resets = window.resets_at.isoformat() if window.resets_at is not None else NO_VALUE
-            table.add_row(
-                agent,
-                window.name,
-                f"{window.used_pct:.0f}%",
-                resets,
-                window.observed_at.isoformat(),
+            reset = (
+                window.resets_at.isoformat(timespec=DATETIME_TIMESPEC_SECONDS)
+                if window.resets_at is not None
+                else "unknown"
             )
-    return table
+            rows.append(
+                (
+                    row_name(f"{agent} · {window.name}"),
+                    (
+                        _fact("used", f"{window.used_pct:g}%", BOLD_PRIMARY),
+                        _fact("reset", reset),
+                        _fact(
+                            "observed",
+                            window.observed_at.isoformat(timespec=DATETIME_TIMESPEC_SECONDS),
+                        ),
+                    ),
+                )
+            )
+    return rows
 
 
-def _reports_table(detail: TaskDetail) -> Table:
-    table = Table(title=REPORTS_TABLE_TITLE)
-    table.add_column("Turn")
-    table.add_column("Kind")
-    table.add_column("Summary")
+def _task_blocker_rows(
+    detail: TaskDetail, escalations: list[EscalationView]
+) -> list[tuple[Text, tuple[Text, ...]]]:
+    task = detail.task
+    rows: list[tuple[Text, tuple[Text, ...]]] = []
+    if task.holds:
+        holds = ", ".join(sorted(hold.value for hold in task.holds))
+        rows.append((row_name("Holds"), (Text(holds, style=AMBER),)))
+    if task.wait_reason is not None:
+        rows.append((row_name("Waiting"), (Text(task.wait_reason, style=AMBER, overflow="fold"),)))
+    if task.status_reason is not None:
+        rows.append((row_name("Outcome"), (Text(task.status_reason, style=SECONDARY_TEXT_COLOR),)))
+    rows.extend(
+        (
+            row_name("Escalation"),
+            (
+                Text(item.escalation.id, style=BOLD_PRIMARY),
+                Text(escalation_reason_label(item.escalation.reason), style=AMBER),
+                Text(item.escalation.headline, style=PRIMARY_TEXT_COLOR, overflow="fold"),
+            ),
+        )
+        for item in escalations
+        if item.escalation.task_id == task.id
+    )
+    return rows
+
+
+def _report_rows(detail: TaskDetail) -> list[Text]:
+    rows: list[Text] = []
     for report in detail.reports:
-        table.add_row(report.turn, report.kind.value, _report_summary(report.data))
-    if not detail.reports:
-        table.add_row(NO_ROWS, NO_VALUE, NO_VALUE)
-    return table
+        rows.append(
+            Text.assemble(
+                (report.turn, BOLD_PRIMARY),
+                (" · ", SECONDARY_TEXT_COLOR),
+                (report.kind.value, BOLD_STEEL),
+                (" · ", SECONDARY_TEXT_COLOR),
+                (_report_summary(report.data), PRIMARY_TEXT_COLOR),
+            )
+        )
+        if isinstance(report.data, Verdict):
+            rows.extend(
+                Text.assemble(
+                    (
+                        f"  {issue.severity} · ",
+                        ALERT_COLOR if issue.severity == SEVERITY_BLOCKER else AMBER,
+                    ),
+                    (issue.description, PRIMARY_TEXT_COLOR),
+                )
+                for issue in report.data.issues
+            )
+            rows.extend(
+                Text.assemble(("  residual risk · ", AMBER), (risk, PRIMARY_TEXT_COLOR))
+                for risk in report.data.residual_risks
+            )
+    return rows
+
+
+def _timeline_rows(detail: TaskDetail) -> list[Text]:
+    return [
+        Text.assemble(
+            (event.ts.isoformat(), SECONDARY_TEXT_COLOR),
+            (" · ", SECONDARY_TEXT_COLOR),
+            (event.kind.value, BOLD_STEEL),
+            (" · ", SECONDARY_TEXT_COLOR),
+            (event.message, PRIMARY_TEXT_COLOR),
+        )
+        for event in detail.events
+    ]
+
+
+def _branch_rows(detail: TaskDetail) -> list[tuple[Text, tuple[Text, ...]]]:
+    branches = list(detail.branches)
+    repo = detail.task.repo
+    if repo is not None and repo.branch not in branches:
+        branches.append(repo.branch)
+    rows: list[tuple[Text, tuple[Text, ...]]] = []
+    for branch in branches:
+        facts: list[Text] = []
+        if repo is not None and branch == repo.branch:
+            facts.extend(
+                (
+                    _fact("base", repo.base),
+                    _fact("base ref", repo.base_ref),
+                    _fact("base sha", repo.base_sha),
+                )
+            )
+        rows.append((row_name(branch), tuple(facts)))
+    return rows
+
+
+def _session_rows(detail: TaskDetail) -> list[tuple[Text, tuple[Text, ...]]]:
+    rows: list[tuple[Text, tuple[Text, ...]]] = []
+    for run in detail.sessions:
+        label = run.role.value.title()
+        session_id = run.session_id if run.session_id is not None else "session id unavailable"
+        facts = [
+            Text(run.status.value, style=BOLD_STEEL),
+            Text(f"{run.agent}/{run.model}", style=PRIMARY_TEXT_COLOR, overflow="fold"),
+            _fact("session", session_id),
+        ]
+        if run.effort is not None:
+            facts.append(_fact("effort", run.effort))
+        rows.append((row_name(label), tuple(facts)))
+    return rows
+
+
+def _task_label_width(rows: list[tuple[Text, tuple[Text, ...]]]) -> int:
+    return max((cell_len(label.plain) for label, _ in rows), default=0)
 
 
 def _report_summary(
@@ -399,31 +608,15 @@ def _report_summary(
 ) -> str:
     match report:
         case TriageReport(title=title):
-            return title or NO_VALUE
+            return title
         case ImplementationReport(status=status, summary=summary):
-            return summary or status
+            return f"{status}: {summary}" if summary else status
         case PlanReport(summary=summary):
-            return summary or NO_VALUE
-        case ConsultAnswer(decision=decision):
-            return decision
+            return summary
+        case ConsultAnswer(decision=decision, answer=answer):
+            return f"{decision}: {answer}" if answer else decision
         case Verdict(decision=decision, summary=summary):
             return f"{decision}: {summary}" if summary else decision
-
-
-def _cost_basis(cost_basis: CostBasis | Literal["mixed"]) -> str:
-    match cost_basis:
-        case "api_equivalent":
-            return "API-equivalent"
-        case "billed":
-            return "billed"
-        case "unknown":
-            return NO_VALUE
-        case "mixed":
-            return "mixed"
-
-
-def _slot(task: TaskSummary) -> str:
-    return str(task.slot) if task.slot is not None else NO_VALUE
 
 
 def _outcome_line(glyph: str, label: str, color: str) -> Text:
@@ -445,7 +638,3 @@ def _stop_effect(ack: Ack, kill_session: bool) -> str | None:
         return None
     session_effect = "session closed" if kill_session else "session unchanged"
     return f"{engine_effect} · {session_effect}"
-
-
-def _stack(blocks: list[RenderableType]) -> RenderableType:
-    return Group(*blocks)
