@@ -138,6 +138,16 @@ def _test_env(directory: Path, capture: Path, server: TmuxServer) -> dict[str, s
     }
 
 
+def _assert_session_data(
+    output: str, session: str, project_dir: str, counts: tuple[int, ...]
+) -> None:
+    compact_output = "".join(output.split())
+    assert "".join(session.split()) in compact_output
+    assert "".join(project_dir.split()) in compact_output
+    assert "up" in output
+    assert all(str(count) in compact_output for count in counts)
+
+
 @pytest.mark.asyncio
 async def test_lister_reads_two_projects_progress_and_liveness_without_mutations(
     tmp_path: Path, tmux_server: TmuxServer
@@ -337,8 +347,8 @@ async def test_cli_local_and_remote_ls_work_without_an_initialized_current_proje
     _fake_tmux(bin_dir)
     capture = tmp_path / "ssh-list-argv.json"
     remote_row = SessionRow(
-        session=f"{SESSION_PREFIX}remote [literal]",
-        project_dir="/remote project/[literal]",
+        session=f"{SESSION_PREFIX}remote [literal] " + "session-segment-" * 5,
+        project_dir="/remote project/[literal]/" + "path-segment-" * 7,
         engine_state="up",
         running=3,
         queued=2,
@@ -363,7 +373,6 @@ print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
 
     try:
         local_result = await asyncio.to_thread(runner.invoke, app, ["ls", "--json"], env=env)
-        human_result = await asyncio.to_thread(runner.invoke, app, ["ls"], env=env)
         remote_result = await asyncio.to_thread(
             runner.invoke,
             app,
@@ -371,16 +380,33 @@ print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
             env=env,
         )
         remote_argv = capture.read_text()
-        remote_human_result = await asyncio.to_thread(
-            runner.invoke,
-            app,
-            ["ls", "--host", "remote.example"],
-            env=env,
+        listing_cases = (
+            (None, session, str(project), (1, 1, 0)),
+            (
+                "remote.example",
+                remote_row.session,
+                remote_row.project_dir,
+                (remote_row.running, remote_row.queued, remote_row.escalated),
+            ),
         )
+        for width in (80, 60, 40):
+            for host, identity, project_dir, counts in listing_cases:
+                args = ["ls"] if host is None else ["ls", "--host", host]
+                result = await asyncio.to_thread(
+                    runner.invoke,
+                    app,
+                    args,
+                    env={**env, "COLUMNS": str(width)},
+                )
+                assert result.exit_code == 0
+                _assert_session_data(result.stdout, identity, project_dir, counts)
+                if host is not None:
+                    assert result.stdout.count(host) == 1
     finally:
         engine_lock.release()
 
     local_rows = json.loads(local_result.stdout)
+
     assert local_result.exit_code == 0
     assert all(
         local_rows[0][field] == value
@@ -392,37 +418,9 @@ print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
             ("queued", 1),
         )
     )
-    assert human_result.exit_code == 0
-    assert all(
-        fact in human_result.stdout
-        for fact in (
-            session,
-            f"/{project.name}",
-            "Engine up",
-            "running 1",
-            "queued 1",
-            "escalated 0",
-        )
-    )
     assert remote_result.exit_code == 0
     assert json.loads(remote_result.stdout) == [remote_row.model_dump(mode="json")]
-    assert json.loads(remote_argv) == [
-        "--",
-        "remote.example",
-        "shikiru",
-        "ls",
-        "--json",
-    ]
-    assert remote_human_result.exit_code == 0
-    assert remote_human_result.stdout.count("remote.example") == 1
-    remote_text = "".join(remote_human_result.stdout.split())
-    assert all(
-        "".join(value.split()) in remote_text
-        for value in (remote_row.session, remote_row.project_dir)
-    )
-    assert all(
-        fact in remote_human_result.stdout for fact in ("running 3", "queued 2", "escalated 1")
-    )
+    assert json.loads(remote_argv) == ["--", "remote.example", "shikiru", "ls", "--json"]
     capture_before_invalid_host = capture.read_text()
     invalid_timeout_result = await asyncio.to_thread(
         runner.invoke,
@@ -524,7 +522,8 @@ rows = [
     for row in json.loads(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
 ]
 
-async def pick(options):
+async def pick(options, host):
+    assert host == "remote.example"
     return options[1]
 
 attacher = SessionAttacher(SubprocessRunner(), pick)
@@ -581,7 +580,8 @@ async def test_attach_rejects_an_option_like_name_without_using_it_as_a_target()
         escalated=0,
     )
 
-    async def pick(rows: Sequence[SessionRow]) -> SessionRow:
+    async def pick(rows: Sequence[SessionRow], host: str | None) -> SessionRow:
+        assert host is None
         return rows[0]
 
     attacher = SessionAttacher(SubprocessRunner(), pick)
@@ -610,22 +610,28 @@ async def test_session_picker_can_scroll_to_and_select_rows_beyond_small_viewpor
         )
         for index in range(5)
     )
-    app_instance = SessionPicker(rows)
+    host = "build[bold]box[/bold]"
+    app_instance = SessionPicker(rows, host=host)
 
-    async with app_instance.run_test(size=(72, 12)) as pilot:
+    async with app_instance.run_test(size=(40, 8)) as pilot:
         picker = app_instance.query_one("#session-picker-list", ListView)
+        first_row = picker.children[0].query_one(Static)
         selected_row = picker.children[-1].query_one(Static)
+        host_label = app_instance.query_one("#session-picker-host", Static)
         picker.focus()
         for _ in rows[1:]:
             await pilot.press("down")
         assert picker.index == len(rows) - 1
         assert picker.scroll_y > 0
-        await pilot.resize_terminal(40, 8)
+        await pilot.resize_terminal(80, 24)
         await wait_until(
             lambda: (
-                0 < picker.size.width <= 40
+                0 < picker.size.width <= 80
                 and picker.region.bottom <= app_instance.size.height
+                and rows[0].session in visible_widget_text(first_row, picker)
                 and rows[-1].session in visible_widget_text(selected_row, picker)
+                and "alpha/beta/gamma" in visible_widget_text(selected_row, picker)
+                and "escalated 3" in visible_widget_text(selected_row, picker)
             ),
             timeout=1,
         )
@@ -634,6 +640,7 @@ async def test_session_picker_can_scroll_to_and_select_rows_beyond_small_viewpor
         assert "up" in visible_after_resize
         assert "running 4" in visible_after_resize
         assert "queued 2" in visible_after_resize
+        assert host in visible_widget_text(host_label, app_instance.screen)
         assert all(style[0] for style in styles(selected_row, rows[-1].session))
         await pilot.press("pagedown")
         await wait_until(

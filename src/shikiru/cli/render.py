@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
-from rich.console import Group
+from rich.console import Console, Group
 from rich.style import Style
 from rich.table import Table
 from rich.text import Text
@@ -21,23 +21,31 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.steps import ACTING_ROLE, Step
-from shikiru.domain.tasks import Status
+from shikiru.domain.tasks import Status, Task
 from shikiru.errors import NotInitialisedError, ShikiruError
 from shikiru.operator.commands import AckStatus
 from shikiru.operator.doctor import (
     PLUGIN_CHECK_PREFIX,
     PLUGIN_CHECK_SEPARATOR,
     PLUGINS_CHECK_NAME,
+    PROBE_CHECK_PREFIX,
 )
 from shikiru.ui.age import format_age
 from shikiru.ui.compact import compact_count
 from shikiru.ui.console import supports_osc8
 from shikiru.ui.glyphs import (
+    GLYPH_CONSULT,
     GLYPH_DONE,
     GLYPH_ENGINE,
     GLYPH_PENDING,
     GLYPH_STALLED,
     GLYPH_STOPPED,
+    ROLE_GLYPHS,
+    STAGE_IMPLEMENT,
+    STAGE_MERGE,
+    STAGE_PLAN,
+    STAGE_TRIAGE,
+    STAGE_VERIFY,
 )
 from shikiru.ui.section import (
     BOLD_PRIMARY,
@@ -49,12 +57,17 @@ from shikiru.ui.section import (
     number,
     row_name,
 )
+from shikiru.ui.session import (
+    escalation_count,
+    session_engine_value,
+    session_facts,
+    session_identity,
+)
 from shikiru.ui.size import format_size
 from shikiru.ui.status import status_visual
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
-    ENGINE_COLOR,
     PRIMARY_TEXT_COLOR,
     SAGE,
     SECONDARY_TEXT_COLOR,
@@ -63,7 +76,7 @@ from shikiru.ui.tokens import (
 )
 
 if TYPE_CHECKING:
-    from rich.console import Console, RenderableType
+    from rich.console import RenderableType
 
     from shikiru.operator.commands import Ack
     from shikiru.operator.doctor import DoctorCheck, DoctorReport
@@ -78,15 +91,41 @@ if TYPE_CHECKING:
     from shikiru.operator.sessions import SessionRow
 
 STATUS_ROW_STACKED_BELOW_WIDTH = 60
+SESSION_TABLE_MIN_WIDTH = 65
+SESSION_TABLE_PADDING = 1
+SESSION_TABLE_CELL_PADDING_WIDTH = 2
+SESSION_TABLE_FIRST_COUNT_COLUMN = 2
+SESSION_COUNT_LABELS = ("Running", "Queued", "Escalated")
+SESSION_PATH_INDENT = 2
+SESSION_COLUMN_LABEL = "Session"
+SESSION_ENGINE_LABEL = "Engine"
 DATETIME_TIMESPEC_SECONDS = "seconds"
 STATUS_COST_FORMAT = ".2f"
-DOCTOR_OK_LABEL = "ok"
-DOCTOR_FAIL_LABEL = "fail"
-DOCTOR_OUTCOME_LABEL_WIDTH = len(f"{GLYPH_STOPPED} {DOCTOR_FAIL_LABEL}")
 STOPPED_RESULT_FIELD = "stopped"
 STOPPING_RESULT_FIELD = "stopping"
 PLUGIN_AGGREGATE_PART_COUNT = 2
 PLUGIN_CHILD_PART_COUNT = 3
+DOCTOR_PROBE_PART_COUNT = 2
+DOCTOR_CHECK_NAMES = {
+    "tmux": "Tmux",
+    "git": "Git",
+    "repository": "Repository",
+    "config": "Configuration",
+    "db": "Database",
+    "cow": "Copy-on-write",
+    "engine-output": "Engine output",
+    "plugins": "Agents",
+    "config.plugins": "Agent configuration",
+}
+DOCTOR_PLUGIN_CHECK_NAMES = {"model_choices": "Model choices"}
+STATUS_STEP_GLYPHS = {
+    Step.TRIAGE: STAGE_TRIAGE,
+    Step.PLAN: STAGE_PLAN,
+    Step.IMPLEMENT: STAGE_IMPLEMENT,
+    Step.CONSULT: GLYPH_CONSULT,
+    Step.VERIFY: STAGE_VERIFY,
+    Step.INTEGRATE: STAGE_MERGE,
+}
 
 
 def init_renderable(
@@ -145,24 +184,36 @@ def status_renderable(view: StatusView, *, width: int) -> RenderableType:
 
 
 def _project_status_renderable(view: StatusView, *, width: int) -> RenderableType:
-    engine_style = f"{STYLE_BOLD} {ENGINE_COLOR if view.engine_up else ALERT_COLOR}"
+    engine_style = BOLD_STEEL if view.engine_up else SECONDARY_TEXT_COLOR
     summary = [
         Text(view.project, style=BOLD_PRIMARY),
         Text.assemble(
-            (f"{GLYPH_ENGINE} engine ", f"{STYLE_BOLD} {ENGINE_COLOR}"),
+            (GLYPH_ENGINE, BOLD_STEEL if view.engine_up else SECONDARY_TEXT_COLOR),
+            (" engine ", SECONDARY_TEXT_COLOR),
             ("up" if view.engine_up else "down", engine_style),
         ),
         _fact("slots", f"{view.slots.active}/{view.slots.maximum}", BOLD_PRIMARY),
         _fact("queued", str(len(view.queued_tasks)), BOLD_PRIMARY),
-        _fact("escalations", str(len(view.escalations)), BOLD_PRIMARY),
+        Text.assemble(
+            ("escalations ", SECONDARY_TEXT_COLOR), escalation_count(len(view.escalations))
+        ),
     ]
     if view.oldest_escalation_age_seconds is not None:
         summary.append(
             _fact("oldest", format_age(view.oldest_escalation_age_seconds), BOLD_PRIMARY)
         )
-    summary.append(_fact("run dirs", str(view.run_directories.directories), BOLD_PRIMARY))
-    summary.append(_fact("size", format_size(view.run_directories.size_bytes)))
-    return Group(WrappedGroups(tuple(summary)), *_project_status_sections(view, width=width))
+    run_summary = Text.assemble(
+        ("Run directories ", SECONDARY_TEXT_COLOR),
+        (str(view.run_directories.directories), BOLD_PRIMARY),
+        (" · ", SECONDARY_TEXT_COLOR),
+        (format_size(view.run_directories.size_bytes), PRIMARY_TEXT_COLOR),
+    )
+    sections = _project_status_sections(view, width=width)
+    body: list[RenderableType] = [WrappedGroups(tuple(summary))]
+    for section in sections:
+        body.extend((Text(""), section))
+    body.extend((Text(""), run_summary))
+    return Group(*body)
 
 
 def _project_status_sections(view: StatusView, *, width: int) -> list[RenderableType]:
@@ -176,9 +227,9 @@ def _project_status_sections(view: StatusView, *, width: int) -> list[Renderable
         ]
         blocks.append(_status_rows(path_row, width=width))
     if view.active_tasks:
-        blocks.append(_task_section("Tasks", view.active_tasks, width=width))
+        blocks.append(_task_section("Tasks", view.active_tasks))
     if view.queued_tasks:
-        blocks.append(_task_section("Queue", view.queued_tasks, width=width))
+        blocks.append(_task_section("Queue", view.queued_tasks))
     if view.faults:
         blocks.append(_fault_section(view, width=width))
     if view.escalations:
@@ -196,45 +247,39 @@ def _task_status_renderable(
 ) -> RenderableType:
     task = detail.task
     identity = Text.assemble(
-        (task.id, BOLD_PRIMARY), (" · ", SECONDARY_TEXT_COLOR), (task.title, PRIMARY_TEXT_COLOR)
+        (task.id, BOLD_PRIMARY),
+        (" · ", SECONDARY_TEXT_COLOR),
+        (task.title, PRIMARY_TEXT_COLOR),
     )
-    visual = status_visual(task.status)
-    state = Text(f"{visual.glyph} {task.status.value}", style=visual.style)
-    groups = [state]
-    if task.step is not None:
-        role = ACTING_ROLE[task.step]
-        groups.extend(
-            (
-                _fact("step", task.step.value, BOLD_STEEL),
-                _fact("role", role.value.title(), BOLD_STEEL),
-            )
-        )
     body: list[RenderableType] = [
         _status_text_rows([identity], width=width),
-        WrappedGroups(tuple(groups)),
+        WrappedGroups(_task_groups(task)),
     ]
 
     blockers = _task_blocker_rows(detail, escalations)
     if blockers:
-        body.append(_status_rows(blockers, width=width))
+        body.extend((Text(""), _status_rows(blockers, width=width)))
     report_rows = _report_rows(detail)
     if report_rows:
-        body.append(_status_text_section("Reports", report_rows, width=width))
+        body.extend((Text(""), _status_text_section("Reports", report_rows, width=width)))
     timeline_rows = _timeline_rows(detail)
     if timeline_rows:
-        body.append(_status_text_section("Timeline", timeline_rows, width=width))
+        body.extend((Text(""), _status_text_section("Timeline", timeline_rows, width=width)))
     branch_rows = _branch_rows(detail)
     if branch_rows:
-        body.append(_status_section("Branches", branch_rows, width=width))
+        body.extend((Text(""), _status_section("Branches", branch_rows, width=width)))
     session_rows = _session_rows(detail)
     if session_rows:
-        body.append(_status_section("Sessions", session_rows, width=width))
+        body.extend((Text(""), _status_section("Sessions", session_rows, width=width)))
     if detail.evidence_errors:
-        body.append(
-            _status_text_section(
-                "Evidence",
-                [Text(error, style=AMBER) for error in detail.evidence_errors],
-                width=width,
+        body.extend(
+            (
+                Text(""),
+                _status_text_section(
+                    "Evidence",
+                    [Text(error, style=AMBER) for error in detail.evidence_errors],
+                    width=width,
+                ),
             )
         )
     return Group(*body)
@@ -264,24 +309,26 @@ def ack_renderable(ack: Ack, *, stopping: bool = False) -> RenderableType:
 
 def doctor_renderable(report: DoctorReport, *, width: int) -> RenderableType:
     """Render each diagnostic with its complete detail and an aggregate result."""
-    rows: list[tuple[Text, tuple[Text, ...]]] = []
     visible_checks = _doctor_display_checks(report.checks)
+    wrap_console = Console(width=max(1, width), force_terminal=False, color_system=None)
+    rows: list[RenderableType] = []
     for check in visible_checks:
+        row = Text(overflow="fold")
         if check.ok:
-            outcome = _outcome_line(GLYPH_DONE, DOCTOR_OK_LABEL, SUCCESS_COLOR)
+            row.append(GLYPH_DONE, style=f"{STYLE_BOLD} {SUCCESS_COLOR}")
         else:
-            outcome = _outcome_line(GLYPH_STOPPED, DOCTOR_FAIL_LABEL, ALERT_COLOR)
-        rows.append(
-            (
-                outcome,
-                (row_name(check.name), Text(check.detail, style=PRIMARY_TEXT_COLOR)),
-            )
-        )
-    checks = labelled_rows(rows, width, DOCTOR_OUTCOME_LABEL_WIDTH)
+            row.append(GLYPH_STOPPED, style=f"{STYLE_BOLD} {ALERT_COLOR}")
+        row.append(" ")
+        row.append(_doctor_check_name(check.name), style=BOLD_PRIMARY)
+        row.append(" · ", style=SECONDARY_TEXT_COLOR)
+        row.append(check.detail, style=PRIMARY_TEXT_COLOR)
+        rows.extend(row.wrap(wrap_console, max(1, width), overflow="fold"))
+    if rows:
+        rows.append(Text(""))
     if report.ok:
         result = _outcome_line(GLYPH_DONE, "Doctor passed", SUCCESS_COLOR)
         result.append(" · ", style=SECONDARY_TEXT_COLOR)
-        result.append(f"{len(report.checks)} checks", style=BOLD_PRIMARY)
+        result.append(f"{len(visible_checks)} checks", style=BOLD_PRIMARY)
     else:
         failed_checks = sum(not check.ok for check in visible_checks)
         result = _outcome_line(GLYPH_STOPPED, "Doctor failed", ALERT_COLOR)
@@ -290,7 +337,7 @@ def doctor_renderable(report: DoctorReport, *, width: int) -> RenderableType:
             f"{failed_checks} of {len(visible_checks)} checks failed",
             style=PRIMARY_TEXT_COLOR,
         )
-    return Group(checks, result)
+    return Group(*rows, result)
 
 
 def _doctor_display_checks(checks: list[DoctorCheck]) -> list[DoctorCheck]:
@@ -308,19 +355,61 @@ def _doctor_display_checks(checks: list[DoctorCheck]) -> list[DoctorCheck]:
         and (parts := check.name.split(PLUGIN_CHECK_SEPARATOR))[0] == PLUGIN_CHECK_PREFIX
         and len(parts) >= PLUGIN_CHILD_PART_COUNT
     }
+    plugins_with_details = {
+        parts[1]
+        for check in checks
+        if (parts := check.name.split(PLUGIN_CHECK_SEPARATOR))[0] == PLUGIN_CHECK_PREFIX
+        and len(parts) >= PLUGIN_CHILD_PART_COUNT
+    }
     return [
         check
         for check in checks
         if not (
             (check.name == PLUGINS_CHECK_NAME and failed_plugins)
+            or (check.ok and check.name == PLUGINS_CHECK_NAME and plugins_with_details)
             or (
                 not check.ok
                 and (parts := check.name.split(PLUGIN_CHECK_SEPARATOR))[0] == PLUGIN_CHECK_PREFIX
                 and len(parts) == PLUGIN_AGGREGATE_PART_COUNT
                 and parts[1] in failed_plugins_with_details
             )
+            or (
+                check.ok
+                and (parts := check.name.split(PLUGIN_CHECK_SEPARATOR))[0] == PLUGIN_CHECK_PREFIX
+                and len(parts) == PLUGIN_AGGREGATE_PART_COUNT
+                and parts[1] in plugins_with_details
+            )
         )
     ]
+
+
+def _doctor_check_name(name: str) -> str:
+    if name in DOCTOR_CHECK_NAMES:
+        return DOCTOR_CHECK_NAMES[name]
+    prefix, *parts = name.split(PLUGIN_CHECK_SEPARATOR)
+    if prefix == PLUGIN_CHECK_PREFIX:
+        if not parts:
+            return name
+        return _doctor_plugin_check_name(parts)
+    if prefix == PROBE_CHECK_PREFIX:
+        return _doctor_probe_check_name(name, parts)
+    return name
+
+
+def _doctor_plugin_check_name(parts: list[str]) -> str:
+    if not parts:
+        return "Agent check"
+    if len(parts) == 1:
+        return f"Agent {parts[0]}"
+    check_name = PLUGIN_CHECK_SEPARATOR.join(parts[1:])
+    display_check = DOCTOR_PLUGIN_CHECK_NAMES.get(check_name, check_name)
+    return f"Agent {parts[0]} · {display_check}"
+
+
+def _doctor_probe_check_name(name: str, parts: list[str]) -> str:
+    if len(parts) < DOCTOR_PROBE_PART_COUNT:
+        return name
+    return f"{parts[0]} probe · {' · '.join(parts[1:])}"
 
 
 def session_rows_renderable(
@@ -333,22 +422,76 @@ def session_rows_renderable(
         heading.append(host, style=BOLD_PRIMARY)
     if not rows:
         return Group(heading, Text("No Shikiru sessions found.", style=SECONDARY_TEXT_COLOR))
-    values: list[RenderableType] = [heading]
-    for row in rows:
-        path = _path_text(
-            Path(row.project_dir),
-            linked=host is None and supports_osc8(console),
-        )
-        path_text = Text("  ")
-        path_text.append_text(path)
-        facts = (
-            _session_engine(row.engine_state),
-            _session_count("running", row.running),
-            _session_count("queued", row.queued),
-            _session_count("escalated", row.escalated),
-        )
-        values.extend((row_name(row.session), path_text, WrappedGroups(facts)))
+    if console.width < SESSION_TABLE_MIN_WIDTH:
+        return Group(heading, *(_stacked_session(row, console=console, host=host) for row in rows))
+    return Group(heading, _session_table(rows, console=console, host=host))
+
+
+def _stacked_session(row: SessionRow, *, console: Console, host: str | None) -> RenderableType:
+    path = _path_text(Path(row.project_dir), linked=host is None and supports_osc8(console))
+    return Group(
+        *_wrap_text(session_identity(row.session), width=console.width),
+        *_wrap_text(path, width=console.width, indent=SESSION_PATH_INDENT),
+        WrappedGroups(session_facts(row.engine_state, row.running, row.queued, row.escalated)),
+    )
+
+
+def _session_table(rows: list[SessionRow], *, console: Console, host: str | None) -> RenderableType:
+    widths = _session_table_widths(rows, console.width)
+    values: list[RenderableType] = [_session_table_line(widths, _session_table_headers())]
+    for index, row in enumerate(rows):
+        if index:
+            values.append(Text(""))
+        cells = _session_table_cells(row)
+        if cell_len(cells[0].plain) > widths[0]:
+            values.extend(_wrap_text(cells[0], width=console.width))
+            cells = (Text(""), *cells[1:])
+        values.append(_session_table_line(widths, cells))
+        path = _path_text(Path(row.project_dir), linked=host is None and supports_osc8(console))
+        values.extend(_wrap_text(path, width=console.width, indent=SESSION_PATH_INDENT))
     return Group(*values)
+
+
+def _session_table_widths(rows: list[SessionRow], width: int) -> tuple[int, ...]:
+    headers = _session_table_headers()
+    cells = tuple(_session_table_cells(row) for row in rows)
+    columns = tuple(
+        max(cell_len(header.plain), *(cell_len(row[index].plain) for row in cells))
+        for index, header in enumerate(headers[1:], start=1)
+    )
+    padding_width = len(headers) * SESSION_TABLE_CELL_PADDING_WIDTH * SESSION_TABLE_PADDING
+    session_width = max(1, width - sum(columns) - padding_width)
+    return (session_width, *columns)
+
+
+def _session_table_headers() -> tuple[Text, ...]:
+    return (
+        Text(SESSION_COLUMN_LABEL, style=SECONDARY_TEXT_COLOR),
+        Text(SESSION_ENGINE_LABEL, style=SECONDARY_TEXT_COLOR),
+        *(Text(label, style=SECONDARY_TEXT_COLOR) for label in SESSION_COUNT_LABELS),
+    )
+
+
+def _session_table_cells(row: SessionRow) -> tuple[Text, ...]:
+    return (
+        session_identity(row.session),
+        session_engine_value(row.engine_state),
+        number(str(row.running)),
+        number(str(row.queued)),
+        escalation_count(row.escalated),
+    )
+
+
+def _session_table_line(widths: tuple[int, ...], cells: tuple[Text, ...]) -> Table:
+    table = Table.grid(padding=(0, SESSION_TABLE_PADDING), expand=True)
+    for index, width in enumerate(widths):
+        table.add_column(
+            width=width,
+            overflow="fold",
+            justify="right" if index >= SESSION_TABLE_FIRST_COUNT_COLUMN else "left",
+        )
+    table.add_row(*cells)
+    return table
 
 
 def _path_text(path: Path, *, linked: bool) -> Text:
@@ -358,23 +501,18 @@ def _path_text(path: Path, *, linked: bool) -> Text:
     return text
 
 
-def _session_count(label: str, count: int) -> Text:
-    return Text.assemble((f"{label} ", SECONDARY_TEXT_COLOR), number(str(count)))
-
-
-def _session_engine(engine_state: Literal["up", "down"]) -> Text:
-    engine = Text.assemble((GLYPH_ENGINE, BOLD_STEEL), (" Engine ", SECONDARY_TEXT_COLOR))
-    match engine_state:
-        case "up":
-            engine.append(engine_state, style=f"{STYLE_BOLD} {SUCCESS_COLOR}")
-        case "down":
-            engine.append(engine_state, style=f"{STYLE_BOLD} {ALERT_COLOR}")
-    return engine
-
-
-def _task_section(title: str, tasks: list[TaskSummary], *, width: int) -> Section:
-    rows = [(row_name(task.id), _task_groups(task)) for task in tasks]
-    return _status_section(title, rows, width=width)
+def _wrap_text(text: Text, *, width: int, indent: int = 0) -> list[Text]:
+    line_width = max(1, width - indent)
+    console = Console(width=line_width, force_terminal=False, color_system=None)
+    lines = text.wrap(console, line_width, overflow="fold")
+    if indent:
+        indented: list[Text] = []
+        for line in lines:
+            leading = Text(" " * indent, style=SECONDARY_TEXT_COLOR)
+            leading.append_text(line)
+            indented.append(leading)
+        return indented
+    return list(lines)
 
 
 def _status_section(
@@ -409,15 +547,18 @@ def _fact(label: str, value: str, value_style: str = PRIMARY_TEXT_COLOR) -> Text
     return Text.assemble((f"{label} ", SECONDARY_TEXT_COLOR), (value, value_style))
 
 
-def _task_groups(task: TaskSummary) -> tuple[Text, ...]:
+def _task_groups(task: TaskSummary | Task) -> tuple[Text, ...]:
     visual = status_visual(task.status)
-    groups = [Text(f"{visual.glyph} {task.status.value}", style=visual.style)]
-    groups.append(Text(task.title, style=PRIMARY_TEXT_COLOR, overflow="fold"))
+    status_style = f"{STYLE_BOLD} {AMBER}" if task.status is Status.ESCALATED else visual.style
+    groups = [Text(f"{visual.glyph} {task.status.value}", style=status_style)]
     if task.step is not None:
-        step = Step(task.step)
+        step = task.step if isinstance(task.step, Step) else Step(task.step)
         role = ACTING_ROLE[step]
         groups.extend(
-            (_fact("step", step.value, BOLD_STEEL), _fact("role", role.value.title(), BOLD_STEEL))
+            (
+                Text(f"{STATUS_STEP_GLYPHS[step]} {step.value.title()}", style=BOLD_STEEL),
+                Text(f"{ROLE_GLYPHS[role]} {role.value.title()}", style=BOLD_STEEL),
+            )
         )
     if task.slot is not None:
         groups.append(_fact("slot", str(task.slot), BOLD_PRIMARY))
@@ -544,11 +685,6 @@ def _task_blocker_rows(
 ) -> list[tuple[Text, tuple[Text, ...]]]:
     task = detail.task
     rows: list[tuple[Text, tuple[Text, ...]]] = []
-    if task.holds:
-        holds = ", ".join(sorted(hold.value for hold in task.holds))
-        rows.append((row_name("Holds"), (Text(holds, style=AMBER),)))
-    if task.wait_reason is not None:
-        rows.append((row_name("Waiting"), (Text(task.wait_reason, style=AMBER, overflow="fold"),)))
     if task.status_reason is not None:
         rows.append((row_name("Outcome"), (Text(task.status_reason, style=SECONDARY_TEXT_COLOR),)))
     rows.extend(
@@ -647,6 +783,18 @@ def _session_rows(detail: TaskDetail) -> list[tuple[Text, tuple[Text, ...]]]:
 
 def _task_label_width(rows: list[tuple[Text, tuple[Text, ...]]]) -> int:
     return max((cell_len(label.plain) for label, _ in rows), default=0)
+
+
+def _task_section(title: str, tasks: list[TaskSummary]) -> Section:
+    rows: list[RenderableType] = []
+    for task in tasks:
+        identity = Text.assemble(
+            (task.id, BOLD_PRIMARY),
+            (" · ", SECONDARY_TEXT_COLOR),
+            (task.title, PRIMARY_TEXT_COLOR),
+        )
+        rows.append(Group(identity, WrappedGroups(_task_groups(task))))
+    return Section(title, Group(*rows), ruled=False, title_style=BOLD_STEEL)
 
 
 def _report_summary(

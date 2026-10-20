@@ -374,8 +374,13 @@ async def test_init_wizard_walkthrough_saves_choices_and_shows_doctor(
     result = cast("InitWizardResult", app.return_value)
     assert result.doctor_report is not None
     assert result.doctor_report.ok
-    for check in result.doctor_report.checks:
-        assert check.name in doctor_text_without_wraps
+    visible_checks = [
+        check
+        for check in result.doctor_report.checks
+        if check.name != "plugins"
+        and not (check.name.startswith("plugin:") and check.name.count(":") == 1)
+    ]
+    for check in visible_checks:
         assert (
             check.detail in doctor_text_without_wraps
             or " ".join(check.detail.split()) in doctor_text_normalized
@@ -510,7 +515,7 @@ async def test_init_wizard_keeps_config_and_exposes_failed_doctor_report(
         config_path = tmp_path / ".shikiru" / "config.toml"
         await wait_until(config_path.is_file, timeout=3)
         await wait_until(
-            lambda: "fail" in _doctor_text(app.query_one("#doctor-report", Static)),
+            lambda: "exit 9" in _doctor_text(app.query_one("#doctor-report", Static)),
             timeout=60,
         )
 
@@ -518,7 +523,7 @@ async def test_init_wizard_keeps_config_and_exposes_failed_doctor_report(
         await pilot.resize_terminal(40, 12)
         await wait_until(lambda: app.size.width == 40 and app.size.height == 12, timeout=1)
         report = app.query_one("#doctor-report", Static)
-        await wait_until(lambda: "fail" in _doctor_text(report).lower(), timeout=1)
+        await wait_until(lambda: "exit 9" in _doctor_text(report), timeout=1)
         doctor_text = _doctor_text(report)
         assert str(config_path.resolve()) in doctor_text.replace("\n", "")
         await pilot.click("#wizard-finish")

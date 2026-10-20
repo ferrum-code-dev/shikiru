@@ -304,9 +304,9 @@ def build_session_tools(
     def reader_for(project_root: Path) -> StateReader:
         return StateReader(Database(state_db_path(project_root)), clock)
 
-    async def pick(rows: Sequence[SessionRow]) -> SessionRow:
+    async def pick(rows: Sequence[SessionRow], host: str | None) -> SessionRow:
         picker_module = import_module("shikiru.dashboard.session_picker")
-        return await picker_module.pick_session(tuple(rows))
+        return await picker_module.pick_session(tuple(rows), host=host)
 
     return (
         SessionLister(

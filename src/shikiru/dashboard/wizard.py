@@ -169,7 +169,7 @@ class LadderRung(Vertical):
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="rung-heading"):
-            yield Label(f"{self._role.title()} rung {self._index + 1}")
+            yield Label(f"{self._role.title()} {self._index + 1}")
             if self._role in EDITABLE_ROLES:
                 if self._index == 0:
                     yield Button("Add", id=f"{self._role}-{RUNG_ACTION_ADD}")
@@ -305,6 +305,7 @@ class InitWizardApp(App[InitWizardResult | None]):
     #wizard-navigation Button:focus {
         color: $primary-text; background: $selected-surface; text-style: reverse;
     }
+    #wizard-shell.wizard-narrow .rung-heading Button { padding: 0; }
     #wizard-shell.wizard-narrow .rung-fields {
         layout: vertical;
     }

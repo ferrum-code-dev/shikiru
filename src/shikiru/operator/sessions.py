@@ -53,7 +53,7 @@ _ROWS_ADAPTER: TypeAdapter[list[SessionRow]] = TypeAdapter(list[SessionRow])
 
 
 EngineState = Callable[[Path], bool]
-SessionPicker = Callable[[Sequence[SessionRow]], Awaitable[SessionRow]]
+SessionPicker = Callable[[Sequence[SessionRow], str | None], Awaitable[SessionRow]]
 ReaderFactory = Callable[[Path], StateReader]
 
 
@@ -164,7 +164,7 @@ class SessionAttacher:
         inside_tmux: bool,
     ) -> None:
         """Replace this process with tmux or ssh for one listed session."""
-        row = await self._select(rows, name)
+        row = await self._select(rows, name, host)
         if host is None:
             command = _local_attach_argv(row.session, inside_tmux)
         else:
@@ -172,7 +172,9 @@ class SessionAttacher:
             command = _remote_attach_argv(host, row.session)
         self._runner.replace(command)
 
-    async def _select(self, rows: Sequence[SessionRow], name: str | None) -> SessionRow:
+    async def _select(
+        self, rows: Sequence[SessionRow], name: str | None, host: str | None
+    ) -> SessionRow:
         if name is not None:
             matches = [
                 row
@@ -187,7 +189,7 @@ class SessionAttacher:
             return rows[0]
         if not rows:
             raise UsageError(NO_SESSIONS_ERROR)
-        return await self._picker(rows)
+        return await self._picker(rows, host)
 
 
 def _validate_host(host: str) -> None:

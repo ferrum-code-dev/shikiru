@@ -291,7 +291,8 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
     task_facts = (
         "T-1 · literal [bold red] detail",
         "escalated",
-        "role Leader",
+        "Triage",
+        "Leader",
         "intervention",
         "Keep the parser strict?",
         "01-triage-i0 · triage · triage",

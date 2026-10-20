@@ -2,7 +2,7 @@
 
 This document records the five visual directions and the selected Focus ledger policy. Native application behavior is normative in [Operator interfaces](design/06-operator.md); this document and the [interactive comparison](design/references/cli-style-options.html) provide design rationale and examples. The self-contained HTML page is an offline browser prototype using sample data and mock flows for setup, submission, status, diagnostics and attachment. It runs no shell commands, reads no projects and changes no configuration. Its output, interactions and browser rendering do not override native CLI behavior.
 
-**Selected: Focus ledger (2026-10-18).** The user chose this direction and requested concise, command-specific output while retaining every necessary detail. Existing Typer help keeps its layout, wording, ordering and defaults; only its palette and text attributes change. The HTML defaults to the refined Focus ledger; the earlier alternatives remain available for comparison. These are design alternatives, not five proposed application themes. Native CLI and TUI behavior follows the operator design; the HTML stays illustrative.
+**Selected: Focus ledger (2026-10-18).** The user chose this direction and requested concise, command-specific output while retaining every necessary detail. Native Typer help keeps its overall composition, command order and defaults, with readable section titles, useful visible argument and option descriptions, and one required-argument legend. The HTML defaults to the refined Focus ledger; the earlier alternatives remain available for comparison. These are design alternatives, not five proposed application themes. Native CLI and TUI behavior follows the operator design; the HTML stays illustrative.
 
 | Direction | Primary structure | Main strength | Main cost |
 |---|---|---|---|
@@ -20,17 +20,17 @@ The 2026-10-18 feedback refines the original composition sketches below. Shorten
 
 | Command | Concise output scope |
 |---|---|
-| Help | Existing Typer content and structure, recolored only; preserve wording, order, defaults, arguments and wrapping. |
-| `ls` | Session, directory, engine and running/queued/escalated counts; remote host once when requested. |
-| `status` | One project/engine/slots/queue/escalation summary, populated task/queue/decision/fault groups, compact usage/quota/run facts. Empty counts stay in the summary. No unrelated Recent history. Keep wait/hold reasons, slots, queue priority, oldest escalation age, fault scope/times/repeats/recoverability and observed quota/reset evidence. |
-| `status T-n` | Task identity once, current state and blocker, report/verdict, timeline, branch and sessions when available. Keep evidence relevant to that task rather than repeating project-wide usage. |
-| `doctor` | One row per check, with outcome, name and detail; actionable failure cause and an aggregate result. `--probe` adds probe checks. |
-| `start` / `stop` | One outcome or acknowledgement, command identity when present and known engine/session effect. Preserve pending/rejected distinctions and relevant failure diagnostics. No repeated brand masthead or result panel. |
-| `init` | Existing seven-step interaction; Finish shows the written absolute config path and Doctor results. The human post-wizard result shares the init success treatment without a placeholder warning; `--yes` adds its required placeholder/review warning. |
+| Help | Current Typer layout with readable Options, Commands and Arguments headings, useful descriptions for visible arguments/options, and one `* required` legend. Preserve command order and defaults; hidden process entrypoints stay hidden. |
+| `ls` | At 65 columns and above, aligned Session/Engine/Running/Queued/Escalated columns with each full path below its row; below that, stack identity, path and all engine/count facts. Show remote host once. |
+| `status` | One compact project/engine/slots/queue/escalation summary, populated task/queue/decision/fault/usage/quota sections separated by blank lines, and run-directory count/size at the tail. Task ID/title lead each row; its continuation carries state, stage/role, slot, wait/holds and priority. Keep fault scope/times/repeats/recoverability and observed quota/reset evidence. |
+| `status T-n` | That task's ID/title and state, blocker/outcome, retained reports/verdicts, timeline, branches, sessions and evidence errors. Keep task scope and omit project-wide usage and other project noise. |
+| `doctor` | One compact row per visible check: semantic glyph, readable check name and complete detail, followed by an honest visible-check count. `--probe` retains probe stream tail/stderr; `--json` keeps every existing check and its schema. |
+| `start` / `stop` | Successful lifecycle output is the single outcome `Engine started`, `Engine already running`, `Engine stopped` or `Engine already stopped`. Pending and rejected acknowledgements retain their command identity and truthful reason. |
+| `init` | Existing seven-step interaction with ordered Leader/Implementer ladder builders and exactly one Helper rung. Finish uses the same Doctor renderer as `doctor`, shows the written absolute config path and complete visible check details. The human post-wizard result has no placeholder warning; `--yes` keeps its required placeholder/review warning. |
 | Errors | Cause, relevant context and a known recovery action; preserve error exits and any necessary startup-output evidence. |
 | Submit/version/JSON/MCP | Existing bare task ID, bare version or protocol payload. No extra presentation text. |
 
-The preview's help examples were captured from the actual CLI at 24, 32, 40, 60 and 80 columns and retain their complete text. They are reference captures; native Typer help is authoritative and preserves its current layout, wording, order, defaults and wrapping. Help does not use the prototype's generic heading, grouping or framing helpers.
+The HTML's embedded help captures are historical actual-CLI output from before Task 260. They are retained as proposal evidence, not current help output. Current Typer help is authoritative and follows the row above. Help does not use the prototype's generic framing helpers.
 
 ## Shared visual contract
 
@@ -74,23 +74,38 @@ One identity line introduces an open report. A factual summary comes first, foll
 ```text
 SHIKIRU · projects
 
-Project       Engine       Running  Queued  Escalated
-shikiru       ⚙︎ up               2       3          1
-              ~/Projects/shikiru
-website       ✕ down             0       1          0
-              ~/Projects/website
+Session                          Engine   Running Queued Escalated
+[shikiru] shikiru                ⚙︎ up          2      3         1
+  ~/Projects/shikiru
+[shikiru] website                ⚙︎ down        0      1         0
+  ~/Projects/website
 ```
 
 ```text
 SHIKIRU · shikiru
-⚙︎ Engine up · slots 2/4 · queued 3 · escalations 1
+⚙︎ engine up · slots 2/4 · queued 3 · escalations 1 · oldest 4m
 
-Tasks ─────────────────────────────────────────────
-T-12  Add retry handling  ⚖︎ Verify · ◆ Leader
-T-15  Improve onboarding ⏸︎ Paused · ▲ Implementer
+Tasks
+T-12 · Add retry handling
+‼ escalated · ⚖︎ Verify · ◆ Leader · slot 1 · holds intervention
+T-15 · Improve onboarding
+⏸︎ paused · ⚒ Implement · ▲ Implementer
 
-Escalations ───────────────────────────────────────
+Queue
+T-18 · Add usage export
+· queued · wait on T-12 · priority 1
+
+Escalations
 ‼ E-3 · T-12 · Review required · open 4m
+
+Usage
+claude · 18k in · 4k out · $1.84 billed
+codex · 24k in · 6k out · API-equivalent estimate $0.42
+
+Quota
+codex · 5h · 62% · resets 14:00 · observed 12:06
+
+Run directories 6 · 48 MiB
 ```
 
 ```text
@@ -99,15 +114,18 @@ SHIKIRU · initialize shikiru
 Repository · ✔ ~/Projects/shikiru · main
 Agents · step 2 of 7
 
-Leader         [claude:                    ]
-Implementer    [codex:                     ]
-Helper         [claude:                    ]
+Leader 1
+  Agent [claude] · Model [Choose model] · Effort [Choose effort]
+Implementer 1
+  Agent [codex] · Model [Choose model] · Effort [Choose effort]
+Helper 1
+  Agent [claude] · Model [Choose model] · Effort [Choose effort]
 
 Choose a model for each role.
 Enter next · Esc cancel
 ```
 
-**Strength:** closest continuity with Home, quick comparison across many rows and minimal overhead for small commands. **Tradeoff:** quieter identity; effective hierarchy depends on disciplined spacing. Doctor uses a compact check list and errors a short outcome/cause/next-action block; help retains its existing Typer composition. On narrow terminals, columns become labeled continuation lines without dropping facts.
+**Strength:** closest continuity with Home, quick comparison across many rows and minimal overhead for small commands. **Tradeoff:** quieter identity; effective hierarchy depends on disciplined spacing. Doctor uses one glyph, readable check name and full detail per line, followed by its result count; help keeps Typer's overall composition. At 65 columns and above, session counts align and each path follows its row; narrower terminals stack the identity, path and complete labeled facts.
 
 ## 2. Project dossiers
 
@@ -151,7 +169,7 @@ SHIKIRU · initialize shikiru
   Enter next · Esc cancel
 ```
 
-**Strength:** strong ownership grouping, natural wrapping for paths and descriptions, comfortable narrow output. **Tradeoff:** taller reports and slower comparison of counts across many projects. Doctor places failure details under each check; lifecycle results stay concise. Help retains its existing Typer composition.
+**Strength:** strong ownership grouping, natural wrapping for paths and descriptions, comfortable narrow output. **Tradeoff:** taller reports and slower comparison of counts across many projects. Doctor places failure details under each check; lifecycle results stay concise. Help uses Typer's current composition with readable section titles, useful visible descriptions and one required-argument legend.
 
 ## 3. Signal rail
 
@@ -195,7 +213,7 @@ SHIKIRU · initialize shikiru
 │   Enter next · Esc cancel
 ```
 
-**Strength:** distinctive instrument-like rhythm and useful continuity between work in progress and final outcomes. **Tradeoff:** glyph density can become busy, and the rail consumes width. The current-stage marker identifies a wizard stage, never selection in the picker. Errors put the factual failure on the rail; probe progress updates the current check and retains completed outcomes. Help retains its existing Typer composition.
+**Strength:** distinctive instrument-like rhythm and useful continuity between work in progress and final outcomes. **Tradeoff:** glyph density can become busy, and the rail consumes width. The current-stage marker identifies a wizard stage, never selection in the picker. Errors put the factual failure on the rail; probe progress updates the current check and retains completed outcomes. Help uses Typer's current composition with readable section titles, useful visible descriptions and one required-argument legend.
 
 ## 4. Yonkoma notebook
 
@@ -240,7 +258,7 @@ Choose a model for each role.
 Enter next · Esc cancel
 ```
 
-**Strength:** most distinctive expression of Shikiru's original visual identity and useful lifecycle storytelling. **Tradeoff:** highest width cost, more chrome and a less natural fit for generic commands. Initialization keeps its real seven steps; do not invent a four-stage wizard to match the strip. Doctor stays a check list; help retains its existing Typer composition. Ordinary acknowledgements stay short, with panels reserved for useful workflow structure. Narrow task strips collapse into the existing one-line form.
+**Strength:** most distinctive expression of Shikiru's original visual identity and useful lifecycle storytelling. **Tradeoff:** highest width cost, more chrome and a less natural fit for generic commands. Initialization keeps its real seven steps; do not invent a four-stage wizard to match the strip. Doctor stays a check list; help uses Typer's current composition with readable section titles, useful visible descriptions and one required-argument legend. Ordinary acknowledgements stay short, with panels reserved for useful workflow structure. Narrow task strips collapse into the existing one-line form.
 
 ## 5. Command folio
 
@@ -283,7 +301,7 @@ One rectangular frame encloses a whole command result. Internal rules divide sec
 └────────────────────────────────────────────────────────────┘
 ```
 
-**Strength:** consistent containment across reports, help, errors and forms. **Tradeoff:** frames add copying noise and width pressure, and can overwhelm a one-line result. Do not nest boxes. Help retains its existing Typer frames without an extra folio frame; one-line lifecycle results and short errors remain unframed. At constrained widths the frame must yield space to the complete text.
+**Strength:** consistent containment across reports, help, errors and forms. **Tradeoff:** frames add copying noise and width pressure, and can overwhelm a one-line result. Do not nest boxes. Help uses Typer's current composition with readable section titles, useful visible descriptions and one required-argument legend, without an extra folio frame. One-line lifecycle results and short errors remain unframed. At constrained widths the frame must yield space to the complete text.
 
 ## Command and state coverage
 
@@ -292,14 +310,14 @@ This matrix records the selected native presentation boundaries. The browser pre
 | Surface | Required treatment in every direction |
 |---|---|
 | Global options | Preserve `--project PATH`, `--json`, `--set k=v`, `--version` and existing parsing/placement behavior; style documented flags consistently in help. Do not invent flags for a preview control. |
-| Root and command help | Preserve the implemented Typer Usage, Arguments, Options and Commands layout, exact descriptions, order, defaults and responsive wrapping. Apply shared colors and text attributes only. Add no masthead, new command groups or enclosing frame. Hidden commands stay hidden. Usage errors retain their cause, relevant usage and exit 2. |
+| Root and command help | Preserve the implemented Typer composition, command order and defaults, with readable Usage, Arguments, Options and Commands titles, useful descriptions for visible arguments/options, one required-argument legend and responsive wrapping. Apply the shared palette and text attributes. Add no masthead, new command groups or enclosing frame. Hidden commands stay hidden. Usage errors retain their cause, relevant usage and exit 2. |
 | Version | Preserve the bare version result; no masthead or report chrome. |
 | `ls`, `--host H` | Preserve session/project identity, directory, engine state and running/queued/escalated counts. Show remote host context when relevant. Counts retain their existing meanings; do not relabel escalated tasks as Home's grouped attention count. |
 | `attach [NAME]`, `--host H` | Direct attachment has no decorative interstitial. Multiple matches use the inline picker with the same session facts as `ls`, selected-surface highlighting and a monochrome focus cue. Keyboard and click selection, cancellation and compact resizing preserve access to all rows and controls. |
-| `init` | Seven-step inline Textual wizard: repository, agents, trackers, caches, parallelism, integration mode and finish. Preserve model choices, validation, drafts, focus and Doctor behavior. Finish shows the absolute written path and all real Doctor results with full details, including failures. |
+| `init` | Seven-step inline Textual wizard: repository, agents, trackers, caches, parallelism, integration mode and finish. Agent choices use the supported ordered Leader/Implementer ladder builders and exactly one Helper rung. Preserve catalog-backed model/effort choices, validation, drafts and focus. Finish uses the same Doctor renderer as `doctor` and shows the absolute written path and full details for every visible result, including failures. |
 | `init --yes` | Show written config path, editable default-model placeholder warning and the required review/doctor next step. Writing config does not establish that the project is ready to start. |
-| `start`, `--attach` | Distinguish newly started from already running. Progress labels describe actual operations. Preserve session collision hints, lock readiness and early-exit diagnostics including engine output. Attachment remains the final transition. |
-| `stop`, `--kill-session` | Preserve the acknowledgement and command ID where currently returned. Do not report success before the existing shutdown guarantee. Clearly describe whether the session was retained or closed when known. |
+| `start`, `--attach` | Successful output is only `Engine started` or `Engine already running`. Preserve session collision hints, lock readiness and early-exit diagnostics including engine output. `--attach` remains the final transition and prints no result after replacing the CLI with tmux. |
+| `stop`, `--kill-session` | Successful output is only `Engine stopped` or `Engine already stopped`, after the existing shutdown guarantee. Pending and rejected acknowledgements retain their command identity and truthful reason. |
 | `submit` and its existing flags | Preserve bare allocated `T-n` on human stdout. If no task ID is available, preserve the command acknowledgement. Do not add a brand banner around this result. |
 | `status` | Retain engine liveness, occupied/max slots, active tasks with wait reasons, queue, escalation ages, fault scope/task/error/first/last/repeats/recoverability, usage basis, quota windows and observations, run-directory count/size and relevant engine-output path. Layout changes cannot drop evidence. |
 | `status T-n` | Retain task strip or equivalent factual workflow presentation, timeline, reports/verdicts, branches and sessions. Distinguish pending, live, waiting and unknown facts. |
@@ -313,13 +331,13 @@ This matrix records the selected native presentation boundaries. The browser pre
 | `mcp` | Stdio remains exclusively the MCP transport; no branded output or progress on protocol stdout. |
 | Hidden `engine`, `dash`, `palette`, `view`, `report` | Preserve their process-entrypoint and protocol contracts. Do not wrap pane streams or exported reports in new command chrome, or expose hidden entrypoints through redesigned help. Existing shared UI token improvements may flow through intentionally. |
 
-The native CLI uses OSC 8 path links only when the terminal is known to support them and always retains the full literal path; browser links do not prove terminal support. Static narrow output wraps complete facts into labeled lines; the preview's compact switch illustrates that requirement and is not a CLI option. For visual comparison, all five use the same sample facts within each command. Each `ls` excerpt includes both projects. Each status excerpt shows engine up, slots 2/4, three queued tasks, one escalation, T-12 verifying with the Leader, T-15 paused with the Implementer, and E-3 open for four minutes. Each initializer excerpt shows the same repository and unchosen agent models at step 2 of 7. Layout and grouping distinguish the options.
+The following five direction excerpts preserve the original composition proposal; their mock wizard values and lifecycle wording are illustrative historical samples, not current native output. The Focus wizard excerpt reflects the supported ladder builder. The selected native contract is the matrix above and the [operator design](design/06-operator.md). The native CLI uses OSC 8 path links only when the terminal is known to support them and always retains the full literal path; browser links do not prove terminal support. Static narrow output wraps complete facts into labeled lines; the preview's compact switch illustrates that requirement and is not a CLI option. For visual comparison, all five use the same sample facts within each command. Each `ls` excerpt includes both projects. Each status excerpt shows engine up, slots 2/4, three queued tasks, one escalation, T-12 verifying with the Leader, T-15 paused with the Implementer, and E-3 open for four minutes. Each initializer excerpt shows the same repository and unchosen agent models at step 2 of 7. Layout and grouping distinguish the options.
 
 ## Initial snapshot preview verification
 
 The comparison includes 35 command/state examples, all five compositions, requested terminal widths of 80/60/40 columns, truecolor, approximate 256/16-color palettes, `NO_COLOR` and linear non-TTY one-shot reports. The reduced-color views are approximations; actual ANSI colors depend on the terminal palette. Wizard fields and attachment rows are illustrative interactive flows, and watch shows one static frame. Remote host context comes from the requested host argument; the JSON row schema gains no host field.
 
-Proposed human wording uses the operator design's Applied/Pending/Rejected labels while raw acknowledgement status values remain `done`/`queued`/`rejected`. Stop while already down completes as already stopped; a stop acknowledgement wait can remain pending while the engine is up. `start --attach` replaces the CLI with tmux and prints no CLI success result afterwards. Session-retained/closed confirmations illustrate information available after successful lifecycle completion, rather than current CLI wording.
+Historical proposal wording used Applied/Pending/Rejected labels while raw acknowledgement status values remained `done`/`queued`/`rejected`. Current successful lifecycle output is the short contract in the matrix above; pending and rejected results retain their command identity and reason. A stop acknowledgement wait can remain pending while the engine is up. `start --attach` replaces the CLI with tmux and prints no CLI result afterwards. The old session-retained/closed lines are proposal evidence, not current successful output.
 
 Manual browser checks on 2026-10-17 exercised 2,625 combinations per run: 35 examples × five compositions × three requested terminal widths × five output modes. Checks at 320- and 360-pixel content widths found no script errors, horizontal overflow or differences in sampled task/model/usage facts between compositions; the wide comparison was also checked at 736 pixels. Bare task IDs, parseable JSON, empty MCP/handoff output, and completed-versus-pending stop states were checked. The standalone saved comparison was rendered and visually reviewed separately. These checks validate the proposal prototype; they do not constitute application integration tests or native terminal verification. No runtime files or tests changed, and no commit was made.
 
@@ -340,6 +358,6 @@ Interactive follow-up verification: final browser checks passed 175 assertions a
 
 ## Native implementation status
 
-Tasks 256–259 delivered the shared human CLI presentation, help palette and layout preservation, concise session and Doctor output, Focus project/task status, and the Focus-themed initializer and attachment picker. Task 259 was accepted on 2026-10-20 after full normal and TERM=dumb NO_COLOR=1 gates. The [operator design](design/06-operator.md) is the normative record of native behavior. The HTML remains an offline assessment prototype; its mock data and browser flows are not evidence of runtime behavior.
+Tasks 256–263 delivered shared human CLI presentation, readable help, short lifecycle outcomes, authoritative model diagnostics, the guided ladder builder, aligned session discovery/picker rows, compact project/task status and the shared Doctor renderer in the initializer. The first-review corrections were accepted on 2026-10-20 after full normal and `TERM=dumb NO_COLOR=1` gates, each with 1,666 passed tests and 14 skipped; task proof and native review limits are recorded in `tasks/plan.md`. The [operator design](design/06-operator.md) is the normative record of native behavior. The HTML remains an offline assessment prototype; its mock data and browser flows are not evidence of runtime behavior.
 
 Focus ledger refinement verification (2026-10-18): wide and narrow browser runs each passed 320 checks and a 2,625-combination sweep, with no script errors or horizontal overflow. The checks compare all three help examples against actual CLI captures in color, monochrome and non-TTY modes across requested widths, preserve the five mock flows and machine-output contracts, and verify concise unframed lifecycle results. Only proposal files and task tracking changed.

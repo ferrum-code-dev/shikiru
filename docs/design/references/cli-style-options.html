@@ -289,7 +289,7 @@
         if(task.paused) return ink('⏸︎ Paused · ▲ Implementer','amber');
         if(task.stage==='done') return ink('✔ Done','sage');
         if(task.stage==='queued') return ink('· Queued · '+(mock.engineUp?'waiting for a slot':'engine is down'),'muted');
-        if(task.stage==='verify' && task.id==='T-12' && mock.decision) return ink('‼ Escalated · verify · ◆ Leader','amber');
+        if(task.stage==='verify' && task.id==='T-12' && mock.decision) return ink('‼ Escalated · ⚖︎ Verify · ◆ Leader','amber');
         return ink(({triage:'⌕ Triage · ◆ Leader',implement:'⚒ Implement · ▲ Implementer',verify:'⚖︎ Verify · ◆ Leader'})[task.stage],'steel');
       }
       function mockCounts() {
@@ -298,8 +298,12 @@
       function liveProjects() {
         const counts=mockCounts();
         const projects=[];
-        if(mock.sessionExists) projects.push(['shikiru',mock.engineUp?'⚙︎ up':'✕ down',mock.engineUp?'steel':'muted','~/Projects/shikiru',counts.running,counts.queued,counts.escalated]);
-        projects.push(['website','✕ down','muted','~/Projects/website',0,1,0]);
+        if(mock.sessionExists) projects.push(['shikiru',mock.engineUp?'⚙︎ up':'⚙︎ down',mock.engineUp?'steel':'muted','~/Projects/shikiru',counts.running,counts.queued,counts.escalated]);
+        projects.push(['website','⚙︎ down','muted','~/Projects/website',0,1,0]);
+        if(option==='focus') {
+          if(columns>=65) return ink(pad('Session',23)+pad('Engine',11)+pad('Running',10)+pad('Queued',9)+'Escalated','muted')+'\n'+projects.map(([name,engine,tone,path,running,queued,escalated])=>pad(project('[shikiru] '+name),23)+pad(ink(engine,tone),11)+pad(String(running),10)+pad(String(queued),9)+ink(String(escalated),escalated?'amber':'muted')+'\n  '+ink(path,'muted')).join('\n\n');
+          return projects.map(([name,engine,tone,path,running,queued,escalated])=>project('[shikiru] '+name)+'\n  '+ink(path,'muted')+'\n  '+ink(engine,tone)+' · running '+running+' · queued '+queued+' · '+ink('escalated '+escalated,escalated?'amber':'muted')).join('\n\n');
+        }
         if(['focus','folio','yonkoma'].includes(option)&&columns>=65) return ink(pad('Session',23)+pad('Engine',11)+pad('Running',10)+pad('Queued',9)+'Escalated','muted')+'\n'+projects.map(([name,engine,tone,path,running,queued,escalated])=>pad(project('[shikiru] '+name),23)+pad(ink(engine,tone),11)+pad(String(running),10)+pad(String(queued),9)+ink(escalated,escalated?'amber':'muted')+'\n'+ink(path,'muted')).join('\n\n');
         return projects.map(([name,engine,tone,path,running,queued,escalated])=>{
           const identity=project('[shikiru] '+name)+'\n'+ink(path,'muted');
@@ -351,21 +355,23 @@
         }
         const active=mock.tasks.filter(t=>!['queued','done'].includes(t.stage));
         const queued=mock.tasks.filter(t=>t.stage==='queued');
-        const summary=project('shikiru')+' · '+ink(mock.engineUp?'⚙︎ engine up':'✕ engine down',mock.engineUp?'steel':'muted')+' · slots '+strong(counts.occupied+'/'+(mock.wizard.written?mock.wizard.values.parallelism:'2'))+' · queued '+strong(counts.queued)+' · escalations '+ink(counts.escalated,counts.escalated?'amber':'muted')+(counts.escalated?ink(' · oldest 4m','amber'):'');
+        const summary=project('shikiru')+' · '+ink(mock.engineUp?'⚙︎ engine up':'⚙︎ engine down',mock.engineUp?'steel':'muted')+' · slots '+strong(counts.occupied+'/'+(mock.wizard.written?mock.wizard.values.parallelism:'2'))+' · queued '+strong(counts.queued)+' · escalations '+ink(counts.escalated,counts.escalated?'amber':'muted')+(counts.escalated?ink(' · oldest 4m','amber'):'');
         const blocks=[summary];
         if(active.length)blocks.push(section('Tasks',[liveTaskRows(active)]));
         if(queued.length)blocks.push(section('Queue',[liveTaskRows(queued,true)]));
         if(mock.decision)blocks.push(ink('‼ E-3 · T-12 · decision_required · choose retry policy · open 4m','amber'));
         blocks.push(ink('Usage  ','muted')+'claude · 18k in · 4k out · '+ink('$1.84 billed','sage')+'\n       codex · 24k in · 6k out · '+ink('— unknown cost','muted'));
-        blocks.push(ink('Quota  ','muted')+ink('codex · 5h · 62%','amber')+' · resets 14:00 · observed 12:06\n'+ink('Runs   ','muted')+'6 directories · 48 MiB');
+        blocks.push(ink('Quota  ','muted')+ink('codex · 5h · 62%','amber')+' · resets 14:00 · observed 12:06');
+        blocks.push(ink('Run directories  ','muted')+'6 · 48 MiB');
         return blocks.join('\n\n');
       }
       function liveDoctor(probe=false) {
         if(!mock.doctorRun)return '';
-        const checks=[ink('✔ tmux 3.7c','sage'),ink('✔ git 2.55.0','sage'),ink('✔ Repository · ~/Projects/shikiru','sage'),mock.doctorIssue?ink('✕ Helper model · explicit model required','rose'):ink('✔ Agent ladders · all roles configured','sage'),ink('✔ Trackers · plan.md · todo.md','sage')];
-        if(mock.doctorIssue)checks.splice(4,0,'  Set the helper model in .shikiru/config.toml.');
-        if(probe)checks.push(ink('✔ Probe · Leader contract passed','sage'),ink('✔ Probe · Implementer smoke passed','sage'),mock.doctorIssue?ink('✕ Probe · Helper model required','rose'):ink('✔ Probe · Helper contract passed','sage'));
-        return checks.join('\n')+'\n\n'+outcome(mock.doctorIssue?'✕':'✔',mock.doctorIssue?'Doctor found 1 issue':'Doctor passed',mock.doctorIssue?'rose':'sage');
+        const checks=[{ok:true,text:ink('✔ Tmux · tmux 3.7c','sage')},{ok:true,text:ink('✔ Git · git version 2.55.0','sage')},{ok:true,text:ink('✔ Repository · ~/Projects/shikiru','sage')},{ok:!mock.doctorIssue,text:ink(mock.doctorIssue?'✕ Configuration · explicit Helper model required':'✔ Agent ladders · all roles configured',mock.doctorIssue?'rose':'sage')},{ok:true,text:ink('✔ Trackers · plan.md · todo.md','sage')}];
+        if(mock.doctorIssue)checks[3].text+='\n  Set the Helper model in .shikiru/config.toml.';
+        if(probe)checks.push({ok:true,text:ink('✔ Leader probe · contract passed','sage')},{ok:true,text:ink('✔ Implementer probe · smoke passed','sage')},{ok:!mock.doctorIssue,text:ink(mock.doctorIssue?'✕ Helper probe · explicit model required':'✔ Helper probe · contract passed',mock.doctorIssue?'rose':'sage')});
+        const failures=checks.filter(check=>!check.ok).length;
+        return checks.map(check=>check.text).join('\n')+'\n\n'+outcome(failures?'✕':'✔',failures?`Doctor failed · ${failures} of ${checks.length} checks failed`:`Doctor passed · ${checks.length} checks`,failures?'rose':'sage');
       }
       function liveContent(name) {
         switch(name) {
@@ -406,7 +412,8 @@
       function pickerHTML() {
         const sessions=mock.sessionExists?['shikiru','website']:['website'];
         const counts=mockCounts();
-        return '<div class="interactive-panel"><div class="identity">'+header('attach')+'</div><div class="form-group"><h2>Attach to a Shikiru session</h2><div class="session-list" role="group" aria-label="Project sessions">'+sessions.map((name,index)=>'<button type="button" class="session-row" id="sh-session-'+index+'" data-session="'+index+'" aria-pressed="'+(mock.pickerIndex===index)+'"><b>[shikiru] '+name+'</b><span class="muted">~/Projects/'+name+'</span><span>'+ink(name==='shikiru'&&mock.engineUp?'⚙︎ Engine up':'✕ Engine down',name==='shikiru'&&mock.engineUp?'steel':'muted')+' · running '+(name==='shikiru'?counts.running:0)+' · queued '+(name==='shikiru'?counts.queued:1)+'</span><span>'+ink('Escalated '+(name==='shikiru'?counts.escalated:0),name==='shikiru'&&counts.escalated?'amber':'muted')+'</span></button>').join('')+'</div></div><p class="field-hint">'+key('↑↓')+' select · '+key('Enter')+' attach · '+key('Esc')+' cancel</p></div>';
+        const host=command.value==='attach-remote'?'<p class="field-hint">Remote host · buildbox</p>':'';
+        return '<div class="interactive-panel"><div class="identity">'+header('attach')+'</div><div class="form-group"><h2>Attach to a Shikiru session</h2>'+host+'<div class="session-list" role="group" aria-label="Project sessions">'+sessions.map((name,index)=>'<button type="button" class="session-row" id="sh-session-'+index+'" data-session="'+index+'" aria-pressed="'+(mock.pickerIndex===index)+'"><b>[shikiru] '+name+'</b><span class="muted">~/Projects/'+name+'</span><span>'+ink(name==='shikiru'&&mock.engineUp?'⚙︎ Engine up':'⚙︎ Engine down',name==='shikiru'&&mock.engineUp?'steel':'muted')+' · running '+(name==='shikiru'?counts.running:0)+' · queued '+(name==='shikiru'?counts.queued:1)+' · escalated '+(name==='shikiru'?counts.escalated:0)+'</span></button>').join('')+'</div></div><p class="field-hint">'+key('↑↓')+' select · '+key('Enter')+' attach · '+key('Esc')+' cancel</p></div>';
       }
       function handoffHTML() {
         const website=mock.attached==='website';
@@ -469,7 +476,8 @@
           else {const already=mock.engineUp;mock.engineUp=true;mock.sessionExists=true;mock.lastRun={command:name,output:outcome('✔',already?'Engine already running':'Engine started','sage')};if(name==='start-attach') mock.attached='shikiru';}
         } else if(['stop','kill'].includes(name)) {
           const already=!mock.engineUp;mock.engineUp=false;if(name==='kill'){mock.sessionExists=false;mock.attached=null;}
-          mock.lastRun={command:name,output:outcome('✔','Applied · command '+(already?0:mock.nextCommand++)+' · '+(already?'engine already stopped':'engine stopped')+'; session '+(name==='kill'?'closed':'retained'),'sage')};
+          if(!already) mock.nextCommand++;
+          mock.lastRun={command:name,output:outcome('✔',already?'Engine already stopped':'Engine stopped','sage')};
         } else if(['attach','attach-remote'].includes(name)) {mock.pickerCancelled=false;mock.attached=mock.sessionExists?null:'website';focusTarget=mock.attached?'sh-detach':'sh-session-'+mock.pickerIndex;}
         else if(name==='attach-direct') {if(mock.sessionExists) mock.attached='shikiru';else mock.lastRun={command:name,output:outcome('✕','No matching Shikiru session','rose')};}
         if(['start','running','stop','kill','start-attach'].includes(name)&&mock.lastRun?.output)mock.announcement=plain(mock.lastRun.output).replaceAll('\n',' ');
@@ -489,11 +497,10 @@
           case 'yes': return outcome('✔','Initialized /home/operator/Projects/shikiru/.shikiru/config.toml','sage')+'\n\n'+section('Review before starting',[ink('⚠︎ Generated model fields are placeholders.','amber'),'Edit the leader, implementer and helper ladders.','Then run '+key('shikiru doctor')+'.'],'⚠︎','amber');
           case 'doctor': return checks();
           case 'probe': return checks(true);
-          case 'start': return outcome('✔','Engine started','sage')+'\n'+ink('shikiru · ~/Projects/shikiru','muted')+'\n\n'+key('shikiru attach')+' to open the session';
-          case 'running': return outcome('✔','Engine already running','sage')+'\nSession ensured';
-          case 'stop': return outcome('✔','Applied · command 42','sage')+'\nEngine stopped · session retained';
-          case 'kill': return outcome('✔','Applied · command 42','sage')+'\nEngine stopped · session closed';
-          case 'pending': return outcome('✔','Applied · command 0','sage')+'\nEngine already stopped';
+          case 'start': return outcome('✔','Engine started','sage');
+          case 'running': return outcome('✔','Engine already running','sage');
+          case 'stop': case 'kill': return outcome('✔','Engine stopped','sage');
+          case 'pending': return outcome('·','Pending · command 42 · acknowledgement wait elapsed','amber')+'\nEngine is up; the command may still apply.';
           case 'timeout': return outcome('·','Pending · command 42 · acknowledgement wait elapsed','amber')+'\nEngine is up; the command may still apply.';
           case 'rejected': return outcome('✕','Rejected · command 42 · dependency T-8 does not exist','rose')+'\n'+key('shikiru status')+' to inspect current tasks';
           case 'submit': case 'submit-flags': return 'T-21';
@@ -547,11 +554,12 @@
         interactive.innerHTML=interactive.hidden?'':isInit?wizardHTML():showHandoff?handoffHTML():pickerHTML();
         updateTools();
         let context=descriptions[option];
+        if(['help','status-help','submit-help'].includes(command.value)) context='The embedded help capture is historical pre-Task260 output; the current CLI uses readable section headings, useful option descriptions and one required legend.';
         if(['submit','submit-flags'].includes(command.value)) context='Bare task ID on stdout in every design. No masthead or success prose.';
         if(command.value==='version') context='Version output stays bare in every design.';
         if(command.value.startsWith('json')) context='Raw structured output in every design. Existing schemas stay unchanged; this sample is illustrative.';
         if(command.value==='mcp') context='No branded terminal output. Stdout belongs exclusively to the MCP protocol.';
-        if(command.value==='init') context+=' Try all seven steps. Edits survive design changes; Escape cancels. Configuration writes and Doctor are simulated.';
+        if(command.value==='init') context+=' Try all seven steps. Edits survive design changes; Escape cancels. Configuration writes and Doctor are simulated. This historical wizard mock has free-text rung fields; native init uses supported ladder controls and shares the CLI Doctor renderer.';
         if(command.value==='watch') context+=' Use Advance sample task to change the shared state. No background execution is running.';
         if(['attach','attach-remote'].includes(command.value)) context+=' Use arrow keys and Enter, or click a session. The destination is a simulated session preview.';
         if(command.value==='attach-direct') context='Direct attachment hands over to tmux without decorative output.';
