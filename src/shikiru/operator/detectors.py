@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import Rung
+from shikiru.agents.contracts import ModelCatalog, Rung
 from shikiru.config.loader import validate_project_config_text
 from shikiru.errors import ConfigError
 from shikiru.paths import EXCLUDE_LINE, SHIKIRU_DIR_NAME, project_config_path
@@ -17,6 +17,7 @@ from shikiru.private import create_private_text, make_private_dir
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from typing import Any
 
     from shikiru.operator.doctor import DoctorReport
     from shikiru.operator.plugin_checks import PluginChecks
@@ -139,6 +140,10 @@ class ProjectDetectors:
     async def check_cow_support(self) -> bool:
         """Probe copy-on-write support using disposable files on the project filesystem."""
         return await self._cache_cloner.check_support(self._root)
+
+    async def model_catalog(self, name: str, options: Mapping[str, Any]) -> ModelCatalog | None:
+        """Return an agent's optional authoritative choices through the injected plugin boundary."""
+        return await self._plugin_checks.model_catalog(name, options)
 
     async def _validate_root(self) -> None:
         if not await self._git.is_repository_root(self._root):

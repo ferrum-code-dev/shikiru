@@ -61,7 +61,7 @@ from shikiru.domain.reports import (
 )
 from shikiru.domain.tasks import EscalationReason
 from shikiru.plugins.agents.claude.agent import ClaudeAgent, create
-from shikiru.plugins.agents.claude.options import DEFAULT_ARGS
+from shikiru.plugins.agents.claude.options import DEFAULT_ARGS, MODEL_CATALOG_REQUEST_ID
 from shikiru.plugins.agents.claude.turn import CONTINUE_PROMPT, ClaudeTurnParser
 from shikiru.process import SubprocessRunner
 from tests.support.clock import FakeClock
@@ -128,6 +128,65 @@ class TestClaudeHeadlessContract(AgentContractSuite):
 
     def _live_change_model(self) -> str | None:
         return os.environ.get(_LIVE_CHANGE_MODEL_ENV) or os.environ.get(_DEFAULT_SONNET_MODEL_ENV)
+
+    @pytest.mark.asyncio
+    async def test_model_catalog_uses_only_native_initialize_metadata(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cli_directory = tmp_path / "bin"
+        cli_directory.mkdir()
+        capture = tmp_path / "catalog-request.json"
+        response = json.dumps(
+            {
+                "type": "control_response",
+                "response": {
+                    "request_id": MODEL_CATALOG_REQUEST_ID,
+                    "subtype": "success",
+                    "response": {
+                        "models": [
+                            {
+                                "value": "sonnet",
+                                "resolvedModel": _OTHER_MODEL,
+                                "supportsEffort": True,
+                                "supportedEffortLevels": ["low", "high"],
+                            }
+                        ]
+                    },
+                },
+            }
+        )
+        executable = cli_directory / "claude"
+        executable.write_text(
+            "\n".join(
+                (
+                    f"#!{sys.executable}",
+                    "import json, os, sys",
+                    f"capture = {str(capture)!r}",
+                    "request = sys.stdin.read()",
+                    "with open(capture, 'w', encoding='utf-8') as output:",
+                    "    json.dump({'argv': sys.argv[1:], 'request': request}, output)",
+                    f"print({response!r})",
+                )
+            ),
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+        monkeypatch.setenv("PATH", f"{cli_directory}{os.pathsep}{os.environ['PATH']}")
+
+        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        catalog = await agent.model_catalog()
+        invocation = json.loads(capture.read_text(encoding="utf-8"))
+        request = json.loads(invocation["request"])
+
+        assert catalog.error is None
+        assert [choice.model for choice in catalog.models] == ["sonnet", _OTHER_MODEL]
+        assert catalog.models[0].efforts == ("low", "high")
+        assert request["request"]["subtype"] == "initialize"
+        assert "--safe-mode" in invocation["argv"]
+        assert "--strict-mcp-config" in invocation["argv"]
+        tools_index = invocation["argv"].index("--tools")
+        assert invocation["argv"][tools_index + 1] == ""
+        assert "--no-session-persistence" in invocation["argv"]
 
     def build_spec(
         self,

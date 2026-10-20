@@ -16,23 +16,35 @@ from shikiru.agents.contracts import (
     UNKNOWN_BILLING_DECLARATION,
     BillingDeclaration,
     CheckResult,
+    ModelCatalog,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.codex.headless import CodexHeadless
 from shikiru.plugins.agents.codex.home import codex_home
-from shikiru.plugins.agents.codex.model_catalog import parse_bundled_context_windows
+from shikiru.plugins.agents.codex.model_catalog import (
+    parse_bundled_context_windows,
+    parse_catalog,
+)
 from shikiru.plugins.agents.codex.options import (
     CODEX_BUNDLED_MODELS_ARGV,
     CODEX_COMMAND,
     CODEX_HOME_ENV_VAR,
+    CODEX_MODEL_CATALOG_ARGV,
     CONFIG_FLAG,
+    CONFIG_LONG_FLAG,
+    EFFORT_LONG_FLAG,
     GIT_DIRS_ARGV,
     GIT_DIRS_TIMEOUT_SECONDS,
     LOGIN_STATUS_ARGV,
+    MODEL_CATALOG_ARGS_DETAIL,
+    MODEL_CONFIG_OVERRIDE,
     MODEL_FLAG,
+    MODEL_LONG_FLAG,
+    MODEL_OVERRIDE,
     NO_DAEMON_FLAG,
+    PROFILE_FLAG,
     REASONING_EFFORT_CONFIG,
     RESUME_SUBCOMMAND,
     TESTED_CODEX_VERSION,
@@ -57,24 +69,16 @@ _MODEL_PROVIDERS_FIELD = "model_providers"
 _OPENAI_BASE_URL_FIELD = "openai_base_url"
 _PROFILES_FIELD = "profiles"
 _PROFILE_FIELD = "profile"
+_PARTITION_VALUE_INDEX = 2
 _CONTEXT_WINDOW_CHECK = "context_window"
 _UNTESTED_VERSION_DETAIL = "{version} (warning: verified with {tested}; re-check the sandbox probe)"
 _UNKNOWN_WINDOW_DETAIL = (
     "no positive context window for {models} in models_cache.json or Codex CLI's bundled "
     "model catalog; compaction at compact_at_pct cannot be applied"
 )
-_BUNDLED_CATALOG_COMMAND_FAILED_DETAIL = (
-    "could not read Codex CLI's bundled model catalog for {models}: {detail}"
-)
-_BUNDLED_CATALOG_INVALID_DETAIL = (
-    "could not parse Codex CLI's bundled model catalog for {models}: {detail}"
-)
-_BUNDLED_CATALOG_EXIT_DETAIL = (
-    "Codex CLI's bundled model catalog command failed for {models} with exit code "
-    "{returncode}: {detail}"
-)
 _MODELS_CACHE_SOURCE = "models_cache.json"
 _BUNDLED_CATALOG_SOURCE = "Codex CLI bundled model catalog"
+_CURRENT_CATALOG_SOURCE = "Codex CLI current model catalog"
 _CUSTOM_PROVIDER_ACCESS_DETAIL = (
     "custom provider configured; provider credentials are not verified by doctor"
 )
@@ -97,12 +101,20 @@ class CodexAgent:
         )
         self._codex_home = codex_home()
         self._sandbox_probe = CodexSandboxProbe(runner)
+        self._catalog_context_windows: dict[str, int] = {}
         self._bundled_context_windows: dict[str, int] = {}
+        self._cached_model_catalog: ModelCatalog | None = None
 
     @property
     def billing_declaration(self) -> BillingDeclaration:
         """Return the explicit plugin option or the unknown declaration (04 §1)."""
         return self._billing_declaration
+
+    async def model_catalog(self) -> ModelCatalog:
+        """Return choices from Codex CLI's refreshed current model catalog."""
+        if self._cached_model_catalog is None:
+            self._cached_model_catalog = await self._read_model_catalog()
+        return self._cached_model_catalog
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one Codex process-per-turn exchange."""
@@ -176,16 +188,21 @@ class CodexAgent:
 
     async def _check_context_windows(self, models: Sequence[str]) -> CheckResult:
         cached_windows = {model: context_window(self._codex_home, model) for model in models}
-        missing_from_cache = [model for model, window in cached_windows.items() if window is None]
-        if missing_from_cache:
-            catalog_result = await self._read_bundled_model_catalog(missing_from_cache)
+        missing_from_catalog = [
+            model
+            for model, window in cached_windows.items()
+            if window is None and model not in self._catalog_context_windows
+        ]
+        if missing_from_catalog:
+            catalog_result = await self._read_bundled_model_catalog(missing_from_catalog)
             if isinstance(catalog_result, CheckResult):
                 return catalog_result
             self._bundled_context_windows = catalog_result
+            self._catalog_context_windows.update(catalog_result)
         windows = {
             model: cached_windows[model]
             if cached_windows[model] is not None
-            else self._bundled_context_windows.get(model)
+            else self._catalog_context_windows.get(model)
             for model in models
         }
         unknown = [model for model, window in windows.items() if window is None]
@@ -197,14 +214,46 @@ class CodexAgent:
             )
         known_parts: list[str] = []
         for model, window in windows.items():
-            source = (
-                _MODELS_CACHE_SOURCE
-                if cached_windows[model] is not None
-                else _BUNDLED_CATALOG_SOURCE
-            )
+            if cached_windows[model] is not None:
+                source = _MODELS_CACHE_SOURCE
+            elif model in self._bundled_context_windows:
+                source = _BUNDLED_CATALOG_SOURCE
+            else:
+                source = _CURRENT_CATALOG_SOURCE
             known_parts.append(f"{model}: {window} ({source})")
         known = ", ".join(known_parts)
         return CheckResult(_CONTEXT_WINDOW_CHECK, True, known)
+
+    async def _read_model_catalog(self) -> ModelCatalog:
+        if _model_catalog_args_are_ambiguous(self._options.args):
+            return ModelCatalog(error=MODEL_CATALOG_ARGS_DETAIL)
+        return await self._query_model_catalog()
+
+    async def _query_model_catalog(self) -> ModelCatalog:
+        try:
+            result = await self._runner.run(
+                CODEX_MODEL_CATALOG_ARGV,
+                timeout=DOCTOR_TIMEOUT_SECONDS,
+                env=self._subprocess_environment(),
+                check=False,
+            )
+        except (FileNotFoundError, ShikiruError) as error:
+            detail = str(error) or type(error).__name__
+            return ModelCatalog(error=f"could not read Codex CLI's current model catalog: {detail}")
+        if result.returncode != 0:
+            detail = result.stderr.strip() or "no diagnostic output"
+            return ModelCatalog(
+                error=(
+                    f"Codex CLI's current model catalog command failed with exit code "
+                    f"{result.returncode}: {detail}"
+                )
+            )
+        try:
+            choices, windows = parse_catalog(result.stdout)
+        except TypeError as error:
+            return ModelCatalog(error=f"could not parse Codex CLI's current model catalog: {error}")
+        self._catalog_context_windows.update(windows)
+        return ModelCatalog(models=choices, complete=True)
 
     async def _read_bundled_model_catalog(
         self,
@@ -224,18 +273,15 @@ class CodexAgent:
             return CheckResult(
                 _CONTEXT_WINDOW_CHECK,
                 False,
-                _BUNDLED_CATALOG_COMMAND_FAILED_DETAIL.format(models=model_names, detail=error),
+                f"could not read Codex CLI's bundled model catalog for {model_names}: {error}",
             )
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip()
             return CheckResult(
                 _CONTEXT_WINDOW_CHECK,
                 False,
-                _BUNDLED_CATALOG_EXIT_DETAIL.format(
-                    models=model_names,
-                    returncode=result.returncode,
-                    detail=detail or "no diagnostic output",
-                ),
+                f"Codex CLI's bundled model catalog command failed for {model_names} with exit "
+                f"code {result.returncode}: {detail or 'no diagnostic output'}",
             )
         try:
             return parse_bundled_context_windows(result.stdout)
@@ -243,7 +289,7 @@ class CodexAgent:
             return CheckResult(
                 _CONTEXT_WINDOW_CHECK,
                 False,
-                _BUNDLED_CATALOG_INVALID_DETAIL.format(models=model_names, detail=error),
+                f"could not parse Codex CLI's bundled model catalog for {model_names}: {error}",
             )
 
     async def _context_windows_for_turn(self, spec: TurnSpec) -> Mapping[str, int]:
@@ -376,6 +422,37 @@ def _custom_provider_check(home: Path) -> CheckResult | None:
     if custom_provider or custom_base_url:
         return CheckResult("login", True, _CUSTOM_PROVIDER_ACCESS_DETAIL)
     return None
+
+
+def _model_catalog_args_are_ambiguous(args: Sequence[str]) -> bool:
+    return any(
+        _catalog_argument_is_ambiguous(args, index, argument) for index, argument in enumerate(args)
+    )
+
+
+def _catalog_argument_is_ambiguous(args: Sequence[str], index: int, argument: str) -> bool:
+    selector_flags = (MODEL_FLAG, MODEL_LONG_FLAG, EFFORT_LONG_FLAG, PROFILE_FLAG)
+    selector_prefixes = (f"{MODEL_LONG_FLAG}=", f"{PROFILE_FLAG}=", f"{EFFORT_LONG_FLAG}=")
+    if argument in selector_flags or argument.startswith(selector_prefixes):
+        return True
+    if argument.startswith(MODEL_FLAG) and argument != MODEL_FLAG:
+        return True
+    if argument in (CONFIG_FLAG, CONFIG_LONG_FLAG):
+        return _config_override_is_ambiguous(args, index + 1)
+    if argument.startswith(f"{CONFIG_LONG_FLAG}="):
+        return _config_value_is_ambiguous(argument.partition("=")[_PARTITION_VALUE_INDEX])
+    if argument.startswith(CONFIG_FLAG) and argument != CONFIG_FLAG:
+        return _config_value_is_ambiguous(argument[len(CONFIG_FLAG) :])
+    return False
+
+
+def _config_override_is_ambiguous(args: Sequence[str], index: int) -> bool:
+    return index >= len(args) or _config_value_is_ambiguous(args[index])
+
+
+def _config_value_is_ambiguous(value: str) -> bool:
+    key = value.partition("=")[0].strip()
+    return key in (MODEL_CONFIG_OVERRIDE, MODEL_OVERRIDE, REASONING_EFFORT_CONFIG)
 
 
 def create(context: AgentContext) -> CodexAgent:

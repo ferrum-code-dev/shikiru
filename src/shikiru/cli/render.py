@@ -24,6 +24,11 @@ from shikiru.domain.steps import ACTING_ROLE, Step
 from shikiru.domain.tasks import Status
 from shikiru.errors import NotInitialisedError, ShikiruError
 from shikiru.operator.commands import AckStatus
+from shikiru.operator.doctor import (
+    PLUGIN_CHECK_PREFIX,
+    PLUGIN_CHECK_SEPARATOR,
+    PLUGINS_CHECK_NAME,
+)
 from shikiru.ui.age import format_age
 from shikiru.ui.compact import compact_count
 from shikiru.ui.console import supports_osc8
@@ -61,7 +66,7 @@ if TYPE_CHECKING:
     from rich.console import Console, RenderableType
 
     from shikiru.operator.commands import Ack
-    from shikiru.operator.doctor import DoctorReport
+    from shikiru.operator.doctor import DoctorCheck, DoctorReport
     from shikiru.operator.lifecycle import StartResult
     from shikiru.operator.queries import (
         EscalationView,
@@ -80,6 +85,8 @@ DOCTOR_FAIL_LABEL = "fail"
 DOCTOR_OUTCOME_LABEL_WIDTH = len(f"{GLYPH_STOPPED} {DOCTOR_FAIL_LABEL}")
 STOPPED_RESULT_FIELD = "stopped"
 STOPPING_RESULT_FIELD = "stopping"
+PLUGIN_AGGREGATE_PART_COUNT = 2
+PLUGIN_CHILD_PART_COUNT = 3
 
 
 def init_renderable(
@@ -258,7 +265,8 @@ def ack_renderable(ack: Ack, *, stopping: bool = False) -> RenderableType:
 def doctor_renderable(report: DoctorReport, *, width: int) -> RenderableType:
     """Render each diagnostic with its complete detail and an aggregate result."""
     rows: list[tuple[Text, tuple[Text, ...]]] = []
-    for check in report.checks:
+    visible_checks = _doctor_display_checks(report.checks)
+    for check in visible_checks:
         if check.ok:
             outcome = _outcome_line(GLYPH_DONE, DOCTOR_OK_LABEL, SUCCESS_COLOR)
         else:
@@ -275,14 +283,44 @@ def doctor_renderable(report: DoctorReport, *, width: int) -> RenderableType:
         result.append(" · ", style=SECONDARY_TEXT_COLOR)
         result.append(f"{len(report.checks)} checks", style=BOLD_PRIMARY)
     else:
-        failed_checks = sum(not check.ok for check in report.checks)
+        failed_checks = sum(not check.ok for check in visible_checks)
         result = _outcome_line(GLYPH_STOPPED, "Doctor failed", ALERT_COLOR)
         result.append(" · ", style=SECONDARY_TEXT_COLOR)
         result.append(
-            f"{failed_checks} of {len(report.checks)} checks failed",
+            f"{failed_checks} of {len(visible_checks)} checks failed",
             style=PRIMARY_TEXT_COLOR,
         )
     return Group(checks, result)
+
+
+def _doctor_display_checks(checks: list[DoctorCheck]) -> list[DoctorCheck]:
+    failed_plugins = {
+        parts[1]
+        for check in checks
+        if not check.ok
+        and (parts := check.name.split(PLUGIN_CHECK_SEPARATOR))[0] == PLUGIN_CHECK_PREFIX
+        and len(parts) >= PLUGIN_AGGREGATE_PART_COUNT
+    }
+    failed_plugins_with_details = {
+        parts[1]
+        for check in checks
+        if not check.ok
+        and (parts := check.name.split(PLUGIN_CHECK_SEPARATOR))[0] == PLUGIN_CHECK_PREFIX
+        and len(parts) >= PLUGIN_CHILD_PART_COUNT
+    }
+    return [
+        check
+        for check in checks
+        if not (
+            (check.name == PLUGINS_CHECK_NAME and failed_plugins)
+            or (
+                not check.ok
+                and (parts := check.name.split(PLUGIN_CHECK_SEPARATOR))[0] == PLUGIN_CHECK_PREFIX
+                and len(parts) == PLUGIN_AGGREGATE_PART_COUNT
+                and parts[1] in failed_plugins_with_details
+            )
+        )
+    ]
 
 
 def session_rows_renderable(

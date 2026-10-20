@@ -51,7 +51,7 @@
 
 | Layer | What | How |
 |---|---|---|
-| Unit | `domain` rules (transitions, `pick_rung`, `recovery.decide`, `pick_ready`, escalation options), report and command model validators, config merge, SDK parsers (`ResetTimeParser`), plugin `TurnParser`s over recorded streams, glyph width safety | Table-driven, no I/O |
+| Unit | `domain` rules (transitions, `pick_rung`, `recovery.decide`, `pick_ready`, escalation options), report and command model validators, config merge, SDK parsers (`ResetTimeParser`), plugin `TurnParser`s and model-catalog parsers over recorded data, agent model/effort choice rules, glyph width safety | Table-driven, no I/O |
 | Integration | Everything else, against real SQLite, git, tmux and Textual, with the fake agent: store; workspace; tmux client, layout, guard and decorations; session manager, turn monitor and turn runner; take over and hand back; `shikiru view`; task flow paths; integration strategies (`gh` faked on PATH); engine and handlers; reconciler; operator services; CLI; MCP (in-memory client); widgets (Textual `run_test`); plugin offline contract checks | Behaviour assertions on observable outcomes: DB rows, events, git history, files, tmux state |
 | E2E | Real Claude Code and Codex | §5 |
 

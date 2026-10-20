@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 from collections.abc import Mapping
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
@@ -15,24 +17,38 @@ from shikiru.agents.contracts import (
     UNKNOWN_BILLING_DECLARATION,
     BillingDeclaration,
     CheckResult,
+    ModelCatalog,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.claude.headless import ClaudeHeadless
+from shikiru.plugins.agents.claude.model_catalog import parse_model_catalog
 from shikiru.plugins.agents.claude.options import (
     ADD_DIR_FLAG,
     CLAUDE_COMMAND,
     EFFORT_FLAG,
+    EMPTY_MCP_CONFIG,
+    EMPTY_TOOLS,
+    INPUT_FORMAT_FLAG,
+    MCP_CONFIG_FLAG,
+    MODEL_CATALOG_REQUEST_ID,
     MODEL_FLAG,
+    NO_SESSION_PERSISTENCE_FLAG,
+    OUTPUT_FORMAT_FLAG,
+    PRINT_FLAG,
     RESUME_FLAG,
+    SAFE_MODE_FLAG,
+    STREAM_JSON_FORMAT,
+    STRICT_MCP_CONFIG_FLAG,
+    TOOLS_FLAG,
+    VERBOSE_FLAG,
     ClaudeOptions,
 )
 from shikiru.plugins.agents.claude.turn import ClaudeTurnSequence
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung, Turn, TurnSpec
     from shikiru.clock import Clock
@@ -42,6 +58,20 @@ CLAUDE_VERSION_ARGV = (CLAUDE_COMMAND, "--version")
 AUTH_STATUS_ARGV = (CLAUDE_COMMAND, "auth", "status", "--json")
 _AUTH_STATUS_LOGGED_IN_FIELD = "loggedIn"
 _INVALID_AUTH_STATUS_MESSAGE = "Claude auth status did not return valid JSON"
+_MODEL_CATALOG_TIMEOUT_SECONDS = 20.0
+_CONTROL_REQUEST_TYPE = "control_request"
+_INITIALIZE_SUBTYPE = "initialize"
+_MODEL_CATALOG_REQUEST = json.dumps(
+    {
+        "type": _CONTROL_REQUEST_TYPE,
+        "request_id": MODEL_CATALOG_REQUEST_ID,
+        "request": {
+            "subtype": _INITIALIZE_SUBTYPE,
+            "hooks": {},
+        },
+    },
+    separators=(",", ":"),
+)
 
 
 class ClaudeAgent:
@@ -64,6 +94,47 @@ class ClaudeAgent:
     def billing_declaration(self) -> BillingDeclaration:
         """Return the explicit plugin option or the unknown declaration (04 §1)."""
         return self._billing_declaration
+
+    async def model_catalog(self) -> ModelCatalog:
+        """Read model and per-model effort choices from Claude Code's initialize response."""
+        argv = (
+            CLAUDE_COMMAND,
+            PRINT_FLAG,
+            INPUT_FORMAT_FLAG,
+            STREAM_JSON_FORMAT,
+            OUTPUT_FORMAT_FLAG,
+            STREAM_JSON_FORMAT,
+            VERBOSE_FLAG,
+            NO_SESSION_PERSISTENCE_FLAG,
+            SAFE_MODE_FLAG,
+            STRICT_MCP_CONFIG_FLAG,
+            MCP_CONFIG_FLAG,
+            EMPTY_MCP_CONFIG,
+            TOOLS_FLAG,
+            EMPTY_TOOLS,
+        )
+        try:
+            with TemporaryDirectory() as isolated_directory:
+                result = await self._runner.run(
+                    argv,
+                    timeout=_MODEL_CATALOG_TIMEOUT_SECONDS,
+                    cwd=Path(isolated_directory),
+                    env=self._subprocess_environment(),
+                    input_text=f"{_MODEL_CATALOG_REQUEST}\n",
+                    check=False,
+                )
+        except (FileNotFoundError, OSError, ShikiruError, TimeoutError) as error:
+            detail = str(error) or type(error).__name__
+            return ModelCatalog(error=f"Claude Code model discovery command failed: {detail}")
+        if result.returncode != 0:
+            detail = result.stderr.strip() or "no diagnostic output"
+            return ModelCatalog(
+                error=f"Claude Code model discovery exited with code {result.returncode}: {detail}"
+            )
+        try:
+            return parse_model_catalog(result.stdout, MODEL_CATALOG_REQUEST_ID)
+        except TypeError as error:
+            return ModelCatalog(error=f"could not parse Claude Code model catalog: {error}")
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one process-per-turn Claude Code exchange."""

@@ -7,6 +7,19 @@ from pydantic import BaseModel, ConfigDict, Field
 from shikiru.agents.contracts import PERCENT, BillingMode
 
 CLAUDE_COMMAND = "claude"
+PRINT_FLAG = "-p"
+INPUT_FORMAT_FLAG = "--input-format"
+OUTPUT_FORMAT_FLAG = "--output-format"
+STREAM_JSON_FORMAT = "stream-json"
+VERBOSE_FLAG = "--verbose"
+NO_SESSION_PERSISTENCE_FLAG = "--no-session-persistence"
+SAFE_MODE_FLAG = "--safe-mode"
+STRICT_MCP_CONFIG_FLAG = "--strict-mcp-config"
+MCP_CONFIG_FLAG = "--mcp-config"
+EMPTY_MCP_CONFIG = '{"mcpServers":{}}'
+TOOLS_FLAG = "--tools"
+EMPTY_TOOLS = ""
+MODEL_CATALOG_REQUEST_ID = "shikiru-model-catalog"
 DEFAULT_COMPACT_AT_PCT = 80.0
 STATUS_PAYMENT_REQUIRED = 402
 STATUS_TOO_MANY_REQUESTS = 429
@@ -18,8 +31,6 @@ SESSION_ID_FLAG = "--session-id"
 RESUME_FLAG = "--resume"
 MODEL_FLAG = "--model"
 EFFORT_FLAG = "--effort"
-PRINT_FLAG = "-p"
-OUTPUT_FORMAT_FLAG = "--output-format"
 ADD_DIR_FLAG = "--add-dir"
 SETTINGS_FLAG = "--settings"
 

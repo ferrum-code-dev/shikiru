@@ -116,6 +116,166 @@ async def test_doctor_reports_core_and_configured_plugin_checks(tmp_path: Path) 
         assert "".join(str(check["detail"]).split()) in human_text
 
 
+async def test_doctor_reports_invalid_model_and_effort_once_in_human_output(
+    tmp_path: Path,
+) -> None:
+    config = """
+[project]
+name = "doctor-project"
+
+[agents.fake]
+
+[roles.leader]
+ladder = [{agent = "fake", model = "default", effort = "extreme"}]
+
+[roles.implementer]
+escalate_after = 2
+ladder = [{agent = "fake", model = "defualt", effort = "high"}]
+
+[roles.helper]
+ladder = [{agent = "fake", model = "strong", effort = "high"}]
+"""
+    root = await _project(tmp_path, config)
+
+    code, stdout, stderr = await _cli(root, "--json", "doctor")
+    human_code, human_stdout, human_stderr = await _cli(root, "doctor")
+
+    report = json.loads(stdout)
+    checks = {check["name"]: check for check in report["checks"]}
+    choice_check = checks["plugin:fake:model_choices"]
+    assert code == 1
+    assert stderr == ""
+    assert report["ok"] is False
+    assert choice_check["ok"] is False
+    assert "defualt" in choice_check["detail"]
+    assert "default" in choice_check["detail"]
+    assert "extreme" in choice_check["detail"]
+    assert checks["plugin:fake"]["ok"] is False
+    assert human_code == 1
+    assert human_stderr == ""
+    assert "plugin:fake:model_choices" in human_stdout
+    assert "plugin:fake:binary" in human_stdout
+    assert human_stdout.count("defualt") == 1
+    assert human_stdout.count("use 'default'") == 1
+    assert human_stdout.count("extreme") == 1
+
+
+async def test_doctor_keeps_existing_choices_usable_when_catalog_discovery_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    config = FAKE_CONFIG.replace(
+        "[agents.fake]",
+        '[agents.fake.options]\nmodel_catalog_error = "discovery failed"',
+    )
+    root = await _project(tmp_path, config)
+
+    code, stdout, stderr = await _cli(root, "--json", "doctor")
+
+    report = json.loads(stdout)
+    checks = {check["name"]: check for check in report["checks"]}
+    catalog_check = checks["plugin:fake:model_choices"]
+    assert code == 0
+    assert stderr == ""
+    assert report["ok"] is True
+    assert catalog_check["ok"] is True
+    assert "catalog unavailable" in catalog_check["detail"]
+    assert "discovery failed" in catalog_check["detail"]
+    assert "unsupported model" not in catalog_check["detail"]
+
+
+async def test_doctor_reports_one_actionable_invalid_codex_model_failure(
+    tmp_path: Path,
+) -> None:
+    config = """
+[project]
+name = "doctor-project"
+
+[agents.codex]
+
+[roles.leader]
+ladder = [{agent = "codex", model = "GPT-6-Luna"}]
+
+[roles.implementer]
+escalate_after = 2
+ladder = [{agent = "codex", model = "GPT-6-Luna"}]
+
+[roles.helper]
+ladder = [{agent = "codex", model = "GPT-6-Luna"}]
+"""
+    root = await _project(tmp_path, config)
+    executable_directory = tmp_path / "bin"
+    executable_directory.mkdir()
+    catalog = json.dumps(
+        {
+            "models": [
+                {
+                    "slug": "gpt-6-luna",
+                    "context_window": 200_000,
+                    "visibility": "list",
+                    "supported_in_api": True,
+                    "supported_reasoning_levels": [{"effort": "low"}],
+                }
+            ]
+        }
+    )
+    executable = executable_directory / "codex"
+    executable.write_text(
+        "\n".join(
+            (
+                f"#!{sys.executable}",
+                "import os, sys",
+                "args = sys.argv[1:]",
+                "capture = os.environ['SHIKIRU_TEST_CODEX_CAPTURE']",
+                "with open(capture, 'a', encoding='utf-8') as log:",
+                "    log.write(' '.join(args) + '\\n')",
+                "if args == ['--version']:",
+                "    print('codex-cli 0.163.0')",
+                "elif args == ['login', 'status']:",
+                "    print('Logged in')",
+                "elif args == ['debug', 'models']:",
+                "    print(os.environ['SHIKIRU_TEST_CODEX_CATALOG'])",
+                "elif args and args[0] == 'sandbox':",
+                "    position = args.index('--') + 1",
+                "    os.execvpe(args[position], args[position:], os.environ)",
+                "else:",
+                "    raise SystemExit(2)",
+            )
+        ),
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    capture = tmp_path / "codex-invocations.txt"
+
+    env = {
+        "PATH": f"{executable_directory}{os.pathsep}{os.environ['PATH']}",
+        "CODEX_HOME": str(codex_home),
+        "SHIKIRU_TEST_CODEX_CATALOG": catalog,
+        "SHIKIRU_TEST_CODEX_CAPTURE": str(capture),
+    }
+    code, stdout, stderr = await _cli(root, "--json", "doctor", **env)
+    human_code, human_stdout, human_stderr = await _cli(root, "doctor", **env)
+
+    report = json.loads(stdout)
+    checks = {check["name"]: check for check in report["checks"]}
+    choices = checks["plugin:codex:model_choices"]
+    assert code == 1
+    assert stderr == ""
+    assert report["ok"] is False
+    assert choices["ok"] is False
+    assert "unsupported model 'GPT-6-Luna'" in choices["detail"]
+    assert "use 'gpt-6-luna'" in choices["detail"]
+    assert "plugin:codex:context_window" not in checks
+    assert human_code == 1
+    assert human_stderr == ""
+    assert human_stdout.count("GPT-6-Luna") == 1
+    assert human_stdout.count("use 'gpt-6-luna'") == 1
+    assert "context window" not in human_stdout
+    assert "compaction" not in human_stdout
+    assert capture.read_text(encoding="utf-8").splitlines().count("debug models") == 2
+
+
 FAKE_VERSION_SCRIPT = """#!/bin/sh
 if [ "$1" = "{flag}" ]; then echo "{output}"; exit 0; fi
 exec {real} "$@"

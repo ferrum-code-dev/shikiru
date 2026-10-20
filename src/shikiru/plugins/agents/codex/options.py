@@ -12,6 +12,18 @@ DEBUG_SUBCOMMAND = "debug"
 MODELS_SUBCOMMAND = "models"
 MODELS_BUNDLED_FLAG = "--bundled"
 MODELS_CACHE_FILENAME = "models_cache.json"
+CODEX_MODEL_CATALOG_ARGV = (CODEX_COMMAND, DEBUG_SUBCOMMAND, MODELS_SUBCOMMAND)
+PROFILE_FLAG = "--profile"
+MODEL_LONG_FLAG = "--model"
+EFFORT_LONG_FLAG = "--effort"
+CONFIG_LONG_FLAG = "--config"
+MODEL_CONFIG_OVERRIDE = "model_provider"
+MODEL_OVERRIDE = "model"
+REASONING_EFFORT_CONFIG = "model_reasoning_effort"
+MODEL_CATALOG_ARGS_DETAIL = (
+    "Codex agent args select a model, effort, or profile; its effective model catalog "
+    "cannot be determined safely"
+)
 CODEX_BUNDLED_MODELS_ARGV = (
     CODEX_COMMAND,
     DEBUG_SUBCOMMAND,
@@ -22,7 +34,6 @@ RESUME_SUBCOMMAND = "resume"
 NO_DAEMON_FLAG = "--no-daemon"
 MODEL_FLAG = "-m"
 CONFIG_FLAG = "-c"
-REASONING_EFFORT_CONFIG = "model_reasoning_effort"
 EXEC_SUBCOMMAND = "exec"
 EPHEMERAL_FLAG = "--ephemeral"
 JSON_FLAG = "--json"

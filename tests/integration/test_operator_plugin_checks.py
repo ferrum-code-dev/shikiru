@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 import shikiru.agents.registry as registry_module
-from shikiru.agents.contracts import Agent, AgentContext, CheckResult
+from shikiru.agents.contracts import Agent, AgentContext, CheckResult, assess_model_choice
 from shikiru.agents.registry import AgentRegistry
 from shikiru.errors import ConfigError
 from shikiru.operator.detectors import ProjectDetectors
@@ -76,3 +76,20 @@ async def test_unexpected_plugin_doctor_errors_are_not_hidden() -> None:
 
     with pytest.raises(RuntimeError):
         await checks.check("broken", {})
+
+
+async def test_plugins_without_catalog_keep_checks_and_report_unknown_choices() -> None:
+    runner = SubprocessRunner()
+    checks = PluginChecks(
+        _registry_for(_BrokenAgent()),
+        runner,
+        FakeClock(TASK_CREATED_AT),
+    )
+
+    result = await checks.check("broken", {}, include_model_catalog=True)
+
+    assert result.error is None
+    assert result.catalog is not None
+    assert assess_model_choice("configured-model", None, result.catalog).supported is None
+    assert not result.ok
+    assert result.checks[0].detail == "binary is missing"

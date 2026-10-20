@@ -111,6 +111,33 @@ class BillingDeclarationProvider(Protocol):
 
 If an agent does not implement the optional property, or has no reliable declaration, the normalized value is `unknown`/`unknown`. A plugin can obtain a known mode only from a trustworthy native report or an explicit plugin-owned `[agents.<name>.options]` value; it returns the matching source. An explicit `unknown` setting is valid and has source `operator_config`. Core does not inspect models, credentials, environment, login state, provider identity or quota to fill the declaration. Plugin factories validate plugin-specific options and return one normalized declaration. The value is captured with the run/session at start and is not changed by a later model rung or current configuration. This capability labels the access/billing mode only; it neither configures access nor supplies price, account or charge data. Task 90 implements the contract in Shikiru's Claude, Codex and fake-agent plugins; older third-party plugins remain `unknown`/`unknown` unless they add the optional capability.
 
+**Optional model-choice capability.** A plugin may implement the following additional capability for an authoritative catalog:
+
+```python
+@dataclass(frozen=True)
+class ModelChoice:
+    model: str
+    efforts: tuple[str, ...] | None
+    offered: bool = True
+
+
+@dataclass(frozen=True)
+class ModelCatalog:
+    models: tuple[ModelChoice, ...] = ()
+    error: str | None = None
+    complete: bool = False
+
+
+class ModelCatalogProvider(Protocol):
+    async def model_catalog(self) -> ModelCatalog: ...
+```
+
+`efforts=None` means the source did not report per-model effort metadata; an empty tuple means the source reported no explicit effort choices. `offered=False` marks a supported native identifier that should not appear as a new picker choice. `complete=False` means an identifier missing from the returned entries is unverified, while an exact listed identifier remains evidence of support. An unset effort uses the agent's native default and is valid when the model itself is listed. A catalog error identifies unavailable or malformed discovery and carries no choices. Entries are exact native identifiers, never guessed aliases or a cross-product of models and efforts. A catalog is evidence for CLI-supported choices, not a guarantee that the Operator's account or configured provider can access each one. Choice validation fails only on a conclusive rejection; unavailable or incomplete discovery and missing effort metadata stay explicitly unverified and do not reject an existing configuration. A future wizard must block new model and effort choices unless the catalog has a matching model entry and, for an explicit effort, reports that effort for the model. Completeness only determines whether absent model identifiers are unsupported or unverified.
+
+Codex obtains choices from the installed CLI's current `codex debug models` metadata command, which lets Codex refresh its own catalog and apply its configured account or provider semantics. The plugin retains only native model identifiers, API support, visibility, per-model reasoning levels and context windows; it does not expose the catalog's unrelated model instructions. API-supported hidden entries remain evidence for existing configurations with `offered=False`. Native model, effort, profile or provider overrides in plugin `args` make choice discovery unverified. The local `$CODEX_HOME/models_cache.json` and `codex debug models --bundled` remain context-window sources for existing turns; they are not authoritative picker inventories because they may be stale.
+
+Claude Code's plugin sends only the SDK `initialize` control request through `claude -p --input-format stream-json --output-format stream-json`, with safe mode, session persistence disabled, no tools and an empty strict MCP configuration. It selects only the matching native control response's `models` metadata and retains each native `value`, `resolvedModel` and its reported effort levels. Its menu can be incomplete as an inventory of explicit identifiers, so missing entries remain unverified. The isolated call sends no user prompt and does not run a model turn. A missing or malformed initialize response is explicit unavailable discovery. A third-party plugin without this optional capability continues to load and run; `PluginChecks.model_catalog()` returns `None`, which means the Operator cannot offer authoritative choices and a wizard must explain and block selection. No legacy plugin receives fabricated defaults.
+
 Prompts call Shikiru back only through `shikiru_command`. Agent shells may be login shells with their own `PATH`, so nothing agent-facing relies on `shikiru` being on it.
 
 **Obligations**, checked by the contract kit:

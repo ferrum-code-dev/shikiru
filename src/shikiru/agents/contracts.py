@@ -5,8 +5,9 @@ from __future__ import annotations
 import shlex
 import sys
 from dataclasses import dataclass
+from difflib import get_close_matches
 from enum import StrEnum, auto
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Protocol, cast
 
 from pydantic import ConfigDict
 
@@ -32,6 +33,7 @@ SLOT_ENV_VAR = "SHIKIRU_SLOT"
 SHIKIRU_MODULE = "shikiru"
 DOCTOR_TIMEOUT_SECONDS = 60.0
 PERCENT = 100
+MODEL_SUGGESTION_CUTOFF = 0.6
 COST_BASIS_UNKNOWN = "unknown"
 COST_BASIS_BILLED = "billed"
 COST_BASIS_API_EQUIVALENT = "api_equivalent"
@@ -147,6 +149,32 @@ class CheckResult:
 
     name: str
     ok: bool
+    detail: str
+
+
+@dataclass(frozen=True)
+class ModelChoice:
+    """One model and its authoritative explicit effort choices (04 §1)."""
+
+    model: str
+    efforts: tuple[str, ...] | None
+    offered: bool = True
+
+
+@dataclass(frozen=True)
+class ModelCatalog:
+    """Authoritative agent model choices, or the reason discovery is unavailable (04 §1)."""
+
+    models: tuple[ModelChoice, ...] = ()
+    error: str | None = None
+    complete: bool = False
+
+
+@dataclass(frozen=True)
+class ModelChoiceAssessment:
+    """One configured choice; `supported` is `None` when catalog evidence is incomplete."""
+
+    supported: bool | None
     detail: str
 
 
@@ -330,6 +358,16 @@ class BillingDeclarationProvider(Protocol):
     def billing_declaration(self) -> BillingDeclaration: ...
 
 
+class ModelCatalogProvider(Protocol):
+    """Optional agent capability for authoritative model and per-model effort choices."""
+
+    async def model_catalog(self) -> ModelCatalog: ...
+
+
+class _ModelCatalogMethod(Protocol):
+    async def __call__(self) -> object: ...
+
+
 def billing_declaration_for(agent: Agent) -> BillingDeclaration:
     """Return an agent's valid optional billing declaration, or unknown for old plugins."""
     declaration = getattr(agent, "billing_declaration", _MISSING_BILLING_DECLARATION)
@@ -345,6 +383,118 @@ def billing_declaration_for(agent: Agent) -> BillingDeclaration:
         message = f"agent {agent.name!r} declared a billing mode without its source"
         raise ConfigError(message)
     return declaration
+
+
+async def model_catalog_for(agent: Agent) -> ModelCatalog | None:
+    """Return an optional agent catalog, rejecting malformed plugin capability results."""
+    provider: object = getattr(agent, "model_catalog", None)
+    if provider is None:
+        return None
+    if not callable(provider):
+        message = f"agent {agent.name!r} returned an invalid model catalog capability"
+        raise ConfigError(message)
+    catalog_value: object = await cast("_ModelCatalogMethod", provider)()
+    if not isinstance(catalog_value, ModelCatalog):
+        message = f"agent {agent.name!r} returned an invalid model catalog"
+        raise ConfigError(message)
+    catalog = catalog_value
+    if catalog.error is not None and (
+        not catalog.error.strip() or catalog.models or catalog.complete
+    ):
+        message = f"agent {agent.name!r} returned an inconsistent model catalog"
+        raise ConfigError(message)
+    model_names: set[str] = set()
+    for choice in catalog.models:
+        if not choice.model:
+            message = f"agent {agent.name!r} returned an invalid model choice"
+            raise ConfigError(message)
+        if choice.model in model_names:
+            message = f"agent {agent.name!r} returned duplicate model choices"
+            raise ConfigError(message)
+        model_names.add(choice.model)
+        if choice.efforts is not None and (
+            any(not effort for effort in choice.efforts)
+            or len(set(choice.efforts)) != len(choice.efforts)
+        ):
+            message = f"agent {agent.name!r} returned invalid effort choices"
+            raise ConfigError(message)
+    return catalog
+
+
+def assess_model_choice(
+    model: str, effort: str | None, catalog: ModelCatalog
+) -> ModelChoiceAssessment:
+    """Classify a configured choice using only its agent's catalog evidence."""
+    if catalog.error is not None:
+        supported = None
+        detail = f"model catalog unavailable: {catalog.error}"
+    else:
+        model_choice = next((choice for choice in catalog.models if choice.model == model), None)
+        if model_choice is None:
+            if not catalog.complete:
+                supported = None
+                detail = f"model {model!r} could not be verified because the catalog is incomplete"
+            else:
+                names = tuple(choice.model for choice in catalog.models)
+                suggestion = _choice_suggestion(model, names)
+                supported = False
+                if suggestion is not None:
+                    detail = f"unsupported model {model!r}; use {suggestion!r}"
+                else:
+                    detail = (
+                        f"unsupported model {model!r}; available model identifiers: "
+                        f"{', '.join(names) or 'none'}"
+                    )
+        elif effort is None:
+            supported = True
+            detail = f"model {model_choice.model!r} is listed; native effort default is selected"
+        elif model_choice.efforts is None:
+            supported = None
+            detail = (
+                f"effort {effort!r} for model {model_choice.model!r} could not be verified because "
+                "the catalog does not report per-model effort choices; leave effort unset"
+            )
+        elif not model_choice.efforts:
+            supported = False
+            detail = (
+                f"model {model_choice.model!r} has no explicit effort choices; leave effort unset"
+            )
+        else:
+            issue = _unsupported_effort_issue(effort, model_choice.model, model_choice.efforts)
+            supported = issue is None
+            detail = issue or f"model {model_choice.model!r} supports effort {effort!r}"
+    return ModelChoiceAssessment(supported, detail)
+
+
+def _unsupported_effort_issue(
+    effort: str, model: str, supported_efforts: Sequence[str]
+) -> str | None:
+    if effort in supported_efforts:
+        return None
+    suggestion = _choice_suggestion(effort, supported_efforts)
+    detail = (
+        f"unsupported effort {effort!r} for model {model!r}; "
+        f"supported efforts: {', '.join(supported_efforts)}"
+    )
+    if suggestion is not None:
+        detail = f"{detail}; use {suggestion!r}"
+    return detail
+
+
+def _choice_suggestion(value: str, choices: Sequence[str]) -> str | None:
+    folded = {choice.casefold(): choice for choice in choices}
+    exact_casefold = folded.get(value.casefold())
+    if exact_casefold is not None:
+        return exact_casefold
+    matches = get_close_matches(
+        value.casefold(),
+        [choice.casefold() for choice in choices],
+        n=1,
+        cutoff=MODEL_SUGGESTION_CUTOFF,
+    )
+    if not matches:
+        return None
+    return folded[matches[0]]
 
 
 @dataclass(frozen=True)

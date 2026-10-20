@@ -9,7 +9,12 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
-from shikiru.agents.contracts import DOCTOR_TIMEOUT_SECONDS
+from shikiru.agents.contracts import (
+    DOCTOR_TIMEOUT_SECONDS,
+    CheckResult,
+    ModelCatalog,
+    assess_model_choice,
+)
 from shikiru.config.loader import load_settings
 from shikiru.domain.versions import Version, parse_version
 from shikiru.errors import ConfigError, ShikiruError
@@ -50,6 +55,9 @@ REPOSITORY_CHECK_NAME = "repository"
 CONFIG_CHECK_NAME = "config"
 PLUGINS_CHECK_NAME = "plugins"
 PLUGIN_CONFIG_CHECK_NAME = "config.plugins"
+PLUGIN_CHECK_PREFIX = "plugin"
+PLUGIN_CHECK_SEPARATOR = ":"
+MODEL_CHOICES_CHECK_NAME = "model_choices"
 COW_CHECK_NAME = "cow"
 DATABASE_CHECK_NAME = "db"
 ENGINE_OUTPUT_CHECK_NAME = "engine-output"
@@ -245,27 +253,39 @@ class Doctor:
 
     async def _plugin_checks(self, settings: Settings) -> list[DoctorCheck]:
         checks: list[DoctorCheck] = []
+        rungs = tuple(dict.fromkeys(settings.ladder_rungs()))
         for name, agent_config in sorted(settings.agents.items()):
+            configured_rungs = tuple(rung for rung in rungs if rung.agent == name)
             result = await self._plugins.check(
-                name, agent_config.options, settings.ladder_models(name)
+                name,
+                agent_config.options,
+                settings.ladder_models(name),
+                include_model_catalog=bool(configured_rungs),
             )
             if result.error is not None:
                 checks.append(
                     DoctorCheck(name=_plugin_check_name(name), ok=False, detail=result.detail)
                 )
                 continue
+            plugin_results = list(result.checks)
+            choice_check = None
+            if configured_rungs and result.catalog is not None:
+                choice_check = _model_choices_check(configured_rungs, result.catalog)
+                plugin_results.append(choice_check)
             checks.extend(
-                [
-                    DoctorCheck(
-                        name=_plugin_result_name(name, plugin_result.name),
-                        ok=plugin_result.ok,
-                        detail=plugin_result.detail,
-                    )
-                    for plugin_result in result.checks
-                ]
+                DoctorCheck(
+                    name=_plugin_result_name(name, plugin_result.name),
+                    ok=plugin_result.ok,
+                    detail=plugin_result.detail,
+                )
+                for plugin_result in plugin_results
             )
+            plugin_ok = result.ok and (choice_check is None or choice_check.ok)
+            plugin_detail = result.detail
+            if choice_check is not None and not choice_check.ok:
+                plugin_detail = f"{plugin_detail}; {choice_check.name}: {choice_check.detail}"
             checks.append(
-                DoctorCheck(name=_plugin_check_name(name), ok=result.ok, detail=result.detail)
+                DoctorCheck(name=_plugin_check_name(name), ok=plugin_ok, detail=plugin_detail)
             )
         return checks
 
@@ -296,8 +316,36 @@ def _probe_check_name(rung: Rung) -> str:
 
 
 def _plugin_check_name(name: str) -> str:
-    return f"plugin:{name}"
+    return PLUGIN_CHECK_SEPARATOR.join((PLUGIN_CHECK_PREFIX, name))
 
 
 def _plugin_result_name(name: str, result: str) -> str:
-    return f"plugin:{name}:{result}"
+    return PLUGIN_CHECK_SEPARATOR.join((PLUGIN_CHECK_PREFIX, name, result))
+
+
+def _model_choices_check(rungs: Sequence[Rung], catalog: ModelCatalog) -> CheckResult:
+    choices = tuple(dict.fromkeys((rung.model, rung.effort) for rung in rungs))
+    assessments = tuple(assess_model_choice(model, effort, catalog) for model, effort in choices)
+    invalid = tuple(
+        assessment.detail for assessment in assessments if assessment.supported is False
+    )
+    unverified = tuple(
+        assessment.detail for assessment in assessments if assessment.supported is None
+    )
+    if invalid:
+        return CheckResult(
+            name=MODEL_CHOICES_CHECK_NAME,
+            ok=False,
+            detail="; ".join((*invalid, *unverified)),
+        )
+    if unverified:
+        return CheckResult(
+            name=MODEL_CHOICES_CHECK_NAME,
+            ok=True,
+            detail=f"model and effort choices could not be fully verified: {'; '.join(unverified)}",
+        )
+    return CheckResult(
+        name=MODEL_CHOICES_CHECK_NAME,
+        ok=True,
+        detail="configured model and effort choices are listed in the agent catalog",
+    )

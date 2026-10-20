@@ -10,9 +10,13 @@ from shikiru.errors import HeadlessOutputError
 from shikiru.plugins.agents.claude.options import (
     CLAUDE_COMMAND,
     EFFORT_FLAG,
+    EMPTY_TOOLS,
     MODEL_FLAG,
+    NO_SESSION_PERSISTENCE_FLAG,
     OUTPUT_FORMAT_FLAG,
     PRINT_FLAG,
+    SAFE_MODE_FLAG,
+    TOOLS_FLAG,
 )
 
 if TYPE_CHECKING:
@@ -23,10 +27,6 @@ if TYPE_CHECKING:
 
 _OUTPUT_FORMAT_JSON = "json"
 _JSON_SCHEMA_FLAG = "--json-schema"
-_SAFE_MODE_FLAG = "--safe-mode"
-_TOOLS_FLAG = "--tools"
-_EMPTY_TOOLS = ""
-_NO_SESSION_PERSISTENCE_FLAG = "--no-session-persistence"
 _STRUCTURED_OUTPUT_FIELD = "structured_output"
 _INVALID_JSON_MESSAGE = "Claude headless output was not valid JSON"
 _INVALID_OBJECT_MESSAGE = "Claude headless output was not an object"
@@ -65,10 +65,10 @@ class ClaudeHeadless:
             argv.extend([EFFORT_FLAG, effort])
         argv.extend(
             [
-                _SAFE_MODE_FLAG,
-                _TOOLS_FLAG,
-                _EMPTY_TOOLS,
-                _NO_SESSION_PERSISTENCE_FLAG,
+                SAFE_MODE_FLAG,
+                TOOLS_FLAG,
+                EMPTY_TOOLS,
+                NO_SESSION_PERSISTENCE_FLAG,
             ]
         )
         result = await self._runner.run(

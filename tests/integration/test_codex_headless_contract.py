@@ -140,6 +140,8 @@ _OPENROUTER_LIVE_MESSAGE = "OK"
 _CODEX_ENV_CAPTURE = "SHIKIRU_CODEX_ENV_CAPTURE"
 _CODEX_BUNDLED_MODELS_JSON_ENV = "SHIKIRU_CODEX_BUNDLED_MODELS_JSON"
 _CODEX_BUNDLED_MODELS_EXIT_CODE_ENV = "SHIKIRU_CODEX_BUNDLED_MODELS_EXIT_CODE"
+_CODEX_MODEL_CATALOG_JSON_ENV = "SHIKIRU_CODEX_MODEL_CATALOG_JSON"
+_CODEX_MODEL_CATALOG_EXIT_CODE_ENV = "SHIKIRU_CODEX_MODEL_CATALOG_EXIT_CODE"
 _FAKE_TURN_SESSION_ID = "bundled-catalog-session"
 _TOOL_OUTCOMES_SESSION_ID = "session-tool-outcomes"
 _FAILED_COMMAND_EXIT_CODE = 2
@@ -858,6 +860,192 @@ class TestCodexHeadlessContract(AgentContractSuite):
         assert f"{AUTO_COMPACT_LIMIT_CONFIG}={_limit_for(_BUNDLED_CONTEXT_WINDOW)}" in command.argv
 
     @pytest.mark.asyncio
+    async def test_plugin_uses_refreshed_catalog_when_local_model_cache_is_stale(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_codex_home: Path
+    ) -> None:
+        monkeypatch.setenv(CODEX_HOME_ENV_VAR, str(operator_codex_home))
+        _write_model_cache(operator_codex_home, [("stale-gpt-model", _TEST_CONTEXT_WINDOW)])
+        _install_fake_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+        monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(tmp_path / "catalog-environment.txt"))
+        monkeypatch.setenv(
+            _CODEX_MODEL_CATALOG_JSON_ENV,
+            json.dumps(
+                {
+                    "models": [
+                        {
+                            "slug": "gpt-6-luna",
+                            "visibility": "list",
+                            "supported_in_api": True,
+                            "context_window": _TEST_CONTEXT_WINDOW,
+                            "supported_reasoning_levels": [
+                                {"effort": "low"},
+                                {"effort": "high"},
+                            ],
+                        },
+                        {
+                            "slug": "gpt-hidden",
+                            "visibility": "hide",
+                            "supported_in_api": True,
+                            "context_window": _TEST_CONTEXT_WINDOW,
+                            "supported_reasoning_levels": [{"effort": "ultra"}],
+                        },
+                    ]
+                }
+            ),
+        )
+        (operator_codex_home / "config.toml").write_text(
+            'model_provider = "openrouter"\n\n'
+            "[model_providers.openrouter]\n"
+            'name = "OpenRouter"\n'
+            'base_url = "https://openrouter.example.invalid/api/v1"\n',
+            encoding="utf-8",
+        )
+        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+
+        catalog = await agent.model_catalog()
+        checks = await agent.doctor(("gpt-hidden",))
+        context_check = next(check for check in checks if check.name == "context_window")
+
+        assert catalog.error is None
+        assert [choice.model for choice in catalog.models] == ["gpt-6-luna", "gpt-hidden"]
+        assert all(choice.model != "stale-gpt-model" for choice in catalog.models)
+        assert catalog.models[0].efforts == ("low", "high")
+        assert not catalog.models[1].offered
+        assert context_check.ok
+        invocations = (
+            (tmp_path / "catalog-environment.txt").read_text(encoding="utf-8").splitlines()[::5]
+        )
+        assert invocations.count("debug models") == 1
+        assert "debug models --bundled" not in invocations
+
+    @pytest.mark.asyncio
+    async def test_plugin_keeps_model_catalog_failures_explicit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_codex_home: Path
+    ) -> None:
+        monkeypatch.setenv(CODEX_HOME_ENV_VAR, str(operator_codex_home))
+        _install_fake_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+        monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(tmp_path / "catalog-environment.txt"))
+        monkeypatch.setenv(_CODEX_MODEL_CATALOG_JSON_ENV, "not-json")
+        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+
+        catalog = await agent.model_catalog()
+
+        assert catalog.models == ()
+        assert catalog.error is not None
+        assert "could not parse Codex CLI's current model catalog" in catalog.error
+
+    @pytest.mark.asyncio
+    async def test_custom_provider_choices_come_from_codex_current_metadata(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_codex_home: Path
+    ) -> None:
+        monkeypatch.setenv(CODEX_HOME_ENV_VAR, str(operator_codex_home))
+        _install_fake_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+        capture = tmp_path / "catalog-environment.txt"
+        monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture))
+        monkeypatch.setenv(
+            _CODEX_MODEL_CATALOG_JSON_ENV,
+            json.dumps(
+                {
+                    "models": [
+                        {
+                            "slug": "native-custom-model",
+                            "context_window": _TEST_CONTEXT_WINDOW,
+                            "visibility": "list",
+                            "supported_in_api": True,
+                            "supported_reasoning_levels": [{"effort": "high"}],
+                        }
+                    ]
+                }
+            ),
+        )
+        (operator_codex_home / "config.toml").write_text(
+            'model_provider = "openrouter"\n\n'
+            "[model_providers.openrouter]\n"
+            'name = "OpenRouter"\n'
+            'base_url = "https://openrouter.example.invalid/api/v1"\n',
+            encoding="utf-8",
+        )
+        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+
+        catalog = await agent.model_catalog()
+
+        assert catalog.error is None
+        assert catalog.complete
+        assert [choice.model for choice in catalog.models] == ["native-custom-model"]
+        assert catalog.models[0].efforts == ("high",)
+        invocations = capture.read_text(encoding="utf-8").splitlines()[::5]
+        assert invocations == ["debug models"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "args",
+        [
+            ["--model", "gpt-6-luna"],
+            ["--profile", "custom"],
+            ["-c", "model_provider=custom"],
+            ["-c", "model_reasoning_effort=high"],
+        ],
+    )
+    async def test_provider_model_or_effort_overrides_make_catalog_unverified(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        operator_codex_home: Path,
+        args: list[str],
+    ) -> None:
+        monkeypatch.setenv(CODEX_HOME_ENV_VAR, str(operator_codex_home))
+        _install_fake_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+        capture = tmp_path / "catalog-environment.txt"
+        monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture))
+        agent = create(
+            AgentContext(options={"args": args}, runner=SubprocessRunner(), clock=SystemClock())
+        )
+
+        catalog = await agent.model_catalog()
+
+        assert catalog.error is not None
+        assert "args" in catalog.error
+        assert not capture.exists()
+
+    @pytest.mark.asyncio
+    async def test_unknown_context_window_does_not_mark_a_listed_model_unsupported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operator_codex_home: Path
+    ) -> None:
+        monkeypatch.setenv(CODEX_HOME_ENV_VAR, str(operator_codex_home))
+        _install_fake_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
+        monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(tmp_path / "catalog-environment.txt"))
+        monkeypatch.setenv(
+            _CODEX_MODEL_CATALOG_JSON_ENV,
+            json.dumps(
+                {
+                    "models": [
+                        {
+                            "slug": "gpt-6-luna",
+                            "visibility": "list",
+                            "supported_in_api": True,
+                            "supported_reasoning_levels": [{"effort": "low"}],
+                        }
+                    ]
+                }
+            ),
+        )
+        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+
+        catalog = await agent.model_catalog()
+        checks = await agent.doctor(("gpt-6-luna",))
+        context_check = next(check for check in checks if check.name == "context_window")
+
+        assert catalog.error is None
+        assert [choice.model for choice in catalog.models] == ["gpt-6-luna"]
+        assert not context_check.ok
+        assert "no positive context window" in context_check.detail
+
+    @pytest.mark.asyncio
     async def test_new_engine_agent_resolves_bundled_window_when_starting_a_turn(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1145,7 +1333,14 @@ def _record(
 def _write_model_cache(home: Path, models: Sequence[tuple[str, int]]) -> None:
     payload = {
         "models": [
-            {"slug": slug, "context_window": context_window} for slug, context_window in models
+            {
+                "slug": slug,
+                "context_window": context_window,
+                "visibility": "list",
+                "supported_in_api": True,
+                "supported_reasoning_levels": [{"effort": "low"}],
+            }
+            for slug, context_window in models
         ]
     }
     (home / MODELS_CACHE_FILENAME).write_text(json.dumps(payload), encoding="utf-8")
@@ -1272,6 +1467,12 @@ def _install_fake_codex(directory: Path) -> None:
         'if [ "$1" = "login" ]; then\n'
         "  printf '%s\\n' 'Not logged in'\n"
         "  exit 1\n"
+        "fi\n"
+        'if [ "$1" = "debug" ] && [ "$2" = "models" ] && [ -z "$3" ]; then\n'
+        f'  catalog="${{{_CODEX_MODEL_CATALOG_JSON_ENV}}}"\n'
+        '  if [ -z "$catalog" ]; then catalog=\'{"models":[]}\'; fi\n'
+        '  printf "%s\\n" "$catalog"\n'
+        f'  exit "${{{_CODEX_MODEL_CATALOG_EXIT_CODE_ENV}:-0}}"\n'
         "fi\n"
         'if [ "$1" = "debug" ] && [ "$2" = "models" ] && [ "$3" = "--bundled" ]; then\n'
         '  catalog="${SHIKIRU_CODEX_BUNDLED_MODELS_JSON}"\n'
