@@ -416,5 +416,5 @@ CLI first-review corrections (sequential on main; lead review after each):
 
 - [x] Task 260: Readable help, brief lifecycle outcomes and project prerequisites
 - [x] Task 261: Authoritative agent choices and actionable model diagnostics
-- [ ] Task 262: Guided ladder builder and prototype-aligned initializer
+- [x] Task 262: Guided ladder builder and prototype-aligned initializer
 - [ ] Task 263: Report parity and complete first-review verification

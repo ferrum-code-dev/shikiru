@@ -34,6 +34,7 @@ _FAKE_MODEL_CATALOG = ModelCatalog(
         ModelChoice(model="strong", efforts=("high",)),
         ModelChoice(model="smoke", efforts=("low",)),
         ModelChoice(model="compact-visible", efforts=("high",)),
+        ModelChoice(model="claude-fable-5-1[1m]", efforts=("high",)),
     ),
     complete=True,
 )

@@ -133,6 +133,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from mcp.server.fastmcp import FastMCP
+    from rich.console import RenderableType
     from textual.screen import ModalScreen
 
     from shikiru.config.settings import LoggingConfig, Settings
@@ -208,6 +209,10 @@ def build_project_detectors(project_root: Path) -> ProjectDetectors:
 
 async def run_init_wizard(project_root: Path) -> InitWizardResult | None:
     """Run the interactive project setup after the shared detector validates D20."""
+    doctor_renderer = cast(
+        "Callable[..., RenderableType]",
+        import_module("shikiru.cli.render").__dict__["doctor_renderable"],
+    )
     detectors = build_project_detectors(project_root)
     project = await detectors.detect()
     config_path = project_config_path(project_root)
@@ -220,6 +225,7 @@ async def run_init_wizard(project_root: Path) -> InitWizardResult | None:
         project=project,
         detectors=detectors,
         doctor=build_doctor(project_root),
+        doctor_renderer=doctor_renderer,
         orchestration_defaults=load_default_orchestration(),
     )
     return cast(

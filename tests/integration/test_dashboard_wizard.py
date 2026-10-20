@@ -3,13 +3,19 @@ from __future__ import annotations
 import asyncio
 import os
 import stat
+from io import StringIO
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from fake_agent.agent import create as create_fake_agent
+from rich.console import Console
 from textual.widgets import Input, Select, Static
 
+import shikiru.agents.registry as registry_module
+from shikiru.agents.contracts import AgentContext, CheckResult
 from shikiru.agents.registry import AgentRegistry
 from shikiru.bootstrap import build_doctor, build_project_detectors, run_init_wizard
+from shikiru.cli.render import doctor_renderable
 from shikiru.clock import SystemClock
 from shikiru.config.loader import load_default_orchestration, load_settings
 from shikiru.dashboard.wizard import InitWizardApp
@@ -27,14 +33,33 @@ from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from _pytest.monkeypatch import MonkeyPatch
     from textual.pilot import Pilot
 
+    from shikiru.agents.contracts import Agent
     from shikiru.operator.detectors import InitWizardResult
 
 pytestmark = pytest.mark.asyncio
+
+
+class _LegacyAgent:
+    name = "legacy"
+
+    async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
+        del models
+        return [CheckResult(name="binary", ok=True, detail="available")]
+
+
+def _create_legacy_agent(_context: AgentContext) -> Agent:
+    return cast("Agent", _LegacyAgent())
+
+
+def _no_entry_points(*, group: str) -> list[object]:
+    del group
+    return []
 
 
 async def _git_project(root: Path) -> None:
@@ -75,6 +100,7 @@ async def _app(root: Path) -> InitWizardApp:
         project=project,
         detectors=detectors,
         doctor=build_doctor(root),
+        doctor_renderer=doctor_renderable,
         orchestration_defaults=load_default_orchestration(),
     )
 
@@ -97,6 +123,7 @@ async def _app_with_cow_probe_error(root: Path) -> InitWizardApp:
         project=project,
         detectors=detectors,
         doctor=build_doctor(root),
+        doctor_renderer=doctor_renderable,
         orchestration_defaults=load_default_orchestration(),
     )
 
@@ -144,10 +171,28 @@ async def _replace_input(pilot: Pilot[InitWizardResult | None], selector: str, v
     await pilot.press(*value)
 
 
+async def _choose(pilot: Pilot[InitWizardResult | None], selector: str, value: str) -> None:
+    select = cast("Select[str]", pilot.app.query_one(selector, Select))
+    select.focus()
+    await wait_until(lambda: pilot.app.focused is select, timeout=1)
+    await pilot.press("enter")
+    await pilot.press(*value)
+    await pilot.press("enter")
+    await wait_until(lambda: select.value == value, timeout=1)
+
+
 async def _click_next(pilot: Pilot[InitWizardResult | None]) -> None:
     button = pilot.app.query_one("#wizard-next")
+    await wait_until(lambda: not button.disabled, timeout=60)
     await wait_until(lambda: not button.has_class("-active"), timeout=1)
     await pilot.click("#wizard-next")
+
+
+async def _click_scrolled(pilot: Pilot[InitWizardResult | None], selector: str) -> None:
+    target = pilot.app.query_one(selector)
+    target.focus()
+    await wait_until(lambda: pilot.app.focused is target, timeout=1)
+    await pilot.press("enter")
 
 
 async def _click_back(pilot: Pilot[InitWizardResult | None], page_id: str) -> None:
@@ -166,23 +211,60 @@ async def _focus_with_tab(pilot: Pilot[InitWizardResult | None], selector: str) 
     assert pilot.app.focused is target
 
 
-async def _set_agents_and_trackers(pilot: Pilot[InitWizardResult | None], tmp_path: Path) -> None:
+async def _focus_with_shift_tab(pilot: Pilot[InitWizardResult | None], selector: str) -> None:
+    target = pilot.app.query_one(selector)
+    for _ in range(40):
+        if pilot.app.focused is target:
+            return
+        await pilot.press("shift+tab")
+    assert pilot.app.focused is target
+
+
+async def _set_agents_and_trackers(pilot: Pilot[InitWizardResult | None]) -> None:
     await _click_next(pilot)
-    await _click_next(pilot)
-    error = pilot.app.query_one("#wizard-error", Static)
-    error_text = str(error.render()).strip()
-    assert error_text
-    shell = pilot.app.query_one("#wizard-shell")
-    visible_error = visible_widget_text(error, shell)
-    assert " ".join(error_text.split()) in " ".join(visible_error.split())
-    assert not (tmp_path / ".shikiru" / "config.toml").exists()
-    await _replace_input(pilot, "#leader-ladder", "missing:model:high")
-    await _click_next(pilot)
-    assert str(pilot.app.query_one("#wizard-error", Static).render()).strip()
-    assert not (tmp_path / ".shikiru" / "config.toml").exists()
-    await _replace_input(pilot, "#leader-ladder", "fake:smoke:low")
-    await _replace_input(pilot, "#implementer-ladder", "fake:strong:high")
-    await _replace_input(pilot, "#helper-ladder", "fake:smoke:low")
+
+    await _choose(pilot, "#rung-leader-0-agent", "fake")
+    await _choose(pilot, "#rung-leader-0-model", "smoke")
+    await _choose(pilot, "#rung-leader-0-effort", "low")
+    await _choose(pilot, "#rung-leader-0-model", "strong")
+    effort = cast("Select[str]", pilot.app.query_one("#rung-leader-0-effort", Select))
+    await wait_until(lambda: effort.value is Select.BLANK, timeout=1)
+    await _choose(pilot, "#rung-leader-0-effort", "high")
+    await _choose(pilot, "#rung-leader-0-model", "compact-visible")
+    await wait_until(lambda: effort.value == "high", timeout=1)
+    await _click_scrolled(pilot, "#leader-add")
+    await wait_until(
+        lambda: pilot.app.query_one("#rung-leader-1-model", Select).id == "rung-leader-1-model",
+        timeout=1,
+    )
+    await _choose(pilot, "#rung-leader-1-agent", "fake")
+    await _choose(pilot, "#rung-leader-1-model", "smoke")
+    await _choose(pilot, "#rung-leader-1-effort", "low")
+    await _click_scrolled(pilot, "#rung-leader-1-up")
+    await wait_until(
+        lambda: (
+            cast("Select[str]", pilot.app.query_one("#rung-leader-0-model", Select)).value
+            == "smoke"
+        ),
+        timeout=1,
+    )
+    await _click_scrolled(pilot, "#leader-add")
+    await wait_until(
+        lambda: pilot.app.query_one("#rung-leader-2-model", Select).id == "rung-leader-2-model",
+        timeout=1,
+    )
+    await _click_scrolled(pilot, "#rung-leader-2-remove")
+    await wait_until(
+        lambda: not pilot.app.query("#rung-leader-2-model"),
+        timeout=1,
+    )
+
+    await _choose(pilot, "#rung-implementer-0-agent", "fake")
+    await _choose(pilot, "#rung-implementer-0-model", "strong")
+    await _choose(pilot, "#rung-implementer-0-effort", "high")
+    await _choose(pilot, "#rung-helper-0-agent", "fake")
+    await _choose(pilot, "#rung-helper-0-model", "claude-fable-5-1[1m]")
+    await _choose(pilot, "#rung-helper-0-effort", "high")
     await _click_next(pilot)
     await _replace_input(pilot, "#trackers", "tasks/plan.md, docs/todo.md")
     await _click_next(pilot)
@@ -199,12 +281,17 @@ async def _set_caches_parallelism_and_integration(
     await pilot.click("#integration")
     await pilot.press("down", "enter")
     integration = cast("Select[str]", pilot.app.query_one("#integration", Select))
-    await wait_until(
-        lambda: rendered_select_label(integration) == "Pull request",
-        timeout=GIT_COMMAND_TIMEOUT,
-    )
+    await wait_until(lambda: integration.value == "pr", timeout=GIT_COMMAND_TIMEOUT)
     assert integration.value == "pr"
     await _click_next(pilot)
+
+
+def _doctor_text(report: Static) -> str:
+    output = StringIO()
+    Console(file=output, width=max(1, report.content_region.width), color_system=None).print(
+        report.content
+    )
+    return output.getvalue()
 
 
 async def _assert_doctor_viewport(
@@ -212,7 +299,7 @@ async def _assert_doctor_viewport(
 ) -> None:
     report = pilot.app.query_one("#doctor-report", Static)
     body = pilot.app.query_one("#wizard-body")
-    assert report_content in str(report.render())
+    assert report_content in _doctor_text(report)
     assert report.region.y < body.region.bottom
     assert report.region.bottom > body.region.y
     body.focus()
@@ -243,43 +330,65 @@ async def test_init_wizard_walkthrough_saves_choices_and_shows_doctor(
     async with app.run_test(size=(64, 20)) as pilot:
         assert app.query_one("#wizard-page-0").display
         assert app.query_one("#wizard-next").region.bottom <= app.size.height
-        await _set_agents_and_trackers(pilot, tmp_path)
+        await _set_agents_and_trackers(pilot)
         await _click_back(pilot, "#wizard-page-2")
         assert app.query_one("#wizard-page-2").display
         assert pilot.app.query_one("#trackers", Input).value == "tasks/plan.md, docs/todo.md"
         await _click_back(pilot, "#wizard-page-1")
         assert app.query_one("#wizard-page-1").display
-        assert pilot.app.query_one("#leader-ladder", Input).value == "fake:smoke:low"
-        assert pilot.app.query_one("#implementer-ladder", Input).value == "fake:strong:high"
-        assert pilot.app.query_one("#helper-ladder", Input).value == "fake:smoke:low"
+        assert (
+            cast("Select[str]", pilot.app.query_one("#rung-leader-0-model", Select)).value
+            == "smoke"
+        )
+        assert (
+            cast("Select[str]", pilot.app.query_one("#rung-leader-1-model", Select)).value
+            == "compact-visible"
+        )
+        assert (
+            cast("Select[str]", pilot.app.query_one("#rung-implementer-0-model", Select)).value
+            == "strong"
+        )
+        assert (
+            cast("Select[str]", pilot.app.query_one("#rung-helper-0-model", Select)).value
+            == "claude-fable-5-1[1m]"
+        )
         await _click_next(pilot)
         await _click_next(pilot)
         await _set_caches_parallelism_and_integration(pilot)
         assert app.query_one("#wizard-page-6").display
-        assert app.query_one("#leader-ladder", Input).value == "fake:smoke:low"
-        assert app.query_one("#implementer-ladder", Input).value == "fake:strong:high"
-        assert app.query_one("#helper-ladder", Input).value == "fake:smoke:low"
         await _focus_with_tab(pilot, "#wizard-finish")
         await pilot.press("enter")
         config_path = tmp_path / ".shikiru" / "config.toml"
         await wait_until(config_path.is_file, timeout=3)
         await wait_until(
-            lambda: bool(str(app.query_one("#doctor-report", Static).render())), timeout=60
+            lambda: bool(_doctor_text(app.query_one("#doctor-report", Static)).strip()),
+            timeout=60,
         )
-        await _assert_doctor_viewport(pilot, "PASS · repository:")
-        assert str(config_path.resolve()) in str(app.query_one("#doctor-report", Static).render())
+        await _assert_doctor_viewport(pilot, "Config:")
+        doctor_text = _doctor_text(app.query_one("#doctor-report", Static))
+        doctor_text_without_wraps = doctor_text.replace("\n", "")
+        doctor_text_normalized = " ".join(doctor_text.split())
+        assert str(config_path.resolve()) in doctor_text_without_wraps
         await pilot.click("#wizard-finish")
 
     result = cast("InitWizardResult", app.return_value)
     assert result.doctor_report is not None
     assert result.doctor_report.ok
+    for check in result.doctor_report.checks:
+        assert check.name in doctor_text_without_wraps
+        assert (
+            check.detail in doctor_text_without_wraps
+            or " ".join(check.detail.split()) in doctor_text_normalized
+        )
     settings = load_settings(tmp_path)
     assert settings.project.trackers == ["tasks/plan.md", "docs/todo.md"]
     assert settings.repo.caches == ["node_modules", "build-cache"]
-    assert settings.roles.leader.ladder[0].model == "smoke"
-    assert settings.roles.leader.ladder[0].effort == "low"
+    assert [rung.model for rung in settings.roles.leader.ladder] == ["smoke", "compact-visible"]
+    assert [rung.effort for rung in settings.roles.leader.ladder] == ["low", "high"]
     assert settings.roles.implementer.ladder[0].model == "strong"
     assert settings.roles.implementer.ladder[0].effort == "high"
+    assert settings.roles.helper.ladder[0].model == "claude-fable-5-1[1m]"
+    assert settings.roles.helper.ladder[0].effort == "high"
     assert settings.orchestration.max_parallel == 3
     assert settings.orchestration.integration == "pr"
     assert "/.shikiru/" in (tmp_path / ".git" / "info" / "exclude").read_text()
@@ -296,24 +405,39 @@ async def test_init_wizard_keeps_run_doctor_focus_after_compact_resize(
 
     async with app.run_test(size=(64, 20)) as pilot:
         await _click_next(pilot)
-        visible_model = "fake:compact-visible:high"
-        await _replace_input(pilot, "#leader-ladder", visible_model)
-        await _replace_input(pilot, "#implementer-ladder", "fake:strong:high")
-        await _replace_input(pilot, "#helper-ladder", "fake:smoke:low")
-        leader_ladder = app.query_one("#leader-ladder", Input)
-        assert await pilot.click("#leader-ladder")
+        leader_model = cast("Select[str]", app.query_one("#rung-leader-0-model", Select))
+        assert leader_model.value is Select.BLANK
+        await _click_next(pilot)
+        await wait_until(
+            lambda: (
+                app.query_one("#wizard-error", Static).display
+                and app.query_one("#wizard-page-1").display
+            ),
+            timeout=1,
+        )
+        assert not (tmp_path / ".shikiru" / "config.toml").exists()
+        await _choose(pilot, "#rung-leader-0-agent", "fake")
+        await _choose(pilot, "#rung-leader-0-model", "compact-visible")
+        await _choose(pilot, "#rung-leader-0-effort", "high")
+        await _choose(pilot, "#rung-implementer-0-agent", "fake")
+        await _choose(pilot, "#rung-implementer-0-model", "strong")
+        await _choose(pilot, "#rung-implementer-0-effort", "high")
+        await _choose(pilot, "#rung-helper-0-agent", "fake")
+        await _choose(pilot, "#rung-helper-0-model", "smoke")
+        await _choose(pilot, "#rung-helper-0-effort", "low")
+        await _focus_with_shift_tab(pilot, "#rung-leader-0-model")
         await pilot.resize_terminal(40, 12)
         body = app.query_one("#wizard-body")
         await wait_until(
             lambda: (
-                leader_ladder.content_region.height > 0
+                leader_model.content_region.height > 0
                 and body.content_region.height > 0
-                and visible_model in visible_widget_text(leader_ladder, body)
+                and "compact-visible" in rendered_select_label(leader_model)
             ),
             timeout=1,
         )
-        assert app.focused is leader_ladder
-        await _replace_input(pilot, "#leader-ladder", "fake:")
+        assert app.focused is leader_model
+        await _click_scrolled(pilot, "#rung-leader-0-remove")
         await _click_next(pilot)
         error = app.query_one("#wizard-error", Static)
         shell = app.query_one("#wizard-shell")
@@ -321,15 +445,20 @@ async def test_init_wizard_keeps_run_doctor_focus_after_compact_resize(
         def validation_is_visible() -> bool:
             error_text = str(error.render()).strip()
             visible_error = visible_widget_text(error, shell)
-            return (
-                bool(error_text)
-                and " ".join(error_text.split()) in " ".join(visible_error.split())
-                and "fake:" in visible_widget_text(leader_ladder, body)
+            return bool(error_text) and " ".join(error_text.split()) in " ".join(
+                visible_error.split()
             )
 
         await wait_until(validation_is_visible, timeout=1)
-        assert app.focused is leader_ladder
-        await _replace_input(pilot, "#leader-ladder", visible_model)
+        assert app.focused is app.query_one("#leader-add")
+        await _click_scrolled(pilot, "#leader-add")
+        await wait_until(
+            lambda: app.query_one("#rung-leader-0-model", Select).id == "rung-leader-0-model",
+            timeout=1,
+        )
+        await _choose(pilot, "#rung-leader-0-agent", "fake")
+        await _choose(pilot, "#rung-leader-0-model", "compact-visible")
+        await _choose(pilot, "#rung-leader-0-effort", "high")
         await _click_next(pilot)
         await _replace_input(pilot, "#trackers", "tasks/plan.md, docs/todo.md")
         await _click_next(pilot)
@@ -368,16 +497,12 @@ async def test_init_wizard_keeps_config_and_exposes_failed_doctor_report(
     app = await _app(tmp_path)
 
     async with app.run_test(size=(64, 20)) as pilot:
-        await _click_next(pilot)
-        await _replace_input(pilot, "#leader-ladder", "fake:smoke:low")
-        await _replace_input(pilot, "#implementer-ladder", "fake:smoke:low")
-        await _replace_input(pilot, "#helper-ladder", "fake:smoke:low")
-        for step in range(1, 6):
+        await _set_agents_and_trackers(pilot)
+        for step in range(4, 7):
             await _click_next(pilot)
-            timeout = 60 if step == 2 else 1
             await wait_until(
-                lambda page_index=step + 1: app.query_one(f"#wizard-page-{page_index}").display,
-                timeout=timeout,
+                lambda page_index=step: app.query_one(f"#wizard-page-{page_index}").display,
+                timeout=60 if step == 4 else 1,
             )
         assert app.query_one("#wizard-page-6").display
         await _focus_with_tab(pilot, "#wizard-finish")
@@ -385,19 +510,88 @@ async def test_init_wizard_keeps_config_and_exposes_failed_doctor_report(
         config_path = tmp_path / ".shikiru" / "config.toml"
         await wait_until(config_path.is_file, timeout=3)
         await wait_until(
-            lambda: "FAIL · tmux:" in str(app.query_one("#doctor-report", Static).render()),
+            lambda: "fail" in _doctor_text(app.query_one("#doctor-report", Static)),
             timeout=60,
         )
 
-        await _assert_doctor_viewport(pilot, "FAIL · tmux:")
-        assert str(config_path.resolve()) in str(app.query_one("#doctor-report", Static).render())
+        await _assert_doctor_viewport(pilot, "Config:")
+        await pilot.resize_terminal(40, 12)
+        await wait_until(lambda: app.size.width == 40 and app.size.height == 12, timeout=1)
+        report = app.query_one("#doctor-report", Static)
+        await wait_until(lambda: "fail" in _doctor_text(report).lower(), timeout=1)
+        doctor_text = _doctor_text(report)
+        assert str(config_path.resolve()) in doctor_text.replace("\n", "")
         await pilot.click("#wizard-finish")
 
     result = cast("InitWizardResult", app.return_value)
     assert config_path.is_file()
     assert result.doctor_report is not None
     assert not result.doctor_report.ok
-    assert any(check.name == "tmux" and not check.ok for check in result.doctor_report.checks)
+    failed_checks = tuple(check for check in result.doctor_report.checks if not check.ok)
+    assert any(check.name == "tmux" for check in failed_checks)
+    rendered_failure = " ".join(doctor_text.split())
+    assert all(" ".join(check.detail.split()) in rendered_failure for check in failed_checks)
+
+
+async def test_init_wizard_explains_and_blocks_agents_without_model_catalogs(
+    tmp_path: Path, monkeypatch: MonkeyPatch
+) -> None:
+    await _git_project(tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    runner = SubprocessRunner()
+    registry = AgentRegistry()
+    registry.register("fake", create_fake_agent)
+    registry.register("fake-copy", create_fake_agent)
+    registry.register("legacy", _create_legacy_agent)
+    detectors = ProjectDetectors(
+        tmp_path,
+        git=Git(runner, command_timeout=GIT_COMMAND_TIMEOUT),
+        plugin_checks=PluginChecks(registry, runner, SystemClock()),
+        cache_cloner=CacheCloner(runner, cow_args=None, copy_timeout=CACHE_COPY_TIMEOUT),
+    )
+    project = await detectors.detect()
+    app = InitWizardApp(
+        project_root=tmp_path,
+        project=project,
+        detectors=detectors,
+        doctor=build_doctor(tmp_path),
+        doctor_renderer=doctor_renderable,
+        orchestration_defaults=load_default_orchestration(),
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _click_next(pilot)
+        status = app.query_one("#agent-choice-status", Static)
+        guidance = app.query_one("#agent-choice-guidance", Static)
+        await wait_until(lambda: "legacy" in str(status.content), timeout=1)
+        assert guidance.display
+        agent = cast("Select[str]", app.query_one("#rung-leader-0-agent", Select))
+        assert agent.value == "fake"
+        await _choose(pilot, "#rung-leader-0-model", "default")
+        await _choose(pilot, "#rung-leader-0-effort", "low")
+        await _choose(pilot, "#rung-leader-0-agent", "fake-copy")
+        model = cast("Select[str]", app.query_one("#rung-leader-0-model", Select))
+        effort = cast("Select[str]", app.query_one("#rung-leader-0-effort", Select))
+        await wait_until(
+            lambda: (
+                model.value is Select.BLANK and effort.value is Select.BLANK and effort.disabled
+            ),
+            timeout=1,
+        )
+        await _choose(pilot, "#rung-leader-0-agent", "fake")
+        await wait_until(lambda: model.value is Select.BLANK and effort.disabled, timeout=1)
+        await _choose(pilot, "#rung-leader-0-model", "default")
+        await _choose(pilot, "#rung-leader-0-effort", "low")
+        agent.focus()
+        await pilot.press("enter", *"legacy", "enter")
+        await wait_until(lambda: agent.value == "fake", timeout=1)
+        await _choose(pilot, "#rung-leader-0-model", "default")
+        await _choose(pilot, "#rung-implementer-0-model", "default")
+        await _choose(pilot, "#rung-helper-0-model", "default")
+        await _click_next(pilot)
+        await wait_until(lambda: app.query_one("#wizard-page-2").display, timeout=1)
+
+    assert not (tmp_path / ".shikiru" / "config.toml").exists()
 
 
 async def test_cow_probe_error_remains_visible_after_navigation(tmp_path: Path) -> None:
@@ -405,11 +599,7 @@ async def test_cow_probe_error_remains_visible_after_navigation(tmp_path: Path) 
     app = await _app_with_cow_probe_error(tmp_path)
 
     async with app.run_test(size=(64, 20)) as pilot:
-        await _click_next(pilot)
-        await _replace_input(pilot, "#leader-ladder", "fake:smoke:low")
-        await _replace_input(pilot, "#implementer-ladder", "fake:smoke:low")
-        await _replace_input(pilot, "#helper-ladder", "fake:smoke:low")
-        await _click_next(pilot)
+        await _set_agents_and_trackers(pilot)
         await _click_next(pilot)
         cow_result = app.query_one("#cow-result", Static)
         await wait_until(lambda: "CoW check failed" in str(cow_result.render()), timeout=3)
