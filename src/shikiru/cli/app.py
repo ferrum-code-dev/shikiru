@@ -74,20 +74,35 @@ if TYPE_CHECKING:
 
     from shikiru.operator.services import OperatorServices
 
-PROJECT_OPTION = typer.Option("--project", help="Select a repository or initialized project.")
-JSON_OPTION = typer.Option("--json", help="Print machine-readable JSON instead of human output.")
+PROJECT_OPTION = typer.Option(
+    "--project", help="Select a project directory. Default: the nearest initialized project."
+)
+JSON_OPTION = typer.Option(
+    "--json", help="Print machine-readable JSON. Default: human-readable output."
+)
 OVERRIDES_OPTION = typer.Option(
-    "--set", help="Set config as key.path=value; repeat for multiple values."
+    "--set", help="Override config with key.path=value; repeat as needed. Default: no overrides."
 )
 ATTACH_OPTION = typer.Option(
-    "--attach", help="Attach to the project tmux session after starting or reusing the engine."
+    "--attach",
+    help=(
+        "Attach to the project session after starting or reusing the engine. "
+        "Default: stay detached."
+    ),
 )
 KILL_SESSION_OPTION = typer.Option(
-    "--kill-session", help="Close the project's tmux session, even if the engine is stopped."
+    "--kill-session",
+    help="Close the project session even if the engine is stopped. Default: keep the session.",
 )
-WATCH_OPTION = typer.Option("--watch", help="Refresh the report when project state changes.")
+WATCH_OPTION = typer.Option(
+    "--watch", help="Refresh the report when project state changes. Default: one report."
+)
 PROBE_OPTION = typer.Option(
-    "--probe", help="Run live agent contract and smoke checks for configured role rungs."
+    "--probe",
+    help=(
+        "Run live contract and smoke checks for configured role rungs. "
+        "Default: skip live agent probes."
+    ),
 )
 REQUIRED_LEGEND = f"[bold {ALERT_COLOR}]*[/] marks a required argument."
 
@@ -112,9 +127,9 @@ def _configure_typer_help_palette() -> None:
     typer_rich_utils.STYLE_REQUIRED_LONG = f"{STYLE_DIM} {ALERT_COLOR}"
     typer_rich_utils.STYLE_OPTIONS_PANEL_BORDER = f"{STYLE_DIM} {NEUTRAL_BORDER_COLOR}"
     typer_rich_utils.STYLE_COMMANDS_PANEL_BORDER = f"{STYLE_DIM} {NEUTRAL_BORDER_COLOR}"
-    typer_rich_utils.ARGUMENTS_PANEL_TITLE = f"[bold not dim {STEEL_BLUE}]Arguments[/]"
-    typer_rich_utils.OPTIONS_PANEL_TITLE = f"[bold not dim {STEEL_BLUE}]Options[/]"
-    typer_rich_utils.COMMANDS_PANEL_TITLE = f"[bold not dim {STEEL_BLUE}]Commands[/]"
+    typer_rich_utils.ARGUMENTS_PANEL_TITLE = f"[bold not dim {PRIMARY_TEXT_COLOR}]Arguments[/]"
+    typer_rich_utils.OPTIONS_PANEL_TITLE = f"[bold not dim {PRIMARY_TEXT_COLOR}]Options[/]"
+    typer_rich_utils.COMMANDS_PANEL_TITLE = f"[bold not dim {PRIMARY_TEXT_COLOR}]Commands[/]"
     typer_rich_utils.REQUIRED_LONG_STRING = ""
     typer_rich_utils.STYLE_COMMANDS_TABLE_FIRST_COLUMN = f"{STYLE_BOLD} {STEEL_BLUE}"
     typer_rich_utils.STYLE_ERRORS_PANEL_BORDER = ALERT_COLOR
@@ -163,7 +178,12 @@ def init(
     *,
     yes: Annotated[
         bool,
-        typer.Option("--yes", help="Write detected defaults without opening the setup wizard."),
+        typer.Option(
+            "--yes",
+            help=(
+                "Write detected defaults without opening the setup wizard. Default: use the wizard."
+            ),
+        ),
     ] = False,
 ) -> None:
     """Initialize a project from detected repositories, plugins and trackers."""
@@ -236,7 +256,8 @@ def list_sessions(
     context: typer.Context,
     *,
     host: Annotated[
-        str | None, typer.Option("--host", help="List sessions on this SSH host instead.")
+        str | None,
+        typer.Option("--host", help="List sessions on this SSH host instead. Default: this host."),
     ] = None,
     json_output: Annotated[bool, JSON_OPTION] = False,
 ) -> None:
@@ -263,7 +284,8 @@ def attach(
     ] = None,
     *,
     host: Annotated[
-        str | None, typer.Option("--host", help="Attach over SSH to this host instead.")
+        str | None,
+        typer.Option("--host", help="Attach over SSH to this host instead. Default: this host."),
     ] = None,
 ) -> None:
     """Attach to a listed Shikiru session, with a picker when selection is needed."""
@@ -294,33 +316,46 @@ def submit(
         Mode | None,
         typer.Option(
             "--mode",
-            metavar="MODE",
-            help="Task mode: implement or plan; Leader decides by default.",
+            help="Choose a task mode. Default: the Leader decides during triage.",
         ),
     ] = None,
     complexity: Annotated[
         ComplexityName | None,
         typer.Option(
             "--complexity",
-            metavar="LEVEL",
-            help="Complexity level: low, normal or high; triage decides by default.",
+            help="Set task complexity. Default: triage decides.",
         ),
     ] = None,
     priority: Annotated[
-        int, typer.Option("--priority", metavar="N", help="Higher values dispatch sooner.")
+        int,
+        typer.Option(
+            "--priority",
+            help="Higher values dispatch sooner. Default: no priority (0).",
+            show_default=False,
+        ),
     ] = 0,
     depends_on: Annotated[
         list[str] | None,
-        typer.Option("--after", metavar="TASK_ID", help="Require earlier tasks first; repeat."),
+        typer.Option(
+            "--after",
+            metavar="TASK_ID",
+            help="Require earlier tasks first; repeat. Default: no dependencies.",
+        ),
     ] = None,
     leader: Annotated[
         str | None,
-        typer.Option("--leader", metavar="RUNG", help="Pin a rung using agent:model[:effort]."),
+        typer.Option(
+            "--leader",
+            metavar="RUNG",
+            help="Pin a rung using agent:model[:effort]. Default: the project ladder.",
+        ),
     ] = None,
     implementer: Annotated[
         str | None,
         typer.Option(
-            "--implementer", metavar="RUNG", help="Pin a rung using agent:model[:effort]."
+            "--implementer",
+            metavar="RUNG",
+            help="Pin a rung using agent:model[:effort]. Default: the project ladder.",
         ),
     ] = None,
 ) -> None:

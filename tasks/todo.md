@@ -418,3 +418,13 @@ CLI first-review corrections (sequential on main; lead review after each):
 - [x] Task 261: Authoritative agent choices and actionable model diagnostics
 - [x] Task 262: Guided ladder builder and prototype-aligned initializer
 - [x] Task 263: Report parity and complete first-review verification
+
+
+CLI second-review corrections (sequential on main; lead review after each):
+
+- [x] Task 264: Quiet help, outcomes and recovery instructions
+  - Proof: Actual help, `ls`, lifecycle and uninitialized-project PTY ANSI/text captures cover 100/40 columns in color and `NO_COLOR` (`/private/tmp/shikiru-cli-second-264-review`). The lead inspected native Rich segment reconstructions for `submit` at 100 and `attach` at 40 columns (`/private/tmp/shikiru-cli-second-help`); these are not terminal-compositor screenshots. Four existing focused behavior tests passed, and the accepted full gate passed 1,666 tests, skipped 14, with 91.39% coverage. Coverage combine warned about one invalid transient worker file; the gate and coverage check passed. A redundant rerun after planning-only edits was stopped on lead direction and is not counted as validation. Lead accepted the source and final result.
+- [ ] Task 265: Concise status and per-agent usage
+- [ ] Task 266: Predictable attach and reliable multi-client detach
+- [ ] Task 267: Full-screen dashboard initializer and complete ladder editor
+- [ ] Task 268: Complete second-review visual and integration verification

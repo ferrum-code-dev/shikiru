@@ -52,7 +52,6 @@ from shikiru.ui.section import (
     BOLD_STEEL,
     Section,
     WrappedGroups,
-    grey,
     labelled_rows,
     number,
     row_name,
@@ -156,7 +155,7 @@ def init_renderable(
 def start_renderable(result: StartResult) -> Text:
     """Render the engine outcome of `start`."""
     label = "Engine started" if result.started else "Engine already running"
-    return Text(label, style=f"{STYLE_BOLD} {SUCCESS_COLOR}")
+    return Text(label, style=PRIMARY_TEXT_COLOR)
 
 
 def error_renderable(error: ShikiruError) -> RenderableType:
@@ -168,9 +167,21 @@ def error_renderable(error: ShikiruError) -> RenderableType:
     if isinstance(error, NotInitialisedError):
         return Group(
             text,
-            grey("Initialize this repository with shikiru init."),
-            grey("Select another project with shikiru --project PATH COMMAND."),
-            grey("Run shikiru --help to see available commands."),
+            Text.assemble(
+                ("Initialize this repository with ", PRIMARY_TEXT_COLOR),
+                ("shikiru init", BOLD_STEEL),
+                (".", PRIMARY_TEXT_COLOR),
+            ),
+            Text.assemble(
+                ("Select another project with ", PRIMARY_TEXT_COLOR),
+                ("shikiru --project PATH COMMAND", BOLD_STEEL),
+                (".", PRIMARY_TEXT_COLOR),
+            ),
+            Text.assemble(
+                ("Run ", PRIMARY_TEXT_COLOR),
+                ("shikiru --help", BOLD_STEEL),
+                (" to see available commands.", PRIMARY_TEXT_COLOR),
+            ),
         )
     return text
 
@@ -290,7 +301,7 @@ def ack_renderable(ack: Ack, *, stopping: bool = False) -> RenderableType:
     if stopping and ack.status is AckStatus.DONE:
         outcome = _stop_outcome(ack)
         if outcome is not None:
-            return Text(outcome, style=f"{STYLE_BOLD} {SUCCESS_COLOR}")
+            return Text(outcome, style=PRIMARY_TEXT_COLOR)
     match ack.status:
         case AckStatus.DONE:
             label, glyph, color = "Applied", GLYPH_DONE, SUCCESS_COLOR
@@ -416,15 +427,22 @@ def session_rows_renderable(
     rows: list[SessionRow], *, host: str | None, console: Console
 ) -> RenderableType:
     """Render each session's identity, project and current progress as an open row."""
-    heading = Text("Sessions", style=BOLD_STEEL)
+    heading: list[RenderableType] = []
     if host is not None:
-        heading.append(" · remote host ", style=SECONDARY_TEXT_COLOR)
-        heading.append(host, style=BOLD_PRIMARY)
+        heading.append(
+            Text.assemble(
+                ("Remote host ", SECONDARY_TEXT_COLOR),
+                (host, BOLD_PRIMARY),
+            )
+        )
     if not rows:
-        return Group(heading, Text("No Shikiru sessions found.", style=SECONDARY_TEXT_COLOR))
+        return Group(*heading, Text("No Shikiru sessions found.", style=SECONDARY_TEXT_COLOR))
     if console.width < SESSION_TABLE_MIN_WIDTH:
-        return Group(heading, *(_stacked_session(row, console=console, host=host) for row in rows))
-    return Group(heading, _session_table(rows, console=console, host=host))
+        return Group(
+            *heading,
+            *(_stacked_session(row, console=console, host=host) for row in rows),
+        )
+    return Group(*heading, _session_table(rows, console=console, host=host))
 
 
 def _stacked_session(row: SessionRow, *, console: Console, host: str | None) -> RenderableType:
