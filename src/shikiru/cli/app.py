@@ -26,7 +26,7 @@ from shikiru.bootstrap import (
     run_init_wizard,
     run_palette,
 )
-from shikiru.cli.context import CliState, project_root, state_from
+from shikiru.cli.context import CliState, nearest_project, project_root, state_from
 from shikiru.cli.render import (
     ack_renderable,
     doctor_renderable,
@@ -44,6 +44,7 @@ from shikiru.domain.tasks import Mode
 from shikiru.errors import (
     EXIT_COMMAND_REJECTED,
     EXIT_GENERIC_ERROR,
+    NotInitialisedError,
     ShikiruError,
     UsageError,
 )
@@ -288,7 +289,12 @@ def attach(
     context: typer.Context,
     name: Annotated[
         str | None,
-        typer.Argument(help="Project or full session name to attach to; omit to choose a session."),
+        typer.Argument(
+            help=(
+                "Project or full session name to attach to; omit to use the current project "
+                "or choose from a numbered list."
+            )
+        ),
     ] = None,
     *,
     host: Annotated[
@@ -298,13 +304,35 @@ def attach(
         ),
     ] = None,
 ) -> None:
-    """Attach to a listed Shikiru session, with a picker when selection is needed."""
+    """Attach to a project session or choose one from a numbered terminal list."""
     try:
         state = state_from(context)
         lister, attacher = build_session_tools(state.overrides)
 
         async def attach_session() -> None:
-            rows = await lister.list_sessions(host)
+            if host is None and name is None:
+                root = _attach_project_root(state)
+                if root is None:
+                    rows = await lister.list_sessions()
+                else:
+                    rows = await lister.list_sessions(project_dir=root)
+                    if not rows:
+                        message = (
+                            f"no Shikiru session exists for project {root}; "
+                            "run `shikiru --project PATH start --attach` to create and attach it"
+                        )
+                        raise UsageError(message)
+                    if len(rows) > 1:
+                        message = (
+                            f"multiple Shikiru sessions belong to project {root}; "
+                            "choose one with `shikiru attach NAME`"
+                        )
+                        raise UsageError(message)
+            else:
+                rows = await lister.list_sessions(
+                    host,
+                    session_name=name if host is None else None,
+                )
             await attacher.attach(
                 rows,
                 name=name,
@@ -315,6 +343,16 @@ def attach(
         _run(attach_session())
     except ShikiruError as error:
         _fail(error)
+
+
+def _attach_project_root(state: CliState) -> Path | None:
+    if state.project is not None:
+        return project_root(state)
+    try:
+        root = nearest_project(Path.cwd())
+    except NotInitialisedError:
+        return None
+    return project_root(CliState(root, state.json_output, state.overrides))
 
 
 @app.command(epilog=REQUIRED_LEGEND)

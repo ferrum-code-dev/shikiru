@@ -9,6 +9,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING, Protocol, cast
 
 from shikiru.agents.registry import AgentRegistry
+from shikiru.cli.session_prompt import prompt_for_session
 from shikiru.clock import Clock, SystemClock
 from shikiru.config.loader import load_default_orchestration, load_session_settings, load_settings
 from shikiru.config.settings import DOCKER_SCOPE_ALL, PULL_REQUEST_INTEGRATION
@@ -91,7 +92,7 @@ from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.operator.probe import AgentProbe
 from shikiru.operator.queries import OperatorQueries
 from shikiru.operator.services import OperatorServices
-from shikiru.operator.sessions import SessionAttacher, SessionLister, SessionRow
+from shikiru.operator.sessions import SessionAttacher, SessionLister
 from shikiru.paths import (
     engine_lock_path,
     engine_log_path,
@@ -304,10 +305,6 @@ def build_session_tools(
     def reader_for(project_root: Path) -> StateReader:
         return StateReader(Database(state_db_path(project_root)), clock)
 
-    async def pick(rows: Sequence[SessionRow], host: str | None) -> SessionRow:
-        picker_module = import_module("shikiru.dashboard.session_picker")
-        return await picker_module.pick_session(tuple(rows), host=host)
-
     return (
         SessionLister(
             tmux=tmux,
@@ -316,7 +313,7 @@ def build_session_tools(
             reader_factory=reader_for,
             remote_timeout_seconds=session_settings.ssh_timeout_seconds,
         ),
-        SessionAttacher(runner, pick),
+        SessionAttacher(runner, prompt_for_session),
     )
 
 

@@ -104,6 +104,7 @@ from shikiru.paths import engine_lock_path, turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.queue import TASK_MARKER_CURRENT
 from shikiru.process import (
+    SpawnedTerminalProcess,
     identify_pid,
 )
 from shikiru.store.commands import CommandQueue
@@ -150,7 +151,10 @@ from tests.support.escalations import (
 from tests.support.render import plain_text
 from tests.support.resource_agent import resource_services, start_resource_agent
 from tests.support.store import seed_task
-from tests.support.tmux import attach_tmux_client
+from tests.support.tmux import (
+    attach_tmux_client,
+    attached_client_tty,
+)
 from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, wait_until
 
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -4164,7 +4168,7 @@ async def test_empty_home_footer_actions_are_mouse_reachable_and_read_only(
         reader.close()
 
 
-async def test_home_footer_detach_uses_the_configured_prefix_and_action(
+async def test_home_footer_detaches_the_input_selected_project_client_by_click_and_enter(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -4200,9 +4204,37 @@ async def test_home_footer_detach_uses_the_configured_prefix_and_action(
         assert prefix_hint is not None
         assert detach_project_client is not None
         async with (
-            attach_tmux_client(tmux_server, project_session),
-            attach_tmux_client(tmux_server, unrelated_session),
+            attach_tmux_client(tmux_server, project_session) as first_project_client,
+            attach_tmux_client(tmux_server, project_session) as second_project_client,
+            attach_tmux_client(tmux_server, unrelated_session) as unrelated_process,
         ):
+            first_project_tty = await attached_client_tty(
+                tmux_server, project_session, first_project_client
+            )
+            second_project_tty = await attached_client_tty(
+                tmux_server, project_session, second_project_client
+            )
+            unrelated_tty = await attached_client_tty(
+                tmux_server, unrelated_session, unrelated_process
+            )
+            await _send_pane_input(
+                tmux,
+                session=project_session,
+                pane=project_pane,
+                client_process=first_project_client.process,
+                expected_client_tty=first_project_tty,
+                input_value=b"printf 'first-client-input\\n'\n",
+                output_value=b"first-client-input",
+            )
+            await _send_pane_input(
+                tmux,
+                session=project_session,
+                pane=project_pane,
+                client_process=unrelated_process.process,
+                expected_client_tty=first_project_tty,
+                input_value=b"printf 'unrelated-input\\n'\n",
+                output_value=b"unrelated-input",
+            )
             app = _app(
                 reader,
                 project_dir,
@@ -4211,53 +4243,70 @@ async def test_home_footer_detach_uses_the_configured_prefix_and_action(
                 detach_tmux_client=detach_project_client,
             )
             async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
-                footer = app.query_one("#focus-footer", Grid)
                 detach = app.query_one("#focus-footer-detach", Button)
-                status = app.query_one("#workspace-command-status", Button)
-                assert len({child.region.y for child in footer.children}) == 1
-                actions_index = next(
-                    index
-                    for index, child in enumerate(footer.children)
-                    if child.id == "focus-footer-actions"
-                )
-                detach_index = next(
-                    index
-                    for index, child in enumerate(footer.children)
-                    if child.id == "focus-footer-detach"
-                )
-                help_index = next(
-                    index
-                    for index, child in enumerate(footer.children)
-                    if child.id == "focus-footer-help"
-                )
-                status_index = next(
-                    index
-                    for index, child in enumerate(footer.children)
-                    if child.id == "workspace-command-status"
-                )
-                assert actions_index < detach_index < help_index < status_index
-                assert status.display
-                assert "Pending: Stop " in _rendered_text(status)
                 assert prefix_hint in plain_text(detach.label)
                 assert not detach.disabled
-                assert await tmux.client_for_pane(project_session, project_pane) is not None
+                assert (
+                    await tmux.client_for_pane(project_session, project_pane) == first_project_tty
+                )
 
                 await pilot.click(detach)
 
                 await wait_until(
-                    lambda: _no_tmux_clients(tmux, project_session),
+                    lambda: _tmux_clients_are(tmux, project_session, [second_project_tty]),
                     timeout=UI_WAIT_SECONDS,
                 )
-                unrelated_clients = await tmux.list_clients(
-                    unrelated_session, _TMUX_CLIENT_TTY_FORMAT
+                await wait_until(lambda: not detach.has_class("-active"), timeout=UI_WAIT_SECONDS)
+                assert await tmux.target_exists(project_session)
+                assert (
+                    await tmux.client_for_pane(project_session, project_pane) == second_project_tty
                 )
-                assert len(unrelated_clients) == 1
+                assert await _tmux_clients_are(tmux, unrelated_session, [unrelated_tty])
+
+                await _send_pane_input(
+                    tmux,
+                    session=project_session,
+                    pane=project_pane,
+                    client_process=second_project_client.process,
+                    expected_client_tty=second_project_tty,
+                    input_value=b"printf 'second-client-input\\n'\n",
+                    output_value=b"second-client-input",
+                )
+                detach.focus()
+                assert app.focused is detach
+                await pilot.press("enter")
+
+                await wait_until(
+                    lambda: _tmux_clients_are(tmux, project_session, []),
+                    timeout=UI_WAIT_SECONDS,
+                )
+                assert await _tmux_clients_are(tmux, project_session, [])
+                assert await tmux.target_exists(project_session)
+                assert await _tmux_clients_are(tmux, unrelated_session, [unrelated_tty])
     finally:
         reader.close()
 
 
-async def _no_tmux_clients(tmux: Tmux, target: str) -> bool:
-    return not await tmux.list_clients(target, _TMUX_CLIENT_TTY_FORMAT)
+async def _tmux_clients_are(tmux: Tmux, target: str, expected: list[str]) -> bool:
+    return await tmux.list_clients(target, _TMUX_CLIENT_TTY_FORMAT) == expected
+
+
+async def _send_pane_input(
+    tmux: Tmux,
+    *,
+    session: str,
+    pane: str,
+    client_process: SpawnedTerminalProcess,
+    expected_client_tty: str,
+    input_value: bytes,
+    output_value: bytes,
+) -> None:
+    client_process.write_input(input_value)
+    await wait_until(
+        lambda: output_value in client_process.output,
+        timeout=UI_WAIT_SECONDS,
+    )
+    assert await tmux.client_for_pane(session, pane) == expected_client_tty
 
 
 async def test_compact_task_evidence_fold_opens_and_returns_to_home_selection(

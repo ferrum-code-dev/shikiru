@@ -495,6 +495,29 @@ def session_rows_renderable(
     return Group(*heading, _session_table(rows, console=console, host=host))
 
 
+def session_options_renderable(
+    rows: tuple[SessionRow, ...], *, host: str | None, console: Console
+) -> RenderableType:
+    """Render numbered, full-identity options for the terminal attach prompt."""
+    values: list[RenderableType] = []
+    if host is not None:
+        values.append(Text.assemble(("Remote host ", SECONDARY_TEXT_COLOR), (host, BOLD_PRIMARY)))
+    for index, row in enumerate(rows, start=1):
+        identity = Text.assemble((f"{index}. ", BOLD_STEEL))
+        identity.append_text(session_identity(row.session))
+        path = _path_text(Path(row.project_dir), linked=host is None and supports_osc8(console))
+        values.extend(
+            (
+                identity,
+                *_wrap_text(path, width=console.width, indent=SESSION_PATH_INDENT),
+                WrappedGroups(
+                    session_facts(row.engine_state, row.running, row.queued, row.escalated)
+                ),
+            )
+        )
+    return Group(*values)
+
+
 def _stacked_session(row: SessionRow, *, console: Console, host: str | None) -> RenderableType:
     path = _path_text(Path(row.project_dir), linked=host is None and supports_osc8(console))
     return Group(

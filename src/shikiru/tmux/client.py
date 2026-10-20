@@ -211,7 +211,7 @@ class Tmux:
         return prefix
 
     async def client_for_pane(self, session_target: str, pane_target: str) -> str | None:
-        """Return the unique client in `session_target` currently showing `pane_target`."""
+        """Return tmux's input-selected client when it still shows `pane_target`."""
         if not await self.pane_exists(pane_target):
             return None
         session_name = await self.display(pane_target, FORMAT_SESSION_NAME)
@@ -223,19 +223,21 @@ class Tmux:
                 (FORMAT_CLIENT_TTY, FORMAT_CLIENT_SESSION, FORMAT_CLIENT_PANE_ID)
             ),
         )
-        matching_clients = [
-            client_target
-            for client_target, client_session, client_pane in (
-                line.split(_CLIENT_FIELD_SEPARATOR) for line in clients
-            )
-            if client_session == session_name and client_pane == pane_target
-        ]
-        if len(matching_clients) != 1:
+        if not clients:
             return None
-        return matching_clients[0]
+        selected_client = await self.display(pane_target, FORMAT_CLIENT_TTY)
+        for line in clients:
+            client_tty, client_session, client_pane = line.split(_CLIENT_FIELD_SEPARATOR)
+            if (
+                client_session == session_name
+                and client_pane == pane_target
+                and client_tty == selected_client
+            ):
+                return client_tty
+        return None
 
     async def detach_client_for_pane(self, session_target: str, pane_target: str) -> bool:
-        """Detach the unique client still showing `pane_target` in `session_target`."""
+        """Detach the input-selected client after revalidating its pane and session."""
         client_target = await self.client_for_pane(session_target, pane_target)
         if client_target is None:
             return False

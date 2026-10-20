@@ -2367,10 +2367,12 @@ Proof (2026-10-21): The pure selector table covers the distribution examples and
 
 ### Task 266: Predictable attach and reliable multi-client detach
 Refs: second-review item 3; operator sessions, bootstrap, tmux client, dashboard footer.
-- [ ] Local unnamed attach uses current/ancestor initialized project or explicit --project; absent current session gives recovery guidance; explicit name/remote host preserved.
-- [ ] Other ambiguous selections use numbered plain list and validated numeric prompt, clean cancellation/EOF and exact attachment argv; delete unused alternate-screen picker path and dead tests.
-- [ ] Click and Enter detach work with multiple clients using private-tmux evidence; preserve other clients/session/server and never guess an unrelated client.
-- [ ] Test real selection/process/tmux boundaries, review manual flows, reconcile docs, pass full check and lead review before proof/commit; clean all owned resources.
+- [x] Local unnamed attach uses current/ancestor initialized project or explicit --project; absent current session gives recovery guidance; explicit name/remote host preserved.
+- [x] Other ambiguous selections use numbered plain list and validated numeric prompt, clean cancellation/EOF and exact attachment argv; delete unused alternate-screen picker path and dead tests.
+- [x] Click and Enter detach work with multiple clients using private-tmux evidence; preserve other clients/session/server and never guess an unrelated client.
+- [x] Test real selection/process/tmux boundaries, review manual flows, reconcile docs, pass full check and lead review before proof/commit; clean all owned resources.
+
+Proof (2026-10-21): The focused native operator and dashboard integration tests passed 20 tests. Actual CLI subprocess flows in `/private/tmp/shikiru-cli-second-266-manual.log` show nested-cwd and explicit `--project` attachment selecting only `[shikiru] current`, without opening a broken foreign project's DB, and an outside-project numbered prompt retrying invalid input before attaching the selected literal session. The private-tmux dashboard regression drives two same-project PTY clients and an unrelated session client: input selects each intended TTY, click detaches the selected first client, Enter detaches the selected second client, and the unrelated client and project session survive. The lead inspected native Rich segment reconstructions of the numbered list at 100/40 columns (`/private/tmp/shikiru-cli-second-attach`). `SpawnedTerminalProcess` now exposes the typed PID, PTY input and interrupt operations used by those real-process checks. Root accepted the source review and full native gate: 1,681 passed, 14 skipped, 91.41% coverage (`/private/tmp/shikiru-cli-second-266-check-final.log`); isolated coverage is `/private/tmp/shikiru-cli-second-266.coverage`. Private tmux servers and temporary projects were cleaned.
 
 ### Task 267: Full-screen dashboard initializer and complete ladder editor
 Refs: second-review item 4; dashboard wizard, shared ui popup/theme/controls, config ladders and detectors.

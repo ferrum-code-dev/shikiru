@@ -29,6 +29,7 @@ _TMUX_INHERITED_ENV_VARS = ("TMUX", "TMUX_PANE")
 _TMUX_COMMAND_TIMEOUT_SECONDS = 5.0
 _CLIENT_ATTACH_TIMEOUT_SECONDS = 20.0
 _CLIENT_TTY_FORMAT = "#{client_tty}"
+_CLIENT_IDENTITY_FORMAT = "#{client_tty}\t#{client_pid}"
 _TERMINAL_TYPE = "xterm-256color"
 _NULL_CONFIG_FILE = "/dev/null"
 _ATTACH_SESSION_COMMAND = "attach-session"
@@ -71,6 +72,24 @@ class AttachedTmuxClient:
     async def close(self) -> None:
         """Stop the client process and close its private terminal."""
         await self.process.stop(grace=_TMUX_COMMAND_TIMEOUT_SECONDS)
+
+
+async def attached_client_tty(server: TmuxServer, target: str, client: AttachedTmuxClient) -> str:
+    """Return the tmux TTY owned by one attached test client."""
+    result = await server.run(
+        "list-clients",
+        "-t",
+        target,
+        "-F",
+        _CLIENT_IDENTITY_FORMAT,
+    )
+    client_pid = client.process.pid
+    for row in result.stdout.splitlines():
+        tty, separator, pid = row.partition("\t")
+        if separator and pid == str(client_pid):
+            return tty
+    message = f"tmux has no client for process {client_pid} in {target}"
+    raise AssertionError(message)
 
 
 @asynccontextmanager

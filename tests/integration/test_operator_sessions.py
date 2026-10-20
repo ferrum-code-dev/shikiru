@@ -11,15 +11,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
-from textual.widgets import ListView, Static
 from typer.testing import CliRunner
 
 from shikiru.cli.app import app
-from shikiru.dashboard.session_picker import SessionPicker
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Status, Step
 from shikiru.engine.daemon import EngineLock, engine_is_running
-from shikiru.errors import CommandFailed, DatabaseError, UsageError
+from shikiru.errors import EXIT_USAGE_ERROR, CommandFailed, DatabaseError, UsageError
 from shikiru.operator.sessions import SessionAttacher, SessionLister, SessionRow
 from shikiru.paths import engine_lock_path
 from shikiru.process import SubprocessRunner
@@ -28,10 +26,9 @@ from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR, SESSION_PREFIX
-from tests.support.cells import styles, visible_widget_text
 from tests.support.clock import FakeClock
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -136,6 +133,37 @@ def _test_env(directory: Path, capture: Path, server: TmuxServer) -> dict[str, s
         "COLUMNS": "180",
         "NO_COLOR": "1",
     }
+
+
+async def _run_attach_cli(
+    arguments: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    input_bytes: bytes | None = None,
+    interrupt: bool = False,
+) -> tuple[str, int]:
+    process = await SubprocessRunner().spawn_terminal(
+        [sys.executable, "-m", "shikiru", *arguments],
+        cwd=cwd,
+        env=env,
+    )
+    try:
+        if input_bytes is not None or interrupt:
+            await wait_until(
+                lambda: b"Select a session number" in process.output,
+                timeout=UI_WAIT_SECONDS,
+            )
+            if interrupt:
+                process.send_interrupt()
+            else:
+                assert input_bytes is not None
+                process.write_input(input_bytes)
+        await wait_until(lambda: process.returncode is not None, timeout=UI_WAIT_SECONDS)
+        assert process.returncode is not None
+        return process.output.decode(errors="replace"), process.returncode
+    finally:
+        await process.stop()
 
 
 def _assert_session_data(
@@ -484,7 +512,157 @@ async def test_cli_attach_uses_a_listed_exact_target_and_tmux_context(
 
 
 @pytest.mark.asyncio
-async def test_attach_picker_selection_and_remote_ssh_quoting_use_process_boundary(
+async def test_unnamed_attach_uses_nearest_or_explicit_project_before_reading_other_databases(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    project = tmp_path / "current project"
+    project_config = project / ".shikiru" / "config.toml"
+    _make_project(project, ())
+    project_config.write_text('[project]\nname = "current"\n')
+    nested_directory = project / "packages" / "nested"
+    nested_directory.mkdir(parents=True)
+    broken_project = tmp_path / "broken foreign project"
+    broken_state = broken_project / ".shikiru"
+    broken_state.mkdir(parents=True)
+    (broken_state / "state.db").write_text("not a SQLite database")
+    session = f"{SESSION_PREFIX}current project"
+    await _add_session(tmux_server, session, project)
+    await _add_session(tmux_server, f"{SESSION_PREFIX}foreign", broken_project)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    env.pop("TMUX", None)
+
+    for arguments, cwd in (
+        (["attach"], nested_directory),
+        (["--project", str(project), "attach"], tmp_path),
+    ):
+        _, returncode = await _run_attach_cli(arguments, cwd=cwd, env=env)
+
+        assert returncode == 0
+        assert json.loads(capture.read_text()) == ["attach", "-t", f"={session}"]
+
+
+@pytest.mark.asyncio
+async def test_current_project_without_a_session_does_not_attach_an_unrelated_singleton(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    project = tmp_path / "current project"
+    _make_project(project, ())
+    (project / ".shikiru" / "config.toml").write_text('[project]\nname = "current"\n')
+    unrelated = tmp_path / "unrelated project"
+    _make_project(unrelated, ())
+    await _add_session(tmux_server, f"{SESSION_PREFIX}unrelated", unrelated)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    env.pop("TMUX", None)
+
+    output, returncode = await _run_attach_cli(["attach"], cwd=project, env=env)
+
+    assert returncode == EXIT_USAGE_ERROR
+    assert "start --attach" in output
+    assert not capture.exists()
+
+
+@pytest.mark.asyncio
+async def test_explicit_attach_name_remains_authoritative_with_project_option(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    current_project = tmp_path / "current project"
+    target_project = tmp_path / "named project"
+    _make_project(current_project, ())
+    _make_project(target_project, ())
+    (current_project / ".shikiru" / "config.toml").write_text('[project]\nname = "current"\n')
+    named_session = f"{SESSION_PREFIX}named project"
+    await _add_session(tmux_server, f"{SESSION_PREFIX}current", current_project)
+    await _add_session(tmux_server, named_session, target_project)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    env.pop("TMUX", None)
+
+    _, returncode = await _run_attach_cli(
+        ["--project", str(current_project), "attach", "named project"],
+        cwd=tmp_path,
+        env=env,
+    )
+
+    assert returncode == 0
+    assert json.loads(capture.read_text()) == ["attach", "-t", f"={named_session}"]
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_attach_retries_invalid_numbers_and_uses_the_selected_exact_row(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    first_project = tmp_path / "first project"
+    second_project = tmp_path / "O'Brien [literal] project"
+    _make_project(first_project, ())
+    _make_project(second_project, ())
+    first_session = f"{SESSION_PREFIX}first project"
+    second_session = f"{SESSION_PREFIX}O'Brien [literal] project"
+    await _add_session(tmux_server, first_session, first_project)
+    await _add_session(tmux_server, second_session, second_project)
+    expected_row = (await _lister(tmux_server).list_sessions())[1]
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    env.pop("TMUX", None)
+
+    output, returncode = await _run_attach_cli(
+        ["attach"],
+        cwd=tmp_path,
+        env=env,
+        input_bytes=b"invalid\n0\n2\n",
+    )
+
+    assert returncode == 0
+    assert second_session in output
+    assert str(second_project) in output
+    assert json.loads(capture.read_text()) == [
+        "attach",
+        "-t",
+        f"={expected_row.session}",
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("input_bytes", "interrupt"), [(b"q\n", False), (b"\x04", False), (None, True)]
+)
+async def test_ambiguous_attach_can_be_cancelled_by_quit_eof_or_interrupt(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    input_bytes: bytes | None,
+    interrupt: bool,
+) -> None:
+    first_project = tmp_path / "first project"
+    second_project = tmp_path / "second project"
+    _make_project(first_project, ())
+    _make_project(second_project, ())
+    await _add_session(tmux_server, f"{SESSION_PREFIX}first", first_project)
+    await _add_session(tmux_server, f"{SESSION_PREFIX}second", second_project)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    env.pop("TMUX", None)
+
+    output, returncode = await _run_attach_cli(
+        ["attach"], cwd=tmp_path, env=env, input_bytes=input_bytes, interrupt=interrupt
+    )
+
+    assert returncode == EXIT_USAGE_ERROR, output
+    assert not capture.exists()
+
+
+@pytest.mark.asyncio
+async def test_remote_attach_selection_and_ssh_quoting_use_process_boundary(
     tmp_path: Path,
 ) -> None:
     bin_dir = tmp_path / "bin"
@@ -522,7 +700,7 @@ rows = [
     for row in json.loads(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
 ]
 
-async def pick(options, host):
+def pick(options, host):
     assert host == "remote.example"
     return options[1]
 
@@ -580,11 +758,11 @@ async def test_attach_rejects_an_option_like_name_without_using_it_as_a_target()
         escalated=0,
     )
 
-    async def pick(rows: Sequence[SessionRow], host: str | None) -> SessionRow:
+    def prompt(rows: Sequence[SessionRow], host: str | None) -> SessionRow:
         assert host is None
         return rows[0]
 
-    attacher = SessionAttacher(SubprocessRunner(), pick)
+    attacher = SessionAttacher(SubprocessRunner(), prompt)
     with pytest.raises(UsageError):
         await attacher.attach(
             [row],
@@ -592,99 +770,3 @@ async def test_attach_rejects_an_option_like_name_without_using_it_as_a_target()
             host=None,
             inside_tmux=False,
         )
-
-
-@pytest.mark.asyncio
-async def test_session_picker_can_scroll_to_and_select_rows_beyond_small_viewport(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("NO_COLOR", "1")
-    rows = tuple(
-        SessionRow(
-            session=f"{SESSION_PREFIX}project-{index}",
-            project_dir=(f"/projects/alpha/beta/gamma/delta/epsilon/zeta/project-{index}"),
-            engine_state="up",
-            running=index,
-            queued=2,
-            escalated=3,
-        )
-        for index in range(5)
-    )
-    host = "build[bold]box[/bold]"
-    app_instance = SessionPicker(rows, host=host)
-
-    async with app_instance.run_test(size=(40, 8)) as pilot:
-        picker = app_instance.query_one("#session-picker-list", ListView)
-        first_row = picker.children[0].query_one(Static)
-        selected_row = picker.children[-1].query_one(Static)
-        host_label = app_instance.query_one("#session-picker-host", Static)
-        picker.focus()
-        for _ in rows[1:]:
-            await pilot.press("down")
-        assert picker.index == len(rows) - 1
-        assert picker.scroll_y > 0
-        await pilot.resize_terminal(80, 24)
-        await wait_until(
-            lambda: (
-                0 < picker.size.width <= 80
-                and picker.region.bottom <= app_instance.size.height
-                and rows[0].session in visible_widget_text(first_row, picker)
-                and rows[-1].session in visible_widget_text(selected_row, picker)
-                and "alpha/beta/gamma" in visible_widget_text(selected_row, picker)
-                and "escalated 3" in visible_widget_text(selected_row, picker)
-            ),
-            timeout=1,
-        )
-        visible_after_resize = visible_widget_text(selected_row, picker)
-        assert "alpha/beta/gamma" in visible_after_resize
-        assert "up" in visible_after_resize
-        assert "running 4" in visible_after_resize
-        assert "queued 2" in visible_after_resize
-        assert host in visible_widget_text(host_label, app_instance.screen)
-        assert all(style[0] for style in styles(selected_row, rows[-1].session))
-        await pilot.press("pagedown")
-        await wait_until(
-            lambda: "escalated 3" in visible_widget_text(selected_row, picker), timeout=1
-        )
-        assert picker.index == len(rows) - 1
-        await pilot.press("enter")
-        await wait_until(lambda: app_instance.return_value == rows[-1], timeout=1)
-
-    assert app_instance.return_value == rows[-1]
-
-
-@pytest.mark.asyncio
-async def test_session_picker_click_returns_the_exact_literal_session_row() -> None:
-    row = SessionRow(
-        session=f"{SESSION_PREFIX}O'Brien [group]",
-        project_dir="/projects/O'Brien [group]",
-        engine_state="up",
-        running=1,
-        queued=2,
-        escalated=3,
-    )
-    app_instance = SessionPicker((row,))
-
-    async with app_instance.run_test(size=(40, 12)) as pilot:
-        await pilot.click("#session-picker-list > ListItem")
-        await wait_until(lambda: app_instance.return_value == row, timeout=1)
-
-    assert app_instance.return_value == row
-
-
-@pytest.mark.asyncio
-async def test_session_picker_escape_returns_without_a_selection() -> None:
-    row = SessionRow(
-        session=f"{SESSION_PREFIX}project",
-        project_dir="/projects/project",
-        engine_state="down",
-        running=0,
-        queued=0,
-        escalated=0,
-    )
-    app_instance = SessionPicker((row,))
-
-    async with app_instance.run_test(size=(72, 12)) as pilot:
-        await pilot.press("escape")
-
-    assert app_instance.return_value is None

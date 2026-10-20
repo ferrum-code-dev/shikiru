@@ -1,4 +1,4 @@
-"""Shared facts for session lists and the attachment picker."""
+"""Shared facts for session listings and attach options."""
 
 from __future__ import annotations
 

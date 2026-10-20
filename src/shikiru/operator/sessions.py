@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import shlex
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -53,7 +53,7 @@ _ROWS_ADAPTER: TypeAdapter[list[SessionRow]] = TypeAdapter(list[SessionRow])
 
 
 EngineState = Callable[[Path], bool]
-SessionPicker = Callable[[Sequence[SessionRow], str | None], Awaitable[SessionRow]]
+SessionPrompt = Callable[[Sequence[SessionRow], str | None], SessionRow]
 ReaderFactory = Callable[[Path], StateReader]
 
 
@@ -76,31 +76,46 @@ class SessionLister:
         self._reader_factory = reader_factory
         self._remote_timeout_seconds = remote_timeout_seconds
 
-    async def list_sessions(self, host: str | None = None) -> list[SessionRow]:
-        """Return every visible Shikiru session on the local or named SSH host."""
+    async def list_sessions(
+        self,
+        host: str | None = None,
+        *,
+        project_dir: Path | None = None,
+        session_name: str | None = None,
+    ) -> list[SessionRow]:
+        """Return visible sessions, optionally limiting local reads to one project or name."""
         if host is not None:
             return await self._list_remote(host)
-        return await self._list_local()
+        return await self._list_local(project_dir=project_dir, session_name=session_name)
 
-    async def _list_local(self) -> list[SessionRow]:
+    async def _list_local(
+        self, *, project_dir: Path | None, session_name: str | None
+    ) -> list[SessionRow]:
         try:
             names = await self._tmux.list_sessions()
             rows: list[SessionRow] = []
             for name in names:
                 if not name.startswith(SESSION_PREFIX):
                     continue
-                project_dir = await self._tmux.show_session_environment(
+                if session_name is not None and not _session_matches_name(name, session_name):
+                    continue
+                session_project_dir = await self._tmux.show_session_environment(
                     exact_target(name), PROJECT_DIR_ENV_VAR
                 )
-                if project_dir is None:
+                if session_project_dir is None:
                     message = f"tmux session {name!r} has no {PROJECT_DIR_ENV_VAR}"
                     raise ConfigError(message)
-                if not Path(project_dir).is_absolute():
+                if not Path(session_project_dir).is_absolute():
                     message = (
-                        f"tmux session {name!r} has an invalid project directory: {project_dir!r}"
+                        "tmux session "
+                        f"{name!r} has an invalid project directory: {session_project_dir!r}"
                     )
                     raise ConfigError(message)
-                rows.append(self._project_row(name, project_dir))
+                if project_dir is not None and not _same_project(
+                    Path(session_project_dir), project_dir
+                ):
+                    continue
+                rows.append(self._project_row(name, session_project_dir))
         except OSError as error:
             message = f"could not inspect local tmux sessions: {error}"
             raise ConfigError(message) from error
@@ -150,10 +165,10 @@ class SessionLister:
 class SessionAttacher:
     """Select a listed row and replace the CLI with its local or remote tmux client."""
 
-    def __init__(self, runner: SubprocessRunner, picker: SessionPicker) -> None:
-        """Use `runner` for process replacement and `picker` for interactive selection."""
+    def __init__(self, runner: SubprocessRunner, prompt: SessionPrompt) -> None:
+        """Use `runner` for process replacement and `prompt` for interactive selection."""
         self._runner = runner
-        self._picker = picker
+        self._prompt = prompt
 
     async def attach(
         self,
@@ -164,7 +179,7 @@ class SessionAttacher:
         inside_tmux: bool,
     ) -> None:
         """Replace this process with tmux or ssh for one listed session."""
-        row = await self._select(rows, name, host)
+        row = self._select(rows, name, host)
         if host is None:
             command = _local_attach_argv(row.session, inside_tmux)
         else:
@@ -172,15 +187,9 @@ class SessionAttacher:
             command = _remote_attach_argv(host, row.session)
         self._runner.replace(command)
 
-    async def _select(
-        self, rows: Sequence[SessionRow], name: str | None, host: str | None
-    ) -> SessionRow:
+    def _select(self, rows: Sequence[SessionRow], name: str | None, host: str | None) -> SessionRow:
         if name is not None:
-            matches = [
-                row
-                for row in rows
-                if row.session == name or row.session.removeprefix(SESSION_PREFIX) == name
-            ]
+            matches = [row for row in rows if _session_matches_name(row.session, name)]
             if len(matches) == 1:
                 return matches[0]
             message = f"no unique Shikiru session named {name!r}"
@@ -189,7 +198,15 @@ class SessionAttacher:
             return rows[0]
         if not rows:
             raise UsageError(NO_SESSIONS_ERROR)
-        return await self._picker(rows, host)
+        return self._prompt(rows, host)
+
+
+def _session_matches_name(session: str, name: str) -> bool:
+    return session == name or session.removeprefix(SESSION_PREFIX) == name
+
+
+def _same_project(session_project: Path, requested_project: Path) -> bool:
+    return session_project.resolve() == requested_project.resolve()
 
 
 def _validate_host(host: str) -> None:

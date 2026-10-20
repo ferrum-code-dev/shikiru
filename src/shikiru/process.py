@@ -251,6 +251,19 @@ class SpawnedTerminalProcess:
         """Return every byte the terminal has produced so far."""
         return bytes(self._output)
 
+    @property
+    def pid(self) -> int:
+        """Return the terminal process's PID."""
+        return self._process.pid
+
+    def write_input(self, value: bytes) -> None:
+        """Write input bytes to the terminal attached to this process."""
+        os.write(self._master_fd, value)
+
+    def send_interrupt(self) -> None:
+        """Send SIGINT to the terminal process."""
+        self._process.send_signal(signal.SIGINT)
+
     async def stop(self, *, grace: float = TURN_STOP_GRACE) -> None:
         """Stop the process group and close the private pseudo-terminal."""
         async with self._stop_lock:
