@@ -75,33 +75,38 @@ if TYPE_CHECKING:
     from shikiru.operator.services import OperatorServices
 
 PROJECT_OPTION = typer.Option(
-    "--project", help="Select a project directory. Default: the nearest initialized project."
+    "--project",
+    help=("Select a project directory. [bold]Default:[/] the nearest initialized project."),
 )
 JSON_OPTION = typer.Option(
-    "--json", help="Print machine-readable JSON. Default: human-readable output."
+    "--json", help="Print machine-readable JSON. [bold]Default:[/] human-readable output."
 )
 OVERRIDES_OPTION = typer.Option(
-    "--set", help="Override config with key.path=value; repeat as needed. Default: no overrides."
+    "--set",
+    help=("Override config with key.path=value; repeat as needed. [bold]Default:[/] no overrides."),
 )
 ATTACH_OPTION = typer.Option(
     "--attach",
     help=(
         "Attach to the project session after starting or reusing the engine. "
-        "Default: stay detached."
+        "[bold]Default:[/] stay detached."
     ),
 )
 KILL_SESSION_OPTION = typer.Option(
     "--kill-session",
-    help="Close the project session even if the engine is stopped. Default: keep the session.",
+    help=(
+        "Close the project session even if the engine is stopped. "
+        "[bold]Default:[/] keep the session."
+    ),
 )
 WATCH_OPTION = typer.Option(
-    "--watch", help="Refresh the report when project state changes. Default: one report."
+    "--watch", help="Refresh the report when project state changes. [bold]Default:[/] one report."
 )
 PROBE_OPTION = typer.Option(
     "--probe",
     help=(
         "Run live contract and smoke checks for configured role rungs. "
-        "Default: skip live agent probes."
+        "[bold]Default:[/] skip live agent probes."
     ),
 )
 REQUIRED_LEGEND = f"[bold {ALERT_COLOR}]*[/] marks a required argument."
@@ -181,7 +186,8 @@ def init(
         typer.Option(
             "--yes",
             help=(
-                "Write detected defaults without opening the setup wizard. Default: use the wizard."
+                "Write detected defaults without opening the setup wizard. "
+                "[bold]Default:[/] use the wizard."
             ),
         ),
     ] = False,
@@ -257,7 +263,9 @@ def list_sessions(
     *,
     host: Annotated[
         str | None,
-        typer.Option("--host", help="List sessions on this SSH host instead. Default: this host."),
+        typer.Option(
+            "--host", help="List sessions on this SSH host instead. [bold]Default:[/] this host."
+        ),
     ] = None,
     json_output: Annotated[bool, JSON_OPTION] = False,
 ) -> None:
@@ -285,7 +293,9 @@ def attach(
     *,
     host: Annotated[
         str | None,
-        typer.Option("--host", help="Attach over SSH to this host instead. Default: this host."),
+        typer.Option(
+            "--host", help="Attach over SSH to this host instead. [bold]Default:[/] this host."
+        ),
     ] = None,
 ) -> None:
     """Attach to a listed Shikiru session, with a picker when selection is needed."""
@@ -316,21 +326,21 @@ def submit(
         Mode | None,
         typer.Option(
             "--mode",
-            help="Choose a task mode. Default: the Leader decides during triage.",
+            help="Choose a task mode. [bold]Default:[/] the Leader decides during triage.",
         ),
     ] = None,
     complexity: Annotated[
         ComplexityName | None,
         typer.Option(
             "--complexity",
-            help="Set task complexity. Default: triage decides.",
+            help="Set task complexity. [bold]Default:[/] triage decides.",
         ),
     ] = None,
     priority: Annotated[
         int,
         typer.Option(
             "--priority",
-            help="Higher values dispatch sooner. Default: no priority (0).",
+            help="Higher values dispatch sooner. [bold]Default:[/] no priority (0).",
             show_default=False,
         ),
     ] = 0,
@@ -339,7 +349,7 @@ def submit(
         typer.Option(
             "--after",
             metavar="TASK_ID",
-            help="Require earlier tasks first; repeat. Default: no dependencies.",
+            help="Require earlier tasks first; repeat. [bold]Default:[/] no dependencies.",
         ),
     ] = None,
     leader: Annotated[
@@ -347,7 +357,7 @@ def submit(
         typer.Option(
             "--leader",
             metavar="RUNG",
-            help="Pin a rung using agent:model[:effort]. Default: the project ladder.",
+            help="Pin a rung using agent:model\\[:effort]. [bold]Default:[/] the project ladder.",
         ),
     ] = None,
     implementer: Annotated[
@@ -355,7 +365,7 @@ def submit(
         typer.Option(
             "--implementer",
             metavar="RUNG",
-            help="Pin a rung using agent:model[:effort]. Default: the project ladder.",
+            help="Pin a rung using agent:model\\[:effort]. [bold]Default:[/] the project ladder.",
         ),
     ] = None,
 ) -> None:
@@ -406,7 +416,16 @@ def status(
         settings = load_settings(root, state.overrides)
         services = build_operator(root, settings)
         try:
-            _run(_status_loop(services, state, task_id, watch))
+            _run(
+                _status_loop(
+                    services,
+                    state,
+                    task_id,
+                    watch,
+                    quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
+                    quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
+                )
+            )
         finally:
             services.close()
     except ShikiruError as error:
@@ -508,6 +527,9 @@ async def _status_loop(
     state: CliState,
     task_id: str | None,
     watch: bool,
+    *,
+    quota_warn_pct: int,
+    quota_alert_pct: int,
 ) -> None:
     def render() -> None:
         view = services.queries.status(task_id)
@@ -515,7 +537,18 @@ async def _status_loop(
             typer.echo(view.model_dump_json())
         else:
             console = human_console()
-            console.print(status_renderable(view, width=console.width))
+            uptime_seconds = (
+                services.queries.current_engine_uptime_seconds() if view.task is None else None
+            )
+            console.print(
+                status_renderable(
+                    view,
+                    width=console.width,
+                    uptime_seconds=uptime_seconds,
+                    quota_warn_pct=quota_warn_pct,
+                    quota_alert_pct=quota_alert_pct,
+                )
+            )
 
     render()
     if watch:

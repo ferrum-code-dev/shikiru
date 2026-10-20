@@ -4,10 +4,12 @@ from datetime import UTC, datetime, timedelta
 
 from shikiru.agents.contracts import QuotaWindow
 from shikiru.cli.render import status_renderable
+from shikiru.domain.escalation import Escalation, EscalationStatus
 from shikiru.domain.reports import ReportKind, Verdict
 from shikiru.domain.steps import Step
-from shikiru.domain.tasks import Mode, Status
+from shikiru.domain.tasks import EscalationReason, Mode, Status
 from shikiru.operator.queries import (
+    EscalationView,
     ReportRow,
     RunDirectoryUsage,
     SlotView,
@@ -68,7 +70,42 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
         slots=SlotView(active=1, maximum=2),
         active_tasks=[active],
         queued_tasks=[queued],
-        escalations=[],
+        escalations=[
+            EscalationView(
+                escalation=Escalation(
+                    id="E-generated",
+                    task_id=active.id,
+                    step=None,
+                    reason=EscalationReason.DECISION_REQUIRED,
+                    headline=(
+                        f"{active.id} · no step · {EscalationReason.DECISION_REQUIRED.value}: "
+                        "The Leader needs an Operator decision to continue."
+                    ),
+                    packet_path="runs/T-active/escalations/E-generated.md",
+                    options=(),
+                    status=EscalationStatus.OPEN,
+                    created_at=OBSERVED_AT,
+                ),
+                packet=None,
+            ),
+            EscalationView(
+                escalation=Escalation(
+                    id="E-custom",
+                    task_id=queued.id,
+                    step=Step.CONSULT,
+                    reason=EscalationReason.DECISION_REQUIRED,
+                    headline=(
+                        "T-legacy · consult · decision_required: preserve "
+                        "agent:model[:effort] literally"
+                    ),
+                    packet_path="runs/T-queued/escalations/E-custom.md",
+                    options=(),
+                    status=EscalationStatus.OPEN,
+                    created_at=OBSERVED_AT,
+                ),
+                packet=None,
+            ),
+        ],
         usage=[
             UsageView(
                 agent="codex",
@@ -101,19 +138,39 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
     )
 
     project_output = plain_text(
-        status_renderable(view.model_copy(update={"task": None}), width=RENDER_WIDTH)
+        status_renderable(
+            view.model_copy(update={"task": None}),
+            width=RENDER_WIDTH,
+            uptime_seconds=None,
+            quota_warn_pct=50,
+            quota_alert_pct=90,
+        )
     )
-    task_output = plain_text(status_renderable(view, width=RENDER_WIDTH))
+    task_output = plain_text(
+        status_renderable(
+            view,
+            width=RENDER_WIDTH,
+            uptime_seconds=None,
+            quota_warn_pct=50,
+            quota_alert_pct=90,
+        )
+    )
 
     assert "T-active" in project_output
     assert "T-queued" in project_output
     assert "dependency" in project_output
-    assert "priority 5" in project_output
+    assert (
+        "E-generated · T-active · The Leader needs an Operator decision to continue."
+        in project_output
+    )
+    custom_headline = (
+        "E-custom · T-queued · T-legacy · consult · decision_required: preserve "
+        "agent:model[:effort] literally"
+    )
+    assert custom_headline in project_output
     assert "5h" in project_output
     assert "5.0 MiB" in project_output
-    assert all(
-        fact in project_output for fact in ("in 100", "out 50", "$0.42", "API-equivalent estimate")
-    )
+    assert all(fact in project_output for fact in ("100", "50", "unknown"))
     assert "T-detail · Add retry to parser" in task_output
     assert "accept" in task_output
     assert "Reviewed" in task_output

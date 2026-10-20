@@ -9,6 +9,7 @@ SECONDS_PER_MINUTE = 60
 MINUTES_PER_HOUR = 60
 HOURS_PER_DAY = 24
 SECONDS_PER_HOUR = SECONDS_PER_MINUTE * MINUTES_PER_HOUR
+SECONDS_PER_DAY = SECONDS_PER_HOUR * HOURS_PER_DAY
 
 
 def format_age(seconds: float) -> str:
@@ -31,9 +32,12 @@ def format_short_age(duration: timedelta) -> str:
 
 
 def format_duration(seconds: float) -> str:
-    """Return `seconds` as `3h 12m`, `5m` or `12s`."""
-    hours, remainder = divmod(int(seconds), SECONDS_PER_HOUR)
+    """Return `seconds` as days, hours and minutes, or the remaining smaller units."""
+    days, remainder = divmod(int(seconds), SECONDS_PER_DAY)
+    hours, remainder = divmod(remainder, SECONDS_PER_HOUR)
     minutes, remainder = divmod(remainder, SECONDS_PER_MINUTE)
+    if days:
+        return f"{days}d {hours}h {minutes}m"
     if hours:
         return f"{hours}h {minutes}m"
     if minutes:

@@ -20,8 +20,9 @@ from shikiru.domain.reports import (
     TriageReport,
     Verdict,
 )
+from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import ACTING_ROLE, Step
-from shikiru.domain.tasks import Status, Task
+from shikiru.domain.tasks import Hold, Status, Task
 from shikiru.errors import NotInitialisedError, ShikiruError
 from shikiru.operator.commands import AckStatus
 from shikiru.operator.doctor import (
@@ -30,9 +31,10 @@ from shikiru.operator.doctor import (
     PLUGINS_CHECK_NAME,
     PROBE_CHECK_PREFIX,
 )
-from shikiru.ui.age import format_age
+from shikiru.ui.age import format_duration
 from shikiru.ui.compact import compact_count
 from shikiru.ui.console import supports_osc8
+from shikiru.ui.gauge import Gauge
 from shikiru.ui.glyphs import (
     GLYPH_CONSULT,
     GLYPH_DONE,
@@ -70,6 +72,7 @@ from shikiru.ui.tokens import (
     PRIMARY_TEXT_COLOR,
     SAGE,
     SECONDARY_TEXT_COLOR,
+    STEEL_BLUE,
     STYLE_BOLD,
     SUCCESS_COLOR,
 )
@@ -77,6 +80,8 @@ from shikiru.ui.tokens import (
 if TYPE_CHECKING:
     from rich.console import RenderableType
 
+    from shikiru.agents.contracts import QuotaWindow
+    from shikiru.domain.escalation import Escalation
     from shikiru.operator.commands import Ack
     from shikiru.operator.doctor import DoctorCheck, DoctorReport
     from shikiru.operator.lifecycle import StartResult
@@ -98,10 +103,10 @@ SESSION_COUNT_LABELS = ("Running", "Queued", "Escalated")
 SESSION_PATH_INDENT = 2
 SESSION_COLUMN_LABEL = "Session"
 SESSION_ENGINE_LABEL = "Engine"
-DATETIME_TIMESPEC_SECONDS = "seconds"
 STATUS_COST_FORMAT = ".2f"
 STOPPED_RESULT_FIELD = "stopped"
 STOPPING_RESULT_FIELD = "stopping"
+STATUS_USAGE_COLUMN_GAP = 2
 PLUGIN_AGGREGATE_PART_COUNT = 2
 PLUGIN_CHILD_PART_COUNT = 3
 DOCTOR_PROBE_PART_COUNT = 2
@@ -117,6 +122,11 @@ DOCTOR_CHECK_NAMES = {
     "config.plugins": "Agent configuration",
 }
 DOCTOR_PLUGIN_CHECK_NAMES = {"model_choices": "Model choices"}
+STATUS_USAGE_TABLE_MIN_WIDTH = 80
+STATUS_ESCALATION_NO_STEP_LABEL = "no step"
+PRIMARY_QUOTA_SLOT = "primary"
+SECONDARY_QUOTA_SLOT = "secondary"
+QUOTA_SLOTS = (PRIMARY_QUOTA_SLOT, SECONDARY_QUOTA_SLOT)
 STATUS_STEP_GLYPHS = {
     Step.TRIAGE: STAGE_TRIAGE,
     Step.PLAN: STAGE_PLAN,
@@ -124,6 +134,14 @@ STATUS_STEP_GLYPHS = {
     Step.CONSULT: GLYPH_CONSULT,
     Step.VERIFY: STAGE_VERIFY,
     Step.INTEGRATE: STAGE_MERGE,
+}
+STATUS_STEP_LABELS = {
+    Step.TRIAGE: "Triaging",
+    Step.PLAN: "Planning",
+    Step.IMPLEMENT: "Implementing",
+    Step.CONSULT: "Consulting",
+    Step.VERIFY: "Verifying",
+    Step.INTEGRATE: "Integrating",
 }
 
 
@@ -186,48 +204,72 @@ def error_renderable(error: ShikiruError) -> RenderableType:
     return text
 
 
-def status_renderable(view: StatusView, *, width: int) -> RenderableType:
+def status_renderable(
+    view: StatusView,
+    *,
+    width: int,
+    uptime_seconds: float | None,
+    quota_warn_pct: int,
+    quota_alert_pct: int,
+) -> RenderableType:
     """Render project or task status as open, width-wrapping rows."""
     if view.task is not None:
         return _task_status_renderable(view.task, view.escalations, width=width)
 
-    return _project_status_renderable(view, width=width)
+    return _project_status_renderable(
+        view,
+        width=width,
+        uptime_seconds=uptime_seconds,
+        quota_warn_pct=quota_warn_pct,
+        quota_alert_pct=quota_alert_pct,
+    )
 
 
-def _project_status_renderable(view: StatusView, *, width: int) -> RenderableType:
+def _project_status_renderable(
+    view: StatusView,
+    *,
+    width: int,
+    uptime_seconds: float | None,
+    quota_warn_pct: int,
+    quota_alert_pct: int,
+) -> RenderableType:
     engine_style = BOLD_STEEL if view.engine_up else SECONDARY_TEXT_COLOR
+    engine = Text.assemble(
+        (GLYPH_ENGINE, BOLD_STEEL if view.engine_up else SECONDARY_TEXT_COLOR),
+        (" engine ", SECONDARY_TEXT_COLOR),
+        ("up" if view.engine_up else "down", engine_style),
+    )
+    if view.engine_up and uptime_seconds is not None:
+        engine.append(f" ({format_duration(uptime_seconds)})", style=PRIMARY_TEXT_COLOR)
     summary = [
         Text(view.project, style=BOLD_PRIMARY),
-        Text.assemble(
-            (GLYPH_ENGINE, BOLD_STEEL if view.engine_up else SECONDARY_TEXT_COLOR),
-            (" engine ", SECONDARY_TEXT_COLOR),
-            ("up" if view.engine_up else "down", engine_style),
-        ),
+        engine,
         _fact("slots", f"{view.slots.active}/{view.slots.maximum}", BOLD_PRIMARY),
         _fact("queued", str(len(view.queued_tasks)), BOLD_PRIMARY),
         Text.assemble(
             ("escalations ", SECONDARY_TEXT_COLOR), escalation_count(len(view.escalations))
         ),
+        _fact("space used", format_size(view.run_directories.size_bytes), PRIMARY_TEXT_COLOR),
     ]
-    if view.oldest_escalation_age_seconds is not None:
-        summary.append(
-            _fact("oldest", format_age(view.oldest_escalation_age_seconds), BOLD_PRIMARY)
-        )
-    run_summary = Text.assemble(
-        ("Run directories ", SECONDARY_TEXT_COLOR),
-        (str(view.run_directories.directories), BOLD_PRIMARY),
-        (" · ", SECONDARY_TEXT_COLOR),
-        (format_size(view.run_directories.size_bytes), PRIMARY_TEXT_COLOR),
+    sections = _project_status_sections(
+        view,
+        width=width,
+        quota_warn_pct=quota_warn_pct,
+        quota_alert_pct=quota_alert_pct,
     )
-    sections = _project_status_sections(view, width=width)
     body: list[RenderableType] = [WrappedGroups(tuple(summary))]
     for section in sections:
         body.extend((Text(""), section))
-    body.extend((Text(""), run_summary))
     return Group(*body)
 
 
-def _project_status_sections(view: StatusView, *, width: int) -> list[RenderableType]:
+def _project_status_sections(
+    view: StatusView,
+    *,
+    width: int,
+    quota_warn_pct: int,
+    quota_alert_pct: int,
+) -> list[RenderableType]:
     blocks: list[RenderableType] = []
     if view.engine_output is not None:
         path_row = [
@@ -238,18 +280,23 @@ def _project_status_sections(view: StatusView, *, width: int) -> list[Renderable
         ]
         blocks.append(_status_rows(path_row, width=width))
     if view.active_tasks:
-        blocks.append(_task_section("Tasks", view.active_tasks))
+        blocks.append(_task_section("Tasks", view.active_tasks, width=width))
     if view.queued_tasks:
-        blocks.append(_task_section("Queue", view.queued_tasks))
+        blocks.append(_task_section("Queue", view.queued_tasks, width=width))
     if view.faults:
         blocks.append(_fault_section(view, width=width))
     if view.escalations:
         blocks.append(_escalation_section(view, width=width))
-    if view.usage:
-        blocks.append(_status_section("Usage", _usage_rows(view.usage), width=width))
-    quota_rows = _quota_rows(view)
-    if quota_rows:
-        blocks.append(_status_section("Quota", quota_rows, width=width))
+    if view.usage or view.quotas:
+        blocks.append(
+            _usage_section(
+                view.usage,
+                view.quotas,
+                width=width,
+                quota_warn_pct=quota_warn_pct,
+                quota_alert_pct=quota_alert_pct,
+            )
+        )
     return blocks
 
 
@@ -611,91 +658,157 @@ def _fault_section(view: StatusView, *, width: int) -> Section:
 
 
 def _escalation_section(view: StatusView, *, width: int) -> Section:
-    rows = [
-        (
-            row_name(item.escalation.id),
+    rows: list[Text] = []
+    for item in view.escalations:
+        escalation = item.escalation
+        row = Text(overflow="fold")
+        row.append(escalation.id, style=f"{STYLE_BOLD} {AMBER}")
+        row.append(" · ", style=SECONDARY_TEXT_COLOR)
+        row.append(escalation.task_id, style=BOLD_STEEL)
+        row.append(" · ", style=SECONDARY_TEXT_COLOR)
+        row.append(_status_escalation_headline(escalation), style=PRIMARY_TEXT_COLOR)
+        rows.append(row)
+    return _section("Escalations", _status_text_rows(rows, width=width))
+
+
+def _status_escalation_headline(escalation: Escalation) -> str:
+    step = escalation.step.value if escalation.step is not None else STATUS_ESCALATION_NO_STEP_LABEL
+    prefix = f"{escalation.task_id} · {step} · {escalation.reason.value}: "
+    return escalation.headline.removeprefix(prefix)
+
+
+def _usage_section(
+    usages: list[UsageView],
+    quotas: dict[str, list[QuotaWindow]],
+    *,
+    width: int,
+    quota_warn_pct: int,
+    quota_alert_pct: int,
+) -> Section:
+    usage_by_agent = {usage.agent: usage for usage in usages}
+    agents = sorted(usage_by_agent.keys() | quotas.keys())
+    if width < STATUS_USAGE_TABLE_MIN_WIDTH:
+        rows = [
             (
-                _fact("task", item.escalation.task_id, BOLD_PRIMARY),
-                Text(escalation_reason_label(item.escalation.reason), style=AMBER),
-                Text(item.escalation.headline, style=PRIMARY_TEXT_COLOR, overflow="fold"),
+                row_name(agent),
+                _usage_groups(
+                    usage_by_agent.get(agent),
+                    quotas.get(agent, []),
+                    quota_warn_pct=quota_warn_pct,
+                    quota_alert_pct=quota_alert_pct,
+                ),
+            )
+            for agent in agents
+        ]
+        return _status_section("Usage", rows, width=width)
+
+    table = Table.grid(expand=False, padding=(0, STATUS_USAGE_COLUMN_GAP))
+    headers = ("Agent", "Runs", "Input", "Output", "Costs", "Quota used")
+    for index, header in enumerate(headers):
+        table.add_column(
+            header,
+            justify="left" if index in (0, len(headers) - 1) else "right",
+            overflow="fold",
+        )
+    table.add_row(*(Text(header, style=SECONDARY_TEXT_COLOR) for header in headers))
+    for agent in agents:
+        usage = usage_by_agent.get(agent)
+        table.add_row(
+            Text(agent, style=BOLD_PRIMARY),
+            Text(str(usage.run_count if usage is not None else 0), style=BOLD_PRIMARY),
+            _token_total(usage, input_tokens=True),
+            _token_total(usage, input_tokens=False),
+            _cost_total(usage),
+            _quota_cell(
+                quotas.get(agent, []),
+                quota_warn_pct=quota_warn_pct,
+                quota_alert_pct=quota_alert_pct,
             ),
         )
-        for item in view.escalations
-    ]
-    return _status_section("Escalations", rows, width=width)
+    return _section("Usage", table)
 
 
-def _usage_rows(usages: list[UsageView]) -> list[tuple[Text, tuple[Text, ...]]]:
-    return [(row_name(usage.agent), _usage_groups(usage)) for usage in usages]
-
-
-def _usage_groups(usage: UsageView) -> tuple[Text, ...]:
-    run_noun = "run" if usage.run_count == 1 else "runs"
-    groups = [
-        Text.assemble((str(usage.run_count), BOLD_PRIMARY), (f" {run_noun}", SECONDARY_TEXT_COLOR))
-    ]
-    known_token_runs = usage.usage_reported_runs + usage.legacy_token_runs
-    unknown_token_runs = usage.run_count - known_token_runs
-    if known_token_runs:
-        groups.extend(
-            (
-                _fact("in", compact_count(usage.input_tokens), BOLD_STEEL),
-                _fact("out", compact_count(usage.output_tokens), BOLD_STEEL),
-            )
-        )
-        if usage.usage_reported_runs:
-            groups.append(_fact("reported runs", str(usage.usage_reported_runs)))
-        if usage.legacy_token_runs:
-            groups.append(_fact("legacy token runs", str(usage.legacy_token_runs), AMBER))
-    if unknown_token_runs:
-        groups.append(_fact("runs without token data", str(unknown_token_runs)))
-    if usage.billed_cost_runs and usage.billed_cost_usd is not None:
-        groups.append(_cost_basis_group(usage.billed_cost_usd, "billed", SAGE))
-    if usage.api_equivalent_cost_runs and usage.api_equivalent_cost_usd is not None:
-        groups.append(
-            _cost_basis_group(usage.api_equivalent_cost_usd, "API-equivalent estimate", AMBER)
-        )
-    if usage.legacy_billed_cost_runs:
-        groups.append(_fact("legacy billed runs", str(usage.legacy_billed_cost_runs), AMBER))
-    if usage.legacy_api_equivalent_cost_runs:
-        groups.append(
-            _fact("legacy estimate runs", str(usage.legacy_api_equivalent_cost_runs), AMBER)
-        )
-    if usage.unknown_cost_runs:
-        groups.append(_fact("runs without cost", str(usage.unknown_cost_runs)))
-    return tuple(groups)
-
-
-def _cost_basis_group(amount: float, basis: str, style: str) -> Text:
-    return Text.assemble(
-        (f"${amount:{STATUS_COST_FORMAT}}", style),
-        (f" {basis}", SECONDARY_TEXT_COLOR),
+def _usage_groups(
+    usage: UsageView | None,
+    windows: list[QuotaWindow],
+    *,
+    quota_warn_pct: int,
+    quota_alert_pct: int,
+) -> tuple[Text, ...]:
+    return (
+        _fact("Runs", str(usage.run_count if usage is not None else 0), BOLD_PRIMARY),
+        _labeled_value("Input", _token_total(usage, input_tokens=True)),
+        _labeled_value("Output", _token_total(usage, input_tokens=False)),
+        _labeled_value("Costs", _cost_total(usage)),
+        _labeled_value(
+            "Quota used",
+            _quota_cell(
+                windows,
+                quota_warn_pct=quota_warn_pct,
+                quota_alert_pct=quota_alert_pct,
+            ),
+        ),
     )
 
 
-def _quota_rows(view: StatusView) -> list[tuple[Text, tuple[Text, ...]]]:
-    rows: list[tuple[Text, tuple[Text, ...]]] = []
-    for agent, windows in sorted(view.quotas.items()):
-        for window in windows:
-            reset = (
-                window.resets_at.isoformat(timespec=DATETIME_TIMESPEC_SECONDS)
-                if window.resets_at is not None
-                else "unknown"
-            )
-            rows.append(
-                (
-                    row_name(f"{agent} · {window.name}"),
-                    (
-                        _fact("used", f"{window.used_pct:g}%", BOLD_PRIMARY),
-                        _fact("reset", reset),
-                        _fact(
-                            "observed",
-                            window.observed_at.isoformat(timespec=DATETIME_TIMESPEC_SECONDS),
-                        ),
-                    ),
-                )
-            )
-    return rows
+def _labeled_value(label: str, value: Text) -> Text:
+    result = Text(label, style=SECONDARY_TEXT_COLOR)
+    result.append(" ", style=SECONDARY_TEXT_COLOR)
+    result.append_text(value)
+    return result
+
+
+def _token_total(usage: UsageView | None, *, input_tokens: bool) -> Text:
+    if usage is None or usage.run_count == 0:
+        return Text("unknown", style=SECONDARY_TEXT_COLOR)
+    known_runs = usage.usage_reported_runs + usage.legacy_token_runs
+    if known_runs != usage.run_count:
+        return Text("unknown", style=SECONDARY_TEXT_COLOR)
+    tokens = usage.input_tokens if input_tokens else usage.output_tokens
+    return Text(compact_count(tokens), style=BOLD_STEEL)
+
+
+def _cost_total(usage: UsageView | None) -> Text:
+    if (
+        usage is None
+        or usage.run_count == 0
+        or usage.billed_cost_runs != usage.run_count
+        or usage.billed_cost_usd is None
+    ):
+        return Text("unknown", style=SECONDARY_TEXT_COLOR)
+    return Text(f"${usage.billed_cost_usd:{STATUS_COST_FORMAT}}", style=SAGE)
+
+
+def _quota_cell(windows: list[QuotaWindow], *, quota_warn_pct: int, quota_alert_pct: int) -> Text:
+    if not windows:
+        return Text("unknown", style=SECONDARY_TEXT_COLOR)
+    by_name = {window.name: window for window in windows}
+    canonical = [by_name.get(slot) for slot in QUOTA_SLOTS]
+    other_windows = [window for window in windows if window.name not in QUOTA_SLOTS]
+    if not any(canonical):
+        canonical = []
+        other_windows = sorted(windows, key=lambda item: item.name)
+    cell = Text()
+    for index, window in enumerate(canonical):
+        if index:
+            cell.append(" / ", style=SECONDARY_TEXT_COLOR)
+        cell.append_text(
+            Text("unknown", style=SECONDARY_TEXT_COLOR)
+            if window is None
+            else Gauge("", window.used_pct, quota_warn_pct, quota_alert_pct).render()
+        )
+    for window in other_windows:
+        if cell:
+            cell.append(" · ", style=SECONDARY_TEXT_COLOR)
+        cell.append_text(
+            Gauge(
+                window.name.replace("_", " "),
+                window.used_pct,
+                quota_warn_pct,
+                quota_alert_pct,
+            ).render()
+        )
+    return cell
 
 
 def _task_blocker_rows(
@@ -803,16 +916,43 @@ def _task_label_width(rows: list[tuple[Text, tuple[Text, ...]]]) -> int:
     return max((cell_len(label.plain) for label, _ in rows), default=0)
 
 
-def _task_section(title: str, tasks: list[TaskSummary]) -> Section:
-    rows: list[RenderableType] = []
+def _task_section(title: str, tasks: list[TaskSummary], *, width: int) -> Section:
+    rows: list[Text] = []
     for task in tasks:
-        identity = Text.assemble(
-            (task.id, BOLD_PRIMARY),
-            (" · ", SECONDARY_TEXT_COLOR),
-            (task.title, PRIMARY_TEXT_COLOR),
-        )
-        rows.append(Group(identity, WrappedGroups(_task_groups(task))))
-    return Section(title, Group(*rows), ruled=False, title_style=BOLD_STEEL)
+        row = Text(overflow="fold")
+        row.append(task.id, style=BOLD_PRIMARY)
+        row.append(" · ", style=SECONDARY_TEXT_COLOR)
+        row.append(task.title, style=PRIMARY_TEXT_COLOR)
+        row.append(" · ", style=SECONDARY_TEXT_COLOR)
+        state, state_color = _task_state(task)
+        row.append(state, style=state_color)
+        rows.append(row)
+    return Section(
+        title,
+        _status_text_rows(rows, width=width),
+        ruled=False,
+        title_style=BOLD_STEEL,
+    )
+
+
+def _task_state(task: TaskSummary) -> tuple[str, str]:
+    if Hold.PAUSED.value in task.holds or task.wait_reason == WaitReason.PAUSED.value:
+        return "Paused", AMBER
+    if Hold.INTERVENTION.value in task.holds:
+        return "Operator control", AMBER
+    if task.wait_reason is not None:
+        return f"Waiting on {task.wait_reason.replace('_', ' ')}", AMBER
+    if task.status is Status.RUNNING and task.step is not None:
+        step = task.step if isinstance(task.step, Step) else Step(task.step)
+        return STATUS_STEP_LABELS[step], STEEL_BLUE
+    return {
+        Status.QUEUED: ("Queued", SECONDARY_TEXT_COLOR),
+        Status.RUNNING: ("Running", STEEL_BLUE),
+        Status.INTEGRATING: ("Integrating", STEEL_BLUE),
+        Status.ESCALATED: ("Escalated", AMBER),
+        Status.DONE: ("Done", SAGE),
+        Status.CANCELLED: ("Cancelled", SECONDARY_TEXT_COLOR),
+    }[task.status]
 
 
 def _report_summary(

@@ -7,12 +7,16 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.agents.contracts import QuotaWindow, Usage
+from shikiru.bootstrap import build_operator
 from shikiru.cli.render import status_renderable
+from shikiru.config.loader import load_settings
 from shikiru.domain.commands import COMMAND_POLL_SECONDS, CommandStatus, Prioritize
+from shikiru.domain.engine_uptime import ENGINE_PID_FIELD, ENGINE_PROCESS_STARTED_AT_FIELD
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import ConsultAnswer
 from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, RepoState, Role, Status, Step
+from shikiru.engine.daemon import EngineLock
 from shikiru.errors import DatabaseError
 from shikiru.operator.commands import (
     COMMAND_ACK_WAIT_SECONDS,
@@ -21,7 +25,7 @@ from shikiru.operator.commands import (
 )
 from shikiru.operator.events import EventFeed
 from shikiru.operator.queries import PEEK_TAIL_LINES, OperatorQueries, OperatorQueryError
-from shikiru.paths import run_dir
+from shikiru.paths import engine_lock_path, run_dir, state_db_path
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database, transaction
 from shikiru.store.escalations import EscalationStore
@@ -32,6 +36,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.view_log import view_log_path
 from shikiru.workspace.reports import InvalidTurnReportError
 from tests.support.clock import FakeClock
+from tests.support.config import write_minimal_project
 from tests.support.factories import LEADER_RUNG, LEADER_RUNG_2
 from tests.support.render import plain_text
 from tests.support.store import seed_task
@@ -46,6 +51,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.asyncio
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
+STATUS_UPTIME_SECONDS = 12
 
 
 async def test_commands_report_queued_when_engine_is_down(connection: Connection) -> None:
@@ -135,6 +141,37 @@ def _queries(
         max_parallel=2,
         clock=clock or FakeClock(START),
     )
+
+
+async def test_status_uptime_uses_live_engine_lock_and_recorded_start_event(
+    tmp_path: Path,
+) -> None:
+    write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    services = build_operator(tmp_path, load_settings(tmp_path), clock=clock)
+    connection = Database(state_db_path(tmp_path)).connect()
+    lock_path = engine_lock_path(tmp_path)
+
+    try:
+        with EngineLock(lock_path) as lock:
+            EventLog(connection, clock).append(
+                EventKind.ENGINE_STARTED,
+                message="engine started",
+                data={
+                    ENGINE_PID_FIELD: lock.identity.pid,
+                    ENGINE_PROCESS_STARTED_AT_FIELD: lock.identity.started_at,
+                },
+            )
+            clock.advance(STATUS_UPTIME_SECONDS)
+
+            assert services.queries.status().engine_up
+            assert services.queries.current_engine_uptime_seconds() == STATUS_UPTIME_SECONDS
+
+        assert not services.queries.status().engine_up
+        assert services.queries.current_engine_uptime_seconds() is None
+    finally:
+        connection.close()
+        services.close()
 
 
 async def test_status_uses_dispatch_order_and_excludes_escalated_slots(
@@ -253,11 +290,29 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
     ]
     task_view = queries.status(task.id)
     project_outputs = {
-        width: plain_text(status_renderable(queries.status(), width=width), width=width)
+        width: plain_text(
+            status_renderable(
+                queries.status(),
+                width=width,
+                uptime_seconds=None,
+                quota_warn_pct=50,
+                quota_alert_pct=90,
+            ),
+            width=width,
+        )
         for width in (80, 60, 40)
     }
     task_outputs = {
-        width: plain_text(status_renderable(task_view, width=width), width=width)
+        width: plain_text(
+            status_renderable(
+                task_view,
+                width=width,
+                uptime_seconds=None,
+                quota_warn_pct=50,
+                quota_alert_pct=90,
+            ),
+            width=width,
+        )
         for width in (80, 60, 40)
     }
     project_compact = {width: "".join(output.split()) for width, output in project_outputs.items()}
@@ -266,19 +321,7 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
     project_facts = (
         "T-1",
         "T-2",
-        "in 130",
-        "out 60",
-        "legacy token runs 1",
-        "reported runs 1",
-        "runs without token data 1",
-        "$0.42",
-        "billed",
-        "$0.21",
-        "API-equivalent estimate",
-        "legacy billed runs 1",
-        "runs without cost 1",
-        "reset unknown",
-        "observed 2026-01-01T00:00:00+00:00",
+        "unknown",
         str(engine_output),
     )
     missing_project_facts = {

@@ -589,6 +589,7 @@ def build_operator(
         project=resolved_settings.project.name,
         project_root=project_root,
         engine_up=engine_state,
+        engine_identity=lambda: EngineLock.identity_if_running(engine_lock),
         max_parallel=resolved_settings.orchestration.max_parallel,
         clock=resolved_clock,
     )

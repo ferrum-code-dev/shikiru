@@ -25,7 +25,14 @@ def test_short_age_collapses_to_the_largest_whole_unit(seconds: int, expected: s
 
 @pytest.mark.parametrize(
     ("seconds", "expected"),
-    [(0, "0s"), (59.9, "59s"), (60, "1m"), (3600, "1h 0m"), (11520, "3h 12m")],
+    [
+        (0, "0s"),
+        (59.9, "59s"),
+        (60, "1m"),
+        (3600, "1h 0m"),
+        (11520, "3h 12m"),
+        (3 * 86400 + 4 * 3600 + 53 * 60 + 15, "3d 4h 53m"),
+    ],
 )
-def test_duration_keeps_the_two_largest_units_up_to_hours(seconds: float, expected: str) -> None:
+def test_duration_keeps_the_largest_units(seconds: float, expected: str) -> None:
     assert format_duration(seconds) == expected

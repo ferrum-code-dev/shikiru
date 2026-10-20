@@ -31,6 +31,7 @@ from shikiru.domain.commands import (
     Submit,
     TakeOver,
 )
+from shikiru.domain.engine_uptime import project_engine_uptime
 from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.faults import FaultStreak, open_fault_streaks
@@ -89,12 +90,15 @@ from shikiru.workspace.reports import (
 
 if TYPE_CHECKING:
     from shikiru.clock import Clock
+    from shikiru.process import ProcessIdentity
     from shikiru.store.commands import StoredCommand
     from shikiru.store.reader import StateReader
     from shikiru.store.tasks import TaskRelationships
 
 PEEK_TAIL_LINES = 60
 TASK_DETAIL_EVENT_LIMIT = 40
+ENGINE_UPTIME_EVENT_LIMIT = 2
+ENGINE_LIFECYCLE_EVENTS = (EventKind.ENGINE_STARTED, EventKind.ENGINE_STOPPED)
 ENGINE_REPORT_SOURCE = "engine"
 AGENT_REPORT_SOURCE = "agent"
 TASK_REPORT_ERROR = "could not read report evidence: {error}"
@@ -390,6 +394,7 @@ StatusView.model_rebuild(_types_namespace={"datetime": datetime})
 
 
 EngineState = Callable[[], bool]
+EngineIdentity = Callable[[], "ProcessIdentity | None"]
 
 
 class OperatorQueryError(ShikiruError):
@@ -406,6 +411,7 @@ class OperatorQueries:
         project: str,
         project_root: Path,
         engine_up: EngineState,
+        engine_identity: EngineIdentity | None = None,
         max_parallel: int,
         clock: Clock,
     ) -> None:
@@ -414,6 +420,7 @@ class OperatorQueries:
         self._project = project
         self._project_root = project_root
         self._engine_up = engine_up
+        self._engine_identity = engine_identity
         self._max_parallel = max_parallel
         self._clock = clock
         self._task_detail_file_cache: TaskFileCache | None = None
@@ -450,6 +457,22 @@ class OperatorQueries:
     def engine_is_up(self) -> bool:
         """Return whether this project's engine currently holds its lock."""
         return self._engine_up()
+
+    def current_engine_uptime_seconds(self) -> float | None:
+        """Return current uptime only when the verified lock identity matches start evidence."""
+        process_identity = self._engine_identity() if self._engine_identity is not None else None
+        identity = (
+            (process_identity.pid, process_identity.started_at)
+            if process_identity is not None and process_identity.started_at is not None
+            else None
+        )
+        projection = project_engine_uptime(
+            self._reader.latest_events(ENGINE_UPTIME_EVENT_LIMIT, kinds=ENGINE_LIFECYCLE_EVENTS),
+            now=self._clock.now(),
+            running=process_identity is not None,
+            identity=identity,
+        )
+        return projection.running_seconds
 
     def _engine_output(self) -> str | None:
         path = engine_output_path(self._project_root)

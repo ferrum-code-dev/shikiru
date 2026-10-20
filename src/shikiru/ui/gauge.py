@@ -31,9 +31,10 @@ class Gauge:
         color = USAGE_LEVEL_COLORS[
             usage_level(self.used_pct, warn_pct=self.warn_pct, alert_pct=self.alert_pct)
         ]
-        return Text.assemble(
-            (self.label, "dim"),
-            (" "),
-            (glyph, color),
-            (f" {self.used_pct:{PERCENT_FORMAT}}%", color),
-        )
+        text = Text()
+        if self.label:
+            text.append(self.label, style="dim")
+            text.append(" ")
+        text.append(glyph, style=color)
+        text.append(f" {self.used_pct:{PERCENT_FORMAT}}%", style=color)
+        return text
