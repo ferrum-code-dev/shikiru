@@ -10,6 +10,7 @@ from shikiru.domain.steps import Step
 from shikiru.domain.tasks import EscalationReason, Mode, Status
 from shikiru.operator.queries import (
     EscalationView,
+    HumanStatusView,
     ReportRow,
     RunDirectoryUsage,
     SlotView,
@@ -139,7 +140,10 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
 
     project_output = plain_text(
         status_renderable(
-            view.model_copy(update={"task": None}),
+            HumanStatusView(
+                status=view.model_copy(update={"task": None}),
+                task_rows=(active, queued),
+            ),
             width=RENDER_WIDTH,
             uptime_seconds=None,
             quota_warn_pct=50,
@@ -148,7 +152,7 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
     )
     task_output = plain_text(
         status_renderable(
-            view,
+            HumanStatusView(status=view, task_rows=()),
             width=RENDER_WIDTH,
             uptime_seconds=None,
             quota_warn_pct=50,

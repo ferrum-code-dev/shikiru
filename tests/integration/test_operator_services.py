@@ -288,11 +288,11 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
             },
         }
     ]
-    task_view = queries.status(task.id)
+    task_view = queries.human_status(task.id)
     project_outputs = {
         width: plain_text(
             status_renderable(
-                queries.status(),
+                queries.human_status(),
                 width=width,
                 uptime_seconds=None,
                 quota_warn_pct=50,

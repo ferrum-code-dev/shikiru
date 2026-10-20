@@ -45,6 +45,7 @@ from shikiru.domain.reports import (
 )
 from shikiru.domain.runs import Run, RunStatus, has_positive_token_evidence
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
+from shikiru.domain.status_tasks import select_human_status_tasks
 from shikiru.domain.steps import task_acting_role
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.domain.timeline import (
@@ -390,6 +391,14 @@ class StatusView(OperatorView):
     task: TaskDetail | None = None
 
 
+@dataclass(frozen=True)
+class HumanStatusView:
+    """A status view with the bounded task rows selected for human project output."""
+
+    status: StatusView
+    task_rows: tuple[TaskSummary, ...]
+
+
 StatusView.model_rebuild(_types_namespace={"datetime": datetime})
 
 
@@ -429,6 +438,20 @@ class OperatorQueries:
     def status(self, task_id: str | None = None) -> StatusView:
         """Return the global status view, optionally including one task's detail."""
         tasks = self._reader.list_tasks()
+        return self._build_status_view(tasks, task_id)
+
+    def human_status(self, task_id: str | None = None) -> HumanStatusView:
+        """Return status and bounded task rows from one project task snapshot."""
+        tasks = self._reader.list_tasks()
+        status = self._build_status_view(tasks, task_id)
+        task_rows = (
+            tuple(TaskSummary.from_task(task) for task in select_human_status_tasks(tasks))
+            if status.task is None
+            else ()
+        )
+        return HumanStatusView(status=status, task_rows=task_rows)
+
+    def _build_status_view(self, tasks: list[Task], task_id: str | None) -> StatusView:
         queued_tasks = sorted(
             (task for task in tasks if task.status is Status.QUEUED), key=dispatch_sort_key
         )

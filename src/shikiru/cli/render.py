@@ -87,6 +87,7 @@ if TYPE_CHECKING:
     from shikiru.operator.lifecycle import StartResult
     from shikiru.operator.queries import (
         EscalationView,
+        HumanStatusView,
         StatusView,
         TaskDetail,
         TaskSummary,
@@ -205,7 +206,7 @@ def error_renderable(error: ShikiruError) -> RenderableType:
 
 
 def status_renderable(
-    view: StatusView,
+    view: HumanStatusView,
     *,
     width: int,
     uptime_seconds: float | None,
@@ -213,11 +214,12 @@ def status_renderable(
     quota_alert_pct: int,
 ) -> RenderableType:
     """Render project or task status as open, width-wrapping rows."""
-    if view.task is not None:
-        return _task_status_renderable(view.task, view.escalations, width=width)
-
+    status = view.status
+    if status.task is not None:
+        return _task_status_renderable(status.task, status.escalations, width=width)
     return _project_status_renderable(
-        view,
+        status,
+        view.task_rows,
         width=width,
         uptime_seconds=uptime_seconds,
         quota_warn_pct=quota_warn_pct,
@@ -227,6 +229,7 @@ def status_renderable(
 
 def _project_status_renderable(
     view: StatusView,
+    task_rows: tuple[TaskSummary, ...],
     *,
     width: int,
     uptime_seconds: float | None,
@@ -253,6 +256,7 @@ def _project_status_renderable(
     ]
     sections = _project_status_sections(
         view,
+        task_rows,
         width=width,
         quota_warn_pct=quota_warn_pct,
         quota_alert_pct=quota_alert_pct,
@@ -265,6 +269,7 @@ def _project_status_renderable(
 
 def _project_status_sections(
     view: StatusView,
+    task_rows: tuple[TaskSummary, ...],
     *,
     width: int,
     quota_warn_pct: int,
@@ -279,10 +284,8 @@ def _project_status_sections(
             )
         ]
         blocks.append(_status_rows(path_row, width=width))
-    if view.active_tasks:
-        blocks.append(_task_section("Tasks", view.active_tasks, width=width))
-    if view.queued_tasks:
-        blocks.append(_task_section("Queue", view.queued_tasks, width=width))
+    if task_rows:
+        blocks.append(_task_section("Tasks", list(task_rows), width=width))
     if view.faults:
         blocks.append(_fault_section(view, width=width))
     if view.escalations:
@@ -936,6 +939,8 @@ def _task_section(title: str, tasks: list[TaskSummary], *, width: int) -> Sectio
 
 
 def _task_state(task: TaskSummary) -> tuple[str, str]:
+    if task.status is Status.DONE:
+        return "Done", SAGE
     if Hold.PAUSED.value in task.holds or task.wait_reason == WaitReason.PAUSED.value:
         return "Paused", AMBER
     if Hold.INTERVENTION.value in task.holds:

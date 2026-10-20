@@ -77,8 +77,8 @@ async def test_status_shows_an_open_fault_streak_until_the_engine_recovers(
         await guard.attempt(ticks.tick)
         clock.advance(_TICK_SECONDS)
 
-    view = queries.status()
-    (streak,) = view.faults
+    view = queries.human_status()
+    (streak,) = view.status.faults
     assert (streak.scope, streak.error, streak.task_id) == (_SCOPE, "CommandFailed", None)
     assert streak.recoverable
     assert streak.repeat > 1
@@ -102,8 +102,8 @@ async def test_status_shows_an_open_fault_streak_until_the_engine_recovers(
     await guard.attempt(ticks.tick)
     clock.advance(_TICK_SECONDS)
 
-    recovered = queries.status()
-    assert recovered.faults == []
+    recovered = queries.human_status()
+    assert recovered.status.faults == []
     assert _SCOPE not in plain_text(
         status_renderable(
             recovered,

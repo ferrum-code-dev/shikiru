@@ -13,8 +13,15 @@ import pytest
 
 from shikiru.bootstrap import build_operator
 from shikiru.config.loader import load_settings
+from shikiru.domain.escalation import options_for
+from shikiru.domain.steps import Transition
+from shikiru.domain.tasks import EscalationReason, Hold, Status, Step
 from shikiru.operator.lifecycle import PALETTE_COMMAND, ProjectLifecycle, StartResult
+from shikiru.paths import state_db_path
 from shikiru.process import SubprocessRunner
+from shikiru.store.database import Database
+from shikiru.store.escalations import EscalationStore
+from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.session import (
     DETACHED_SIZE,
@@ -24,6 +31,7 @@ from shikiru.tmux.session import (
     session_name,
 )
 from tests.support.clock import FakeClock
+from tests.support.store import seed_task
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -108,6 +116,99 @@ async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) 
     assert stderr == ""
     assert stdout.strip() == "Engine already stopped"
     assert "\x1b[" not in stdout
+
+
+async def test_human_status_limits_rows_and_json_keeps_full_task_collections(
+    tmp_path: Path,
+) -> None:
+    await _git_project(tmp_path)
+    code, stdout, stderr = await _cli(tmp_path, "init", "--yes")
+    assert code == 0
+    assert stderr == ""
+
+    database = Database(state_db_path(tmp_path))
+    connection = database.connect()
+    clock = FakeClock(START)
+    tasks = TaskStore(connection, clock)
+    escalations = EscalationStore(connection, clock)
+    project_tasks = [
+        seed_task(connection, clock, title="escalated one"),
+        seed_task(connection, clock, title="escalated two"),
+        seed_task(connection, clock, title="running one"),
+        seed_task(connection, clock, title="integrating"),
+        seed_task(connection, clock, title="running two"),
+    ]
+    for task, status, step in (
+        (project_tasks[0], Status.ESCALATED, Step.CONSULT),
+        (project_tasks[1], Status.ESCALATED, Step.VERIFY),
+        (project_tasks[2], Status.RUNNING, Step.IMPLEMENT),
+        (project_tasks[3], Status.INTEGRATING, Step.INTEGRATE),
+        (project_tasks[4], Status.RUNNING, Step.TRIAGE),
+    ):
+        tasks.apply_transition(task.id, Transition.stay(task, step=step, status=status))
+    for index, task in enumerate(project_tasks[:2], start=1):
+        escalations.open(
+            task.id,
+            step=task.step,
+            reason=EscalationReason.DECISION_REQUIRED,
+            headline=f"decision {index}",
+            packet_path=f"runs/{task.id}/escalations/E-{index}.md",
+            options=options_for(EscalationReason.DECISION_REQUIRED),
+        )
+    tasks.set_slot(project_tasks[2].id, 0)
+    tasks.set_slot(project_tasks[3].id, 1)
+    queued_tasks = [
+        seed_task(connection, clock, title=f"queued {index}", priority=index)
+        for index in range(1, 11)
+    ]
+    latest = seed_task(connection, clock, title="done latest")
+    higher_sequence = seed_task(connection, clock, title="done earlier")
+    clock.advance(1)
+    tasks.apply_transition(
+        higher_sequence.id,
+        Transition.stay(higher_sequence, step=None, status=Status.DONE),
+    )
+    clock.advance(1)
+    tasks.apply_transition(latest.id, Transition.stay(latest, step=None, status=Status.DONE))
+    tasks.set_holds(latest.id, frozenset({Hold.PAUSED}))
+    connection.close()
+
+    code, stdout, stderr = await _cli(tmp_path, "status")
+
+    assert code == 0
+    assert stderr == ""
+    task_rows = [line for line in stdout.splitlines() if line.startswith("T-")]
+    expected_ids = [
+        *(task.id for task in project_tasks[:5]),
+        *(task.id for task in reversed(queued_tasks[-4:])),
+        latest.id,
+    ]
+    assert [line.split(" · ", 1)[0] for line in task_rows] == expected_ids
+    assert len(task_rows) == 10
+    assert task_rows[-1].rstrip() == f"{latest.id} · done latest · Done"
+    assert "queued 10" in stdout
+    assert "escalations 2" in stdout
+
+    code, unknown_task_stdout, stderr = await _cli(tmp_path, "status", "T-999")
+
+    assert code == 0
+    assert stderr == ""
+    unknown_task_rows = [line for line in unknown_task_stdout.splitlines() if line.startswith("T-")]
+    assert [line.split(" · ", 1)[0] for line in unknown_task_rows] == expected_ids
+    assert "queued 10" in unknown_task_stdout
+    assert "escalations 2" in unknown_task_stdout
+
+    code, stdout, stderr = await _cli(tmp_path, "--json", "status")
+
+    assert code == 0
+    assert stderr == ""
+    status_value = json.loads(stdout)
+    assert [task["id"] for task in status_value["active_tasks"]] == [
+        task.id for task in project_tasks
+    ]
+    assert [task["id"] for task in status_value["queued_tasks"]] == [
+        task.id for task in reversed(queued_tasks)
+    ]
 
 
 @pytest.mark.parametrize("partial_state", [False, True])

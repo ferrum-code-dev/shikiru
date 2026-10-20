@@ -532,13 +532,16 @@ async def _status_loop(
     quota_alert_pct: int,
 ) -> None:
     def render() -> None:
-        view = services.queries.status(task_id)
         if state.json_output:
+            view = services.queries.status(task_id)
             typer.echo(view.model_dump_json())
         else:
+            view = services.queries.human_status(task_id)
             console = human_console()
             uptime_seconds = (
-                services.queries.current_engine_uptime_seconds() if view.task is None else None
+                services.queries.current_engine_uptime_seconds()
+                if view.status.task is None
+                else None
             )
             console.print(
                 status_renderable(
