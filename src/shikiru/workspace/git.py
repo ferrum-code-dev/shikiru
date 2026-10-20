@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from shikiru.process import ProcessResult, SubprocessRunner
 
 _GIT_BIN = "git"
+_HEAD_REF = "HEAD"
 _PUSH_TIMEOUT_SECONDS = 300.0
 GIT_STOP_GRACE = 10.0
 _WORKTREE_LIST_PREFIX = "worktree "
@@ -139,6 +140,13 @@ class Git:
         """Return whether `path` is the top-level directory of a git working tree."""
         result = await self._run(path, "rev-parse", "--show-toplevel", check=False)
         return result.returncode == 0 and Path(result.stdout.strip()).resolve() == path.resolve()
+
+    async def has_commit(self, repo_dir: Path) -> bool:
+        """Return whether `repo_dir` has a commit at `HEAD`."""
+        result = await self._run(
+            repo_dir, "rev-parse", "--verify", "--quiet", _HEAD_REF, check=False
+        )
+        return result.returncode == 0
 
     async def rev_parse(self, repo_dir: Path, ref: str) -> str:
         """Resolve `ref` to a commit sha in the repo at `repo_dir`."""

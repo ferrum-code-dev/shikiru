@@ -108,12 +108,9 @@ def init_renderable(
 
 
 def start_renderable(result: StartResult) -> Text:
-    """Render the known engine and session effects of `start`."""
+    """Render the engine outcome of `start`."""
     label = "Engine started" if result.started else "Engine already running"
-    text = _outcome_line(GLYPH_DONE, label, SUCCESS_COLOR)
-    text.append(" · Session ensured ", style=SECONDARY_TEXT_COLOR)
-    text.append(result.session, style=BOLD_PRIMARY)
-    return text
+    return Text(label, style=f"{STYLE_BOLD} {SUCCESS_COLOR}")
 
 
 def error_renderable(error: ShikiruError) -> RenderableType:
@@ -123,7 +120,12 @@ def error_renderable(error: ShikiruError) -> RenderableType:
     text.append(" ")
     text.append(str(error), style=PRIMARY_TEXT_COLOR)
     if isinstance(error, NotInitialisedError):
-        return Group(text, grey("Run shikiru init in the repository root."))
+        return Group(
+            text,
+            grey("Initialize this repository with shikiru init."),
+            grey("Select another project with shikiru --project PATH COMMAND."),
+            grey("Run shikiru --help to see available commands."),
+        )
     return text
 
 
@@ -231,10 +233,12 @@ def _task_status_renderable(
     return Group(*body)
 
 
-def ack_renderable(
-    ack: Ack, *, stopping: bool = False, kill_session: bool = False
-) -> RenderableType:
-    """Render an acknowledgement and any known stop effects."""
+def ack_renderable(ack: Ack, *, stopping: bool = False) -> RenderableType:
+    """Render an acknowledgement and known lifecycle outcomes."""
+    if stopping and ack.status is AckStatus.DONE:
+        outcome = _stop_outcome(ack)
+        if outcome is not None:
+            return Text(outcome, style=f"{STYLE_BOLD} {SUCCESS_COLOR}")
     match ack.status:
         case AckStatus.DONE:
             label, glyph, color = "Applied", GLYPH_DONE, SUCCESS_COLOR
@@ -245,10 +249,7 @@ def ack_renderable(
     text = _outcome_line(glyph, label, color)
     text.append(" · command ", style=SECONDARY_TEXT_COLOR)
     text.append(str(ack.id), style=BOLD_PRIMARY)
-    stop_effect = _stop_effect(ack, kill_session) if stopping else None
-    if stop_effect is not None:
-        text.append(f" · {stop_effect}", style=SECONDARY_TEXT_COLOR)
-    elif ack.message:
+    if ack.message:
         text.append(" · ", style=SECONDARY_TEXT_COLOR)
         text.append(ack.message, style=PRIMARY_TEXT_COLOR)
     return text
@@ -634,14 +635,11 @@ def _outcome_line(glyph: str, label: str, color: str) -> Text:
     return text
 
 
-def _stop_effect(ack: Ack, kill_session: bool) -> str | None:
+def _stop_outcome(ack: Ack) -> str | None:
     if ack.status is not AckStatus.DONE or ack.result is None:
         return None
     if ack.result.get(STOPPED_RESULT_FIELD) is False:
-        engine_effect = "Engine already stopped"
-    elif ack.result.get(STOPPING_RESULT_FIELD) is True:
-        engine_effect = "Engine stopped"
-    else:
-        return None
-    session_effect = "session closed" if kill_session else "session unchanged"
-    return f"{engine_effect} · {session_effect}"
+        return "Engine already stopped"
+    if ack.result.get(STOPPING_RESULT_FIELD) is True:
+        return "Engine stopped"
+    return None

@@ -74,13 +74,22 @@ if TYPE_CHECKING:
 
     from shikiru.operator.services import OperatorServices
 
-PROJECT_OPTION = typer.Option("--project", help="Project directory.")
-JSON_OPTION = typer.Option("--json", help="Print JSON output.")
-OVERRIDES_OPTION = typer.Option("--set", help="Override a config key.")
-ATTACH_OPTION = typer.Option("--attach", help="Attach to the tmux session after start.")
-KILL_SESSION_OPTION = typer.Option("--kill-session", help="Kill the project tmux session.")
-WATCH_OPTION = typer.Option("--watch")
-PROBE_OPTION = typer.Option("--probe", help="Run live agent contract checks.")
+PROJECT_OPTION = typer.Option("--project", help="Select a repository or initialized project.")
+JSON_OPTION = typer.Option("--json", help="Print machine-readable JSON instead of human output.")
+OVERRIDES_OPTION = typer.Option(
+    "--set", help="Set config as key.path=value; repeat for multiple values."
+)
+ATTACH_OPTION = typer.Option(
+    "--attach", help="Attach to the project tmux session after starting or reusing the engine."
+)
+KILL_SESSION_OPTION = typer.Option(
+    "--kill-session", help="Close the project's tmux session, even if the engine is stopped."
+)
+WATCH_OPTION = typer.Option("--watch", help="Refresh the report when project state changes.")
+PROBE_OPTION = typer.Option(
+    "--probe", help="Run live agent contract and smoke checks for configured role rungs."
+)
+REQUIRED_LEGEND = f"[bold {ALERT_COLOR}]*[/] marks a required argument."
 
 
 def _configure_typer_help_palette() -> None:
@@ -103,6 +112,10 @@ def _configure_typer_help_palette() -> None:
     typer_rich_utils.STYLE_REQUIRED_LONG = f"{STYLE_DIM} {ALERT_COLOR}"
     typer_rich_utils.STYLE_OPTIONS_PANEL_BORDER = f"{STYLE_DIM} {NEUTRAL_BORDER_COLOR}"
     typer_rich_utils.STYLE_COMMANDS_PANEL_BORDER = f"{STYLE_DIM} {NEUTRAL_BORDER_COLOR}"
+    typer_rich_utils.ARGUMENTS_PANEL_TITLE = f"[bold not dim {STEEL_BLUE}]Arguments[/]"
+    typer_rich_utils.OPTIONS_PANEL_TITLE = f"[bold not dim {STEEL_BLUE}]Options[/]"
+    typer_rich_utils.COMMANDS_PANEL_TITLE = f"[bold not dim {STEEL_BLUE}]Commands[/]"
+    typer_rich_utils.REQUIRED_LONG_STRING = ""
     typer_rich_utils.STYLE_COMMANDS_TABLE_FIRST_COLUMN = f"{STYLE_BOLD} {STEEL_BLUE}"
     typer_rich_utils.STYLE_ERRORS_PANEL_BORDER = ALERT_COLOR
     typer_rich_utils.STYLE_ERRORS_SUGGESTION = f"{STYLE_DIM} {SECONDARY_TEXT_COLOR}"
@@ -132,7 +145,7 @@ def main(
             "--version",
             callback=_print_version,
             is_eager=True,
-            help="Print the version and exit.",
+            help="Show the installed version and exit.",
         ),
     ] = False,
     project: Annotated[Path | None, PROJECT_OPTION] = None,
@@ -150,7 +163,7 @@ def init(
     *,
     yes: Annotated[
         bool,
-        typer.Option("--yes", help="Write detected defaults without prompting."),
+        typer.Option("--yes", help="Write detected defaults without opening the setup wizard."),
     ] = False,
 ) -> None:
     """Initialize a project from detected repositories, plugins and trackers."""
@@ -215,15 +228,17 @@ def stop(
         result = _run(build_lifecycle().stop(root, state.overrides, kill_session=kill_session))
     except ShikiruError as error:
         _fail(error)
-    emit_ack(state, result, stopping=True, kill_session=kill_session)
+    emit_ack(state, result, stopping=True)
 
 
 @app.command(name="ls")
 def list_sessions(
     context: typer.Context,
     *,
-    host: Annotated[str | None, typer.Option("--host")] = None,
-    json_output: Annotated[bool, typer.Option("--json", help="Print JSON output.")] = False,
+    host: Annotated[
+        str | None, typer.Option("--host", help="List sessions on this SSH host instead.")
+    ] = None,
+    json_output: Annotated[bool, JSON_OPTION] = False,
 ) -> None:
     """List Shikiru project sessions visible on this host or an SSH host."""
     try:
@@ -242,9 +257,14 @@ def list_sessions(
 @app.command()
 def attach(
     context: typer.Context,
-    name: Annotated[str | None, typer.Argument()] = None,
+    name: Annotated[
+        str | None,
+        typer.Argument(help="Project or full session name to attach to; omit to choose a session."),
+    ] = None,
     *,
-    host: Annotated[str | None, typer.Option("--host")] = None,
+    host: Annotated[
+        str | None, typer.Option("--host", help="Attach over SSH to this host instead.")
+    ] = None,
 ) -> None:
     """Attach to a listed Shikiru session, with a picker when selection is needed."""
     try:
@@ -265,17 +285,44 @@ def attach(
         _fail(error)
 
 
-@app.command()
+@app.command(epilog=REQUIRED_LEGEND)
 def submit(
     context: typer.Context,
     *,
-    request: Annotated[str, typer.Argument(help="Task request.")],
-    mode: Annotated[Mode | None, typer.Option("--mode")] = None,
-    complexity: Annotated[ComplexityName | None, typer.Option("--complexity")] = None,
-    priority: Annotated[int, typer.Option("--priority")] = 0,
-    depends_on: Annotated[list[str] | None, typer.Option("--after")] = None,
-    leader: Annotated[str | None, typer.Option("--leader")] = None,
-    implementer: Annotated[str | None, typer.Option("--implementer")] = None,
+    request: Annotated[str, typer.Argument(help="Task for triage and implementation.")],
+    mode: Annotated[
+        Mode | None,
+        typer.Option(
+            "--mode",
+            metavar="MODE",
+            help="Task mode: implement or plan; Leader decides by default.",
+        ),
+    ] = None,
+    complexity: Annotated[
+        ComplexityName | None,
+        typer.Option(
+            "--complexity",
+            metavar="LEVEL",
+            help="Complexity level: low, normal or high; triage decides by default.",
+        ),
+    ] = None,
+    priority: Annotated[
+        int, typer.Option("--priority", metavar="N", help="Higher values dispatch sooner.")
+    ] = 0,
+    depends_on: Annotated[
+        list[str] | None,
+        typer.Option("--after", metavar="TASK_ID", help="Require earlier tasks first; repeat."),
+    ] = None,
+    leader: Annotated[
+        str | None,
+        typer.Option("--leader", metavar="RUNG", help="Pin a rung using agent:model[:effort]."),
+    ] = None,
+    implementer: Annotated[
+        str | None,
+        typer.Option(
+            "--implementer", metavar="RUNG", help="Pin a rung using agent:model[:effort]."
+        ),
+    ] = None,
 ) -> None:
     """Queue one task and print its allocated `T-n` id."""
     try:
@@ -312,7 +359,9 @@ def submit(
 def status(
     context: typer.Context,
     *,
-    task_id: Annotated[str | None, typer.Argument()] = None,
+    task_id: Annotated[
+        str | None, typer.Argument(help="Task ID to show; omit for project status.")
+    ] = None,
     watch: Annotated[bool, WATCH_OPTION] = False,
 ) -> None:
     """Show engine, queue, task, escalation, usage and quota status."""
@@ -447,13 +496,12 @@ def emit_ack(
     ack: Ack,
     *,
     stopping: bool = False,
-    kill_session: bool = False,
 ) -> None:
     """Render an acknowledgement and map rejected commands to their exit code."""
     if state.json_output:
         typer.echo(ack.model_dump_json())
     else:
-        human_console().print(ack_renderable(ack, stopping=stopping, kill_session=kill_session))
+        human_console().print(ack_renderable(ack, stopping=stopping))
     if ack.status is AckStatus.REJECTED:
         raise typer.Exit(code=EXIT_COMMAND_REJECTED)
 

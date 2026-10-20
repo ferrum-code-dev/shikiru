@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from shikiru.errors import NotInitialisedError
-from shikiru.paths import SHIKIRU_DIR_NAME, project_state_dir
+from shikiru.paths import SHIKIRU_DIR_NAME, project_config_path, project_state_dir
 
 if TYPE_CHECKING:
     import typer
@@ -31,11 +31,18 @@ def state_from(context: typer.Context) -> CliState:
     return state
 
 
-def project_root(state: CliState) -> Path:
-    """Resolve and validate the initialized project selected by `state`."""
+def project_root(state: CliState, *, require_config: bool = True) -> Path:
+    """Resolve the selected project, optionally requiring its config file."""
     root = state.project.resolve() if state.project is not None else nearest_project(Path.cwd())
-    if not project_state_dir(root).is_dir():
+    state_dir = project_state_dir(root)
+    if not state_dir.is_dir():
         message = f"no {SHIKIRU_DIR_NAME}/ directory found from {root}"
+        raise NotInitialisedError(message)
+    config_path = project_config_path(root)
+    if require_config and not config_path.is_file():
+        message = (
+            f"{config_path} is missing; initialize the repository before running project commands"
+        )
         raise NotInitialisedError(message)
     return root
 

@@ -412,3 +412,9 @@ Focus ledger CLI implementation (main; sequential, with lead review between task
 - [x] Task 257: Concise session discovery and Doctor results
 - [x] Task 258: Focused project and task status reports
 - [x] Task 259: Align initializer and attachment picker; verify the complete CLI
+CLI first-review corrections (sequential on main; lead review after each):
+
+- [x] Task 260: Readable help, brief lifecycle outcomes and project prerequisites
+- [ ] Task 261: Authoritative agent choices and actionable model diagnostics
+- [ ] Task 262: Guided ladder builder and prototype-aligned initializer
+- [ ] Task 263: Report parity and complete first-review verification

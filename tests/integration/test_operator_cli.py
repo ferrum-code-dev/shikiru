@@ -106,22 +106,28 @@ async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) 
     code, stdout, stderr = await _cli(tmp_path, "stop")
     assert code == 0
     assert stderr == ""
-    assert "Applied" in stdout
-    assert "command 0" in stdout
-    assert "already stopped" in stdout.lower()
-    assert "session unchanged" in stdout
+    assert stdout.strip() == "Engine already stopped"
     assert "\x1b[" not in stdout
 
 
-async def test_cli_uninitialized_project_error_keeps_recovery_and_exit_code(
-    tmp_path: Path,
+@pytest.mark.parametrize("partial_state", [False, True])
+async def test_cli_requires_a_complete_project_and_shows_recovery_options(
+    tmp_path: Path, partial_state: bool
 ) -> None:
+    if partial_state:
+        (tmp_path / ".shikiru").mkdir()
+
     code, stdout, stderr = await _cli(tmp_path, "status")
 
     assert code == 3
     assert stdout == ""
     assert str(tmp_path) in stderr
     assert "shikiru init" in stderr
+    assert "shikiru --project PATH COMMAND" in stderr
+    assert "shikiru --help" in stderr
+    assert "defaults.toml" not in stderr
+    if partial_state:
+        assert str(tmp_path / ".shikiru" / "config.toml") in stderr
     assert "\x1b[" not in stderr
 
 
@@ -244,6 +250,25 @@ async def test_init_rejects_a_project_root_that_is_not_a_repository_root(
     assert code != 0
     assert str(project) in stderr
     assert not (project / ".shikiru" / "config.toml").exists()
+
+
+async def test_init_rejects_an_unborn_repository_before_writing_project_state(
+    tmp_path: Path,
+) -> None:
+    await asyncio.to_thread(tmp_path.mkdir, parents=True, exist_ok=True)
+    await SubprocessRunner().run(["git", "init", "-q"], timeout=10, cwd=tmp_path, check=True)
+
+    code, stdout, stderr = await _cli(tmp_path, "init", "--yes")
+
+    assert code == 1
+    assert stdout == ""
+    assert str(tmp_path) in stderr
+    assert "initial commit" in stderr
+    assert "shikiru init" in stderr
+    assert "rev-parse" not in stderr
+    assert not (tmp_path / ".shikiru").exists()
+    exclude = tmp_path / ".git" / "info" / "exclude"
+    assert not exclude.exists() or "/.shikiru/" not in exclude.read_text()
 
 
 async def test_init_and_submit_create_the_state_directory_and_database_owner_only(

@@ -143,6 +143,12 @@ class ProjectDetectors:
     async def _validate_root(self) -> None:
         if not await self._git.is_repository_root(self._root):
             raise ConfigError(not_repository_root(self._root))
+        if not await self._git.has_commit(self._root):
+            message = (
+                f"{self._root} is a git repository without commits; create an initial commit, "
+                "then run shikiru init"
+            )
+            raise ConfigError(message)
 
     async def _write_and_exclude(self, config_path: Path, contents: str) -> None:
         try:
