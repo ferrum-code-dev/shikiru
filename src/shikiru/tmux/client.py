@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from shikiru.process import ProcessResult, SubprocessRunner
 
 _TMUX_BIN = "tmux"
+_UNKNOWN_ENVIRONMENT_VARIABLE_PREFIX = "unknown variable: "
 _SOCKET_FLAG = "-L"
 _CONFIG_FLAG = "-f"
 _COMMAND_TIMEOUT_SECONDS = 5.0
@@ -199,12 +200,14 @@ class Tmux:
         """Read session environment variable `name`, or `None` if unset or removed.
 
         `show-environment` exits 0 and prints `-<name>` (no `=`) for a variable that was
-        *removed* from the session (e.g. via `set-environment -r`), so a missing separator
-        means unset just as much as a non-zero exit does.
+        *removed* from the session (e.g. via `set-environment -r`); an `unknown variable` error
+        also means unset. Other command failures remain visible.
         """
         result = await self._run("show-environment", "-t", target, name, check=False)
         if result.returncode != 0:
-            return None
+            if result.stderr.strip() == f"{_UNKNOWN_ENVIRONMENT_VARIABLE_PREFIX}{name}":
+                return None
+            raise CommandFailed(result.argv, result.returncode, result.stderr)
         _, separator, value = result.stdout.strip().partition("=")
         if not separator:
             return None

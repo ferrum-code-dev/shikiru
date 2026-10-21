@@ -74,7 +74,7 @@ class StateReader:
         """See `shikiru.store.tasks.fetch_tasks`."""
         try:
             return fetch_tasks(self._connection, statuses=statuses)
-        except sqlite3.Error as error:
+        except (sqlite3.Error, TypeError) as error:
             message = f"could not query read-only database {self._database_path}: {error}"
             raise DatabaseError(message) from error
 

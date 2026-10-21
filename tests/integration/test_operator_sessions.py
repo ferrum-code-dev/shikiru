@@ -20,10 +20,10 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Status, Step
 from shikiru.engine.daemon import EngineLock, engine_is_running
 from shikiru.errors import (
+    EXIT_GENERIC_ERROR,
     EXIT_NOT_INITIALISED,
     EXIT_USAGE_ERROR,
     CommandFailed,
-    DatabaseError,
     UsageError,
 )
 from shikiru.operator.lifecycle import ProjectLifecycle, home_command
@@ -83,6 +83,30 @@ def _make_project(root: Path, statuses: tuple[Status, ...]) -> None:
             tasks.apply_transition(task.id, transition)
     finally:
         connection.close()
+
+
+def _make_unavailable_project(root: Path, failure_mode: str) -> None:
+    state_dir = root / ".shikiru"
+    if failure_mode == "missing_database":
+        state_dir.mkdir(parents=True)
+    elif failure_mode == "corrupt_database":
+        state_dir.mkdir(parents=True)
+        (state_dir / "state.db").touch()
+    elif failure_mode == "deleted_state":
+        _make_project(root, ())
+        shutil.rmtree(state_dir)
+    elif failure_mode == "malformed_task_data":
+        _make_project(root, (Status.QUEUED,))
+        connection = Database(state_dir / "state.db").connect()
+        try:
+            task = connection.execute("SELECT id FROM tasks").fetchone()
+            assert task is not None
+            connection.execute(
+                "UPDATE tasks SET created_at = ? WHERE id = ?",
+                (b"invalid timestamp", task["id"]),
+            )
+        finally:
+            connection.close()
 
 
 async def _add_session(server: TmuxServer, name: str, project_dir: Path) -> None:
@@ -323,7 +347,8 @@ async def test_lister_reads_two_projects_progress_and_liveness_without_mutations
 
     snapshots = snapshot()
     try:
-        rows = await _lister(tmux_server).list_sessions()
+        listing = await _lister(tmux_server).list_sessions()
+        rows = listing.rows
         after_listing = snapshot()
     finally:
         active_writer.close()
@@ -331,6 +356,7 @@ async def test_lister_reads_two_projects_progress_and_liveness_without_mutations
 
     by_session = {row.session: row for row in rows}
     assert set(by_session) == {first_session, second_session}
+    assert listing.diagnostics == ()
     assert by_session[first_session].project_dir == str(first)
     assert by_session[first_session].engine_state == "up"
     assert (
@@ -429,19 +455,117 @@ async def test_tmux_session_listing_treats_both_missing_socket_errors_as_empty(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("corrupt", [False, True])
+@pytest.mark.parametrize(
+    "failure_mode",
+    ["missing_database", "corrupt_database", "deleted_state", "malformed_task_data"],
+)
 async def test_lister_surfaces_unavailable_project_database(
-    tmp_path: Path, tmux_server: TmuxServer, corrupt: bool
+    tmp_path: Path, tmux_server: TmuxServer, failure_mode: str
 ) -> None:
-    project = tmp_path / "unavailable"
+    project = tmp_path / "O'Brien ; unavailable [project]"
+    healthy = tmp_path / "healthy"
     state_dir = project / ".shikiru"
-    state_dir.mkdir(parents=True)
-    if corrupt:
-        (state_dir / "state.db").touch()
-    await _add_session(tmux_server, f"{SESSION_PREFIX}unavailable", project)
+    _make_unavailable_project(project, failure_mode)
+    _make_project(healthy, (Status.QUEUED,))
+    stale_session = f"{SESSION_PREFIX}O'Brien ; unavailable [project]"
+    healthy_session = f"{SESSION_PREFIX}healthy"
+    await _add_session(tmux_server, stale_session, project)
+    await _add_session(tmux_server, healthy_session, healthy)
 
-    with pytest.raises(DatabaseError):
-        await _lister(tmux_server).list_sessions()
+    listing = await _lister(tmux_server).list_sessions()
+
+    assert [row.session for row in listing.rows] == [healthy_session]
+    assert len(listing.diagnostics) == 1
+    diagnostic = listing.diagnostics[0]
+    assert diagnostic.session == stale_session
+    assert diagnostic.project_dir == str(project)
+    assert diagnostic.reason
+    assert shlex.split(diagnostic.repair_commands[0]) == [
+        "tmux",
+        "kill-session",
+        "-t",
+        exact_target(stale_session),
+    ]
+    assert shlex.split(diagnostic.repair_commands[1]) == [
+        "shikiru",
+        "--project",
+        str(project),
+        "init",
+    ]
+    if failure_mode == "deleted_state":
+        assert not state_dir.exists()
+    elif failure_mode == "missing_database":
+        assert not (state_dir / "state.db").exists()
+    elif failure_mode == "corrupt_database":
+        assert (state_dir / "state.db").stat().st_size == 0
+    else:
+        connection = Database(state_dir / "state.db").connect()
+        try:
+            stored_task = connection.execute("SELECT created_at FROM tasks").fetchone()
+            assert stored_task is not None
+            assert stored_task[0] == b"invalid timestamp"
+        finally:
+            connection.close()
+
+
+@pytest.mark.asyncio
+async def test_missing_project_directory_only_offers_removing_the_retained_session(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    project = tmp_path / "vanished project"
+    _make_project(project, ())
+    session = f"{SESSION_PREFIX}vanished project"
+    await _add_session(tmux_server, session, project)
+    shutil.rmtree(project)
+
+    listing = await _lister(tmux_server).list_sessions()
+
+    assert not listing.rows
+    assert len(listing.diagnostics) == 1
+    diagnostic = listing.diagnostics[0]
+    assert diagnostic.project_dir == str(project)
+    assert len(diagnostic.repair_commands) == 1
+    assert shlex.split(diagnostic.repair_commands[0]) == [
+        "tmux",
+        "kill-session",
+        "-t",
+        exact_target(session),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("project_dir", [None, "relative/project"])
+async def test_lister_isolates_missing_or_relative_session_project_metadata(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    project_dir: str | None,
+) -> None:
+    healthy = tmp_path / "healthy project"
+    _make_project(healthy, (Status.QUEUED,))
+    healthy_session = f"{SESSION_PREFIX}healthy"
+    stale_session = f"{SESSION_PREFIX}unavailable"
+    await _add_session(tmux_server, healthy_session, healthy)
+    await tmux_server.run("new-session", "-d", "-s", stale_session)
+    if project_dir is not None:
+        await tmux_server.run(
+            "set-environment", "-t", exact_target(stale_session), PROJECT_DIR_ENV_VAR, project_dir
+        )
+
+    listing = await _lister(tmux_server).list_sessions()
+
+    assert [row.session for row in listing.rows] == [healthy_session]
+    assert len(listing.diagnostics) == 1
+    diagnostic = listing.diagnostics[0]
+    assert diagnostic.session == stale_session
+    assert diagnostic.project_dir == project_dir
+    assert diagnostic.reason
+    assert len(diagnostic.repair_commands) == 1
+    assert shlex.split(diagnostic.repair_commands[0]) == [
+        "tmux",
+        "kill-session",
+        "-t",
+        exact_target(stale_session),
+    ]
 
 
 @pytest.mark.asyncio
@@ -458,6 +582,40 @@ async def test_tmux_session_listing_does_not_hide_non_socket_failures(
 
     with pytest.raises(CommandFailed):
         await Tmux(SubprocessRunner()).list_sessions()
+
+
+@pytest.mark.asyncio
+async def test_session_metadata_transport_failure_remains_global(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    _write_executable(
+        bin_dir,
+        "tmux",
+        "import sys\n"
+        "if sys.argv[1] == 'list-sessions':\n"
+        "    print('[shikiru] retained')\n"
+        "    raise SystemExit(0)\n"
+        "print('error connecting to private tmux socket (Permission denied)', file=sys.stderr)\n"
+        "raise SystemExit(1)\n",
+    )
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    runner = SubprocessRunner()
+
+    def unexpected_reader(_root: Path) -> StateReader:
+        raise AssertionError
+
+    lister = SessionLister(
+        tmux=Tmux(runner),
+        runner=runner,
+        engine_up=lambda _root: False,
+        reader_factory=unexpected_reader,
+        remote_timeout_seconds=SSH_TIMEOUT_SECONDS,
+    )
+
+    with pytest.raises(CommandFailed):
+        await lister.list_sessions()
 
 
 @pytest.mark.asyncio
@@ -579,6 +737,123 @@ print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
     assert invalid_host_result.exit_code == 2
     assert "invalid SSH host" in invalid_host_result.stderr
     assert capture.read_text() == capture_before_invalid_host
+
+
+@pytest.mark.asyncio
+async def test_cli_ls_keeps_healthy_json_rows_and_reports_unavailable_projects(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    healthy = tmp_path / "healthy project"
+    unavailable = tmp_path / "O'Brien ; unavailable [project]"
+    _make_project(healthy, (Status.QUEUED,))
+    _make_project(unavailable, ())
+    healthy_session = f"{SESSION_PREFIX}healthy project"
+    unavailable_session = f"{SESSION_PREFIX}O'Brien ; unavailable [project]"
+    await _add_session(tmux_server, healthy_session, healthy)
+    await _add_session(tmux_server, unavailable_session, unavailable)
+    shutil.rmtree(unavailable / ".shikiru")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    runner = CliRunner()
+
+    structured = await asyncio.to_thread(
+        runner.invoke,
+        app,
+        ["--json", "ls"],
+        env=env,
+    )
+    human = await asyncio.to_thread(runner.invoke, app, ["ls"], env=env)
+
+    assert structured.exit_code == EXIT_GENERIC_ERROR
+    assert json.loads(structured.stdout) == [
+        {
+            "session": healthy_session,
+            "project_dir": str(healthy),
+            "engine_state": "down",
+            "running": 0,
+            "queued": 1,
+            "escalated": 0,
+        }
+    ]
+    assert unavailable_session in structured.stderr
+    assert str(unavailable) in structured.stderr
+    assert "tmux kill-session" in structured.stderr
+    assert "shikiru --project" in structured.stderr
+    assert human.exit_code == EXIT_GENERIC_ERROR
+    assert healthy_session in human.stdout
+    assert str(healthy) in human.stdout
+    assert unavailable_session in human.stderr
+
+    (healthy / ".shikiru" / "state.db").unlink()
+    all_unavailable = await asyncio.to_thread(
+        runner.invoke,
+        app,
+        ["--json", "ls"],
+        env=env,
+    )
+
+    assert all_unavailable.exit_code == EXIT_GENERIC_ERROR
+    assert json.loads(all_unavailable.stdout) == []
+    assert healthy_session in all_unavailable.stderr
+    assert unavailable_session in all_unavailable.stderr
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("remote_exit_code", [0, 1, 2, 255])
+async def test_remote_ls_preserves_valid_partial_rows_and_scopes_raw_diagnostics(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    remote_exit_code: int,
+) -> None:
+    bin_dir = tmp_path / "bin"
+    capture = tmp_path / "ssh-argv.json"
+    row = SessionRow(
+        session=f"{SESSION_PREFIX}remote healthy",
+        project_dir="/remote/healthy",
+        engine_state="up",
+        running=1,
+        queued=2,
+        escalated=0,
+    )
+    _write_executable(
+        bin_dir,
+        "ssh",
+        "import json, os, sys\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['SHIKIRU_TEST_CAPTURE']).write_text(json.dumps(sys.argv[1:]))\n"
+        "if int(os.environ['SHIKIRU_TEST_REMOTE_EXIT_CODE']) != 255:\n"
+        "    print(os.environ['SHIKIRU_TEST_SESSION_ROWS'])\n"
+        "print('remote diagnostic with raw detail', file=sys.stderr)\n"
+        f"raise SystemExit({remote_exit_code})\n",
+    )
+    env = _test_env(bin_dir, capture, tmux_server)
+    env[JSON_ROWS_ENV] = json.dumps([row.model_dump(mode="json")])
+    env["SHIKIRU_TEST_REMOTE_EXIT_CODE"] = str(remote_exit_code)
+    result = await asyncio.to_thread(
+        CliRunner().invoke,
+        app,
+        ["ls", "--host", "remote.example", "--json"],
+        env=env,
+    )
+
+    assert json.loads(capture.read_text()) == ["--", "remote.example", "shikiru", "ls", "--json"]
+    if remote_exit_code in {0, 1}:
+        expected_exit = EXIT_GENERIC_ERROR if remote_exit_code else 0
+        assert result.exit_code == expected_exit
+        assert json.loads(result.stdout) == [row.model_dump(mode="json")]
+        assert "remote.example" in result.stderr
+        assert "remote diagnostic with raw detail" in result.stderr
+    else:
+        assert result.exit_code == EXIT_GENERIC_ERROR
+        assert result.stdout == ""
+        assert "remote diagnostic with raw detail" in result.stderr
 
 
 @pytest.mark.asyncio
@@ -884,26 +1159,21 @@ async def test_remote_attach_runs_the_remote_live_admission_policy(
         bin_dir,
         "ssh",
         """
-import json
 import os
-import shlex
 import sys
 
 arguments = sys.argv[1:]
 if "ls" in arguments:
     print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
     raise SystemExit(0)
-remote_command = shlex.split(arguments[-1])
-if remote_command[:3] != ["TMUX=", "TMUX_PANE=", "shikiru"]:
-    raise SystemExit(1)
-os.environ["TMUX"] = ""
-os.environ["TMUX_PANE"] = ""
-os.execve(
-    sys.executable,
-    [sys.executable, "-m", "shikiru", *remote_command[3:]],
-    os.environ,
-)
+os.execv("/bin/sh", ["/bin/sh", "-c", arguments[-1]])
 """,
+    )
+    _write_executable(
+        bin_dir,
+        "shikiru",
+        "import os, sys\n"
+        "os.execv(sys.executable, [sys.executable, '-m', 'shikiru', *sys.argv[1:]])\n",
     )
     env = _test_env(bin_dir, tmp_path / "unused-capture.json", tmux_server)
     env.pop("TMUX", None)
@@ -925,7 +1195,7 @@ os.execve(
     async with attach_tmux_client(tmux_server, exact_target(session)) as first_client:
         original_state = await _client_state(tmux_server, session, first_client.process.pid)
         _, returncode = await _run_attach_cli(
-            ["attach", session, "--host", "remote.example"], cwd=tmp_path, env=env
+            ["attach", "remote project", "--host", "remote.example"], cwd=tmp_path, env=env
         )
 
         assert returncode == EXIT_USAGE_ERROR
@@ -941,7 +1211,7 @@ os.execve(
                 "-m",
                 "shikiru",
                 "attach",
-                session,
+                "remote project",
                 "--host",
                 "remote.example",
             ],
@@ -1053,6 +1323,65 @@ async def test_explicit_project_without_config_rejects_attach_without_selecting_
 
 
 @pytest.mark.asyncio
+async def test_attach_gives_focused_repair_for_unavailable_current_and_named_sessions(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "O'Brien ; unavailable project"
+    _make_project(project, ())
+    config_path = project / ".shikiru" / "config.toml"
+    config_path.write_text("invalid config remains unparsed")
+    (project / ".shikiru" / "state.db").unlink()
+    session = f"{SESSION_PREFIX}O'Brien ; unavailable project"
+    await _add_session(tmux_server, session, project)
+    monkeypatch.chdir(project)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    runner = CliRunner()
+
+    current = await asyncio.to_thread(runner.invoke, app, ["attach"], env=env)
+    named = await asyncio.to_thread(runner.invoke, app, ["attach", session], env=env)
+
+    for result in (current, named):
+        assert result.exit_code == EXIT_USAGE_ERROR
+        assert session in result.stderr
+        assert str(project) in result.stderr
+        assert result.stderr.count("Unavailable session") == 1
+        assert result.stderr.count("tmux kill-session") == 1
+        assert "shikiru --project" not in result.stderr
+    assert not capture.exists()
+
+
+@pytest.mark.asyncio
+async def test_attach_reports_all_unavailable_sessions_once(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+) -> None:
+    projects = [tmp_path / "first unavailable", tmp_path / "second unavailable"]
+    sessions = [f"{SESSION_PREFIX}{project.name}" for project in projects]
+    for project, session in zip(projects, sessions, strict=True):
+        _make_project(project, ())
+        (project / ".shikiru" / "state.db").unlink()
+        await _add_session(tmux_server, session, project)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    env = _test_env(bin_dir, tmp_path / "unused-capture.json", tmux_server)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    output, returncode = await _run_attach_cli(["attach"], cwd=outside, env=env)
+
+    assert returncode == EXIT_USAGE_ERROR
+    assert output.count("Unavailable session") == len(sessions)
+    for session in sessions:
+        assert session in output
+    assert output.count("tmux kill-session") == len(sessions)
+
+
+@pytest.mark.asyncio
 async def test_explicit_attach_name_remains_authoritative_with_project_option(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
@@ -1091,40 +1420,56 @@ async def test_ambiguous_attach_retries_invalid_numbers_and_uses_the_selected_ex
 ) -> None:
     first_project = tmp_path / "first project"
     second_project = tmp_path / "O'Brien [literal] project"
+    unavailable_project = tmp_path / "unavailable project"
     outside_directory = tmp_path / "outside" / "nested"
     _make_project(first_project, ())
     _make_project(second_project, ())
+    _make_project(unavailable_project, ())
     outside_directory.mkdir(parents=True)
     first_session = f"{SESSION_PREFIX}first project"
     second_session = f"{SESSION_PREFIX}O'Brien [literal] project"
+    unavailable_session = f"{SESSION_PREFIX}unavailable project"
     await _add_session(tmux_server, first_session, first_project)
     await _add_session(tmux_server, second_session, second_project)
+    await _add_session(tmux_server, unavailable_session, unavailable_project)
+    shutil.rmtree(unavailable_project / ".shikiru")
     if legacy_trust_file:
         legacy_state = tmp_path / ".shikiru"
         legacy_state.mkdir()
         (legacy_state / "trusted.json").write_text("{}")
-    expected_row = (await _lister(tmux_server).list_sessions())[1]
+    expected_row = (await _lister(tmux_server).list_sessions()).rows[1]
     bin_dir = tmp_path / "bin"
-    _fake_tmux(bin_dir)
+    _private_tmux_proxy(bin_dir)
     capture = tmp_path / "tmux-argv.json"
     env = _test_env(bin_dir, capture, tmux_server)
     env.pop("TMUX", None)
+    env.pop("TMUX_PANE", None)
 
-    output, returncode = await _run_attach_cli(
-        ["attach"],
+    process = await SubprocessRunner().spawn_terminal(
+        [sys.executable, "-m", "shikiru", "attach"],
         cwd=outside_directory,
         env=env,
-        input_bytes=b"invalid\n0\n2\n",
     )
+    try:
+        await wait_until(lambda: b"Select a session number" in process.output, UI_WAIT_SECONDS)
+        process.write_input(b"invalid\n0\n3\n2\n")
 
-    assert returncode == 0
-    assert second_session in output
-    assert str(second_project) in output
-    assert shlex.split(json.loads(capture.read_text())[6]) == [
-        "attach-session",
-        "-t",
-        exact_target(expected_row.session),
-    ]
+        async def attached_to_expected_session() -> bool:
+            return await _client_session(tmux_server, process.pid) == expected_row.session
+
+        await wait_until(attached_to_expected_session, UI_WAIT_SECONDS)
+        assert await _client_session(tmux_server, process.pid) == expected_row.session
+        client_state = await _client_state(tmux_server, expected_row.session, process.pid)
+        assert await _session_client_panes(tmux_server, expected_row.session) == [client_state[1]]
+        assert await _no_session_clients(tmux_server, unavailable_session)
+        assert second_session in process.output.decode(errors="replace")
+        assert str(second_project) in process.output.decode(errors="replace")
+    finally:
+        await process.stop()
+        await wait_until(
+            lambda: _no_session_clients(tmux_server, expected_row.session),
+            UI_WAIT_SECONDS,
+        )
 
 
 @pytest.mark.asyncio
@@ -1243,6 +1588,8 @@ asyncio.run(attach())
     assert argv[:3] == ["-t", "--", "remote.example"]
     assert len(argv) == 4
     assert shlex.split(argv[3]) == [
+        "env",
+        "SHIKIRU_REMOTE_ORIGIN_HOST=remote.example",
         "TMUX=",
         "TMUX_PANE=",
         "shikiru",
@@ -1250,6 +1597,55 @@ asyncio.run(attach())
         "--",
         selected.session,
     ]
+
+
+@pytest.mark.asyncio
+async def test_remote_unavailable_named_attach_scopes_repairs_to_ssh_host(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+) -> None:
+    project = tmp_path / "O'Brien ; unavailable project"
+    _make_project(project, ())
+    (project / ".shikiru" / "state.db").unlink()
+    session = f"{SESSION_PREFIX}O'Brien ; unavailable project"
+    await _add_session(tmux_server, session, project)
+    marker = tmp_path / "shell-injection-marker"
+    host = "remote';touch${IFS}shell-injection-marker;#"
+    bin_dir = tmp_path / "bin"
+    _private_tmux_proxy(bin_dir)
+    _write_executable(
+        bin_dir,
+        "ssh",
+        """
+import os
+import sys
+
+os.execv("/bin/sh", ["/bin/sh", "-c", sys.argv[-1]])
+""",
+    )
+    _write_executable(
+        bin_dir,
+        "shikiru",
+        "import os, sys\n"
+        "os.execv(sys.executable, [sys.executable, '-m', 'shikiru', *sys.argv[1:]])\n",
+    )
+    env = _test_env(bin_dir, tmp_path / "unused-capture.json", tmux_server)
+    env.pop("TMUX", None)
+    env.pop("TMUX_PANE", None)
+
+    output, returncode = await _run_attach_cli(
+        ["attach", session, "--host", host],
+        cwd=tmp_path,
+        env=env,
+    )
+
+    assert returncode == EXIT_USAGE_ERROR
+    assert session in output
+    assert str(project) in output
+    assert "tmux kill-session" in output
+    assert "shikiru --project" in output
+    assert host in output
+    assert not marker.exists()
 
 
 @pytest.mark.asyncio

@@ -32,6 +32,7 @@ from shikiru.cli.render import (
     doctor_renderable,
     error_renderable,
     init_renderable,
+    session_diagnostics_renderable,
     session_rows_renderable,
     start_renderable,
     status_renderable,
@@ -44,6 +45,7 @@ from shikiru.domain.tasks import Mode
 from shikiru.errors import (
     EXIT_COMMAND_REJECTED,
     EXIT_GENERIC_ERROR,
+    EXIT_USAGE_ERROR,
     ShikiruError,
     UsageError,
 )
@@ -54,6 +56,7 @@ from shikiru.operator.lifecycle import (
     CLI_PALETTE_ORIGIN_PANE_OPTION,
     PACKAGE_NAME,
 )
+from shikiru.operator.sessions import REMOTE_ORIGIN_HOST_ENV_VAR
 from shikiru.paths import project_config_path
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.ui.console import human_console
@@ -74,6 +77,11 @@ if TYPE_CHECKING:
     from rich.console import RenderableType
 
     from shikiru.operator.services import OperatorServices
+    from shikiru.operator.sessions import (
+        SessionAttacher,
+        SessionLister,
+        SessionListing,
+    )
 
 PROJECT_OPTION = typer.Option(
     "--project",
@@ -282,14 +290,24 @@ def list_sessions(
     try:
         state = state_from(context)
         lister, _ = build_session_tools(state.overrides)
-        rows = _run(lister.list_sessions(host))
+        listing = _run(lister.list_sessions(host))
     except ShikiruError as error:
         _fail(error)
     if state.json_output or json_output:
-        typer.echo(json.dumps([row.model_dump(mode="json") for row in rows]))
+        typer.echo(json.dumps([row.model_dump(mode="json") for row in listing.rows]))
     else:
         console = human_console()
-        console.print(session_rows_renderable(rows, host=host, console=console))
+        console.print(
+            session_rows_renderable(
+                list(listing.rows),
+                host=host,
+                console=console,
+                unavailable=bool(listing.diagnostics or listing.remote_exit_code),
+            )
+        )
+    _print_session_diagnostics(listing, host)
+    if listing.diagnostics or listing.remote_exit_code:
+        raise typer.Exit(code=EXIT_GENERIC_ERROR)
 
 
 @app.command()
@@ -316,40 +334,7 @@ def attach(
     try:
         state = state_from(context)
         lister, attacher = build_session_tools(state.overrides)
-
-        async def attach_session() -> None:
-            if host is None and name is None:
-                root = _attach_project_root(state)
-                if root is None:
-                    rows = await lister.list_sessions()
-                else:
-                    rows = await lister.list_sessions(project_dir=root)
-                    if not rows:
-                        message = (
-                            f"no Shikiru session exists for project {root}; "
-                            "run `shikiru --project PATH start --attach` to create and attach it"
-                        )
-                        raise UsageError(message)
-                    if len(rows) > 1:
-                        message = (
-                            f"multiple Shikiru sessions belong to project {root}; "
-                            "choose one with `shikiru attach NAME`"
-                        )
-                        raise UsageError(message)
-            else:
-                rows = await lister.list_sessions(
-                    host,
-                    session_name=name if host is None else None,
-                )
-            await attacher.attach(
-                rows,
-                name=name,
-                host=host,
-                inside_tmux=bool(os.environ.get("TMUX")),
-                current_pane=os.environ.get("TMUX_PANE"),
-            )
-
-        _run(attach_session())
+        _run(_attach_from_cli(lister, attacher, state, name=name, host=host))
     except ShikiruError as error:
         _fail(error)
 
@@ -364,6 +349,86 @@ def _attach_project_root(state: CliState) -> Path | None:
         if root.parent == root:
             return None
         root = root.parent
+
+
+async def _attach_from_cli(
+    lister: SessionLister,
+    attacher: SessionAttacher,
+    state: CliState,
+    *,
+    name: str | None,
+    host: str | None,
+) -> None:
+    if host is not None and name is not None:
+        await attacher.attach(
+            (),
+            name=name,
+            host=host,
+            inside_tmux=bool(os.environ.get("TMUX")),
+            current_pane=os.environ.get("TMUX_PANE"),
+        )
+        return
+    listing, project_root = await _attach_listing(lister, state, name=name, host=host)
+    _print_session_diagnostics(listing, host)
+    if not listing.rows:
+        if listing.diagnostics:
+            raise typer.Exit(code=EXIT_USAGE_ERROR)
+        if listing.remote_exit_code:
+            raise typer.Exit(code=listing.remote_exit_code)
+        if project_root is not None:
+            message = (
+                f"no Shikiru session exists for project {project_root}; "
+                "run `shikiru --project PATH start --attach` to create and attach it"
+            )
+            raise UsageError(message)
+    if project_root is not None and len(listing.rows) > 1:
+        message = (
+            f"multiple Shikiru sessions belong to project {project_root}; "
+            "choose one with `shikiru attach NAME`"
+        )
+        raise UsageError(message)
+    await attacher.attach(
+        listing.rows,
+        name=name,
+        host=host,
+        inside_tmux=bool(os.environ.get("TMUX")),
+        current_pane=os.environ.get("TMUX_PANE"),
+    )
+
+
+async def _attach_listing(
+    lister: SessionLister,
+    state: CliState,
+    *,
+    name: str | None,
+    host: str | None,
+) -> tuple[SessionListing, Path | None]:
+    if host is not None or name is not None:
+        return await lister.list_sessions(host, session_name=name if host is None else None), None
+    root = _attach_project_root(state)
+    if root is None:
+        return await lister.list_sessions(), None
+    listing = await lister.list_sessions(project_dir=root)
+    return listing, root
+
+
+def _print_session_diagnostics(listing: SessionListing, host: str | None) -> None:
+    if listing.diagnostics:
+        human_console(stderr=True).print(
+            session_diagnostics_renderable(
+                listing.diagnostics,
+                remote_host=os.environ.get(REMOTE_ORIGIN_HOST_ENV_VAR),
+            )
+        )
+    if listing.remote_diagnostics:
+        typer.echo(
+            f"Session diagnostics from remote host {host!r}; "
+            "run any listed repair commands on that host:",
+            err=True,
+        )
+        typer.echo(listing.remote_diagnostics, err=True, nl=False)
+        if not listing.remote_diagnostics.endswith("\n"):
+            typer.echo(err=True)
 
 
 @app.command(epilog=REQUIRED_LEGEND)

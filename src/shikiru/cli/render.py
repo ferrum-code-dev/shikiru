@@ -93,7 +93,7 @@ if TYPE_CHECKING:
         TaskSummary,
         UsageView,
     )
-    from shikiru.operator.sessions import SessionRow
+    from shikiru.operator.sessions import SessionDiagnostic, SessionRow
 
 STATUS_ROW_STACKED_BELOW_WIDTH = 60
 SESSION_TABLE_MIN_WIDTH = 65
@@ -474,7 +474,11 @@ def _doctor_probe_check_name(name: str, parts: list[str]) -> str:
 
 
 def session_rows_renderable(
-    rows: list[SessionRow], *, host: str | None, console: Console
+    rows: list[SessionRow],
+    *,
+    host: str | None,
+    console: Console,
+    unavailable: bool = False,
 ) -> RenderableType:
     """Render each session's identity, project and current progress as an open row."""
     heading: list[RenderableType] = []
@@ -486,13 +490,46 @@ def session_rows_renderable(
             )
         )
     if not rows:
-        return Group(*heading, Text("No Shikiru sessions found.", style=SECONDARY_TEXT_COLOR))
+        message = (
+            "No usable Shikiru sessions found." if unavailable else "No Shikiru sessions found."
+        )
+        return Group(*heading, Text(message, style=SECONDARY_TEXT_COLOR))
     if console.width < SESSION_TABLE_MIN_WIDTH:
         return Group(
             *heading,
             *(_stacked_session(row, console=console, host=host) for row in rows),
         )
     return Group(*heading, _session_table(rows, console=console, host=host))
+
+
+def session_diagnostics_renderable(
+    diagnostics: tuple[SessionDiagnostic, ...],
+    *,
+    remote_host: str | None = None,
+) -> RenderableType:
+    """Render unavailable local sessions with literal causes and repair commands."""
+    rows: list[RenderableType] = []
+    for diagnostic in diagnostics:
+        identity = Text("Unavailable session ", style=SECONDARY_TEXT_COLOR)
+        identity.append(diagnostic.session, style=BOLD_PRIMARY)
+        path = Text("Project ", style=SECONDARY_TEXT_COLOR)
+        path.append(diagnostic.project_dir or "path not recorded", style=PRIMARY_TEXT_COLOR)
+        reason = Text("Reason ", style=SECONDARY_TEXT_COLOR)
+        reason.append(diagnostic.reason, style=PRIMARY_TEXT_COLOR)
+        rows.extend((identity, path, reason))
+        rows.extend(
+            Text.assemble(("Repair: ", SECONDARY_TEXT_COLOR), (command, BOLD_STEEL))
+            for command in diagnostic.repair_commands
+        )
+        rows.append(Text(diagnostic.note, style=SECONDARY_TEXT_COLOR))
+    if remote_host is not None:
+        rows.append(
+            Text(
+                f"Run the repair commands above on SSH host {remote_host}.",
+                style=SECONDARY_TEXT_COLOR,
+            )
+        )
+    return Group(*rows)
 
 
 def session_options_renderable(
