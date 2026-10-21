@@ -170,7 +170,7 @@ src/shikiru/
   operator/     queries.py timeline.py commands.py evidence_export.py evidence_writer.py services.py events.py strip_views.py sessions.py lifecycle.py detectors.py probe.py doctor.py plugin_checks.py
   cli/          app.py context.py report.py view.py render.py
   mcp/          server.py
-  dashboard/    app.py contract.py services.py views.py detail.py palette.py wizard.py activity.py motion.py session_picker.py
+  dashboard/    app.py contract.py services.py views.py detail.py palette.py wizard.py ladder_editor.py activity.py motion.py task_picker.py
   plugins/
     agents/claude/  agent.py turn.py headless.py options.py context.py hook.py
     agents/codex/   agent.py turn.py headless.py options.py home.py quota.py usage.py sandbox.py sandbox_probe.py

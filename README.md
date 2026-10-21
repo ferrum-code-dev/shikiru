@@ -125,7 +125,7 @@ Shikiru runs AI agents unattended with your user's privileges. Use it only on re
 - **Worktree isolation is not enforced.** Each task works in its own git worktree, and the prompts tell the agent to stay there, but nothing stops an agent from touching other paths, the main checkout or other tasks' worktrees.
 - Shikiru keeps `.shikiru/` (state, prompts, reports, logs, transcripts) owner-only, but it is not a sandbox. It does not limit what agents, configured notification commands or the commands in the project's own instructions can do.
 
-Logs and run files live under `.shikiru/`. The engine log rotates by size (`[logging]` in the config, 10 MiB and 3 backups by default). Run directories (`.shikiru/runs/`: prompts, reports, raw agent output and transcripts) and the events of tasks that finished more than 30 days ago are removed by the running engine (`[retention]` in the config); a task with an open escalation, a kept worktree or an open pull request is never touched. `shikiru status` shows how many run directories exist and their size.
+Logs and run files live under `.shikiru/`. The engine log rotates by size (`[logging]` in the config, 10 MiB and 3 backups by default). Run directories (`.shikiru/runs/`: prompts, reports, raw agent output and transcripts) and the events of tasks that finished more than 30 days ago are removed by the running engine (`[retention]` in the config); a task with an open escalation, a kept worktree or an open pull request is never touched. Human `shikiru status` shows their total size; `shikiru status --json` retains the existing count and size fields.
 
 ## Platform support
 
@@ -141,6 +141,7 @@ Logs and run files live under `.shikiru/`. The engine log rotates by size (`[log
 - Phase 9 release evidence: [`docs/release-readiness-2026-10-04-phase9.md`](docs/release-readiness-2026-10-04-phase9.md) — macOS gates, connected fake-agent walkthroughs, fresh E1–E6, visual review, limits and host hygiene.
 - Phase 10 release evidence: [`docs/release-readiness-2026-10-05-phase10.md`](docs/release-readiness-2026-10-05-phase10.md) — connected correction walkthroughs, final gates, macOS clean-install/navigation smoke, native-cell review, limits and host hygiene.
 - Workspace walkthrough evidence: [`docs/workspace-walkthroughs-2026-10-03.md`](docs/workspace-walkthroughs-2026-10-03.md) — executed flows, fixtures and observed limits.
+- CLI second-review readiness: [`docs/release-readiness-2026-10-21-cli-second-review.md`](docs/release-readiness-2026-10-21-cli-second-review.md) — source-attributed native review evidence, current limits and gate status for Tasks 264–268.
 - Implementation plan: [`tasks/plan.md`](tasks/plan.md), progress: [`tasks/todo.md`](tasks/todo.md)
 
 ## Requirements
