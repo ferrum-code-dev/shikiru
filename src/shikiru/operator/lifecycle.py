@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 
 from shikiru.config.loader import load_settings
 from shikiru.errors import ShikiruError
+from shikiru.operator.attachment import admit_attachment
 from shikiru.operator.commands import Ack, AckStatus
 from shikiru.paths import engine_output_path
 from shikiru.private import make_private_dir
@@ -47,7 +48,6 @@ PALETTE_COMMAND = (
     CLI_PALETTE_ORIGIN_PANE_OPTION,
     FORMAT_PANE_ID,
 )
-TMUX_ATTACH_ARGV = ("tmux", "attach-session", "-t")
 ENGINE_START_WAIT_SECONDS = 5.0
 ENGINE_START_POLL_SECONDS = 0.05
 ENGINE_OUTPUT_TAIL_BYTES = 2000
@@ -87,11 +87,15 @@ class ProjectLifecycle:
         overrides: Sequence[str],
         *,
         attach: bool,
+        inside_tmux: bool = False,
+        current_pane: str | None = None,
     ) -> StartResult:
         """Validate a project and start or reuse its engine and tmux session."""
         settings = load_settings(root, overrides)
+        name = session_name(settings.project.name)
+        target = exact_target(name)
+        same_client = await admit_attachment(self._tmux, name, current_pane) if attach else False
         await self._plugin_validator(settings)
-        target = exact_target(session_name(settings.project.name))
         await self._session.ensure(
             settings.project.name,
             root,
@@ -125,8 +129,8 @@ class ProjectLifecycle:
                 spawned=pid,
                 output=output,
             )
-        if attach:
-            self._runner.replace((*TMUX_ATTACH_ARGV, target))
+        if attach and not same_client:
+            self._runner.replace(self._tmux.guarded_client_argv(name, switch=inside_tmux))
         return StartResult(started=started, engine="up", session=target)
 
     async def stop(

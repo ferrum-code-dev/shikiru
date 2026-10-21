@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from shikiru.domain.tasks import Status
 from shikiru.errors import ConfigError, DatabaseError, UsageError
+from shikiru.operator.attachment import admit_attachment
 from shikiru.paths import state_db_path
 from shikiru.store.reader import StateReader
 from shikiru.tmux.client import exact_target
@@ -26,10 +27,10 @@ SSH_TTY_OPTION = "-t"
 SHIKIRU_COMMAND = "shikiru"
 LS_COMMAND = "ls"
 JSON_OPTION = "--json"
-TMUX_COMMAND = "tmux"
-TMUX_TARGET_OPTION = "-t"
 ATTACH_COMMAND = "attach"
-SWITCH_CLIENT_COMMAND = "switch-client"
+ATTACH_OPTION_TERMINATOR = "--"
+TMUX_ENV_ASSIGNMENT = "TMUX="
+TMUX_PANE_ENV_ASSIGNMENT = "TMUX_PANE="
 ENGINE_UP = "up"
 ENGINE_DOWN = "down"
 REMOTE_LIST_COMMAND = (SHIKIRU_COMMAND, LS_COMMAND, JSON_OPTION)
@@ -165,9 +166,10 @@ class SessionLister:
 class SessionAttacher:
     """Select a listed row and replace the CLI with its local or remote tmux client."""
 
-    def __init__(self, runner: SubprocessRunner, prompt: SessionPrompt) -> None:
+    def __init__(self, runner: SubprocessRunner, tmux: Tmux, prompt: SessionPrompt) -> None:
         """Use `runner` for process replacement and `prompt` for interactive selection."""
         self._runner = runner
+        self._tmux = tmux
         self._prompt = prompt
 
     async def attach(
@@ -177,11 +179,15 @@ class SessionAttacher:
         name: str | None,
         host: str | None,
         inside_tmux: bool,
+        current_pane: str | None = None,
     ) -> None:
         """Replace this process with tmux or ssh for one listed session."""
         row = self._select(rows, name, host)
         if host is None:
-            command = _local_attach_argv(row.session, inside_tmux)
+            same_client = await admit_attachment(self._tmux, row.session, current_pane)
+            if same_client:
+                return
+            command = self._tmux.guarded_client_argv(row.session, switch=inside_tmux)
         else:
             _validate_host(host)
             command = _remote_attach_argv(host, row.session)
@@ -215,12 +221,16 @@ def _validate_host(host: str) -> None:
         raise UsageError(message)
 
 
-def _local_attach_argv(session: str, inside_tmux: bool) -> tuple[str, ...]:
-    operation = SWITCH_CLIENT_COMMAND if inside_tmux else ATTACH_COMMAND
-    return TMUX_COMMAND, operation, TMUX_TARGET_OPTION, exact_target(session)
-
-
 def _remote_attach_argv(host: str, session: str) -> tuple[str, ...]:
     _validate_host(host)
-    command = shlex.join((TMUX_COMMAND, ATTACH_COMMAND, TMUX_TARGET_OPTION, exact_target(session)))
+    command = shlex.join(
+        (
+            TMUX_ENV_ASSIGNMENT,
+            TMUX_PANE_ENV_ASSIGNMENT,
+            SHIKIRU_COMMAND,
+            ATTACH_COMMAND,
+            ATTACH_OPTION_TERMINATOR,
+            session,
+        )
+    )
     return SSH_COMMAND, SSH_TTY_OPTION, SSH_OPTION_TERMINATOR, host, command

@@ -236,7 +236,15 @@ def start(
     try:
         state = state_from(context)
         root = project_root(state)
-        result = _run(build_lifecycle().start(root, state.overrides, attach=attach))
+        result = _run(
+            build_lifecycle().start(
+                root,
+                state.overrides,
+                attach=attach,
+                inside_tmux=bool(os.environ.get("TMUX")),
+                current_pane=os.environ.get("TMUX_PANE"),
+            )
+        )
     except ShikiruError as error:
         _fail(error)
     _emit_value(state, result, start_renderable(result))
@@ -338,6 +346,7 @@ def attach(
                 name=name,
                 host=host,
                 inside_tmux=bool(os.environ.get("TMUX")),
+                current_pane=os.environ.get("TMUX_PANE"),
             )
 
         _run(attach_session())

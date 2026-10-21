@@ -13,7 +13,9 @@ from typing import TYPE_CHECKING
 import pytest
 from typer.testing import CliRunner
 
+from shikiru.bootstrap import build_operator
 from shikiru.cli.app import app
+from shikiru.config.loader import load_settings
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Status, Step
 from shikiru.engine.daemon import EngineLock, engine_is_running
@@ -24,16 +26,18 @@ from shikiru.errors import (
     DatabaseError,
     UsageError,
 )
+from shikiru.operator.lifecycle import ProjectLifecycle, home_command
 from shikiru.operator.sessions import SessionAttacher, SessionLister, SessionRow
-from shikiru.paths import engine_lock_path
-from shikiru.process import SubprocessRunner
+from shikiru.paths import engine_lock_path, engine_output_path
+from shikiru.process import SpawnedTerminalProcess, SubprocessRunner
 from shikiru.store.database import Database
 from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
-from shikiru.tmux.client import Tmux
-from shikiru.tmux.session import PROJECT_DIR_ENV_VAR, SESSION_PREFIX
+from shikiru.tmux.client import Tmux, exact_target
+from shikiru.tmux.session import PROJECT_DIR_ENV_VAR, SESSION_PREFIX, SessionView, session_name
 from tests.support.clock import FakeClock
 from tests.support.store import seed_task
+from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
@@ -48,6 +52,17 @@ JSON_ROWS_ENV = "SHIKIRU_TEST_SESSION_ROWS"
 TMUX_SOCKET_ENV = "SHIKIRU_TEST_TMUX_SOCKET"
 REAL_TMUX_ENV = "SHIKIRU_TEST_REAL_TMUX"
 CAPTURE_ENV = "SHIKIRU_TEST_CAPTURE"
+PTY_SIZES = ((129, 41), (71, 23))
+PTY_GATE_COMMAND = (
+    'stty cols "$1" rows "$2" || exit; shift 2; printf "ready\\n"; '
+    'IFS= read -r _ || exit; exec "$@"'
+)
+CLIENT_STATE_FORMAT = (
+    "#{client_pid}\t#{client_session}\t#{pane_id}\t"
+    "#{window_id}\t#{client_width}\t#{client_height}\t#{client_tty}"
+)
+CLIENT_SESSION_FORMAT = "#{client_pid}\t#{client_session}"
+WINDOW_PANE_GEOMETRY_FORMAT = "#{window_width}\t#{window_height}\t#{pane_width}\t#{pane_height}"
 
 
 def _make_project(root: Path, statuses: tuple[Status, ...]) -> None:
@@ -75,7 +90,7 @@ async def _add_session(server: TmuxServer, name: str, project_dir: Path) -> None
         "new-session",
         "-d",
         "-s",
-        name,
+        name.replace("#{", "##{"),
         "-e",
         f"{PROJECT_DIR_ENV_VAR}={project_dir}",
     )
@@ -115,10 +130,25 @@ import sys
 from pathlib import Path
 
 arguments = sys.argv[1:]
-if arguments[0] in {"attach", "switch-client"}:
+if arguments[0] == "if-shell":
     Path(os.environ["SHIKIRU_TEST_CAPTURE"]).write_text(json.dumps(arguments))
     raise SystemExit(0)
 real_tmux = os.environ["SHIKIRU_TEST_REAL_TMUX"]
+os.execv(real_tmux, [real_tmux, "-L", os.environ["SHIKIRU_TEST_TMUX_SOCKET"], *arguments])
+""",
+    )
+
+
+def _private_tmux_proxy(directory: Path) -> None:
+    _write_executable(
+        directory,
+        "tmux",
+        """
+import os
+import sys
+
+real_tmux = os.environ["SHIKIRU_TEST_REAL_TMUX"]
+arguments = sys.argv[1:]
 os.execv(real_tmux, [real_tmux, "-L", os.environ["SHIKIRU_TEST_TMUX_SOCKET"], *arguments])
 """,
     )
@@ -139,6 +169,74 @@ def _test_env(directory: Path, capture: Path, server: TmuxServer) -> dict[str, s
         "COLUMNS": "180",
         "NO_COLOR": "1",
     }
+
+
+async def _client_state(server: TmuxServer, session: str, pid: int) -> tuple[str, ...]:
+    result = await server.run(
+        "list-clients", "-t", exact_target(session), "-F", CLIENT_STATE_FORMAT
+    )
+    for row in result.stdout.splitlines():
+        fields = tuple(row.split("\t"))
+        if fields[0] == str(pid):
+            return fields[1:]
+    message = f"tmux has no client for process {pid} in {session}"
+    raise AssertionError(message)
+
+
+async def _client_session(server: TmuxServer, pid: int) -> str | None:
+    result = await server.run("list-clients", "-F", CLIENT_SESSION_FORMAT, check=False)
+    for row in result.stdout.splitlines():
+        client_pid, session = row.split("\t")
+        if client_pid == str(pid):
+            return session
+    return None
+
+
+async def _window_pane_geometry(server: TmuxServer, session: str) -> tuple[int, ...]:
+    result = await server.run(
+        "display-message",
+        "-p",
+        "-t",
+        f"{exact_target(session)}:",
+        WINDOW_PANE_GEOMETRY_FORMAT,
+    )
+    return tuple(int(value) for value in result.stdout.split("\t"))
+
+
+async def _session_client_panes(server: TmuxServer, session: str) -> list[str]:
+    return await Tmux(
+        server.runner, socket=server.socket_name, env=server.env
+    ).session_client_panes(session)
+
+
+async def _no_session_clients(server: TmuxServer, session: str) -> bool:
+    return not await _session_client_panes(server, session)
+
+
+async def _session_has_clients(server: TmuxServer, session: str) -> bool:
+    return bool(await _session_client_panes(server, session))
+
+
+async def _spawn_gated_terminal(
+    runner: SubprocessRunner,
+    command: Sequence[str],
+    *,
+    size: tuple[int, int],
+    env: dict[str, str],
+) -> SpawnedTerminalProcess:
+    columns, rows = size
+    return await runner.spawn_terminal(
+        [
+            "/bin/sh",
+            "-c",
+            PTY_GATE_COMMAND,
+            "sh",
+            str(columns),
+            str(rows),
+            *command,
+        ],
+        env=env,
+    )
 
 
 async def _run_attach_cli(
@@ -486,7 +584,7 @@ print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("inside_tmux", "expected_operation"),
-    [(False, "attach"), (True, "switch-client")],
+    [(False, "attach-session"), (True, "switch-client")],
 )
 async def test_cli_attach_uses_a_listed_exact_target_and_tmux_context(
     tmp_path: Path,
@@ -507,14 +605,367 @@ async def test_cli_attach_uses_a_listed_exact_target_and_tmux_context(
     else:
         env.pop("TMUX", None)
     result = await SubprocessRunner().run(
-        [sys.executable, "-m", "shikiru", "attach", session.removeprefix(SESSION_PREFIX)],
+        [sys.executable, "-m", "shikiru", "attach", session],
         timeout=10,
         env=env,
         cwd=tmp_path,
     )
 
     assert result.returncode == 0
-    assert json.loads(capture.read_text()) == [expected_operation, "-t", f"={session}"]
+    guarded_command = json.loads(capture.read_text())
+    assert guarded_command[:4] == ["if-shell", "-F", "-t", f"={session}:"]
+    assert shlex.split(guarded_command[-1]) == [
+        expected_operation,
+        "-t",
+        exact_target(session),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_managed_attach_preserves_the_live_client_and_allows_reattach_after_detach(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    project = tmp_path / "literal project"
+    other_project = tmp_path / "other project"
+    _make_project(project, ())
+    _make_project(other_project, ())
+    session = f"{SESSION_PREFIX}literal ' ; $ #{{client_pid}}"
+    other_session = f"{SESSION_PREFIX}other project"
+    await _add_session(tmux_server, session, project)
+    await _add_session(tmux_server, other_session, other_project)
+    bin_dir = tmp_path / "bin"
+    _private_tmux_proxy(bin_dir)
+    env = _test_env(bin_dir, tmp_path / "unused-capture.json", tmux_server)
+    env.pop("TMUX", None)
+    env.pop("TMUX_PANE", None)
+    runner = SubprocessRunner()
+
+    async with attach_tmux_client(tmux_server, exact_target(session)) as first_client:
+        original_state = await _client_state(tmux_server, session, first_client.process.pid)
+        _, returncode = await _run_attach_cli(["attach", session], cwd=tmp_path, env=env)
+
+        assert returncode == EXIT_USAGE_ERROR
+        assert await _session_client_panes(tmux_server, session) == [original_state[1]]
+        assert await _client_state(tmux_server, session, first_client.process.pid) == original_state
+
+        other_client = await runner.spawn_terminal(
+            [sys.executable, "-m", "shikiru", "attach", other_session],
+            cwd=tmp_path,
+            env=env,
+        )
+        try:
+            await wait_until(
+                lambda: _session_has_clients(tmux_server, other_session),
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert await _session_client_panes(tmux_server, other_session)
+            assert (
+                await _client_state(tmux_server, session, first_client.process.pid)
+                == original_state
+            )
+        finally:
+            await other_client.stop()
+
+        await tmux_server.run("detach-client", "-t", original_state[-1])
+        await wait_until(lambda: _no_session_clients(tmux_server, session), timeout=UI_WAIT_SECONDS)
+        assert await _session_client_panes(tmux_server, session) == []
+
+        reattached = await runner.spawn_terminal(
+            [sys.executable, "-m", "shikiru", "attach", session],
+            cwd=tmp_path,
+            env=env,
+        )
+        try:
+            await wait_until(
+                lambda: _session_has_clients(tmux_server, session),
+                timeout=UI_WAIT_SECONDS,
+            )
+            attached_state = await _client_state(tmux_server, session, reattached.pid)
+            assert attached_state[0:5] == original_state[0:5]
+        finally:
+            await reattached.stop()
+            await wait_until(
+                lambda: _no_session_clients(tmux_server, session),
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert await _session_client_panes(tmux_server, session) == []
+
+
+@pytest.mark.asyncio
+async def test_attach_from_the_only_client_already_showing_target_is_a_noop(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    project = tmp_path / "same client project"
+    _make_project(project, ())
+    session = f"{SESSION_PREFIX}same client project"
+    await _add_session(tmux_server, session, project)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    env["TMUX"] = "private-session"
+
+    async with attach_tmux_client(tmux_server, exact_target(session)) as client:
+        state = await _client_state(tmux_server, session, client.process.pid)
+        env["TMUX_PANE"] = state[1]
+        result = await SubprocessRunner().run(
+            [sys.executable, "-m", "shikiru", "attach", session],
+            timeout=10,
+            cwd=tmp_path,
+            env=env,
+        )
+
+        assert result.returncode == 0
+        assert not capture.exists()
+        assert await _client_state(tmux_server, session, client.process.pid) == state
+
+
+@pytest.mark.asyncio
+async def test_start_attach_refuses_before_engine_or_session_mutation_when_busy(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    project = tmp_path / "lifecycle project"
+    _make_project(project, ())
+    (project / ".shikiru" / "config.toml").write_text(
+        """
+[project]
+name = "lifecycle"
+
+[agents.fake]
+
+[roles.leader]
+ladder = [{agent = "fake", model = "default"}]
+
+[roles.implementer]
+escalate_after = 2
+ladder = [{agent = "fake", model = "default"}]
+
+[roles.helper]
+ladder = [{agent = "fake", model = "default"}]
+"""
+    )
+    settings = load_settings(project)
+    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env)
+    session = session_name(settings.project.name)
+    target = exact_target(session)
+    session_view = SessionView(tmux)
+    await session_view.ensure(
+        settings.project.name,
+        project,
+        home_command=home_command(project),
+    )
+    clock = FakeClock(START)
+
+    async def validate_settings(_settings: object) -> None:
+        return None
+
+    lifecycle = ProjectLifecycle(
+        runner=SubprocessRunner(),
+        tmux=tmux,
+        session=session_view,
+        clock=clock,
+        operator_factory=lambda root, project_settings: build_operator(
+            root, project_settings, clock=clock
+        ),
+        plugin_validator=validate_settings,
+        engine_up=lambda _root: False,
+    )
+
+    original_windows = await tmux.list_session_windows(target)
+    original_project_dir = await tmux.show_session_environment(target, PROJECT_DIR_ENV_VAR)
+    output_path = engine_output_path(project)
+    assert not output_path.exists()
+
+    async with attach_tmux_client(tmux_server, target) as client:
+        original_state = await _client_state(tmux_server, session, client.process.pid)
+        with pytest.raises(UsageError):
+            await lifecycle.start(project, (), attach=True)
+
+        assert await _client_state(tmux_server, session, client.process.pid) == original_state
+        assert await tmux.list_session_windows(target) == original_windows
+        assert await tmux.show_session_environment(target, PROJECT_DIR_ENV_VAR) == (
+            original_project_dir
+        )
+        assert not output_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_managed_attach_requests_admit_at_most_one_client(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    project = tmp_path / "concurrent project"
+    _make_project(project, ())
+    session = f"{SESSION_PREFIX}race ' ; $ #{{client_pid}}"
+    await _add_session(tmux_server, session, project)
+    runner = SubprocessRunner()
+    tmux = Tmux(runner, socket=tmux_server.socket_name, env=tmux_server.env)
+    command = tmux.guarded_client_argv(session, switch=False)
+    env = {**tmux_server.env, "TERM": "xterm-256color"}
+    processes = await asyncio.gather(
+        *(
+            _spawn_gated_terminal(
+                runner,
+                command,
+                size=size,
+                env=env,
+            )
+            for size in PTY_SIZES
+        )
+    )
+
+    try:
+        await wait_until(
+            lambda: all(b"ready" in process.output for process in processes),
+            timeout=UI_WAIT_SECONDS,
+        )
+        for process in processes:
+            process.write_input(b"go\n")
+
+        async def one_attached_and_one_refused() -> bool:
+            return (
+                len(await _session_client_panes(tmux_server, session)) == 1
+                and sum(process.returncode is None for process in processes) == 1
+            )
+
+        await wait_until(one_attached_and_one_refused, timeout=UI_WAIT_SECONDS)
+        assert len(await _session_client_panes(tmux_server, session)) == 1
+        winner_index = next(
+            index for index, process in enumerate(processes) if process.returncode is None
+        )
+        loser = next(process for process in processes if process.returncode is not None)
+        winner = processes[winner_index]
+        assert loser.returncode != 0
+        assert session in loser.output.decode(errors="replace")
+
+        winner_state = await _client_state(tmux_server, session, winner.pid)
+        assert tuple(map(int, winner_state[3:5])) == PTY_SIZES[winner_index]
+        geometry = await _window_pane_geometry(tmux_server, session)
+        columns, rows = PTY_SIZES[winner_index]
+        assert geometry == (columns, rows - 1, columns, rows - 1)
+        assert await _client_state(tmux_server, session, winner.pid) == winner_state
+        assert await _window_pane_geometry(tmux_server, session) == geometry
+    finally:
+        await asyncio.gather(*(process.stop() for process in processes))
+
+
+@pytest.mark.asyncio
+async def test_guarded_switch_moves_the_current_tmux_client_to_target_session(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    source_session = f"{SESSION_PREFIX}switch source"
+    target_session = f"{SESSION_PREFIX}switch target"
+    await _add_session(tmux_server, source_session, tmp_path)
+    await _add_session(tmux_server, target_session, tmp_path)
+    tmux = Tmux(SubprocessRunner(), socket=tmux_server.socket_name, env=tmux_server.env)
+
+    async with attach_tmux_client(tmux_server, exact_target(source_session)) as client:
+        source_state = await _client_state(tmux_server, source_session, client.process.pid)
+        guarded_command = shlex.join(tmux.guarded_client_argv(target_session, switch=True))
+        await tmux_server.run("send-keys", "-t", source_state[1], guarded_command, "Enter")
+
+        async def switched() -> bool:
+            return await _client_session(tmux_server, client.process.pid) == target_session
+
+        await wait_until(switched, timeout=UI_WAIT_SECONDS)
+        assert await _client_session(tmux_server, client.process.pid) == target_session
+
+
+@pytest.mark.asyncio
+async def test_remote_attach_runs_the_remote_live_admission_policy(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    project = tmp_path / "remote project"
+    _make_project(project, ())
+    session = f"{SESSION_PREFIX}remote project"
+    await _add_session(tmux_server, session, project)
+    bin_dir = tmp_path / "bin"
+    _private_tmux_proxy(bin_dir)
+    _write_executable(
+        bin_dir,
+        "ssh",
+        """
+import json
+import os
+import shlex
+import sys
+
+arguments = sys.argv[1:]
+if "ls" in arguments:
+    print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
+    raise SystemExit(0)
+remote_command = shlex.split(arguments[-1])
+if remote_command[:3] != ["TMUX=", "TMUX_PANE=", "shikiru"]:
+    raise SystemExit(1)
+os.environ["TMUX"] = ""
+os.environ["TMUX_PANE"] = ""
+os.execve(
+    sys.executable,
+    [sys.executable, "-m", "shikiru", *remote_command[3:]],
+    os.environ,
+)
+""",
+    )
+    env = _test_env(bin_dir, tmp_path / "unused-capture.json", tmux_server)
+    env.pop("TMUX", None)
+    env.pop("TMUX_PANE", None)
+    env[JSON_ROWS_ENV] = json.dumps(
+        [
+            {
+                "session": session,
+                "project_dir": str(project),
+                "engine_state": "down",
+                "running": 0,
+                "queued": 0,
+                "escalated": 0,
+            }
+        ]
+    )
+    runner = SubprocessRunner()
+
+    async with attach_tmux_client(tmux_server, exact_target(session)) as first_client:
+        original_state = await _client_state(tmux_server, session, first_client.process.pid)
+        _, returncode = await _run_attach_cli(
+            ["attach", session, "--host", "remote.example"], cwd=tmp_path, env=env
+        )
+
+        assert returncode == EXIT_USAGE_ERROR
+        assert await _client_state(tmux_server, session, first_client.process.pid) == original_state
+
+        await tmux_server.run("detach-client", "-t", original_state[-1])
+        await wait_until(lambda: _no_session_clients(tmux_server, session), timeout=UI_WAIT_SECONDS)
+        assert await _session_client_panes(tmux_server, session) == []
+
+        remote_client = await runner.spawn_terminal(
+            [
+                sys.executable,
+                "-m",
+                "shikiru",
+                "attach",
+                session,
+                "--host",
+                "remote.example",
+            ],
+            cwd=tmp_path,
+            env=env,
+        )
+        try:
+
+            async def attached_or_finished() -> bool:
+                return bool(await _session_client_panes(tmux_server, session)) or (
+                    remote_client.returncode is not None
+                )
+
+            await wait_until(attached_or_finished, timeout=UI_WAIT_SECONDS)
+            assert remote_client.returncode is None, remote_client.output.decode(errors="replace")
+            remote_state = await _client_state(tmux_server, session, remote_client.pid)
+            assert remote_state[0] == session
+        finally:
+            await remote_client.stop()
+            await wait_until(
+                lambda: _no_session_clients(tmux_server, session),
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert await _session_client_panes(tmux_server, session) == []
 
 
 @pytest.mark.asyncio
@@ -548,7 +999,11 @@ async def test_unnamed_attach_uses_nearest_or_explicit_project_before_reading_ot
         _, returncode = await _run_attach_cli(arguments, cwd=cwd, env=env)
 
         assert returncode == 0
-        assert json.loads(capture.read_text()) == ["attach", "-t", f"={session}"]
+        assert shlex.split(json.loads(capture.read_text())[6]) == [
+            "attach-session",
+            "-t",
+            exact_target(session),
+        ]
 
 
 @pytest.mark.asyncio
@@ -622,7 +1077,11 @@ async def test_explicit_attach_name_remains_authoritative_with_project_option(
     )
 
     assert returncode == 0
-    assert json.loads(capture.read_text()) == ["attach", "-t", f"={named_session}"]
+    assert shlex.split(json.loads(capture.read_text())[6]) == [
+        "attach-session",
+        "-t",
+        exact_target(named_session),
+    ]
 
 
 @pytest.mark.asyncio
@@ -661,10 +1120,10 @@ async def test_ambiguous_attach_retries_invalid_numbers_and_uses_the_selected_ex
     assert returncode == 0
     assert second_session in output
     assert str(second_project) in output
-    assert json.loads(capture.read_text()) == [
-        "attach",
+    assert shlex.split(json.loads(capture.read_text())[6]) == [
+        "attach-session",
         "-t",
-        f"={expected_row.session}",
+        exact_target(expected_row.session),
     ]
 
 
@@ -731,6 +1190,7 @@ import json
 import os
 from shikiru.operator.sessions import SessionAttacher, SessionRow
 from shikiru.process import SubprocessRunner
+from shikiru.tmux.client import Tmux
 
 rows = [
     SessionRow.model_validate(row)
@@ -741,7 +1201,8 @@ def pick(options, host):
     assert host == "remote.example"
     return options[1]
 
-attacher = SessionAttacher(SubprocessRunner(), pick)
+runner = SubprocessRunner()
+attacher = SessionAttacher(runner, Tmux(runner), pick)
 
 async def attach():
     await attacher.attach(
@@ -781,7 +1242,14 @@ asyncio.run(attach())
     argv = json.loads(capture.read_text())
     assert argv[:3] == ["-t", "--", "remote.example"]
     assert len(argv) == 4
-    assert shlex.split(argv[3]) == ["tmux", "attach", "-t", f"={selected.session}"]
+    assert shlex.split(argv[3]) == [
+        "TMUX=",
+        "TMUX_PANE=",
+        "shikiru",
+        "attach",
+        "--",
+        selected.session,
+    ]
 
 
 @pytest.mark.asyncio
@@ -799,7 +1267,8 @@ async def test_attach_rejects_an_option_like_name_without_using_it_as_a_target()
         assert host is None
         return rows[0]
 
-    attacher = SessionAttacher(SubprocessRunner(), prompt)
+    runner = SubprocessRunner()
+    attacher = SessionAttacher(runner, Tmux(runner), prompt)
     with pytest.raises(UsageError):
         await attacher.attach(
             [row],

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -40,6 +41,16 @@ _DETACHED_FLAG = "-d"
 _BEFORE_FLAG = "-b"
 _RESIZE_HEIGHT_FLAG = "-y"
 _LAYOUT_OPTION = "-t"
+_IF_SHELL_COMMAND = "if-shell"
+_ATTACHED_CLIENTS_FORMAT = "#{>:#{session_attached},0}"
+_ATTACH_REFUSAL_MESSAGE = (
+    "A terminal is already attached to Shikiru session {session!r}. Detach it first, then retry."
+)
+_ATTACH_REFUSAL_COMMAND = "; "
+_ATTACH_COMMAND = "attach-session"
+_SWITCH_CLIENT_COMMAND = "switch-client"
+_RUN_SHELL_COMMAND = "run-shell"
+_FAILED_SHELL_COMMAND = "exit 1"
 
 FORMAT_PANE_ID = "#{pane_id}"
 FORMAT_PANE_PID = "#{pane_pid}"
@@ -254,6 +265,47 @@ class Tmux:
         if result.stderr.strip() == _NO_CLIENTS:
             return []
         raise CommandFailed(result.argv, result.returncode, result.stderr)
+
+    async def session_client_panes(self, name: str) -> list[str]:
+        """Return the panes shown by live clients in session `name`."""
+        if name not in await self.list_sessions():
+            return []
+        return await self.list_clients(exact_target(name), FORMAT_CLIENT_PANE_ID)
+
+    def guarded_client_argv(self, name: str, *, switch: bool) -> tuple[str, ...]:
+        """Build a client transition guarded by tmux's live attached-client count."""
+        target = exact_target(name)
+        session_target = f"{target}{_SESSION_SEPARATOR}"
+        refusal = _ATTACH_REFUSAL_COMMAND.join(
+            (
+                shlex.join(
+                    (
+                        "display-message",
+                        "-p",
+                        "-l",
+                        _ATTACH_REFUSAL_MESSAGE.format(session=name),
+                    )
+                ),
+                shlex.join((_RUN_SHELL_COMMAND, _FAILED_SHELL_COMMAND)),
+            )
+        )
+        operation = _SWITCH_CLIENT_COMMAND if switch else _ATTACH_COMMAND
+        transition = shlex.join((operation, "-t", target))
+        argv = [_TMUX_BIN]
+        if self._socket is not None:
+            argv += [_SOCKET_FLAG, self._socket]
+        if self._config_file is not None:
+            argv += [_CONFIG_FLAG, str(self._config_file)]
+        argv += [
+            _IF_SHELL_COMMAND,
+            "-F",
+            "-t",
+            session_target,
+            _ATTACHED_CLIENTS_FORMAT,
+            refusal,
+            transition,
+        ]
+        return tuple(argv)
 
     async def detach_client(self, target: str) -> None:
         """Detach only the explicitly named tmux client `target`."""
