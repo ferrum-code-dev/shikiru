@@ -189,7 +189,13 @@ def _minimum_child_height(child: Widget) -> int:
         return 0
     height = child.styles.height
     fixed_height = height.cells if height is not None else None
-    return max(child.outer_size.height, fixed_height or 0) + child.styles.margin.height
+    minimum_height = child.styles.min_height
+    minimum_height_cells = minimum_height.cells if minimum_height is not None else None
+    flexible_height = height is not None and height.unit is Unit.FRACTION
+    outer_height = 0 if flexible_height else child.outer_size.height
+    return (
+        max(outer_height, fixed_height or 0, minimum_height_cells or 0) + child.styles.margin.height
+    )
 
 
 POPUP_BUTTON_CSS = """
