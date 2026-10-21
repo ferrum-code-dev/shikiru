@@ -1,0 +1,1227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Shikiru initializer composition proposals</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --background: #11151b;
+      --surface: #171d25;
+      --detail: #1c2530;
+      --selected: #233340;
+      --border: #3d4654;
+      --ink: #dce2e9;
+      --muted: #9aa5b5;
+      --steel: #83bddd;
+      --sage: #90cba6;
+      --amber: #dfb16c;
+      --rose: #e3a0a0;
+      --mono: "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--background); color: var(--ink); font: 14px/1.45 system-ui, sans-serif; }
+    body { margin: 0; min-width: 320px; }
+    button, input, select { font: inherit; }
+    button, select, input { color: var(--ink); }
+    button { cursor: pointer; }
+    button:disabled, select:disabled, input:disabled { cursor: default; opacity: .55; }
+    .page { max-width: 1560px; margin: 0 auto; padding: 20px; }
+    .assessment-heading { margin: 0 0 4px; color: var(--steel); font-size: 21px; }
+    .assessment-lede { margin: 0 0 18px; max-width: 88ch; color: var(--muted); }
+    .workspace { display: grid; grid-template-columns: minmax(220px, 260px) minmax(0, 1fr); gap: 20px; align-items: start; }
+    .assessment-controls, .assessment-card, .preview-meta {
+      border: 1px solid var(--border); background: var(--surface); padding: 12px;
+    }
+    .assessment-controls { position: sticky; top: 12px; max-height: calc(100vh - 24px); overflow: auto; }
+    .assessment-controls h2, .assessment-card h2 { margin: 0 0 8px; color: var(--ink); font-size: 14px; }
+    .control-group { margin: 12px 0; }
+    .control-label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
+    .assessment-controls select, .assessment-controls button {
+      width: 100%; min-height: 32px; border: 1px solid var(--border); border-radius: 0;
+      background: var(--detail); padding: 4px 7px; text-align: left;
+    }
+    .assessment-controls select:focus, .assessment-controls button:focus-visible {
+      outline: 1px solid var(--steel); outline-offset: 0; background: var(--selected);
+    }
+    .segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+    .segmented button, .step-shortcuts button { width: auto; text-align: center; }
+    .segmented button[aria-pressed="true"], .step-shortcuts button[aria-pressed="true"] {
+      background: var(--selected); color: var(--steel); border-color: var(--steel);
+    }
+    .step-shortcuts { display: grid; grid-template-columns: 1fr; gap: 4px; }
+    .check-row { display: flex; align-items: center; gap: 8px; color: var(--ink); }
+    .check-row input { accent-color: var(--steel); }
+    .plain-button { margin-top: 8px; color: var(--rose) !important; }
+    .editor-rationale { margin: 12px 0; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+    .editor-rationale strong { color: var(--ink); }
+    .assessment-note { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+    .art-gallery { margin-top: 12px; }
+    .art-gallery pre {
+      min-height: 124px; max-height: 18em; margin: 8px 0; overflow: auto; padding: 12px;
+      border: 1px solid var(--border); background: var(--background); color: var(--steel);
+      font: 12px/1.35 var(--mono); white-space: pre; tab-size: 2;
+    }
+    .art-gallery p { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+    .viewer { min-width: 0; }
+    .terminal-scroll { overflow: auto; padding: 1px 1px 12px; }
+    .terminal {
+      --cols: 100;
+      --rows: 40;
+      width: calc(var(--cols) * 1ch + 18px);
+      height: calc(var(--rows) * 1.32em + 18px);
+      min-width: calc(var(--cols) * 1ch + 18px);
+      display: flex; flex-direction: column; padding: 8px;
+      overflow: hidden; border: 1px solid var(--border); background: var(--background);
+      color: var(--ink); font: 12px/1.32 var(--mono);
+    }
+    .terminal.size-100 { --cols: 100; --rows: 40; }
+    .terminal.size-80 { --cols: 80; --rows: 24; }
+    .terminal.size-60 { --cols: 60; --rows: 24; }
+    .terminal.size-40 { --cols: 40; --rows: 16; }
+    .terminal.monochrome { filter: grayscale(1); }
+    .term-header {
+      min-height: 1.5em; display: flex; justify-content: space-between; gap: 1ch;
+      border-bottom: 1px solid var(--border); padding: 0 1ch 5px; color: var(--muted);
+      white-space: nowrap;
+    }
+    .term-brand { color: var(--steel); font-weight: 700; }
+    .term-header-right { overflow: hidden; text-overflow: ellipsis; }
+    .terminal-stage { position: relative; flex: 1; min-height: 0; display: grid; place-items: center; overflow: hidden; }
+    .art-backdrop {
+      position: absolute; z-index: 0; left: 55%; top: 50%; transform: translate(-50%, -50%);
+      max-width: none; margin: 0; color: var(--muted); opacity: .19; pointer-events: none;
+      font: 11px/1.05 var(--mono); white-space: pre;
+    }
+    .popup-frame {
+      position: relative; z-index: 1; width: min(82ch, 100%); max-height: 100%; min-height: 0;
+      height: 30em; flex: 0 0 auto; display: flex; flex-direction: column; padding: 1em 2ch;
+      border: 1px solid var(--steel); background: var(--surface); color: var(--ink);
+    }
+    .terminal.size-60 .popup-frame, .terminal.size-40 .popup-frame { height: min(24em, 100%); padding: .5em 1ch; }
+    .popup-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 1ch; min-height: 1.35em; }
+    .popup-title { color: var(--ink); font-weight: 700; }
+    .popup-step { color: var(--steel); text-align: right; }
+    .popup-rule { height: 1px; flex: 0 0 1px; margin: .45em 0 .65em; background: var(--border); }
+    .popup-body { flex: 1 1 auto; min-height: 0; overflow: auto; scrollbar-color: var(--border) var(--surface); padding-right: 1ch; }
+    .step-content { min-height: 8em; }
+    .step-content h3 { margin: 0 0 .5em; color: var(--steel); font-size: 1em; }
+    .step-copy { margin: 0 0 .8em; color: var(--muted); }
+    .fact-list { display: grid; grid-template-columns: 13ch 1fr; row-gap: .35em; margin: .6em 0; }
+    .fact-label { color: var(--muted); }
+    .fact-value { color: var(--ink); overflow-wrap: anywhere; }
+    .good { color: var(--sage); }
+    .warning { color: var(--amber); }
+    .error-text { min-height: 1.2em; margin-top: .35em; color: var(--rose); }
+    .form-grid { display: grid; gap: .45em; }
+    .form-row { display: grid; grid-template-columns: 13ch minmax(0, 1fr); gap: 1ch; align-items: center; }
+    .form-row > label, .form-row > .field-label { color: var(--muted); }
+    .term-input, .term-select {
+      width: 100%; min-width: 0; min-height: 1.8em; border: 0; border-radius: 0;
+      padding: 0 1ch; color: var(--ink);
+    }
+    .term-input { background: var(--surface); }
+    .term-select { display: flex; align-items: center; justify-content: space-between; gap: 1ch; background: var(--detail); text-align: left; cursor: pointer; }
+    .term-input:focus, .term-select:focus-visible { outline: 0; background: var(--selected); }
+    .term-select:disabled { color: var(--muted); background: var(--surface); cursor: default; }
+    .combo-wrap { position: relative; min-width: 0; }
+    .combo-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .combo-chevron { flex: 0 0 auto; color: var(--muted); }
+    .combo-menu {
+      position: absolute; z-index: 10; top: calc(100% + 1px); left: 0; width: 100%; max-height: 12em;
+      overflow: auto; border: 1px solid var(--border); background: var(--surface); padding: 2px;
+    }
+    .combo-menu.opens-above { top: auto; bottom: calc(100% + 1px); }
+    .combo-option {
+      display: block; width: 100%; min-height: 1.5em; border: 0; border-radius: 0;
+      padding: .15em 1ch; background: transparent; color: var(--ink); text-align: left;
+    }
+    .combo-option[aria-current="true"], .combo-option:hover { background: var(--selected); color: var(--ink); font-weight: 700; }
+    .catalog-note, .micro-note { color: var(--muted); font-size: .9em; }
+    .key-hint { color: var(--muted); }
+    .key { color: var(--steel); font-weight: 700; }
+    .editor-shell { border-top: 1px solid var(--border); margin-top: .55em; padding-top: .55em; }
+    .editor-toolbar { display: flex; gap: 1ch; flex-wrap: wrap; margin-bottom: .45em; }
+    .editor-toolbar .form-row { flex: 1 1 20ch; grid-template-columns: 9ch minmax(0, 1fr); }
+    .scope-state { min-height: 1.2em; margin: .25em 0 .5em; color: var(--muted); }
+    .scope-state strong { color: var(--steel); font-weight: 600; }
+    .editor-split { display: grid; grid-template-columns: minmax(20ch, 1fr) minmax(27ch, 1.3fr); gap: 1.5ch; }
+    .editor-column { min-width: 0; }
+    .column-title { margin: 0 0 .3em; color: var(--muted); font-size: .95em; }
+    .rung-list, .outline-list, .inline-rungs { display: grid; gap: 2px; min-width: 0; }
+    .rung-row, .outline-row, .rung-chip {
+      width: 100%; min-width: 0; display: flex; align-items: baseline; gap: 1ch;
+      border: 0; border-radius: 0; padding: .18em .5ch; background: transparent;
+      color: var(--ink); text-align: left; overflow-wrap: anywhere;
+    }
+    .rung-row[aria-selected="true"], .rung-row[aria-pressed="true"], .outline-row[aria-current="true"], .rung-chip[aria-pressed="true"] {
+      background: var(--selected); color: var(--ink); font-weight: 700;
+    }
+    .rung-index { min-width: 3ch; color: var(--steel); }
+    .rung-detail { min-width: 0; overflow-wrap: anywhere; }
+    .rung-fields { display: grid; gap: .35em; padding: .35em 0 .1em; }
+    .rung-fields .form-row { grid-template-columns: 9ch minmax(0, 1fr); }
+    .editor-actions { display: flex; flex-wrap: wrap; gap: .35em 1.2ch; margin: .45em 0; }
+    .term-action, .nav-action, .scope-button, .role-toggle, .rung-step {
+      min-height: 1.5em; border: 0; border-radius: 0; padding: 0 .45ch;
+      background: transparent; color: var(--ink); text-align: left;
+    }
+    .term-action:hover, .nav-action:hover, .scope-button:hover, .role-toggle:hover, .rung-step:hover,
+    .term-action:focus-visible, .nav-action:focus-visible, .scope-button:focus-visible,
+    .role-toggle:focus-visible, .rung-step:focus-visible { outline: 0; background: var(--selected); }
+    .term-action:disabled, .nav-action:disabled { color: var(--muted); }
+    .term-action.primary, .nav-action.primary { color: var(--steel); }
+    .split-editor-form { padding-top: .2em; }
+    .outline-layout { display: grid; grid-template-columns: minmax(15ch, .8fr) minmax(32ch, 1.8fr); gap: 1.5ch; }
+    .outline-group { margin-bottom: .55em; }
+    .outline-heading { margin: 0 0 .2em; color: var(--muted); }
+    .outline-row { padding-left: 1.5ch; }
+    .editor-detail-panel { min-width: 0; }
+    .editor-detail-panel .editor-split { grid-template-columns: 1fr; }
+    .sequence-rail { display: flex; gap: 3px; overflow-x: auto; padding: .3em 0; }
+    .rung-chip { width: auto; flex: 0 0 auto; border: 0; }
+    .inline-rung { display: grid; grid-template-columns: minmax(12ch, .8fr) minmax(17ch, 1.5fr); gap: .5ch 1ch; padding: .35em 0; border-bottom: 1px solid var(--border); }
+    .inline-rung:last-child { border-bottom: 0; }
+    .inline-rung.selected { background: var(--selected); }
+    .inline-rung .rung-row { grid-row: 1 / span 3; align-self: start; }
+    .inline-rung .form-row { grid-template-columns: 7ch minmax(0, 1fr); gap: .5ch; }
+    .accordion { border-top: 1px solid var(--border); }
+    .role-section { border-bottom: 1px solid var(--border); padding: .35em 0; }
+    .role-toggle { width: 100%; display: flex; justify-content: space-between; gap: 1ch; padding: .35em .5ch; }
+    .role-toggle[aria-expanded="true"] { background: var(--selected); color: var(--ink); font-weight: 700; }
+    .role-summary { color: var(--muted); text-align: right; }
+    .role-section-body { padding: .4em .5ch .2em; }
+    .scope-tabs { display: flex; gap: .25em; flex-wrap: wrap; margin: .35em 0; }
+    .scope-button[aria-pressed="true"] { background: var(--selected); color: var(--ink); font-weight: 700; }
+    .focused-rung { margin: .4em 0; padding: .45em 1ch; border: 1px solid var(--border); background: var(--detail); }
+    .focused-rung-title { margin: 0 0 .3em; color: var(--steel); }
+    .rung-nav { display: flex; justify-content: space-between; gap: 1ch; margin: .2em 0; }
+    .doctor-list { display: grid; grid-template-columns: 3ch minmax(12ch, .7fr) minmax(20ch, 1.3fr); gap: .25em 1ch; margin-top: .55em; }
+    .doctor-list > div { overflow-wrap: anywhere; }
+    .popup-navigation { display: flex; justify-content: flex-end; gap: 1.5ch; flex-wrap: wrap; border-top: 1px solid var(--border); padding-top: .4em; }
+    .nav-action { min-width: 6ch; text-align: center; }
+    .terminal-footer {
+      min-height: 1.7em; display: flex; align-items: center; flex-wrap: wrap; gap: 0 2ch;
+      border-top: 1px solid var(--border); padding: 4px 1ch 0; color: var(--muted);
+    }
+    .terminal-footer .key { white-space: nowrap; }
+    .assessment-callout { margin: 12px 0 0; border-left: 2px solid var(--amber); padding: 5px 10px; color: var(--muted); font-size: 12px; }
+    .assessment-callout strong { color: var(--amber); }
+    .preview-meta { margin-top: 8px; color: var(--muted); font: 12px/1.45 var(--mono); }
+    .preview-meta strong { color: var(--ink); }
+    .mono-mode .term-header, .mono-mode .terminal-footer { border-color: #777; }
+    .mono-mode .term-brand, .mono-mode .popup-step, .mono-mode .key, .mono-mode .rung-index { color: var(--ink); }
+    .mono-mode .good, .mono-mode .warning, .mono-mode .error-text { color: var(--ink); font-weight: 700; }
+    @media (max-width: 1000px) {
+      .workspace { grid-template-columns: 220px minmax(0, 1fr); gap: 12px; }
+      .page { padding: 12px; }
+    }
+    @media (max-width: 760px) {
+      .workspace { grid-template-columns: 1fr; }
+      .assessment-controls { position: static; max-height: none; }
+    }
+    .terminal.size-60 .editor-split, .terminal.size-40 .editor-split,
+    .terminal.size-60 .outline-layout, .terminal.size-40 .outline-layout {
+      grid-template-columns: 1fr;
+    }
+    .terminal.size-60 .editor-split .editor-column + .editor-column,
+    .terminal.size-40 .editor-split .editor-column + .editor-column {
+      border-top: 1px solid var(--border); padding-top: .5em;
+    }
+    .terminal.size-40 .inline-rung { grid-template-columns: 1fr; }
+    .terminal.size-40 .inline-rung .rung-row { grid-row: auto; }
+    .terminal.size-60 .doctor-list { grid-template-columns: 3ch 1fr; }
+    .terminal.size-40 .doctor-list { grid-template-columns: 3ch 1fr; }
+    .terminal.size-60 .doctor-list > div:nth-child(3n),
+    .terminal.size-40 .doctor-list > div:nth-child(3n) { grid-column: 2; }
+    .terminal.size-60 .popup-heading, .terminal.size-40 .popup-heading { align-items: flex-start; }
+    .terminal.size-60 .popup-step, .terminal.size-40 .popup-step { text-align: left; }
+    .terminal.size-80 .art-backdrop, .terminal.size-60 .art-backdrop, .terminal.size-40 .art-backdrop { display: none; }
+    .terminal.size-40 .form-row { grid-template-columns: 9ch minmax(0, 1fr); }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1 class="assessment-heading">Initializer composition proposals</h1>
+    <p class="assessment-lede">Compare five terminal-cell renderings of しきる with five ladder-editor compositions. The shared shell, palette, frame, selection surface, controls, and key hints stay fixed so the two design choices can be combined independently.</p>
+    <div class="workspace">
+      <aside class="assessment-controls" aria-label="Assessment controls">
+        <h2>Assessment controls</h2>
+        <p class="assessment-note">These controls belong to this browser mock. They are not part of the terminal UI.</p>
+        <div class="control-group">
+          <label class="control-label" for="art-choice">Artwork</label>
+          <select id="art-choice">
+            <option value="ascii">1 · ASCII tonal raster</option>
+            <option value="braille">2 · Braille detail · recommended</option>
+            <option value="block">3 · Mincho shaded blocks</option>
+            <option value="line">4 · Fine Mincho stipple</option>
+            <option value="dot">5 · Light Sans stipple</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label class="control-label" for="editor-choice">Ladder composition</label>
+          <select id="editor-choice">
+            <option value="split">1 · List and inspector</option>
+            <option value="inline">2 · Inline rung rows</option>
+            <option value="outline">3 · Scope outline and editor</option>
+            <option value="accordion">4 · Expandable role sections</option>
+            <option value="stepper">5 · One-rung editor and sequence</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <span class="control-label">Logical terminal size</span>
+          <div class="segmented" id="size-choice" role="group" aria-label="Logical terminal size">
+            <button type="button" data-size="100" aria-pressed="true">100 × 40</button>
+            <button type="button" data-size="80" aria-pressed="false">80 × 24</button>
+            <button type="button" data-size="60" aria-pressed="false">60 × 24</button>
+            <button type="button" data-size="40" aria-pressed="false">40 × 16</button>
+          </div>
+        </div>
+        <div class="control-group">
+          <label class="check-row"><input id="mono-choice" type="checkbox"> Monochrome assessment</label>
+        </div>
+        <div class="control-group">
+          <span class="control-label">Step shortcuts · assessment only</span>
+          <div class="step-shortcuts" id="step-shortcuts" aria-label="Assessment step shortcuts"></div>
+        </div>
+        <button class="plain-button" id="reset-button" type="button">Reset mock state</button>
+        <div class="editor-rationale" id="editor-rationale" aria-live="polite">
+          <strong>List and inspector · recommended.</strong> Keeps fallback order visible beside one focused form; it follows Home’s list-and-inspector pattern.
+        </div>
+      </aside>
+
+      <main class="viewer">
+        <div class="terminal-scroll">
+          <section class="terminal" id="terminal" aria-label="Simulated terminal preview">
+            <header class="term-header">
+              <div><span class="term-brand">SHIKIRU</span> &nbsp; ferrum / main &nbsp; <span>· initialize</span></div>
+              <div class="term-header-right">project setup · fresh install</div>
+            </header>
+            <div class="terminal-stage" id="terminal-stage">
+              <pre class="art-backdrop" id="art-backdrop" aria-hidden="true"></pre>
+              <section class="popup-frame" id="wizard-frame" aria-label="Project setup wizard">
+                <div class="popup-heading">
+                  <div class="popup-title" id="popup-title">Agents and ladders</div>
+                  <div class="popup-step" id="popup-step"></div>
+                </div>
+                <div class="popup-rule"></div>
+                <div class="popup-body" id="popup-body" tabindex="0">
+                  <div class="step-content" id="step-content"></div>
+                  <div class="error-text" id="step-error" role="alert" aria-live="polite"></div>
+                </div>
+                <nav class="popup-navigation" aria-label="Wizard navigation">
+                  <button class="nav-action" id="back-button" type="button">Back</button>
+                  <button class="nav-action primary" id="next-button" type="button">Next</button>
+                  <button class="nav-action primary" id="finish-button" type="button" hidden>Run doctor</button>
+                  <button class="nav-action" id="cancel-button" type="button">Cancel</button>
+                </nav>
+              </section>
+            </div>
+            <footer class="terminal-footer" aria-label="Initializer key hints">
+              <span><span class="key">Tab / Enter</span> select · <span class="key">PgUp / PgDn</span> scroll · <span class="key">Esc</span> cancel</span>
+            </footer>
+          </section>
+        </div>
+        <div class="preview-meta" id="preview-meta"></div>
+        <p class="assessment-callout"><strong>Simulation only.</strong> The example catalog is a labelled fixture. Config writes, Doctor checks, keyboard hints, and project facts are simulated; this page makes no provider, filesystem, subprocess, or network calls.</p>
+        <p class="assessment-callout" id="keyboard-note"><strong>Keyboard:</strong> Tab reaches fields and buttons; Enter/Space activates buttons. In-terminal comboboxes open with ArrowDown or Enter/Space; while open, Up/Down and Home/End move, Enter/Space choose, and Escape closes. Menus choose above or below their trigger within the popup body using browser geometry; this is a CSS-pixel approximation, not terminal-cell positioning. Tab closes and advances. Assessment selects outside the terminal keep native browser behavior. Rung lists handle Up/Down only while a rung button has focus. There are no page-wide shortcuts.</p>
+        <section class="art-gallery assessment-card" aria-live="polite">
+          <h2 id="art-title">Braille detail · recommended</h2>
+          <pre id="art-sample" aria-label="Unobscured artwork sample"></pre>
+          <p id="art-description"></p>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    "use strict";
+    const ART = {
+      "ascii": {
+        title: "ASCII tonal raster",
+        description: "Rounded Hiragino Sans W4 sampled into ASCII luminance characters. It keeps the mark compact without the noisy +/# bitmap treatment.",
+        text: "            oO:                   oO::ooOO       OOOOOOOOOO\n            oO:              OOOOOOOOo::.             :OOo\n            oO.              :::::ooOOOOOOO        :OOO:..\n            OO.        .:    ooooo::::Oo        :oOOOOOooOOOo\n            OO         OO     .oOOOOOOOOO:     OOo:...     :Oo\n            oO:      .OO.    .OO.      :o:       .OOoOOO.  :Oo\n            .OOoo::oOOO.     .OOo::.:::oo.       .OO:.:OOoOOo\n              :ooooo:          :ooOOOooo:          :ooooo:."
+      },
+      "braille": {
+        title: "Braille detail · recommended",
+        description: "Hiragino Sans W6 sampled into eight-dot Braille cells. It keeps the full kana shape readable at a short terminal height, with no bundled font or image.",
+        text: "⠀⠀⠀⠀⢸⣿⠀⠀⠀⠀⠀⠀⢘⣟⣛⣻⣿⣿⣭⡄⠀⠀⠉⣉⣽⠿⠋⠀⠀⠀⠀⠀\n⠀⠀⠀⠀⢸⣿⠀⠀⠀⣴⡦⠀⠘⢛⣿⣿⣽⣿⣍⠀⠀⣤⣾⢿⣟⠛⠿⣷⡀⠀⠀⠀\n⠀⠀⠀⠀⠸⣿⣤⣤⣴⡿⠁⠀⠰⣿⣏⣉⣉⣭⡅⠀⠀⠈⢱⣿⣛⣷⣴⡿⠃⠀⠀⠀\n⠀⠀⠀⠀⠀⠈⠉⠉⠉⠀⠀⠀⠀⠈⠉⠛⠋⠉⠁⠀⠀⠀⠀⠉⠉⠉⠉⠀⠀⠀⠀⠀\n⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀"
+      },
+      "block": {
+        title: "Mincho shaded blocks",
+        description: "Hiragino Mincho ProN W6 sampled into shaded block cells. Its heavier serif strokes create a bolder silhouette than the ASCII and Braille treatments.",
+        text: "             ▓█▓                 ░▓█░ ▒▓▓        ░▒░▒▒▒██▓\n             ▒██              ░▒▒▒▓██▓░░░░        ░▒░ ▓█▓░\n             ▒█░                    ▒█▒▓▓▒          ▒█▒\n             ▓█                ░▒▒▒▒▒░█▒          ░█▓▒▒▒▒▒▒\n             ▓█                 ░░░▒▒▒▓█▒       ░██▓░     ▓█░\n             ▓█       ░▓      ░█      ▒▓▒       ▓▓░ ▒▒░   ▓█▒\n             ░█▓▒▒▒▓██▒       ░█▓▒▒▒▒▒▒            █  ▒█▒▓█▓\n               ░▒▒▒░            ░▒▒▒▒▒▒             ▒▒▒▒▒░"
+      },
+      "line": {
+        title: "Fine Mincho stipple",
+        description: "Hiragino Mincho ProN W3 sampled as fine dot strokes. The thin serif source gives a quieter, more open treatment.",
+        text: "            ····                ····  ···        ·········\n              ··              ············        ········\n              ··               ···  ······          ····\n             ··                ·········           ········\n             ··                 ·········        ·····    ··\n             ··       ··      ···    ····       ··· ···   ···\n              ·········       ·········            ·········\n               ······           ·······             ······"
+      },
+      "dot": {
+        title: "Light Sans stipple",
+        description: "Hiragino Sans W1 sampled with light dot marks. It leaves more negative space and trades contrast for a lighter presence.",
+        text: "            ..                    ... ....       ..........\n            ..               ............             ....\n            ..                   ..........         ....\n            ..         .     ...........         ............\n            ..        ..       ..........      .....       ..\n            ..       ...      ...      ..       . ......   ..\n             ..........       ...........         ...........\n              ......           .........           ......."
+      }
+    };
+    const STEPS = ["Repository", "Agents and ladders", "Trackers", "Caches and CoW", "Parallelism", "Integration mode", "Finish"];
+    const CATALOG = {
+      codex: {
+        label: "Codex",
+        models: {
+          "gpt-6-luna": ["low", "medium", "high", "xhigh"],
+          "gpt-6-codex": ["low", "medium", "high", "xhigh"]
+        }
+      },
+      claude: {
+        label: "Claude Code",
+        models: {
+          "claude-sonnet-4-5": ["low", "medium", "high"],
+          "claude-opus-4-1": ["low", "medium", "high"]
+        }
+      }
+    };
+    const freshState = function () {
+      return {
+        step: 1, size: "100", monochrome: false, art: "braille", editor: "split",
+        project: "/work/ferrum",
+        trackers: "tasks/plan.md, tasks/todo.md", caches: "node_modules, .pytest_cache",
+        parallelism: "2", integration: "merge", role: "implementer", scope: "low",
+        scopes: { leader: "base", implementer: "low", helper: "base" },
+        expandedRole: "implementer", selected: { leader: { base: 0 }, implementer: { base: 0, low: 0, normal: 0, high: 0 }, helper: { base: 0 } },
+        drafts: {
+          leader: { base: [
+            { agent: "codex", model: "gpt-6-luna", effort: "xhigh" },
+            { agent: "claude", model: "claude-opus-4-1", effort: "high" }
+          ] },
+          implementer: { base: [
+            { agent: "codex", model: "gpt-6-codex", effort: "high" },
+            { agent: "codex", model: "gpt-6-luna", effort: "medium" },
+            { agent: "claude", model: "claude-sonnet-4-5", effort: "high" }
+          ], low: [
+            { agent: "codex", model: "gpt-6-luna", effort: "low" },
+            { agent: "claude", model: "claude-sonnet-4-5", effort: "low" }
+          ], normal: [
+            { agent: "codex", model: "gpt-6-luna", effort: "low" },
+            { agent: "claude", model: "claude-sonnet-4-5", effort: "medium" }
+          ], high: null },
+          helper: { base: [
+            { agent: "claude", model: "claude-sonnet-4-5", effort: "medium" }
+          ] }
+        },
+        simulationComplete: false, cancelled: false
+      };
+    };
+    let state = freshState();
+    const byId = function (id) { return document.getElementById(id); };
+    const stepContent = byId("step-content");
+    const terminal = byId("terminal");
+    const make = function (tag, className, text) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (text !== undefined) element.textContent = text;
+      return element;
+    };
+    const makeButton = function (label, className, onClick, attrs) {
+      const button = make("button", className, label);
+      button.type = "button";
+      if (attrs) Object.keys(attrs).forEach(function (key) { button.setAttribute(key, attrs[key]); });
+      button.addEventListener("click", onClick);
+      return button;
+    };
+    const makeSelect = function (labelText, options, value, onChange, disabled, id) {
+      const row = make("div", "form-row");
+      const label = make("div", "field-label", labelText);
+      const wrap = make("div", "combo-wrap");
+      const trigger = make("button", "term-select combo-trigger");
+      trigger.type = "button";
+      trigger.id = id || "combo-" + Math.random().toString(36).slice(2);
+      trigger.setAttribute("role", "combobox");
+      trigger.setAttribute("aria-haspopup", "listbox");
+      trigger.setAttribute("aria-expanded", "false");
+      trigger.setAttribute("aria-label", labelText + ": " + (options.find(function (option) { return option.value === value; }) || options[0]).label);
+      trigger.disabled = Boolean(disabled);
+      label.id = trigger.id + "-label";
+      trigger.setAttribute("aria-labelledby", label.id);
+      const current = make("span", "combo-value");
+      const selected = options.find(function (option) { return option.value === value; }) || options[0];
+      current.textContent = selected.label;
+      const chevron = make("span", "combo-chevron", "▾");
+      chevron.setAttribute("aria-hidden", "true");
+      trigger.append(current, chevron);
+      const menu = make("div", "combo-menu");
+      menu.id = trigger.id + "-listbox";
+      menu.setAttribute("role", "listbox");
+      menu.hidden = true;
+      trigger.setAttribute("aria-controls", menu.id);
+      let activeIndex = Math.max(0, options.findIndex(function (option) { return option.value === value; }));
+      const paintOptions = function () {
+        menu.replaceChildren();
+        options.forEach(function (option, index) {
+          const item = makeButton(option.label, "combo-option", function () { choose(index); }, {
+            role: "option", "aria-selected": String(option.value === value), "aria-current": String(index === activeIndex), tabindex: "-1"
+          });
+          item.addEventListener("mousedown", function (event) { event.preventDefault(); });
+          menu.append(item);
+        });
+        const active = menu.children[activeIndex];
+        if (active) {
+          trigger.setAttribute("aria-activedescendant", active.id || (active.id = menu.id + "-option-" + activeIndex));
+          if (!menu.hidden && typeof active.scrollIntoView === "function") active.scrollIntoView({ block: "nearest", inline: "nearest" });
+        }
+      };
+      const positionMenu = function () {
+        if (typeof trigger.getBoundingClientRect !== "function") return;
+        const body = byId("popup-body");
+        if (typeof body.getBoundingClientRect !== "function") return;
+        if (typeof trigger.scrollIntoView === "function") trigger.scrollIntoView({ block: "nearest", inline: "nearest" });
+        const triggerBox = trigger.getBoundingClientRect();
+        const bodyBox = body.getBoundingClientRect();
+        const wantedHeight = Math.min(12 * 16, options.length * 24);
+        const above = Math.max(0, triggerBox.top - bodyBox.top - 2);
+        const below = Math.max(0, bodyBox.bottom - triggerBox.bottom - 2);
+        const openAbove = below < wantedHeight && above > below;
+        const available = openAbove ? above : below;
+        menu.classList.toggle("opens-above", openAbove);
+        if (menu.style) menu.style.maxHeight = Math.max(20, Math.min(wantedHeight, available)) + "px";
+      };
+      trigger.positionMenu = positionMenu;
+      const close = function (restoreFocus) {
+        menu.hidden = true;
+        trigger.setAttribute("aria-expanded", "false");
+        if (restoreFocus) trigger.focus();
+      };
+      const open = function (index) {
+        document.querySelectorAll(".combo-trigger[aria-expanded='true']").forEach(function (other) {
+          if (other !== trigger) {
+            other.setAttribute("aria-expanded", "false");
+            const otherMenu = document.getElementById(other.getAttribute("aria-controls"));
+            if (otherMenu) otherMenu.hidden = true;
+          }
+        });
+        activeIndex = Math.max(0, Math.min(options.length - 1, index));
+        paintOptions();
+        menu.hidden = false;
+        trigger.setAttribute("aria-expanded", "true");
+        positionMenu();
+        const active = menu.children[activeIndex];
+        if (active && typeof active.scrollIntoView === "function") active.scrollIntoView({ block: "nearest", inline: "nearest" });
+      };
+      const choose = function (index) {
+        const option = options[index];
+        if (!option || disabled) return;
+        value = option.value;
+        current.textContent = option.label;
+        trigger.setAttribute("aria-label", labelText + ": " + option.label);
+        paintOptions();
+        close(true);
+        onChange(value, trigger);
+      };
+      trigger.addEventListener("click", function () {
+        if (menu.hidden) open(activeIndex);
+        else close(false);
+      });
+      trigger.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          if (menu.hidden) return;
+          event.preventDefault();
+          event.stopPropagation();
+          close(true);
+          return;
+        }
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const direction = event.key === "ArrowDown" ? 1 : -1;
+          if (menu.hidden) open(direction > 0 ? Math.max(0, activeIndex) : Math.min(options.length - 1, activeIndex));
+          else {
+            activeIndex = Math.max(0, Math.min(options.length - 1, activeIndex + direction));
+            paintOptions();
+          }
+          return;
+        }
+        if (event.key === "Home" || event.key === "End") {
+          if (menu.hidden) return;
+          event.preventDefault();
+          activeIndex = event.key === "Home" ? 0 : options.length - 1;
+          paintOptions();
+          return;
+        }
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          if (menu.hidden) { open(activeIndex); return; }
+          choose(activeIndex);
+          return;
+        }
+        if (event.key === "Tab" && !menu.hidden) close(false);
+        if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          const wanted = event.key.toLocaleLowerCase();
+          const match = options.findIndex(function (option) { return option.label.toLocaleLowerCase().startsWith(wanted); });
+          if (match >= 0) {
+            event.preventDefault();
+            open(match);
+          }
+        }
+      });
+      paintOptions();
+      wrap.append(trigger, menu);
+      row.append(label, wrap);
+      return row;
+    };
+    const makeInput = function (labelText, value, onInput, type, id) {
+      const row = make("div", "form-row");
+      const label = make("label", "", labelText);
+      const input = make("input", "term-input");
+      input.type = type || "text";
+      input.value = value;
+      if (id) { input.id = id; label.htmlFor = id; }
+      row.append(label, input);
+      input.addEventListener("input", function () { onInput(input.value); });
+      return row;
+    };
+    const repositionOpenMenus = function () {
+      document.querySelectorAll(".combo-trigger[aria-expanded='true']").forEach(function (trigger) {
+        if (typeof trigger.positionMenu === "function") trigger.positionMenu();
+      });
+    };
+    const getBase = function (role) { return state.drafts[role].base; };
+    const isInherited = function (role, scope) { return role === "implementer" && scope !== "base" && state.drafts[role][scope] === null; };
+    const getRungs = function (role, scope) {
+      if (isInherited(role, scope)) return getBase(role);
+      return state.drafts[role][scope];
+    };
+    const isEditable = function (role, scope) { return !isInherited(role, scope); };
+    const getSelected = function (role, scope, count) {
+      const selected = state.selected[role][scope] || 0;
+      return Math.max(0, Math.min(selected, count - 1));
+    };
+    const setSelected = function (role, scope, index) { state.selected[role][scope] = index; };
+    const rungLabel = function (rung) {
+      if (!rung || !rung.agent || !rung.model) return "Choose agent and model";
+      const effort = rung.effort ? " · " + rung.effort : " · native default";
+      return rung.agent + " · " + rung.model + effort;
+    };
+    const cloneRungs = function (rungs) { return rungs.map(function (rung) { return { agent: rung.agent, model: rung.model, effort: rung.effort }; }); };
+    const scopeLabel = function (scope) { return scope === "base" ? "Base ladder" : scope[0].toUpperCase() + scope.slice(1); };
+    const setRole = function (role) {
+      state.role = role;
+      state.scope = state.scopes[role] || "base";
+    };
+    const setScope = function (role, scope) {
+      state.role = role;
+      state.scope = role === "implementer" ? scope : "base";
+      state.scopes[role] = state.scope;
+    };
+    const writeValidation = function (message) { byId("step-error").textContent = message || ""; };
+    const validateRung = function (rung) {
+      if (!rung.agent || !CATALOG[rung.agent]) return "Choose a listed agent for every rung.";
+      if (!rung.model || !CATALOG[rung.agent].models[rung.model]) return "Choose a model listed for the selected agent.";
+      if (rung.effort && CATALOG[rung.agent].models[rung.model].indexOf(rung.effort) < 0) return "Choose an effort supported by the selected model.";
+      return "";
+    };
+    const validateLadders = function () {
+      for (const role of ["leader", "implementer", "helper"]) {
+        const scopes = role === "implementer" ? ["base", "low", "normal", "high"] : ["base"];
+        for (const scope of scopes) {
+          if (isInherited(role, scope)) continue;
+          const rungs = state.drafts[role][scope];
+          if (!rungs || rungs.length === 0) return "Every configured ladder needs at least one complete rung.";
+          if (role === "helper" && rungs.length !== 1) return "Helper has exactly one rung.";
+          for (const rung of rungs) {
+            const error = validateRung(rung);
+            if (error) return error;
+          }
+        }
+      }
+      return "";
+    };
+    const stepError = function () {
+      if (state.step === 1) return validateLadders();
+      if (state.step === 4 && (!/^\d+$/.test(state.parallelism) || Number(state.parallelism) < 1)) return "Parallelism must be a positive whole number.";
+      if (state.step === 5 && !["merge", "pr"].includes(state.integration)) return "Choose an integration mode.";
+      return "";
+    };
+    const validateConfiguration = function () {
+      const ladderError = validateLadders();
+      if (ladderError) return ladderError;
+      if (!/^\d+$/.test(state.parallelism) || Number(state.parallelism) < 1) return "Parallelism must be a positive whole number.";
+      if (!["merge", "pr"].includes(state.integration)) return "Choose an integration mode.";
+      return "";
+    };
+    const updateNavigation = function () {
+      const error = state.step === STEPS.length - 1 && !state.simulationComplete ? validateConfiguration() : stepError();
+      byId("popup-title").textContent = state.cancelled ? "Setup cancelled" : STEPS[state.step];
+      byId("popup-step").textContent = (state.step + 1) + " / " + STEPS.length;
+      byId("back-button").disabled = state.step === 0 || state.simulationComplete;
+      byId("next-button").hidden = state.step === STEPS.length - 1 || state.simulationComplete;
+      byId("next-button").disabled = Boolean(error) || state.cancelled;
+      byId("finish-button").hidden = state.step !== STEPS.length - 1 && !state.simulationComplete;
+      byId("finish-button").textContent = state.simulationComplete ? "Doctor complete" : "Run doctor";
+      byId("finish-button").disabled = state.cancelled || state.simulationComplete;
+      byId("cancel-button").disabled = state.simulationComplete || state.cancelled;
+      writeValidation(error);
+    };
+    const updateAssessment = function () {
+      const item = ART[state.art];
+      byId("art-title").textContent = item.title;
+      byId("art-sample").textContent = item.text;
+      byId("art-description").textContent = item.description;
+      byId("art-choice").value = state.art;
+      byId("editor-choice").value = state.editor;
+      ["100", "80", "60", "40"].forEach(function (size) { terminal.classList.toggle("size-" + size, size === state.size); });
+      terminal.classList.toggle("monochrome", state.monochrome);
+      document.body.classList.toggle("mono-mode", state.monochrome);
+      byId("mono-choice").checked = state.monochrome;
+      byId("art-backdrop").textContent = item.text;
+      byId("art-backdrop").hidden = Number(state.size) <= 80;
+      byId("preview-meta").textContent = "CSS approximation · " + state.size + " × " + ({ "100": "40", "80": "24", "60": "24", "40": "16" }[state.size]) + " logical cells · fixed 12 px monospace · 1ch and line-height approximate cell metrics; padding and border included · " + item.title + " · " + editorTitle(state.editor);
+      const rationale = byId("editor-rationale");
+      const rationaleTitle = make("strong", "", editorTitle(state.editor) + (state.editor === "split" ? " · recommended." : "."));
+      rationale.replaceChildren(rationaleTitle, document.createTextNode(" " + editorRationale(state.editor)));
+      document.querySelectorAll("#size-choice [data-size]").forEach(function (button) {
+        button.setAttribute("aria-pressed", String(button.dataset.size === state.size));
+      });
+      document.querySelectorAll("#step-shortcuts button").forEach(function (button) {
+        button.setAttribute("aria-pressed", String(Number(button.dataset.step) === state.step));
+        button.disabled = state.simulationComplete;
+      });
+    };
+    const editorTitle = function (editor) {
+      return {
+        split: "List and inspector", inline: "Inline rung rows", outline: "Scope outline and editor",
+        accordion: "Expandable role sections", stepper: "One-rung editor and sequence"
+      }[editor];
+    };
+    const editorRationale = function (editor) {
+      return {
+        split: "Keeps fallback order beside one focused form; closest to Home’s list-and-inspector pattern.",
+        inline: "Shows every rung’s fields at once; edits are direct, with longer vertical scroll.",
+        outline: "Puts roles and complexity scopes in one tree; preserves the same selected-rung form.",
+        accordion: "Opens one role at a time; saves width and gives each role a clear boundary.",
+        stepper: "Gives one rung the full form; keeps the ordered sequence visible above it."
+      }[editor];
+    };
+    const makeFact = function (labelText, valueText, valueClass) {
+      const label = make("div", "fact-label", labelText);
+      const value = make("div", "fact-value " + (valueClass || ""), valueText);
+      return [label, value];
+    };
+    const renderSimpleStep = function () {
+      const content = make("p", "step-copy");
+      const facts = make("div", "fact-list");
+      if (state.step === 0) {
+        content.textContent = "Repository discovery is read-only. Shikiru uses the current repository root and Git base branch.";
+        makeFact("Repository root", state.project, "good").forEach(function (node) { facts.append(node); });
+        makeFact("Git base", "main · detected", "good").forEach(function (node) { facts.append(node); });
+        makeFact("Config target", "/work/ferrum/.shikiru/config.toml", "").forEach(function (node) { facts.append(node); });
+        stepContent.append(content);
+        stepContent.append(facts);
+      } else if (state.step === 2) {
+        content.textContent = "Comma-separated project-relative Markdown file paths used as task trackers.";
+        stepContent.append(content, makeInput("Tracker files", state.trackers, function (value) { state.trackers = value; updateNavigation(); }, "text", "trackers"));
+        makeFact("Detected", "tasks/plan.md · tasks/todo.md", "good").forEach(function (node) { facts.append(node); });
+        makeFact("Empty list", "valid · no extra tracker paths", "good").forEach(function (node) { facts.append(node); });
+        stepContent.append(facts);
+      } else if (state.step === 3) {
+        content.textContent = "Cache paths are registered for task worktrees. Copy-on-write is shown as detected repository evidence.";
+        stepContent.append(content, makeInput("Cache paths", state.caches, function (value) { state.caches = value; updateNavigation(); }, "text", "cache-paths"));
+        makeFact("Detected CoW", "available · repository probe", "good").forEach(function (node) { facts.append(node); });
+        makeFact("Fallback", "ordinary copy if unsupported", "").forEach(function (node) { facts.append(node); });
+        stepContent.append(facts);
+      } else if (state.step === 4) {
+        content.textContent = "Maximum number of tasks the engine may run at once.";
+        stepContent.append(content, makeInput("Max parallel", state.parallelism, function (value) { state.parallelism = value; updateNavigation(); }, "number", "max-parallel"));
+        makeFact("Current value", state.parallelism || "empty", "").forEach(function (node) { facts.append(node); });
+        makeFact("Accepted", "positive whole number", "").forEach(function (node) { facts.append(node); });
+        stepContent.append(facts);
+      } else if (state.step === 5) {
+        content.textContent = "Choose how completed work is integrated back into the repository.";
+        stepContent.append(content, makeSelect("Integration", [
+          { label: "Local merge", value: "merge" }, { label: "Pull request", value: "pr" }
+        ], state.integration, function (value) { state.integration = value; updateNavigation(); }, false, "integration-mode"));
+        makeFact("Local merge", "merge a finished task branch locally", "").forEach(function (node) { facts.append(node); });
+        makeFact("Pull request", "open a pull request for review", "").forEach(function (node) { facts.append(node); });
+        stepContent.append(facts);
+      }
+    };
+    const scopeOptions = function (role) {
+      return role === "implementer"
+        ? [{ label: "Base ladder", value: "base" }, { label: "Low override", value: "low" }, { label: "Normal override", value: "normal" }, { label: "High override", value: "high" }]
+        : [{ label: "Base ladder", value: "base" }];
+    };
+    const makeRoleSelect = function (focusId) {
+      return makeSelect("Role", [
+        { label: "Leader", value: "leader" }, { label: "Implementer", value: "implementer" }, { label: "Helper", value: "helper" }
+      ], state.role, function (value) {
+        setRole(value);
+        renderEditor("role-select");
+      }, false, focusId || "role-select");
+    };
+    const makeScopeSelect = function (focusId) {
+      return makeSelect("Scope", scopeOptions(state.role), state.scope, function (value) {
+        setScope(state.role, value);
+        renderEditor("scope-select");
+      }, state.role !== "implementer", focusId || "scope-select");
+    };
+    const scopeStateText = function () {
+      const roleLabel = state.role[0].toUpperCase() + state.role.slice(1);
+      if (isInherited(state.role, state.scope)) return roleLabel + " · " + scopeLabel(state.scope) + " · inherited from Base (read-only)";
+      if (state.scope !== "base") return roleLabel + " · " + scopeLabel(state.scope) + " · explicit override";
+      return roleLabel + " · Base ladder" + (state.role === "helper" ? " · exactly one rung" : "");
+    };
+    const makeScopeState = function () {
+      const line = make("div", "scope-state");
+      line.id = "scope-state";
+      line.tabIndex = -1;
+      line.textContent = scopeStateText();
+      return line;
+    };
+    const makeRungList = function (role, scope, focusSuffix) {
+      const rungs = getRungs(role, scope);
+      const selected = getSelected(role, scope, rungs.length);
+      const list = make("div", "rung-list");
+      list.setAttribute("role", "listbox");
+      list.setAttribute("aria-label", role + " " + scopeLabel(scope) + " ordered rungs");
+      rungs.forEach(function (rung, index) {
+        const row = makeButton("", "rung-row", function () { setSelected(role, scope, index); renderEditor("rung-" + (focusSuffix || "list") + "-" + index); }, { role: "option", "aria-selected": String(index === selected), "data-rung-index": String(index) });
+        row.id = "rung-" + (focusSuffix || "list") + "-" + index;
+        const number = make("span", "rung-index", String(index + 1).padStart(2, "0"));
+        const detail = make("span", "rung-detail", rungLabel(rung));
+        row.append(number, detail);
+        list.append(row);
+      });
+      list.addEventListener("keydown", function (event) {
+        if (event.target.tagName !== "BUTTON" || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+        const current = Number(event.target.dataset.rungIndex);
+        const next = Math.max(0, Math.min(rungs.length - 1, current + (event.key === "ArrowDown" ? 1 : -1)));
+        if (next !== current) {
+          event.preventDefault();
+          setSelected(role, scope, next);
+          renderEditor("rung-" + (focusSuffix || "list") + "-" + next);
+        }
+      });
+      return list;
+    };
+    const makeFieldForRung = function (role, scope, index, kind, prefix) {
+      const rung = getRungs(role, scope)[index];
+      const inherited = isInherited(role, scope);
+      const focusId = prefix + "-" + kind;
+      const selectRung = function () { setSelected(role, scope, index); };
+      if (kind === "agent") {
+        return makeSelect("Agent", [
+          { label: "Choose listed agent", value: "" },
+          { label: "Codex", value: "codex" }, { label: "Claude Code", value: "claude" }
+        ], rung.agent, function (value) {
+          selectRung();
+          rung.agent = value;
+          rung.model = "";
+          rung.effort = "";
+          renderEditor(focusId);
+        }, inherited, focusId);
+      }
+      if (kind === "model") {
+        const models = rung.agent && CATALOG[rung.agent] ? Object.keys(CATALOG[rung.agent].models) : [];
+        const options = [{ label: rung.agent ? "Choose listed model" : "Choose agent first", value: "" }].concat(models.map(function (model) { return { label: model, value: model }; }));
+        return makeSelect("Model", options, rung.model, function (value) {
+          selectRung();
+          rung.model = value;
+          rung.effort = "";
+          renderEditor(focusId);
+        }, inherited || !rung.agent, focusId);
+      }
+      const efforts = rung.agent && rung.model && CATALOG[rung.agent] ? CATALOG[rung.agent].models[rung.model] || [] : [];
+      const effortOptions = [{ label: "Native default", value: "" }].concat(efforts.map(function (effort) { return { label: effort, value: effort }; }));
+      return makeSelect("Effort", effortOptions, rung.effort, function (value) {
+        selectRung();
+        rung.effort = value;
+        renderEditor(focusId);
+      }, inherited || !rung.model, focusId);
+    };
+    const makeRungFields = function (role, scope, index, prefix, compact) {
+      const panel = make("div", compact ? "rung-fields split-editor-form" : "rung-fields");
+      panel.append(makeFieldForRung(role, scope, index, "agent", prefix), makeFieldForRung(role, scope, index, "model", prefix), makeFieldForRung(role, scope, index, "effort", prefix));
+      const detail = make("div", "micro-note");
+      const rung = getRungs(role, scope)[index];
+      detail.textContent = rung.agent && rung.model ? "Effort may use the model’s native default." : "Choose a listed agent, then a model and supported effort.";
+      panel.append(detail);
+      return panel;
+    };
+    const makeInspector = function (compact) {
+      const rungs = getRungs(state.role, state.scope);
+      return makeRungFields(state.role, state.scope, getSelected(state.role, state.scope, rungs.length), "edit", compact);
+    };
+    const rungFocusId = function (role, scope, index) {
+      if (role !== state.role || scope !== state.scope) return "scope-select";
+      if (state.editor === "inline") return "inline-rung-" + index;
+      if (state.editor === "outline") return "outline-rung-" + index;
+      if (state.editor === "stepper") return "sequence-chip-" + index;
+      return "rung-list-" + index;
+    };
+    const addRungActions = function (container, role, scope) {
+      const inherited = isInherited(role, scope);
+      const editable = isEditable(role, scope);
+      const rungs = getRungs(role, scope);
+      const selected = getSelected(role, scope, rungs.length);
+      const helper = role === "helper";
+      const add = makeButton("Add rung", "term-action primary", function () {
+        state.drafts[role][scope].push({ agent: "", model: "", effort: "" });
+        setSelected(role, scope, state.drafts[role][scope].length - 1);
+        renderEditor(rungFocusId(role, scope, state.drafts[role][scope].length - 1));
+      });
+      add.disabled = inherited || helper;
+      const remove = makeButton("Remove", "term-action", function () {
+        if (state.drafts[role][scope].length <= 1 || helper) return;
+        state.drafts[role][scope].splice(selected, 1);
+        setSelected(role, scope, Math.min(selected, state.drafts[role][scope].length - 1));
+        renderEditor(rungFocusId(role, scope, getSelected(role, scope, state.drafts[role][scope].length)));
+      });
+      remove.disabled = inherited || helper || rungs.length <= 1;
+      const up = makeButton("Move up", "term-action", function () { moveRung(role, scope, -1); });
+      const down = makeButton("Move down", "term-action", function () { moveRung(role, scope, 1); });
+      up.disabled = inherited || helper || selected === 0;
+      down.disabled = inherited || helper || selected === rungs.length - 1;
+      container.append(add, remove, up, down);
+      if (role === "implementer" && scope !== "base") {
+        const customize = makeButton("Customize", "term-action primary", function () {
+          state.drafts.implementer[scope] = cloneRungs(state.drafts.implementer.base);
+          renderEditor(rungFocusId(role, scope, getSelected(role, scope, state.drafts[role][scope].length)));
+        });
+        customize.id = "scope-customize";
+        customize.hidden = !inherited;
+        const useBase = makeButton("Use base", "term-action", function () {
+          state.drafts.implementer[scope] = null;
+          setSelected(role, scope, 0);
+          renderEditor(rungFocusId(role, scope, 0));
+        });
+        useBase.id = "scope-use-base";
+        useBase.hidden = inherited;
+        container.append(customize, useBase);
+      }
+      const helperNote = make("span", "micro-note", helper ? "Helper uses one fixed rung." : inherited ? "This scope follows Base until customized." : editable ? "Edits stay in this scope." : "");
+      container.append(helperNote);
+    };
+    const moveRung = function (role, scope, direction) {
+      if (!isEditable(role, scope) || role === "helper") return;
+      const rungs = state.drafts[role][scope];
+      const selected = getSelected(role, scope, rungs.length);
+      const target = selected + direction;
+      if (target < 0 || target >= rungs.length) return;
+      const item = rungs.splice(selected, 1)[0];
+      rungs.splice(target, 0, item);
+      setSelected(role, scope, target);
+      renderEditor(rungFocusId(role, scope, target));
+    };
+    const makeToolbar = function () {
+      const toolbar = make("div", "editor-toolbar");
+      toolbar.append(makeRoleSelect(), makeScopeSelect());
+      return toolbar;
+    };
+    const makeEditorStatus = function () {
+      const stateLine = makeScopeState();
+      const catalog = make("div", "catalog-note", "Example choices · Codex · Claude Code");
+      return [stateLine, catalog];
+    };
+    const renderSplitEditor = function (root) {
+      root.append(makeToolbar());
+      makeEditorStatus().forEach(function (node) { root.append(node); });
+      const split = make("div", "editor-split");
+      const listColumn = make("section", "editor-column");
+      listColumn.append(make("h4", "column-title", "Ordered rungs"), makeRungList(state.role, state.scope, "list"));
+      const actions = make("div", "editor-actions");
+      addRungActions(actions, state.role, state.scope);
+      listColumn.append(actions);
+      const formColumn = make("section", "editor-column");
+      formColumn.append(make("h4", "column-title", "Edit selected rung"), makeInspector(true));
+      split.append(listColumn, formColumn);
+      root.append(split);
+    };
+    const renderInlineEditor = function (root) {
+      root.append(makeToolbar());
+      makeEditorStatus().forEach(function (node) { root.append(node); });
+      const rungs = getRungs(state.role, state.scope);
+      const selected = getSelected(state.role, state.scope, rungs.length);
+      const list = make("div", "inline-rungs");
+      list.setAttribute("aria-label", "Inline ordered rung editor");
+      rungs.forEach(function (rung, index) {
+        const row = make("div", "inline-rung" + (index === selected ? " selected" : ""));
+        const choice = makeButton("Rung " + String(index + 1).padStart(2, "0"), "rung-row", function () { setSelected(state.role, state.scope, index); renderEditor("inline-rung-" + index); }, { "aria-pressed": String(index === selected), "data-rung-index": String(index) });
+        choice.id = "inline-rung-" + index;
+        row.append(choice);
+        row.append(makeRungFields(state.role, state.scope, index, "inline-" + index, false));
+        list.append(row);
+      });
+      root.append(list);
+      const actions = make("div", "editor-actions");
+      addRungActions(actions, state.role, state.scope);
+      root.append(actions);
+    };
+    const makeOutlineItem = function (label, role, scope, depth) {
+      const current = state.role === role && state.scope === scope;
+      const text = (depth ? "↳ " : "") + label;
+      const row = makeButton(text, "outline-row", function () {
+        setRole(role);
+        setScope(role, scope);
+        renderEditor("outline-" + role + "-" + scope);
+      }, { "aria-current": String(current) });
+      row.id = "outline-" + role + "-" + scope;
+      return row;
+    };
+    const renderOutlineEditor = function (root) {
+      const layout = make("div", "outline-layout");
+      const outline = make("nav", "outline-list");
+      outline.setAttribute("aria-label", "Role and scope outline");
+      [["leader", "Leader"], ["implementer", "Implementer"], ["helper", "Helper"]].forEach(function (entry) {
+        const role = entry[0];
+        const group = make("div", "outline-group");
+        group.append(make("div", "outline-heading", entry[1]));
+        group.append(makeOutlineItem("Base ladder", role, "base", 1));
+        if (role === "implementer") {
+          ["low", "normal", "high"].forEach(function (scope) {
+            const scopeText = scope[0].toUpperCase() + scope.slice(1) + (isInherited(role, scope) ? " · inherits" : " · override");
+            group.append(makeOutlineItem(scopeText, role, scope, 1));
+          });
+        }
+        outline.append(group);
+      });
+      layout.append(outline);
+      const panel = make("section", "editor-detail-panel");
+      const title = state.role[0].toUpperCase() + state.role.slice(1) + " · " + scopeLabel(state.scope);
+      panel.append(make("h4", "column-title", title));
+      makeEditorStatus().forEach(function (node) { panel.append(node); });
+      const sequence = make("div", "sequence-rail");
+      getRungs(state.role, state.scope).forEach(function (rung, index) {
+        const chip = makeButton(String(index + 1) + " · " + rungLabel(rung), "rung-chip", function () { setSelected(state.role, state.scope, index); renderEditor("outline-rung-" + index); }, { "aria-pressed": String(getSelected(state.role, state.scope, getRungs(state.role, state.scope).length) === index) });
+        chip.id = "outline-rung-" + index;
+        sequence.append(chip);
+      });
+      panel.append(make("div", "column-title", "Ordered rungs"), sequence);
+      panel.append(makeInspector(false));
+      const actions = make("div", "editor-actions");
+      addRungActions(actions, state.role, state.scope);
+      panel.append(actions);
+      layout.append(panel);
+      root.append(layout);
+    };
+    const makeScopeTabs = function (role) {
+      const tabs = make("div", "scope-tabs");
+      const scopes = role === "implementer" ? ["base", "low", "normal", "high"] : ["base"];
+      scopes.forEach(function (scope) {
+        let label = scopeLabel(scope);
+        if (scope !== "base") label += isInherited(role, scope) ? " · inherited" : " · override";
+        const button = makeButton(label, "scope-button", function () {
+          setRole(role);
+          setScope(role, scope);
+          renderEditor("scope-tab-" + scope);
+        }, { "aria-pressed": String(state.scope === scope) });
+        button.id = "scope-tab-" + scope;
+        tabs.append(button);
+      });
+      return tabs;
+    };
+    const renderAccordionEditor = function (root) {
+      const accordion = make("div", "accordion");
+      const expandedRole = !state.expandedRole || state.expandedRole === state.role ? state.expandedRole : state.role;
+      [["leader", "Leader"], ["implementer", "Implementer"], ["helper", "Helper"]].forEach(function (entry) {
+        const role = entry[0];
+        const section = make("section", "role-section");
+        const expanded = expandedRole === role;
+        const summary = role === "helper" ? "1 rung" : role === "implementer" ? "Base · " + getBase(role).length + " rungs" : "Base · " + getBase(role).length + " rungs";
+        const toggle = makeButton("", "role-toggle", function () {
+          state.expandedRole = expanded ? "" : role;
+          if (!expanded) setRole(role);
+          renderEditor("role-toggle-" + role);
+        }, { "aria-expanded": String(expanded) });
+        toggle.id = "role-toggle-" + role;
+        const title = make("span", "", entry[1]);
+        const right = make("span", "role-summary", summary + (expanded ? " · open" : " · closed"));
+        toggle.append(title, right);
+        section.append(toggle);
+        if (expanded) {
+          const body = make("div", "role-section-body");
+          body.append(makeScopeTabs(role));
+          makeEditorStatus().forEach(function (node) { body.append(node); });
+          body.append(makeRungList(role, state.scope, "list"));
+          const actions = make("div", "editor-actions");
+          addRungActions(actions, role, state.scope);
+          body.append(actions, make("h4", "column-title", "Edit selected rung"), makeInspector(false));
+          section.append(body);
+        }
+        accordion.append(section);
+      });
+      root.append(accordion);
+      const note = make("p", "micro-note", "Expand one role at a time. Implementer keeps Base and separate low, normal, and high scopes; inherited scopes remain read-only until customized.");
+      root.append(note);
+    };
+    const renderStepperEditor = function (root) {
+      root.append(makeToolbar());
+      makeEditorStatus().forEach(function (node) { root.append(node); });
+      const rail = make("div", "sequence-rail");
+      rail.setAttribute("aria-label", "Visible ordered rung sequence");
+      const rungs = getRungs(state.role, state.scope);
+      const selected = getSelected(state.role, state.scope, rungs.length);
+      rungs.forEach(function (rung, index) {
+        const chip = makeButton(String(index + 1).padStart(2, "0") + " · " + rungLabel(rung), "rung-chip", function () {
+          setSelected(state.role, state.scope, index);
+          renderEditor("sequence-chip-" + index);
+        }, { "aria-pressed": String(index === selected) });
+        chip.id = "sequence-chip-" + index;
+        rail.append(chip);
+      });
+      root.append(make("h4", "column-title", "Sequence order · first rung is tried first"), rail);
+      const panel = make("section", "focused-rung");
+      panel.append(make("h4", "focused-rung-title", "Rung " + (selected + 1) + " of " + rungs.length + " · focused editor"));
+      const stepNav = make("div", "rung-nav");
+      const previous = makeButton("← Previous rung", "rung-step", function () { setSelected(state.role, state.scope, Math.max(0, selected - 1)); renderEditor("sequence-chip-" + Math.max(0, selected - 1)); });
+      previous.disabled = selected === 0 || isInherited(state.role, state.scope);
+      const next = makeButton("Next rung →", "rung-step", function () { setSelected(state.role, state.scope, Math.min(rungs.length - 1, selected + 1)); renderEditor("sequence-chip-" + Math.min(rungs.length - 1, selected + 1)); });
+      next.disabled = selected === rungs.length - 1 || isInherited(state.role, state.scope);
+      stepNav.append(previous, next);
+      panel.append(stepNav, makeInspector(false));
+      root.append(panel);
+      const actions = make("div", "editor-actions");
+      addRungActions(actions, state.role, state.scope);
+      root.append(actions);
+    };
+    const renderEditor = function (focusId) {
+      const root = make("div", "editor-shell");
+      root.setAttribute("aria-label", editorTitle(state.editor));
+      if (state.editor === "split") renderSplitEditor(root);
+      else if (state.editor === "inline") renderInlineEditor(root);
+      else if (state.editor === "outline") renderOutlineEditor(root);
+      else if (state.editor === "accordion") renderAccordionEditor(root);
+      else renderStepperEditor(root);
+      byId("editor-slot").replaceChildren(root);
+      if (focusId) {
+        const focusTarget = byId(focusId);
+        if (focusTarget) focusTarget.focus();
+      }
+      updateNavigation();
+    };
+    const makeEditorStep = function () {
+      const intro = make("p", "step-copy", "Leader and Implementer use ordered ladders. Helper has exactly one rung; Implementer complexity scopes inherit Base until customized.");
+      const slot = make("div", "");
+      slot.id = "editor-slot";
+      stepContent.append(intro, slot);
+      renderEditor();
+    };
+    const renderFinish = function () {
+      const intro = make("p", "step-copy", state.simulationComplete ? "Simulated configuration and Doctor checks are complete. No files were written." : "Run Doctor to simulate writing the configuration and checking this repository. No files will be changed.");
+      const facts = make("div", "fact-list");
+      makeFact("Config path", "/work/ferrum/.shikiru/config.toml", "").forEach(function (node) { facts.append(node); });
+      makeFact("Roles", "Leader · Implementer · Helper", "").forEach(function (node) { facts.append(node); });
+      makeFact("Doctor", state.simulationComplete ? "passed · simulated checks below" : "ready to simulate", state.simulationComplete ? "good" : "").forEach(function (node) { facts.append(node); });
+      stepContent.append(intro, facts);
+      if (state.simulationComplete) {
+        const doctor = make("div", "doctor-list");
+        const lowState = isInherited("implementer", "low") ? "inherits Base" : "explicit override";
+        const normalState = isInherited("implementer", "normal") ? "inherits Base" : "explicit override";
+        const highState = isInherited("implementer", "high") ? "inherits Base" : "explicit override";
+        [["✓", "Repository", "root /work/ferrum · Git base main", "good"], ["✓", "Configuration", "would target /work/ferrum/.shikiru/config.toml", "good"], ["✓", "Agent ladders", "Leader · Implementer · Helper choices valid", "good"], ["✓", "Complexity", "low " + lowState + " · normal " + normalState + " · high " + highState, "good"], ["✓", "Workspace", "copy-on-write shown as detected evidence", "good"], ["✓", "Orchestration", "max parallel " + state.parallelism + " · " + state.integration, "good"]].forEach(function (row) {
+          doctor.append(make("div", row[3], row[0]), make("div", "", row[1]), make("div", row[3], row[2]));
+        });
+        stepContent.append(doctor, make("p", "good", "✓ Doctor passed · 6 simulated checks"));
+      }
+    };
+    const renderStep = function () {
+      stepContent.replaceChildren();
+      if (state.cancelled) {
+        stepContent.append(make("p", "step-copy", "Setup cancelled. No configuration was written. Reset the mock to review another proposal."));
+      } else if (state.simulationComplete && state.step === STEPS.length - 1) {
+        renderFinish();
+      } else if (state.step === 1) {
+        makeEditorStep();
+      } else if (state.step === STEPS.length - 1) {
+        renderFinish();
+      } else {
+        renderSimpleStep();
+      }
+      updateNavigation();
+    };
+    const render = function () {
+      updateAssessment();
+      renderStep();
+    };
+    const goStep = function (step) {
+      state.step = Math.max(0, Math.min(STEPS.length - 1, step));
+      state.cancelled = false;
+      render();
+      focusCurrentStep();
+    };
+    const focusCurrentStep = function () {
+      if (state.step === STEPS.length - 1 && !byId("finish-button").hidden) {
+        byId("finish-button").focus();
+        return;
+      }
+      const target = stepContent.querySelector("button:not(:disabled), input:not(:disabled), [role='combobox']:not(:disabled)");
+      if (target) target.focus();
+      else byId("popup-body").focus();
+    };
+    const finish = function () {
+      if (state.simulationComplete) return;
+      const error = validateConfiguration();
+      if (error) { writeValidation(error); return; }
+      state.simulationComplete = true;
+      render();
+    };
+    const createStepShortcuts = function () {
+      const root = byId("step-shortcuts");
+      STEPS.forEach(function (step, index) {
+        const button = makeButton(String(index + 1) + " · " + step, "", function () { goStep(index); }, { "data-step": String(index), "aria-label": "Assessment shortcut to " + step });
+        root.append(button);
+      });
+    };
+    document.addEventListener("pointerdown", function (event) {
+      if (event.target.closest(".combo-wrap")) return;
+      if (event.target.closest(".combo-menu")) return;
+      document.querySelectorAll(".combo-trigger[aria-expanded='true']").forEach(function (trigger) {
+        trigger.setAttribute("aria-expanded", "false");
+        const menu = document.getElementById(trigger.getAttribute("aria-controls"));
+        if (menu) menu.hidden = true;
+      });
+    });
+    document.addEventListener("scroll", repositionOpenMenus, true);
+    if (typeof window !== "undefined") window.addEventListener("resize", repositionOpenMenus);
+    byId("art-choice").addEventListener("change", function (event) { state.art = event.target.value; render(); });
+    byId("editor-choice").addEventListener("change", function (event) {
+      state.editor = event.target.value;
+      if (state.editor === "accordion") state.expandedRole = state.role;
+      if (state.step === 1) render(); else updateAssessment();
+    });
+    byId("size-choice").addEventListener("click", function (event) {
+      const button = event.target.closest("button[data-size]");
+      if (!button) return;
+      state.size = button.dataset.size;
+      updateAssessment();
+    });
+    byId("mono-choice").addEventListener("change", function (event) { state.monochrome = event.target.checked; updateAssessment(); });
+    byId("back-button").addEventListener("click", function () { if (state.step > 0) goStep(state.step - 1); });
+    byId("next-button").addEventListener("click", function () {
+      const error = stepError();
+      if (error) { writeValidation(error); return; }
+      if (state.step < STEPS.length - 1) goStep(state.step + 1);
+    });
+    byId("finish-button").addEventListener("click", function () {
+      finish();
+    });
+    byId("cancel-button").addEventListener("click", function () {
+      if (state.simulationComplete) return;
+      state.cancelled = true;
+      render();
+    });
+    byId("reset-button").addEventListener("click", function () {
+      state = freshState();
+      byId("step-shortcuts").replaceChildren();
+      createStepShortcuts();
+      render();
+    });
+    byId("wizard-frame").addEventListener("keydown", function (event) {
+      if (event.key !== "Escape") return;
+      if (!state.simulationComplete) {
+        state.cancelled = true;
+        render();
+      }
+    });
+    createStepShortcuts();
+    render();
+  </script>
+</body>
+</html>

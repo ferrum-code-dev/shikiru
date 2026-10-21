@@ -439,5 +439,6 @@ CLI second-review corrections (sequential on main; lead review after each):
 
 - [x] Task 270: Admit one attached terminal per Shikiru session
   - Proof: Focused operator/lifecycle integration passed 39 tests. The private-tmux real-PTY race invoked the atomic guard directly from unequal 129×41 and 71×23 terminals, admitted one client, returned nonzero to the loser with the exact target on its stdout, and preserved real window/pane geometry. Native tests also verified same-client no-op, inside-tmux switching, detach/re-attach, remote CLI admission, independent projects and early lifecycle refusal. Full gate: 1,689 passed, 14 skipped, 91.42% coverage in 609.80s (`/private/tmp/shikiru-cli-270-check.log`); static checks passed. Isolated cache and coverage data were removed; private tmux fixtures left no owned server resources.
-- [ ] Task 272: Reconsider initializer composition with five interactive proposals (next, per latest feedback; runtime awaits selection)
+- [x] Task 272: Reconsider initializer composition with five interactive proposals
+  - Proof: Lead accepted the standalone five-art/five-editor HTML and design notes after reviewing the native artwork atlas and wide/narrow list-inspector captures. The state harness and `node --check` passed. Final native `uv run --offline poe check`: 1,689 passed, 14 skipped, 91.40% coverage (`/private/tmp/shikiru-init-272-check-native-recheck.log`); browser QA limitations are recorded in the design notes. No initializer runtime changes.
 - [ ] Task 271: Report stale sessions without blocking healthy projects
