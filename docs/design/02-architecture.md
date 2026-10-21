@@ -179,7 +179,7 @@ tests/  unit/ integration/ e2e/ support/ (tmux fixture, fake clock, wait_until) 
   fake_agent/   test-only package (uv dev dependency) with its own `shikiru.agents` entry point `fake`
 ```
 
-`init --yes` and the interactive wizard share `operator/detectors.py`: base branch, agents, trackers, caches.
+`init --yes` and the interactive wizard share `operator/detectors.py`: base branch, agents, trackers, caches, and config rendering. The wizard supplies validated ladder and optional Implementer complexity choices; `init --yes` retains its detected default-model placeholders.
 
 ## 4. Plugins
 

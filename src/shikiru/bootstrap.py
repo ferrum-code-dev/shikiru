@@ -229,9 +229,7 @@ async def run_init_wizard(project_root: Path) -> InitWizardResult | None:
         doctor_renderer=doctor_renderer,
         orchestration_defaults=load_default_orchestration(),
     )
-    return cast(
-        "InitWizardResult | None", await wizard.run_async(inline=True, inline_no_clear=True)
-    )
+    return cast("InitWizardResult | None", await wizard.run_async(inline=False))
 
 
 def build_doctor(project_root: Path) -> Doctor:

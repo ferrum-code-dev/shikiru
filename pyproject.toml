@@ -229,6 +229,7 @@ forbidden_modules = [
   "shikiru.dashboard.help_keys",
   "shikiru.dashboard.help_screen",
   "shikiru.dashboard.interaction",
+  "shikiru.dashboard.ladder_editor",
   "shikiru.dashboard.motion",
   "shikiru.dashboard.palette",
   "shikiru.dashboard.palette_app",

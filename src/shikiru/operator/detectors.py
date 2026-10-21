@@ -1,4 +1,4 @@
-"""Project detection shared by non-interactive init and the future wizard (06 §3)."""
+"""Project detection and config rendering shared by non-interactive init and the wizard (06 §3)."""
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from typing import Any
 
+    from shikiru.config.settings import ComplexityName
     from shikiru.operator.doctor import DoctorReport
     from shikiru.operator.plugin_checks import PluginChecks
     from shikiru.workspace.caches import CacheCloner
@@ -36,6 +37,11 @@ CACHE_NAMES = (
     ".pytest_cache",
 )
 DEFAULT_MODEL = "default"
+LEADER_ROLE = "leader"
+IMPLEMENTER_ROLE = "implementer"
+HELPER_ROLE = "helper"
+ROLE_NAMES = (LEADER_ROLE, IMPLEMENTER_ROLE, HELPER_ROLE)
+COMPLEXITY_NAMES: tuple[ComplexityName, ...] = ("low", "normal", "high")
 EXCLUDED_DIRECTORIES = frozenset({SHIKIRU_DIR_NAME, ".git"})
 
 
@@ -118,6 +124,7 @@ class ProjectDetectors:
         trackers: Sequence[str],
         caches: Sequence[str],
         ladders: Mapping[str, Sequence[Rung]],
+        complexity: Mapping[ComplexityName, Sequence[Rung]] | None = None,
         max_parallel: int,
         integration: str,
     ) -> Path:
@@ -130,6 +137,7 @@ class ProjectDetectors:
             trackers=trackers,
             caches=caches,
             ladders=ladders,
+            complexity=complexity,
             max_parallel=max_parallel,
             integration=integration,
         )
@@ -203,6 +211,7 @@ def render_config(
     trackers: Sequence[str] | None = None,
     caches: Sequence[str] | None = None,
     ladders: Mapping[str, Sequence[Rung]] | None = None,
+    complexity: Mapping[ComplexityName, Sequence[Rung]] | None = None,
     max_parallel: int | None = None,
     integration: str | None = None,
 ) -> str:
@@ -232,29 +241,18 @@ def render_config(
     selected_ladders = (
         ladders
         if ladders is not None
-        else {
-            role: (Rung(agent=agent, model=DEFAULT_MODEL),)
-            for role in ("leader", "implementer", "helper")
-        }
+        else {role: (Rung(agent=agent, model=DEFAULT_MODEL),) for role in ROLE_NAMES}
     )
-    for role in ("leader", "implementer", "helper"):
+    for role in ROLE_NAMES:
         lines.append(f"[roles.{role}]")
-        rung_lines = [
-            "{ "
-            + ", ".join(
-                value
-                for value in (
-                    f"agent = {json.dumps(rung.agent)}",
-                    f"model = {json.dumps(rung.model)}",
-                    None if rung.effort is None else f"effort = {json.dumps(rung.effort)}",
-                )
-                if value is not None
-            )
-            + " }"
-            for rung in selected_ladders[role]
-        ]
-        lines.append(f"ladder = [{', '.join(rung_lines)}]")
+        lines.append(f"ladder = {_render_ladder(selected_ladders[role])}")
         lines.append("")
+    for name in COMPLEXITY_NAMES:
+        rungs = complexity.get(name) if complexity is not None else None
+        if rungs is not None:
+            lines.append(f"[roles.{IMPLEMENTER_ROLE}.complexity.{name}]")
+            lines.append(f"ladder = {_render_ladder(rungs)}")
+            lines.append("")
     if max_parallel is not None or integration is not None:
         lines.extend(("[orchestration]",))
         if max_parallel is not None:
@@ -263,6 +261,24 @@ def render_config(
             lines.append(f"integration = {json.dumps(integration)}")
         lines.append("")
     return "\n".join(lines)
+
+
+def _render_ladder(rungs: Sequence[Rung]) -> str:
+    rung_lines = [
+        "{ "
+        + ", ".join(
+            value
+            for value in (
+                f"agent = {json.dumps(rung.agent)}",
+                f"model = {json.dumps(rung.model)}",
+                None if rung.effort is None else f"effort = {json.dumps(rung.effort)}",
+            )
+            if value is not None
+        )
+        + " }"
+        for rung in rungs
+    ]
+    return f"[{', '.join(rung_lines)}]"
 
 
 def _write_config(config_path: Path, contents: str) -> None:

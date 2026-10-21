@@ -52,6 +52,7 @@ class PopupFrame(Vertical):
         )
         self._content_ready = False
         self._preferred_size: Size | None = None
+        self._applied_size: Size | None = None
 
     def content_ready(self) -> None:
         """Mark meaningful initial content as ready for preferred-size capture."""
@@ -63,6 +64,7 @@ class PopupFrame(Vertical):
     def reset_preferred_size(self) -> None:
         """Forget the prior measurement when a popup changes content purpose."""
         self._preferred_size = None
+        self._applied_size = None
         self._content_ready = False
         self.remove_class("stable")
         self.styles.width = "auto"
@@ -136,14 +138,20 @@ class PopupFrame(Vertical):
         margin = self.styles.margin
         minimum_height = sum(_minimum_child_height(child) for child in self.children)
         minimum_height += self.styles.gutter.height
-        self.styles.width = max(
-            1,
-            min(self._preferred_size.width, viewport.width - margin.width),
+        size = Size(
+            max(1, min(self._preferred_size.width, viewport.width - margin.width)),
+            max(
+                1,
+                min(
+                    max(self._preferred_size.height, minimum_height),
+                    viewport.height - margin.height,
+                ),
+            ),
         )
-        self.styles.height = max(
-            1,
-            min(max(self._preferred_size.height, minimum_height), viewport.height - margin.height),
-        )
+        if size != self._applied_size:
+            self.styles.width = size.width
+            self.styles.height = size.height
+            self._applied_size = size
 
 
 def _preferred_child_height(child: Widget) -> int:
