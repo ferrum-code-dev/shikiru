@@ -26,7 +26,7 @@ from shikiru.bootstrap import (
     run_init_wizard,
     run_palette,
 )
-from shikiru.cli.context import CliState, nearest_project, project_root, state_from
+from shikiru.cli.context import CliState, project_root, state_from
 from shikiru.cli.render import (
     ack_renderable,
     doctor_renderable,
@@ -44,7 +44,6 @@ from shikiru.domain.tasks import Mode
 from shikiru.errors import (
     EXIT_COMMAND_REJECTED,
     EXIT_GENERIC_ERROR,
-    NotInitialisedError,
     ShikiruError,
     UsageError,
 )
@@ -55,6 +54,7 @@ from shikiru.operator.lifecycle import (
     CLI_PALETTE_ORIGIN_PANE_OPTION,
     PACKAGE_NAME,
 )
+from shikiru.paths import project_config_path
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.ui.console import human_console
 from shikiru.ui.tokens import (
@@ -348,11 +348,13 @@ def attach(
 def _attach_project_root(state: CliState) -> Path | None:
     if state.project is not None:
         return project_root(state)
-    try:
-        root = nearest_project(Path.cwd())
-    except NotInitialisedError:
-        return None
-    return project_root(CliState(root, state.json_output, state.overrides))
+    root = Path.cwd().resolve()
+    while True:
+        if project_config_path(root).is_file():
+            return root
+        if root.parent == root:
+            return None
+        root = root.parent
 
 
 @app.command(epilog=REQUIRED_LEGEND)

@@ -17,7 +17,13 @@ from shikiru.cli.app import app
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Status, Step
 from shikiru.engine.daemon import EngineLock, engine_is_running
-from shikiru.errors import EXIT_USAGE_ERROR, CommandFailed, DatabaseError, UsageError
+from shikiru.errors import (
+    EXIT_NOT_INITIALISED,
+    EXIT_USAGE_ERROR,
+    CommandFailed,
+    DatabaseError,
+    UsageError,
+)
 from shikiru.operator.sessions import SessionAttacher, SessionLister, SessionRow
 from shikiru.paths import engine_lock_path
 from shikiru.process import SubprocessRunner
@@ -519,6 +525,7 @@ async def test_unnamed_attach_uses_nearest_or_explicit_project_before_reading_ot
     project_config = project / ".shikiru" / "config.toml"
     _make_project(project, ())
     project_config.write_text('[project]\nname = "current"\n')
+    (project / "packages" / ".shikiru").mkdir(parents=True)
     nested_directory = project / "packages" / "nested"
     nested_directory.mkdir(parents=True)
     broken_project = tmp_path / "broken foreign project"
@@ -568,6 +575,29 @@ async def test_current_project_without_a_session_does_not_attach_an_unrelated_si
 
 
 @pytest.mark.asyncio
+async def test_explicit_project_without_config_rejects_attach_without_selecting_a_session(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    incomplete_project = tmp_path / "incomplete project"
+    unrelated_project = tmp_path / "unrelated project"
+    _make_project(incomplete_project, ())
+    _make_project(unrelated_project, ())
+    await _add_session(tmux_server, f"{SESSION_PREFIX}unrelated", unrelated_project)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    env.pop("TMUX", None)
+
+    _, returncode = await _run_attach_cli(
+        ["--project", str(incomplete_project), "attach"], cwd=tmp_path, env=env
+    )
+
+    assert returncode == EXIT_NOT_INITIALISED
+    assert not capture.exists()
+
+
+@pytest.mark.asyncio
 async def test_explicit_attach_name_remains_authoritative_with_project_option(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
@@ -596,17 +626,24 @@ async def test_explicit_attach_name_remains_authoritative_with_project_option(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_trust_file", [False, True])
 async def test_ambiguous_attach_retries_invalid_numbers_and_uses_the_selected_exact_row(
-    tmp_path: Path, tmux_server: TmuxServer
+    tmp_path: Path, tmux_server: TmuxServer, legacy_trust_file: bool
 ) -> None:
     first_project = tmp_path / "first project"
     second_project = tmp_path / "O'Brien [literal] project"
+    outside_directory = tmp_path / "outside" / "nested"
     _make_project(first_project, ())
     _make_project(second_project, ())
+    outside_directory.mkdir(parents=True)
     first_session = f"{SESSION_PREFIX}first project"
     second_session = f"{SESSION_PREFIX}O'Brien [literal] project"
     await _add_session(tmux_server, first_session, first_project)
     await _add_session(tmux_server, second_session, second_project)
+    if legacy_trust_file:
+        legacy_state = tmp_path / ".shikiru"
+        legacy_state.mkdir()
+        (legacy_state / "trusted.json").write_text("{}")
     expected_row = (await _lister(tmux_server).list_sessions())[1]
     bin_dir = tmp_path / "bin"
     _fake_tmux(bin_dir)
@@ -616,7 +653,7 @@ async def test_ambiguous_attach_retries_invalid_numbers_and_uses_the_selected_ex
 
     output, returncode = await _run_attach_cli(
         ["attach"],
-        cwd=tmp_path,
+        cwd=outside_directory,
         env=env,
         input_bytes=b"invalid\n0\n2\n",
     )
