@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from shikiru.domain.tasks import Status
-from shikiru.errors import CommandFailed, ConfigError, DatabaseError, UsageError
+from shikiru.errors import (
+    CommandFailed,
+    CommandTimeoutError,
+    ConfigError,
+    DatabaseError,
+    UsageError,
+)
 from shikiru.operator.attachment import admit_attachment
 from shikiru.paths import project_config_path, state_db_path
 from shikiru.store.reader import StateReader
@@ -58,12 +64,24 @@ _ROWS_ADAPTER: TypeAdapter[list[SessionRow]] = TypeAdapter(list[SessionRow])
 
 
 @dataclass(frozen=True, slots=True)
+class SessionRepair:
+    label: str
+    instruction: str
+    command: str
+
+
+@dataclass(frozen=True, slots=True)
 class SessionDiagnostic:
     session: str
+    session_id: str | None
     project_dir: str | None
     reason: str
-    repair_commands: tuple[str, ...]
+    repairs: tuple[SessionRepair, ...]
     note: str
+
+    @property
+    def repair_commands(self) -> tuple[str, ...]:
+        return tuple(repair.command for repair in self.repairs)
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,11 +146,15 @@ class SessionLister:
                         exact_target(name), PROJECT_DIR_ENV_VAR
                     )
                 except ConfigError as error:
-                    diagnostics.append(_session_diagnostic(name, session_project_dir, error))
+                    diagnostics.append(
+                        await _session_diagnostic(self._tmux, name, session_project_dir, error)
+                    )
                     continue
                 if session_project_dir is None:
                     message = f"tmux session {name!r} has no {PROJECT_DIR_ENV_VAR}"
-                    diagnostics.append(_session_diagnostic(name, None, ConfigError(message)))
+                    diagnostics.append(
+                        await _session_diagnostic(self._tmux, name, None, ConfigError(message))
+                    )
                     continue
                 if not Path(session_project_dir).is_absolute():
                     message = (
@@ -140,7 +162,9 @@ class SessionLister:
                         f"{name!r} has an invalid project directory: {session_project_dir!r}"
                     )
                     diagnostics.append(
-                        _session_diagnostic(name, session_project_dir, ConfigError(message))
+                        await _session_diagnostic(
+                            self._tmux, name, session_project_dir, ConfigError(message)
+                        )
                     )
                     continue
                 try:
@@ -150,7 +174,9 @@ class SessionLister:
                         continue
                     rows.append(self._project_row(name, session_project_dir))
                 except (ConfigError, DatabaseError, OSError, ValidationError, ValueError) as error:
-                    diagnostics.append(_session_diagnostic(name, session_project_dir, error))
+                    diagnostics.append(
+                        await _session_diagnostic(self._tmux, name, session_project_dir, error)
+                    )
         except OSError as error:
             message = f"could not inspect local tmux sessions: {error}"
             raise ConfigError(message) from error
@@ -287,27 +313,66 @@ def _remote_attach_argv(host: str, name: str) -> tuple[str, ...]:
     return SSH_COMMAND, SSH_TTY_OPTION, SSH_OPTION_TERMINATOR, host, remote_command
 
 
-def _session_diagnostic(
-    session: str, project_dir: str | None, error: Exception
+async def _session_diagnostic(
+    tmux: Tmux,
+    session: str,
+    project_dir: str | None,
+    error: Exception,
 ) -> SessionDiagnostic:
-    commands = [shlex.join(("tmux", "kill-session", "-t", exact_target(session)))]
-    if project_dir is None or not Path(project_dir).is_absolute():
-        note = (
-            "The project path is missing or invalid; removing the session is the available repair."
+    try:
+        session_id = await tmux.session_id(session)
+    except (CommandFailed, CommandTimeoutError, OSError, ValueError) as lookup_error:
+        session_id = None
+        lookup_failure = (
+            f"Tmux session ID lookup failed ({type(lookup_error).__name__}): {lookup_error}"
         )
+    else:
+        lookup_failure = None
+    repairs, note = _session_repairs(session_id, project_dir)
+    if lookup_failure is not None:
+        note = f"{note} {lookup_failure}"
+    return SessionDiagnostic(
+        session=session,
+        session_id=session_id,
+        project_dir=project_dir,
+        reason=str(error),
+        repairs=repairs,
+        note=note,
+    )
+
+
+def _session_repairs(
+    session_id: str | None,
+    project_dir: str | None,
+) -> tuple[tuple[SessionRepair, ...], str]:
+    repairs: list[SessionRepair] = []
+    if session_id is not None:
+        repairs.append(
+            SessionRepair(
+                "Session",
+                "Remove the retained session if it is no longer needed.",
+                shlex.join(("tmux", "kill-session", "-t", session_id)),
+            )
+        )
+    if project_dir is None or not Path(project_dir).is_absolute():
+        note = "The project path is missing or invalid."
     else:
         root = Path(project_dir)
         if root.is_dir() and not project_config_path(root).exists():
-            commands.append(shlex.join((SHIKIRU_COMMAND, "--project", project_dir, "init")))
-            note = "Initialization creates fresh state; it cannot recover deleted state."
+            repairs.append(
+                SessionRepair(
+                    "Project",
+                    "Initialize fresh state if intended; this cannot recover a deleted database.",
+                    shlex.join((SHIKIRU_COMMAND, "--project", project_dir, "init")),
+                )
+            )
+            note = "Initialization creates fresh project state."
         elif root.is_dir():
-            note = "Removing the retained tmux session does not restore unavailable project state."
+            note = (
+                "Removing the retained tmux session does not repair the unavailable project state."
+            )
         else:
-            note = "The project directory is absent; removing the session does not restore it."
-    return SessionDiagnostic(
-        session=session,
-        project_dir=project_dir,
-        reason=str(error),
-        repair_commands=tuple(commands),
-        note=note,
-    )
+            note = "The project directory is absent."
+    if session_id is None:
+        note = f"{note} A stable tmux session ID is unavailable, so no kill command is offered."
+    return tuple(repairs), note

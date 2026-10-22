@@ -67,6 +67,10 @@ FORMAT_SESSION_NAME = "#{session_name}"
 FORMAT_CLIENT_TTY = "#{client_tty}"
 FORMAT_CLIENT_SESSION = "#{client_session}"
 FORMAT_CLIENT_PANE_ID = "#{pane_id}"
+FORMAT_SESSION_ID = "#{session_id}"
+SESSION_ID_NAME_SEPARATOR = "\t"
+SESSION_ID_LOOKUP_FORMAT = f"{FORMAT_SESSION_ID}{SESSION_ID_NAME_SEPARATOR}{FORMAT_SESSION_NAME}"
+NATIVE_SESSION_ID_PREFIX = "$"
 HOME_PANE_OPTION = "@shk_home"
 HOME_PANE_OPTION_VALUE = "1"
 LAYOUT_PANE_OPTION = "@shk_layout_pane"
@@ -489,6 +493,25 @@ class Tmux:
         ):
             return []
         raise CommandFailed(result.argv, result.returncode, result.stderr)
+
+    async def session_id(self, name: str) -> str:
+        """Return the native ID of the exact session named `name`."""
+        result = await self._run("list-sessions", "-F", SESSION_ID_LOOKUP_FORMAT, check=False)
+        if result.returncode != 0:
+            raise CommandFailed(result.argv, result.returncode, result.stderr)
+        session_ids: list[str] = []
+        for row in result.stdout.splitlines():
+            session_id, separator, session_name = row.partition(SESSION_ID_NAME_SEPARATOR)
+            if separator and session_name == name:
+                session_ids.append(session_id)
+        if len(session_ids) != 1:
+            message = f"tmux did not return one native session ID for {name!r}"
+            raise ValueError(message)
+        session_id = session_ids[0]
+        if not session_id.startswith(NATIVE_SESSION_ID_PREFIX) or not session_id[1:].isdecimal():
+            message = f"tmux returned an invalid native session ID: {session_id!r}"
+            raise ValueError(message)
+        return session_id
 
     async def pane_exists(self, target: str) -> bool:
         """Return whether an exact pane target exists."""

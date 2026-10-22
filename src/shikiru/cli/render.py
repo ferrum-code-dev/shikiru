@@ -619,25 +619,30 @@ def session_rows_renderable(
     unavailable: bool = False,
 ) -> RenderableType:
     """Render each session's identity, project and current progress as an open row."""
-    heading: list[RenderableType] = []
-    if host is not None:
-        heading.append(
-            Text.assemble(
-                ("Remote host ", SECONDARY_TEXT_COLOR),
-                (host, BOLD_PRIMARY),
-            )
+    if not rows and unavailable:
+        return Group()
+    partial = bool(rows and unavailable)
+    lines: list[RenderableType] = [
+        _outcome_line_for_cli(
+            "Session discovery is partial" if partial else "Shikiru sessions discovered",
+            GLYPH_PENDING if partial else GLYPH_DONE,
+            AMBER if partial else SUCCESS_COLOR,
         )
+    ]
     if not rows:
-        message = (
-            "No usable Shikiru sessions found." if unavailable else "No Shikiru sessions found."
-        )
-        return Group(*heading, Text(message, style=SECONDARY_TEXT_COLOR))
-    if console.width < SESSION_TABLE_MIN_WIDTH:
-        return Group(
-            *heading,
-            *(_stacked_session(row, console=console, host=host) for row in rows),
-        )
-    return Group(*heading, _session_table(rows, console=console, host=host))
+        lines[0] = _outcome_line_for_cli("No Shikiru sessions found", GLYPH_DONE, SUCCESS_COLOR)
+    if rows:
+        _append_outcome_heading(lines, "Details")
+        if host is not None:
+            lines.append(_outcome_detail_line("Host", host))
+    elif host is not None:
+        _append_outcome_section(lines, "Details", (("Host", host),))
+    if rows:
+        if console.width < SESSION_TABLE_MIN_WIDTH:
+            lines.extend(_stacked_session(row, console=console, host=host) for row in rows)
+        else:
+            lines.append(_session_table(rows, console=console, host=host))
+    return Group(*lines)
 
 
 def session_diagnostics_renderable(
@@ -648,19 +653,30 @@ def session_diagnostics_renderable(
     """Render unavailable local sessions with literal causes and repair commands."""
     rows: list[RenderableType] = []
     for diagnostic in diagnostics:
-        identity = Text("Unavailable session ", style=SECONDARY_TEXT_COLOR)
-        identity.append(diagnostic.session, style=BOLD_PRIMARY)
-        path = Text("Project ", style=SECONDARY_TEXT_COLOR)
-        path.append(diagnostic.project_dir or "path not recorded", style=PRIMARY_TEXT_COLOR)
-        reason = Text("Reason ", style=SECONDARY_TEXT_COLOR)
-        reason.append(diagnostic.reason, style=PRIMARY_TEXT_COLOR)
-        rows.extend((identity, path, reason))
-        rows.extend(
-            Text.assemble(("Repair: ", SECONDARY_TEXT_COLOR), (command, BOLD_STEEL))
-            for command in diagnostic.repair_commands
+        details: list[tuple[str, str]] = []
+        if remote_host is not None:
+            details.append(("Host", remote_host))
+        details.append(("Session", diagnostic.session))
+        if diagnostic.session_id is not None:
+            details.append(("Tmux ID", diagnostic.session_id))
+        details.extend(
+            (
+                ("Project", diagnostic.project_dir or "path not recorded"),
+                ("Cause", diagnostic.reason),
+                ("Note", diagnostic.note),
+            )
         )
-        rows.append(Text(diagnostic.note, style=SECONDARY_TEXT_COLOR))
-    if remote_host is not None:
+        outcome = _outcome_renderable(
+            f"Project state is unavailable for {diagnostic.session}",
+            GLYPH_STOPPED,
+            ALERT_COLOR,
+            details=tuple(details),
+            repair=tuple(
+                (repair.label, repair.instruction, repair.command) for repair in diagnostic.repairs
+            ),
+        )
+        rows.extend((Text(""), outcome))
+    if remote_host is not None and diagnostics:
         rows.append(
             Text(
                 f"Run the repair commands above on SSH host {remote_host}.",
@@ -674,9 +690,14 @@ def session_options_renderable(
     rows: tuple[SessionRow, ...], *, host: str | None, console: Console
 ) -> RenderableType:
     """Render numbered, full-identity options for the terminal attach prompt."""
-    values: list[RenderableType] = []
+    values: list[RenderableType] = [
+        _outcome_line_for_cli(
+            "Choose a session from the discovered list", GLYPH_DONE, SUCCESS_COLOR
+        )
+    ]
+    _append_outcome_heading(values, "Details")
     if host is not None:
-        values.append(Text.assemble(("Remote host ", SECONDARY_TEXT_COLOR), (host, BOLD_PRIMARY)))
+        values.append(_outcome_detail_line("Host", host))
     for index, row in enumerate(rows, start=1):
         identity = Text.assemble((f"{index}. ", BOLD_STEEL))
         identity.append_text(session_identity(row.session))
@@ -1253,17 +1274,25 @@ def _append_outcome_section(
 ) -> None:
     if not rows:
         return
+    _append_outcome_heading(lines, title)
+    for label, value in rows:
+        lines.append(_outcome_detail_line(label, value))
+
+
+def _append_outcome_heading(lines: list[RenderableType], title: str) -> None:
     lines.append(Text(""))
     lines.append(Text(title, style=f"{STYLE_BOLD} {STEEL_BLUE}"))
-    for label, value in rows:
-        row = Text("  ")
-        row.append(label, style=SECONDARY_TEXT_COLOR)
-        row.append(": ", style=SECONDARY_TEXT_COLOR)
-        if isinstance(value, Text):
-            row.append_text(value)
-        else:
-            row.append(value, style=PRIMARY_TEXT_COLOR)
-        lines.append(row)
+
+
+def _outcome_detail_line(label: str, value: str | Text) -> Text:
+    row = Text("  ")
+    row.append(label, style=SECONDARY_TEXT_COLOR)
+    row.append(": ", style=SECONDARY_TEXT_COLOR)
+    if isinstance(value, Text):
+        row.append_text(value)
+    else:
+        row.append(value, style=PRIMARY_TEXT_COLOR)
+    return row
 
 
 def _append_outcome_actions(

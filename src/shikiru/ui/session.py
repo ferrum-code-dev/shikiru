@@ -7,8 +7,8 @@ from typing import Literal
 from rich.text import Text
 
 from shikiru.ui.glyphs import GLYPH_ENGINE
-from shikiru.ui.section import BOLD_PRIMARY, BOLD_STEEL, number
-from shikiru.ui.tokens import AMBER, SECONDARY_TEXT_COLOR, STYLE_BOLD
+from shikiru.ui.section import BOLD_PRIMARY, number
+from shikiru.ui.tokens import AMBER, SECONDARY_TEXT_COLOR, STYLE_BOLD, SUCCESS_COLOR
 
 _SessionEngineState = Literal["up", "down"]
 
@@ -22,7 +22,7 @@ def session_engine_value(engine_state: _SessionEngineState) -> Text:
     """Return the engine glyph and muted or active state word."""
     match engine_state:
         case "up":
-            style = BOLD_STEEL
+            style = f"{STYLE_BOLD} {SUCCESS_COLOR}"
         case "down":
             style = SECONDARY_TEXT_COLOR
     return Text.assemble(

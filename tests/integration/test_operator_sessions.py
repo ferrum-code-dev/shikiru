@@ -423,7 +423,7 @@ async def test_cli_lists_an_absent_tmux_server_as_empty(tmp_path: Path) -> None:
 
     assert human.returncode == 0
     assert human.stderr == ""
-    assert "No Shikiru sessions found." in human.stdout
+    assert "No Shikiru sessions found" in human.stdout
     assert structured.returncode == 0
     assert structured.stderr == ""
     assert json.loads(structured.stdout) == []
@@ -480,11 +480,15 @@ async def test_lister_surfaces_unavailable_project_database(
     assert diagnostic.session == stale_session
     assert diagnostic.project_dir == str(project)
     assert diagnostic.reason
+    assert diagnostic.session_id is not None
+    kill_command = diagnostic.repair_commands[0]
+    assert kill_command.endswith(f"'{diagnostic.session_id}'")
+    assert exact_target(stale_session) not in kill_command
     assert shlex.split(diagnostic.repair_commands[0]) == [
         "tmux",
         "kill-session",
         "-t",
-        exact_target(stale_session),
+        diagnostic.session_id,
     ]
     assert shlex.split(diagnostic.repair_commands[1]) == [
         "shikiru",
@@ -524,12 +528,13 @@ async def test_missing_project_directory_only_offers_removing_the_retained_sessi
     assert len(listing.diagnostics) == 1
     diagnostic = listing.diagnostics[0]
     assert diagnostic.project_dir == str(project)
+    assert diagnostic.session_id is not None
     assert len(diagnostic.repair_commands) == 1
     assert shlex.split(diagnostic.repair_commands[0]) == [
         "tmux",
         "kill-session",
         "-t",
-        exact_target(session),
+        diagnostic.session_id,
     ]
 
 
@@ -559,13 +564,60 @@ async def test_lister_isolates_missing_or_relative_session_project_metadata(
     assert diagnostic.session == stale_session
     assert diagnostic.project_dir == project_dir
     assert diagnostic.reason
+    assert diagnostic.session_id is not None
     assert len(diagnostic.repair_commands) == 1
     assert shlex.split(diagnostic.repair_commands[0]) == [
         "tmux",
         "kill-session",
         "-t",
-        exact_target(stale_session),
+        diagnostic.session_id,
     ]
+
+
+@pytest.mark.asyncio
+async def test_lister_omits_session_removal_when_tmux_cannot_supply_a_native_id(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+) -> None:
+    project = tmp_path / "unavailable project"
+    _make_project(project, ())
+    (project / ".shikiru" / "state.db").unlink()
+    session = f"{SESSION_PREFIX}unavailable"
+    await _add_session(tmux_server, session, project)
+    real_tmux = shutil.which("tmux")
+    assert real_tmux is not None
+    bin_dir = tmp_path / "tmux-bin"
+    _write_executable(
+        bin_dir,
+        "tmux",
+        "import os, sys\n"
+        "arguments = sys.argv[1:]\n"
+        "if '#{session_id}' in arguments[-1]:\n"
+        "    print('session id lookup failed', file=sys.stderr)\n"
+        "    raise SystemExit(1)\n"
+        f"os.execv({real_tmux!r}, [{real_tmux!r}, *arguments])\n",
+    )
+    environment = {
+        **tmux_server.env,
+        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
+    }
+    runner = tmux_server.runner
+    lister = SessionLister(
+        tmux=Tmux(runner, socket=tmux_server.socket_name, env=environment),
+        runner=runner,
+        engine_up=lambda _root: False,
+        reader_factory=lambda root: StateReader(
+            Database(root / ".shikiru" / "state.db"), FakeClock(START)
+        ),
+        remote_timeout_seconds=SSH_TIMEOUT_SECONDS,
+    )
+
+    listing = await lister.list_sessions()
+
+    diagnostic = listing.diagnostics[0]
+    assert diagnostic.session_id is None
+    assert all("kill-session" not in command for command in diagnostic.repair_commands)
+    assert "session id lookup failed" in diagnostic.note
 
 
 @pytest.mark.asyncio
@@ -752,8 +804,6 @@ async def test_cli_ls_keeps_healthy_json_rows_and_reports_unavailable_projects(
     healthy_session = f"{SESSION_PREFIX}healthy project"
     unavailable_session = f"{SESSION_PREFIX}O'Brien ; unavailable [project]"
     await _add_session(tmux_server, healthy_session, healthy)
-    await _add_session(tmux_server, unavailable_session, unavailable)
-    shutil.rmtree(unavailable / ".shikiru")
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
@@ -763,6 +813,8 @@ async def test_cli_ls_keeps_healthy_json_rows_and_reports_unavailable_projects(
     env = _test_env(bin_dir, capture, tmux_server)
     runner = CliRunner()
 
+    await _add_session(tmux_server, unavailable_session, unavailable)
+    shutil.rmtree(unavailable / ".shikiru")
     structured = await asyncio.to_thread(
         runner.invoke,
         app,
@@ -786,6 +838,11 @@ async def test_cli_ls_keeps_healthy_json_rows_and_reports_unavailable_projects(
     assert str(unavailable) in structured.stderr
     assert "tmux kill-session" in structured.stderr
     assert "shikiru --project" in structured.stderr
+    diagnostic_id = await Tmux(
+        tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env
+    ).session_id(unavailable_session)
+    assert f"Tmux ID: {diagnostic_id}" in structured.stderr
+    assert f"tmux kill-session -t '{diagnostic_id}'" in structured.stderr
     assert human.exit_code == EXIT_GENERIC_ERROR
     assert healthy_session in human.stdout
     assert str(healthy) in human.stdout
@@ -1349,7 +1406,6 @@ async def test_attach_gives_focused_repair_for_unavailable_current_and_named_ses
         assert result.exit_code == EXIT_USAGE_ERROR
         assert session in result.stderr
         assert str(project) in result.stderr
-        assert result.stderr.count("Unavailable session") == 1
         assert result.stderr.count("tmux kill-session") == 1
         assert "shikiru --project" not in result.stderr
     assert not capture.exists()
@@ -1375,7 +1431,6 @@ async def test_attach_reports_all_unavailable_sessions_once(
     output, returncode = await _run_attach_cli(["attach"], cwd=outside, env=env)
 
     assert returncode == EXIT_USAGE_ERROR
-    assert output.count("Unavailable session") == len(sessions)
     for session in sessions:
         assert session in output
     assert output.count("tmux kill-session") == len(sessions)
