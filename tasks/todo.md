@@ -450,7 +450,8 @@ CLI second-review corrections (sequential on main; lead review after each):
 
 - [x] Task 274: Apply approved shared human outcomes and adopt the design reference
   - Proof: Lead accepted the final implementation. Focused CLI/plugin/render integration passed 20 tests; the native full gate passed 1,709, skipped 14, with 91.50% coverage (`/private/tmp/shikiru-task274-final-poe-check/command.log`). Adopted reference, companion and byte-identical artwork are included; `.DS_Store` files are preserved and excluded.
-- [ ] Task 275: Implement project status and Operator briefing task status
+- [x] Task 275: Implement project status and Operator briefing task status
+  - Proof: Lead accepted the final layout and behavior. Native Rich project and briefing captures use real temporary SQLite/evidence fixtures at 100/40 columns in color and actual `NO_COLOR=1` (`/private/tmp/shikiru-task275-render-proof-20261022/`); they are renderer captures, not live CLI/engine output. Named quota windows stay honest because the existing data has no provider duration mapping. The final native gate passed 1,709 tests, skipped 14, at 91.51% coverage; 610.64s total and 1,422.8 MiB peak RSS (`/private/tmp/shikiru-task275-full-gate-final-3/command.log`). `.DS_Store` files are preserved and excluded.
 - [ ] Task 276: Align session listings, partial diagnostics and attach prompts
 - [ ] Task 277: Support the ordered Helper fallback ladder
 - [ ] Task 278: Implement the dashboard-style initializer shell and non-ladder steps

@@ -13,6 +13,7 @@ from rich.table import Table
 from rich.text import Text
 
 from shikiru.domain.escalation import escalation_reason_label
+from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
     SEVERITY_BLOCKER,
     ConsultAnswer,
@@ -21,8 +22,9 @@ from shikiru.domain.reports import (
     TriageReport,
     Verdict,
 )
+from shikiru.domain.runs import RunStatus
 from shikiru.domain.scheduling import WaitReason
-from shikiru.domain.steps import ACTING_ROLE, Step
+from shikiru.domain.steps import Step
 from shikiru.domain.tasks import Hold, Status, Task
 from shikiru.errors import (
     CommandFailed,
@@ -48,22 +50,16 @@ from shikiru.operator.doctor import (
     PLUGINS_CHECK_NAME,
     PROBE_CHECK_PREFIX,
 )
+from shikiru.operator.queries import TaskNotFoundError
 from shikiru.ui.age import format_duration
 from shikiru.ui.compact import compact_count
 from shikiru.ui.console import supports_osc8
 from shikiru.ui.gauge import Gauge
 from shikiru.ui.glyphs import (
-    GLYPH_CONSULT,
     GLYPH_DONE,
     GLYPH_ENGINE,
     GLYPH_PENDING,
     GLYPH_STOPPED,
-    ROLE_GLYPHS,
-    STAGE_IMPLEMENT,
-    STAGE_MERGE,
-    STAGE_PLAN,
-    STAGE_TRIAGE,
-    STAGE_VERIFY,
 )
 from shikiru.ui.section import (
     BOLD_PRIMARY,
@@ -81,7 +77,6 @@ from shikiru.ui.session import (
     session_identity,
 )
 from shikiru.ui.size import format_size
-from shikiru.ui.status import status_visual
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
@@ -137,7 +132,9 @@ _ERROR_SUMMARIES: dict[type[ShikiruError], str] = {
     DetachedProcessError: "A background process could not be launched",
     ProcessReplacementError: "The terminal handoff could not be started",
 }
-STATUS_USAGE_COLUMN_GAP = 2
+STATUS_USAGE_COLUMN_PADDING = 2
+STATUS_PAUSED_LABEL = "Paused"
+STATUS_OPERATOR_CONTROL_LABEL = "Operator control"
 PLUGIN_AGGREGATE_PART_COUNT = 2
 PLUGIN_CHILD_PART_COUNT = 3
 DOCTOR_PROBE_PART_COUNT = 2
@@ -155,17 +152,10 @@ DOCTOR_CHECK_NAMES = {
 DOCTOR_PLUGIN_CHECK_NAMES = {"model_choices": "Model choices"}
 STATUS_USAGE_TABLE_MIN_WIDTH = 80
 STATUS_ESCALATION_NO_STEP_LABEL = "no step"
-PRIMARY_QUOTA_SLOT = "primary"
-SECONDARY_QUOTA_SLOT = "secondary"
-QUOTA_SLOTS = (PRIMARY_QUOTA_SLOT, SECONDARY_QUOTA_SLOT)
-STATUS_STEP_GLYPHS = {
-    Step.TRIAGE: STAGE_TRIAGE,
-    Step.PLAN: STAGE_PLAN,
-    Step.IMPLEMENT: STAGE_IMPLEMENT,
-    Step.CONSULT: GLYPH_CONSULT,
-    Step.VERIFY: STAGE_VERIFY,
-    Step.INTEGRATE: STAGE_MERGE,
-}
+STATUS_USAGE_HEADERS = ("Agent", "Runs", "Input", "Output", "Costs", "Quota used 5h/7d")
+ESCALATION_EVENT_HEADLINE_SEPARATORS = (" · ", ": ")
+QUOTA_PERIODS = ("5h", "7d")
+QUOTA_PROVIDER_SLOTS = ("primary", "secondary")
 STATUS_STEP_LABELS = {
     Step.TRIAGE: "Triaging",
     Step.PLAN: "Planning",
@@ -218,6 +208,21 @@ def error_renderable(error: ShikiruError) -> RenderableType:
     """Render a domain error with its cause and any known recovery action."""
     if isinstance(error, ProjectNotRepositoryRootError):
         return _repository_root_error_renderable(error)
+    if isinstance(error, TaskNotFoundError):
+        project = shlex.quote(str(error.project_root))
+        return _outcome_renderable(
+            f"Task {error.task_id} was not found",
+            GLYPH_STOPPED,
+            ALERT_COLOR,
+            details=(("Cause", str(error)),),
+            repair=(
+                (
+                    "Project status",
+                    "Show recent tasks and select an existing task ID.",
+                    f"shikiru --project {project} status",
+                ),
+            ),
+        )
     if isinstance(error, RepositoryHasNoCommitsError):
         project = shlex.quote(str(error.project_root))
         return _outcome_renderable(
@@ -321,11 +326,10 @@ def _project_status_renderable(
     quota_warn_pct: int,
     quota_alert_pct: int,
 ) -> RenderableType:
-    engine_style = BOLD_STEEL if view.engine_up else SECONDARY_TEXT_COLOR
+    engine_style = f"{STYLE_BOLD} {SUCCESS_COLOR}" if view.engine_up else SECONDARY_TEXT_COLOR
     engine = Text.assemble(
-        (GLYPH_ENGINE, BOLD_STEEL if view.engine_up else SECONDARY_TEXT_COLOR),
-        (" engine ", SECONDARY_TEXT_COLOR),
-        ("up" if view.engine_up else "down", engine_style),
+        (GLYPH_ENGINE, engine_style),
+        (" up" if view.engine_up else " down", engine_style),
     )
     if view.engine_up and uptime_seconds is not None:
         engine.append(f" ({format_duration(uptime_seconds)})", style=PRIMARY_TEXT_COLOR)
@@ -392,28 +396,45 @@ def _task_status_renderable(
     detail: TaskDetail, escalations: list[EscalationView], *, width: int
 ) -> RenderableType:
     task = detail.task
+    state, state_color = _task_identity_state(task)
     identity = Text.assemble(
         (task.id, BOLD_PRIMARY),
         (" · ", SECONDARY_TEXT_COLOR),
         (task.title, PRIMARY_TEXT_COLOR),
+        (" · ", SECONDARY_TEXT_COLOR),
+        (state, f"{STYLE_BOLD} {state_color}"),
     )
-    body: list[RenderableType] = [
-        _status_text_rows([identity], width=width),
-        WrappedGroups(_task_groups(task)),
-    ]
+    body: list[RenderableType] = [_status_text_rows([identity], width=width)]
 
     blockers = _task_blocker_rows(detail, escalations)
     if blockers:
-        body.extend((Text(""), _status_rows(blockers, width=width)))
-    report_rows = _report_rows(detail)
+        body.extend((Text(""), _status_section("Attention", blockers, width=width)))
+    progress_rows = _task_progress_rows(task, state)
+    if progress_rows:
+        body.extend((Text(""), _status_section("Progress", progress_rows, width=width)))
+    report_rows = _latest_report_rows(detail)
     if report_rows:
-        body.extend((Text(""), _status_text_section("Reports", report_rows, width=width)))
-    timeline_rows = _timeline_rows(detail)
+        body.extend(
+            (
+                Text(""),
+                _status_text_section(
+                    f"Latest report · 1 of {len(detail.reports)}", report_rows, width=width
+                ),
+            )
+        )
+    timeline_rows = _latest_event_rows(detail, escalations)
     if timeline_rows:
-        body.extend((Text(""), _status_text_section("Timeline", timeline_rows, width=width)))
+        body.extend(
+            (
+                Text(""),
+                _status_text_section(
+                    f"Latest event · 1 of {len(detail.events)}", timeline_rows, width=width
+                ),
+            )
+        )
     branch_rows = _branch_rows(detail)
     if branch_rows:
-        body.extend((Text(""), _status_section("Branches", branch_rows, width=width)))
+        body.extend((Text(""), _status_text_section("Branches", branch_rows, width=width)))
     session_rows = _session_rows(detail)
     if session_rows:
         body.extend((Text(""), _status_section("Sessions", session_rows, width=width)))
@@ -792,31 +813,6 @@ def _fact(label: str, value: str, value_style: str = PRIMARY_TEXT_COLOR) -> Text
     return Text.assemble((f"{label} ", SECONDARY_TEXT_COLOR), (value, value_style))
 
 
-def _task_groups(task: TaskSummary | Task) -> tuple[Text, ...]:
-    visual = status_visual(task.status)
-    status_style = f"{STYLE_BOLD} {AMBER}" if task.status is Status.ESCALATED else visual.style
-    groups = [Text(f"{visual.glyph} {task.status.value}", style=status_style)]
-    if task.step is not None:
-        step = task.step if isinstance(task.step, Step) else Step(task.step)
-        role = ACTING_ROLE[step]
-        groups.extend(
-            (
-                Text(f"{STATUS_STEP_GLYPHS[step]} {step.value.title()}", style=BOLD_STEEL),
-                Text(f"{ROLE_GLYPHS[role]} {role.value.title()}", style=BOLD_STEEL),
-            )
-        )
-    if task.slot is not None:
-        groups.append(_fact("slot", str(task.slot), BOLD_PRIMARY))
-    if task.wait_reason is not None:
-        groups.append(_fact("wait", task.wait_reason, AMBER))
-    if task.holds:
-        holds = ", ".join(sorted(task.holds))
-        groups.append(_fact("holds", holds, AMBER))
-    if task.status is Status.QUEUED:
-        groups.append(_fact("priority", str(task.priority), BOLD_PRIMARY))
-    return tuple(groups)
-
-
 def _fault_section(view: StatusView, *, width: int) -> Section:
     rows: list[tuple[Text, tuple[Text, ...]]] = []
     for fault in view.faults:
@@ -882,8 +878,8 @@ def _usage_section(
         ]
         return _status_section("Usage", rows, width=width)
 
-    table = Table.grid(expand=False, padding=(0, STATUS_USAGE_COLUMN_GAP))
-    headers = ("Agent", "Runs", "Input", "Output", "Costs", "Quota used")
+    table = Table.grid(expand=False, padding=(0, STATUS_USAGE_COLUMN_PADDING))
+    headers = STATUS_USAGE_HEADERS
     for index, header in enumerate(headers):
         table.add_column(
             header,
@@ -921,7 +917,7 @@ def _usage_groups(
         _labeled_value("Output", _token_total(usage, input_tokens=False)),
         _labeled_value("Costs", _cost_total(usage)),
         _labeled_value(
-            "Quota used",
+            "Quota used 5h/7d",
             _quota_cell(
                 windows,
                 quota_warn_pct=quota_warn_pct,
@@ -963,30 +959,29 @@ def _quota_cell(windows: list[QuotaWindow], *, quota_warn_pct: int, quota_alert_
     if not windows:
         return Text("unknown", style=SECONDARY_TEXT_COLOR)
     by_name = {window.name: window for window in windows}
-    canonical = [by_name.get(slot) for slot in QUOTA_SLOTS]
-    other_windows = [window for window in windows if window.name not in QUOTA_SLOTS]
-    if not any(canonical):
-        canonical = []
-        other_windows = sorted(windows, key=lambda item: item.name)
     cell = Text()
-    for index, window in enumerate(canonical):
-        if index:
-            cell.append(" / ", style=SECONDARY_TEXT_COLOR)
-        cell.append_text(
-            Text("unknown", style=SECONDARY_TEXT_COLOR)
-            if window is None
-            else Gauge("", window.used_pct, quota_warn_pct, quota_alert_pct).render()
+    reported_periods = [period for period in QUOTA_PERIODS if period in by_name]
+    if reported_periods:
+        for index, period in enumerate(QUOTA_PERIODS):
+            if index:
+                cell.append(" / ", style=SECONDARY_TEXT_COLOR)
+            window = by_name.get(period)
+            cell.append_text(
+                Text("unknown", style=SECONDARY_TEXT_COLOR)
+                if window is None
+                else Gauge("", window.used_pct, quota_warn_pct, quota_alert_pct).render()
+            )
+        other_windows = [window for window in windows if window.name not in QUOTA_PERIODS]
+    else:
+        order = {name: index for index, name in enumerate(QUOTA_PROVIDER_SLOTS)}
+        other_windows = sorted(
+            windows, key=lambda window: (order.get(window.name, len(order)), window.name)
         )
     for window in other_windows:
         if cell:
-            cell.append(" · ", style=SECONDARY_TEXT_COLOR)
+            cell.append(" · " if reported_periods else " / ", style=SECONDARY_TEXT_COLOR)
         cell.append_text(
-            Gauge(
-                window.name.replace("_", " "),
-                window.used_pct,
-                quota_warn_pct,
-                quota_alert_pct,
-            ).render()
+            Gauge(window.name, window.used_pct, quota_warn_pct, quota_alert_pct).render()
         )
     return cell
 
@@ -996,83 +991,146 @@ def _task_blocker_rows(
 ) -> list[tuple[Text, tuple[Text, ...]]]:
     task = detail.task
     rows: list[tuple[Text, tuple[Text, ...]]] = []
-    if task.status_reason is not None:
-        rows.append((row_name("Outcome"), (Text(task.status_reason, style=SECONDARY_TEXT_COLOR),)))
     rows.extend(
         (
             row_name("Escalation"),
-            (
-                Text(item.escalation.id, style=BOLD_PRIMARY),
-                Text(escalation_reason_label(item.escalation.reason), style=AMBER),
-                Text(item.escalation.headline, style=PRIMARY_TEXT_COLOR, overflow="fold"),
-            ),
+            _escalation_attention_values(item.escalation),
         )
         for item in escalations
         if item.escalation.task_id == task.id
     )
+    if task.status_reason is not None:
+        rows.append((row_name("Outcome"), (Text(task.status_reason, style=SECONDARY_TEXT_COLOR),)))
     return rows
 
 
-def _report_rows(detail: TaskDetail) -> list[Text]:
-    rows: list[Text] = []
-    for report in detail.reports:
-        rows.append(
-            Text.assemble(
-                (report.turn, BOLD_PRIMARY),
-                (" · ", SECONDARY_TEXT_COLOR),
-                (report.kind.value, BOLD_STEEL),
-                (" · ", SECONDARY_TEXT_COLOR),
-                (_report_summary(report.data), PRIMARY_TEXT_COLOR),
-            )
-        )
-        if isinstance(report.data, Verdict):
-            rows.extend(
-                Text.assemble(
-                    (
-                        f"  {issue.severity} · ",
-                        ALERT_COLOR if issue.severity == SEVERITY_BLOCKER else AMBER,
-                    ),
-                    (issue.description, PRIMARY_TEXT_COLOR),
-                )
-                for issue in report.data.issues
-            )
-            rows.extend(
-                Text.assemble(("  residual risk · ", AMBER), (risk, PRIMARY_TEXT_COLOR))
-                for risk in report.data.residual_risks
-            )
-    return rows
-
-
-def _timeline_rows(detail: TaskDetail) -> list[Text]:
-    return [
-        Text.assemble(
-            (event.ts.isoformat(), SECONDARY_TEXT_COLOR),
-            (" · ", SECONDARY_TEXT_COLOR),
-            (event.kind.value, BOLD_STEEL),
-            (" · ", SECONDARY_TEXT_COLOR),
-            (event.message, PRIMARY_TEXT_COLOR),
-        )
-        for event in detail.events
+def _escalation_attention_values(escalation: Escalation) -> tuple[Text, ...]:
+    values = [
+        Text(escalation.id, style=BOLD_PRIMARY),
+        Text(escalation_reason_label(escalation.reason), style=AMBER),
     ]
+    headline = _status_escalation_headline(escalation)
+    values.append(Text(headline, style=PRIMARY_TEXT_COLOR, overflow="fold"))
+    return tuple(values)
 
 
-def _branch_rows(detail: TaskDetail) -> list[tuple[Text, tuple[Text, ...]]]:
+def _task_progress_rows(task: Task, state: str) -> list[tuple[Text, tuple[Text, ...]]]:
+    rows: list[tuple[Text, tuple[Text, ...]]] = []
+    if task.step is not None:
+        stage = STATUS_STEP_LABELS[Step(task.step)]
+        if stage != state:
+            rows.append((row_name("Recorded step"), (Text(stage, style=BOLD_STEEL),)))
+    holds = sorted(
+        hold
+        for hold in task.holds
+        if not (
+            (hold == Hold.PAUSED.value and state == STATUS_PAUSED_LABEL)
+            or (hold == Hold.INTERVENTION.value and state == STATUS_OPERATOR_CONTROL_LABEL)
+        )
+    )
+    if holds:
+        rows.append((row_name("Holds"), (Text(", ".join(holds), style=AMBER),)))
+    return rows
+
+
+def _task_identity_state(task: Task) -> tuple[str, str]:
+    if task.status is Status.ESCALATED:
+        return "Escalated", AMBER
+    if task.status is Status.CANCELLED:
+        return "Cancelled", SECONDARY_TEXT_COLOR
+    return _task_state(task)
+
+
+def _latest_report_rows(detail: TaskDetail) -> list[Text]:
+    if not detail.reports:
+        return []
+    report = detail.reports[-1]
+    rows = [
+        Text.assemble(
+            (report.turn, BOLD_PRIMARY),
+            (" · ", SECONDARY_TEXT_COLOR),
+            (report.kind.value, BOLD_STEEL),
+            (" · ", SECONDARY_TEXT_COLOR),
+            (_report_summary(report.data), PRIMARY_TEXT_COLOR),
+        )
+    ]
+    if isinstance(report.data, Verdict):
+        rows.extend(
+            Text.assemble(
+                (
+                    f"  {issue.severity} · ",
+                    ALERT_COLOR if issue.severity == SEVERITY_BLOCKER else AMBER,
+                ),
+                (issue.description, PRIMARY_TEXT_COLOR),
+            )
+            for issue in report.data.issues
+        )
+        rows.extend(
+            Text.assemble(("  residual risk · ", AMBER), (risk, PRIMARY_TEXT_COLOR))
+            for risk in report.data.residual_risks
+        )
+    return rows
+
+
+def _latest_event_rows(detail: TaskDetail, escalations: list[EscalationView]) -> list[Text]:
+    if not detail.events:
+        return []
+    event = detail.events[-1]
+    message = event.message
+    if event.kind is EventKind.ESCALATION:
+        duplicate_headline = next(
+            (
+                item.escalation.headline
+                for item in escalations
+                if item.escalation.task_id == event.task_id
+                and item.escalation.headline
+                and (
+                    event.message == item.escalation.headline
+                    or any(
+                        event.message.startswith(item.escalation.headline + separator)
+                        for separator in ESCALATION_EVENT_HEADLINE_SEPARATORS
+                    )
+                )
+            ),
+            None,
+        )
+        if duplicate_headline is not None:
+            message = event.message.removeprefix(duplicate_headline)
+            for separator in ESCALATION_EVENT_HEADLINE_SEPARATORS:
+                message = message.removeprefix(separator)
+    row = Text.assemble(
+        (event.ts.isoformat(), SECONDARY_TEXT_COLOR),
+        (" · ", SECONDARY_TEXT_COLOR),
+        (event.kind.value, BOLD_STEEL),
+    )
+    if message:
+        row.append(" · ", style=SECONDARY_TEXT_COLOR)
+        row.append(message, style=PRIMARY_TEXT_COLOR)
+    return [row]
+
+
+def _branch_rows(detail: TaskDetail) -> list[Text]:
     branches = list(detail.branches)
     repo = detail.task.repo
     if repo is not None and repo.branch not in branches:
         branches.append(repo.branch)
-    rows: list[tuple[Text, tuple[Text, ...]]] = []
+    rows: list[Text] = []
     for branch in branches:
-        facts: list[Text] = []
+        row = Text(overflow="fold")
+        row.append("branch ", style=SECONDARY_TEXT_COLOR)
+        row.append(branch, style=PRIMARY_TEXT_COLOR)
         if repo is not None and branch == repo.branch:
-            facts.extend(
-                (
-                    _fact("base", repo.base),
+            row.append(f" → {repo.base}", style=PRIMARY_TEXT_COLOR)
+            rows.append(row)
+            rows.append(
+                Text.assemble(
                     _fact("base ref", repo.base_ref),
+                    (" · ", SECONDARY_TEXT_COLOR),
                     _fact("base sha", repo.base_sha),
                 )
             )
-        rows.append((row_name(branch), tuple(facts)))
+        else:
+            rows.append(row)
     return rows
 
 
@@ -1080,12 +1138,17 @@ def _session_rows(detail: TaskDetail) -> list[tuple[Text, tuple[Text, ...]]]:
     rows: list[tuple[Text, tuple[Text, ...]]] = []
     for run in detail.sessions:
         label = run.role.value.title()
-        session_id = run.session_id if run.session_id is not None else "session id unavailable"
+        status_style = {
+            RunStatus.LIVE: SAGE,
+            RunStatus.TAKEN_OVER: AMBER,
+            RunStatus.CLOSED: SECONDARY_TEXT_COLOR,
+        }[run.status]
         facts = [
-            Text(run.status.value, style=BOLD_STEEL),
             Text(f"{run.agent}/{run.model}", style=PRIMARY_TEXT_COLOR, overflow="fold"),
-            _fact("session", session_id),
+            Text(run.status.value, style=status_style),
         ]
+        if run.session_id is not None:
+            facts.append(_fact("session ID", run.session_id))
         if run.effort is not None:
             facts.append(_fact("effort", run.effort))
         rows.append((row_name(label), tuple(facts)))
@@ -1115,13 +1178,13 @@ def _task_section(title: str, tasks: list[TaskSummary], *, width: int) -> Sectio
     )
 
 
-def _task_state(task: TaskSummary) -> tuple[str, str]:
+def _task_state(task: TaskSummary | Task) -> tuple[str, str]:
     if task.status is Status.DONE:
         return "Done", SAGE
     if Hold.PAUSED.value in task.holds or task.wait_reason == WaitReason.PAUSED.value:
-        return "Paused", AMBER
+        return STATUS_PAUSED_LABEL, AMBER
     if Hold.INTERVENTION.value in task.holds:
-        return "Operator control", AMBER
+        return STATUS_OPERATOR_CONTROL_LABEL, AMBER
     if task.wait_reason is not None:
         return f"Waiting on {task.wait_reason.replace('_', ' ')}", AMBER
     if task.status is Status.RUNNING and task.step is not None:

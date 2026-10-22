@@ -422,7 +422,7 @@ code, pre, .terminal { font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Cons
     </div>
     <div class="below">
       <h2>Status fixture</h2>
-      <p>The task list is a coherent synthetic snapshot: escalated first, then all active tasks, queued tasks, and the latest completed task last. The displayed project counts describe the complete snapshot. Task, escalation, and usage groups are subsections within Details. The quota header is <code>Quota used 5h/7d</code>; both providers use two unlabeled gauges with two-space intrinsic table columns. An unknown task ID has a concise not-found error and Repair.</p>
+      <p>The task list is a coherent synthetic snapshot: escalated first, then all active tasks, queued tasks, and the latest completed task last. The displayed project counts describe the complete snapshot. Task, escalation, and usage groups are subsections within Details. The quota header is <code>Quota used 5h/7d</code> and the intrinsic table keeps two spaces between columns. Only recorded <code>5h</code> and <code>7d</code> windows use two unlabeled gauges; provider windows such as <code>primary</code> and <code>secondary</code> keep their recorded names. An unknown task ID has a concise not-found error and Repair.</p>
       <p>The outside-terminal Task layout selector appears only for <code>status T-n</code>, with the approved Operator briefing selected by default. Current remains available to compare the existing known-task output. Task ledger keeps the project-style identity row, compact progress facts, latest report and event, branch, and full session facts; Operator briefing puts escalation or decision context first, then recorded step/hold facts when present, latest report and event, branch, and full session facts; Evidence view keeps all recorded reports, newest-first event history, branch facts, and complete session identities. The same active <code>T-42</code>, escalated <code>T-41</code>, and completed <code>T-39</code> TaskDetail-shaped fixtures feed each proposal. Latest-only rows and bounded-history counts are stated, completed sessions stay closed, and <code>T-999</code> still fails regardless of layout. These are reference comparisons; runtime selection belongs to Task 275.</p>
     </div>
   </section>
@@ -1597,7 +1597,7 @@ function appendUsage(parent) {
   const codex = node("tr");
   for (const value of ["codex", "6", "16.0k", "4.2k", "unknown"]) codex.append(node("td", "", value));
   const codexQuota = node("td", "quota-cell");
-  codexQuota.append(node("span", "quota-warn", "◑ 52%"), document.createTextNode(" / "), node("span", "quota-good", "◔ 28%"));
+  codexQuota.append(node("span", "quota-label", "primary "), node("span", "quota-warn", "◑ 52%"), document.createTextNode(" / "), node("span", "quota-label", "secondary "), node("span", "quota-good", "◔ 28%"));
   codex.append(codexQuota);
   tbody.append(codex);
   const claude = node("tr");

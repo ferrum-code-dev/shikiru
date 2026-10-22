@@ -84,6 +84,18 @@ async def _cli(root: Path, *args: str) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
+def _assert_unknown_task_status(
+    result: tuple[int, str, str], project_root: Path, task_id: str
+) -> None:
+    code, stdout, stderr = result
+    assert code == 1
+    assert stdout == ""
+    assert task_id in stderr
+    assert "--project" in stderr
+    assert str(project_root) in stderr
+    assert "status" in stderr
+
+
 async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) -> None:
     await _git_project(tmp_path)
 
@@ -95,15 +107,10 @@ async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) 
     code, stdout, stderr = await _cli(tmp_path, "status")
     assert code == 0
     assert stderr == ""
-    assert "engine down" in stdout
+    assert "⚙︎ down" in stdout
     assert "queued 0" in stdout
     assert all(section not in stdout for section in ("Tasks", "Queue", "Escalations", "Faults"))
-    empty_status = stdout
-
-    code, stdout, stderr = await _cli(tmp_path, "status", "T-999")
-    assert code == 0
-    assert stderr == ""
-    assert stdout == empty_status
+    _assert_unknown_task_status(await _cli(tmp_path, "status", "T-999"), tmp_path, "T-999")
 
     code, stdout, stderr = await _cli(tmp_path, "submit", "human task")
     assert code == 0
@@ -115,7 +122,7 @@ async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) 
     code, stdout, stderr = await _cli(tmp_path, "status")
     assert code == 0
     assert stderr == ""
-    assert "engine down" in stdout
+    assert "⚙︎ down" in stdout
     assert "queued 0" in stdout
 
     code, stdout, stderr = await _cli(tmp_path, "stop")
@@ -248,14 +255,10 @@ async def test_human_status_limits_rows_and_json_keeps_full_task_collections(
     assert "queued 10" in stdout
     assert "escalations 2" in stdout
 
-    code, unknown_task_stdout, stderr = await _cli(tmp_path, "status", "T-999")
-
-    assert code == 0
-    assert stderr == ""
-    unknown_task_rows = [line for line in unknown_task_stdout.splitlines() if line.startswith("T-")]
-    assert [line.split(" · ", 1)[0] for line in unknown_task_rows] == expected_ids
-    assert "queued 10" in unknown_task_stdout
-    assert "escalations 2" in unknown_task_stdout
+    _assert_unknown_task_status(await _cli(tmp_path, "status", "T-999"), tmp_path, "T-999")
+    _assert_unknown_task_status(
+        await _cli(tmp_path, "--json", "status", "T-999"), tmp_path, "T-999"
+    )
 
     code, stdout, stderr = await _cli(tmp_path, "--json", "status")
 

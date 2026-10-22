@@ -56,6 +56,7 @@ from shikiru.operator.lifecycle import (
     CLI_PALETTE_ORIGIN_PANE_OPTION,
     PACKAGE_NAME,
 )
+from shikiru.operator.queries import TaskNotFoundError
 from shikiru.operator.sessions import REMOTE_ORIGIN_HOST_ENV_VAR
 from shikiru.paths import project_config_path
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
@@ -536,6 +537,7 @@ def status(
                     state,
                     task_id,
                     watch,
+                    project_root_path=root,
                     quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
                     quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
                 )
@@ -642,12 +644,15 @@ async def _status_loop(
     task_id: str | None,
     watch: bool,
     *,
+    project_root_path: Path,
     quota_warn_pct: int,
     quota_alert_pct: int,
 ) -> None:
     def render() -> None:
         if state.json_output:
             view = services.queries.status(task_id)
+            if task_id is not None and view.task is None:
+                raise TaskNotFoundError(task_id, project_root_path)
             typer.echo(view.model_dump_json())
         else:
             view = services.queries.human_status(task_id)

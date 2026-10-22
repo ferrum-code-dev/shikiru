@@ -410,6 +410,15 @@ class OperatorQueryError(ShikiruError):
     """A requested operator view could not be read at its boundary."""
 
 
+class TaskNotFoundError(OperatorQueryError):
+    """A requested task does not exist in the current project."""
+
+    def __init__(self, task_id: str, project_root: Path) -> None:
+        self.task_id = task_id
+        self.project_root = project_root
+        super().__init__(f"Task {task_id} was not found in this project.")
+
+
 class OperatorQueries:
     """Provide read-only status, task, escalation and pane views to operators."""
 
@@ -443,7 +452,9 @@ class OperatorQueries:
     def human_status(self, task_id: str | None = None) -> HumanStatusView:
         """Return status and bounded task rows from one project task snapshot."""
         tasks = self._reader.list_tasks()
-        status = self._build_status_view(tasks, task_id)
+        if task_id is not None and not any(task.id == task_id for task in tasks):
+            raise TaskNotFoundError(task_id, self._project_root)
+        status = self._build_status_view(tasks, task_id, human_task_detail=True)
         task_rows = (
             tuple(TaskSummary.from_task(task) for task in select_human_status_tasks(tasks))
             if status.task is None
@@ -451,7 +462,9 @@ class OperatorQueries:
         )
         return HumanStatusView(status=status, task_rows=task_rows)
 
-    def _build_status_view(self, tasks: list[Task], task_id: str | None) -> StatusView:
+    def _build_status_view(
+        self, tasks: list[Task], task_id: str | None, *, human_task_detail: bool = False
+    ) -> StatusView:
         queued_tasks = sorted(
             (task for task in tasks if task.status is Status.QUEUED), key=dispatch_sort_key
         )
@@ -460,7 +473,13 @@ class OperatorQueries:
         queued = [TaskSummary.from_task(task) for task in queued_tasks]
         open_escalations = self.list_escalations()
         usage, quotas = self.usage_and_quotas()
-        task_detail = self.get_task(task_id) if task_id is not None else None
+        task_detail = (
+            self._human_task_detail(task_id)
+            if task_id is not None and human_task_detail
+            else self.get_task(task_id)
+            if task_id is not None
+            else None
+        )
         return StatusView(
             project=self._project,
             engine_up=self._engine_up(),
@@ -475,6 +494,33 @@ class OperatorQueries:
             run_directories=self.run_directory_usage(),
             engine_output=self._engine_output(),
             task=task_detail,
+        )
+
+    def _human_task_detail(self, task_id: str) -> TaskDetail | None:
+        task = self._reader.get_task(task_id)
+        if task is None:
+            return None
+        runs = self._reader.list_runs(task_id)
+        turn_dirs, evidence_errors = self._task_turn_dirs(task_id)
+        reports: list[ReportRow] = []
+        recorded_facts = None
+        facts_turn = None
+        if turn_dirs is not None:
+            for turn_dir in turn_dirs:
+                turn_reports, turn_errors = _task_turn_reports(turn_dir)
+                reports.extend(turn_reports)
+                evidence_errors.extend(turn_errors)
+            recorded_facts, facts_turn, fact_errors = _task_facts(turn_dirs)
+            evidence_errors.extend(fact_errors)
+        return TaskDetail(
+            task=task,
+            events=self._reader.events_since(0, task_id=task_id),
+            reports=reports,
+            recorded_facts=recorded_facts,
+            facts_turn=facts_turn,
+            evidence_errors=evidence_errors,
+            branches=[task.repo.branch] if task.repo is not None else [],
+            sessions=runs,
         )
 
     def engine_is_up(self) -> bool:

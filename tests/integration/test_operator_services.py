@@ -143,6 +143,51 @@ def _queries(
     )
 
 
+def _record_status_quota_windows(connection: Connection) -> None:
+    quotas = QuotaStore(connection)
+    for agent, name, used_pct in (
+        ("codex", "5h", 42.5),
+        ("codex", "7d", 28.0),
+        ("claude", "primary", 52.0),
+        ("claude", "secondary", 20.0),
+    ):
+        quotas.record(
+            agent,
+            QuotaWindow(name=name, used_pct=used_pct, resets_at=None, observed_at=START),
+        )
+
+
+def _write_status_task_evidence(project_root: Path, task_id: str) -> Path:
+    turns_dir = project_root / ".shikiru" / "runs" / task_id / "turns"
+    reports = (
+        (
+            "01-triage-i0",
+            "triage",
+            (
+                '{"title":"triage","mode":"implement","complexity":"normal",'
+                '"acceptance_criteria":[],"references":[]}'
+            ),
+        ),
+        (
+            "02-implement-i0",
+            "implementation",
+            (
+                '{"status":"completed","summary":"latest implementation",'
+                '"commits":[],"tests":[],"trackers_updated":false,"risks":[]}'
+            ),
+        ),
+    )
+    for turn, kind, report in reports:
+        turn_dir = turns_dir / turn
+        turn_dir.mkdir(parents=True)
+        (turn_dir / "report.kind").write_text(kind)
+        (turn_dir / "report.json").write_text(report)
+    engine_output = project_root / ".shikiru" / "logs" / "engine.out"
+    engine_output.parent.mkdir(parents=True)
+    engine_output.write_text("startup failed")
+    return engine_output
+
+
 async def test_status_uptime_uses_live_engine_lock_and_recorded_start_event(
     tmp_path: Path,
 ) -> None:
@@ -232,16 +277,20 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
         task_id=task.id,
         message="queued",
     )
+    question = "Keep the parser strict?"
+    escalation_headline = (
+        f"{task.id} · {Step.TRIAGE.value} · {EscalationReason.DECISION_REQUIRED.value}: {question}"
+    )
     events.append(
         EventKind.ESCALATION,
         task_id=task.id,
-        message="decision required: Keep the parser strict?",
+        message=f"{escalation_headline} · diagnostic detail: distinct event fact",
     )
     EscalationStore(connection, clock).open(
         task.id,
         step=Step.TRIAGE,
         reason=EscalationReason.DECISION_REQUIRED,
-        headline="Keep the parser strict?",
+        headline=escalation_headline,
         packet_path="runs/T-1/escalations/E-1.md",
         options=(),
     )
@@ -254,20 +303,8 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
     runs.record_usage(estimate_run.id, Usage(30, 10, 0, 0, 0.21, "api_equivalent", None))
     runs.start(other.id, Role.HELPER, LEADER_RUNG_2)
     connection.execute("UPDATE runs SET usage_reported = NULL WHERE id = ?", (usage_run.id,))
-    QuotaStore(connection).record(
-        "codex",
-        QuotaWindow(name="5h", used_pct=42.5, resets_at=None, observed_at=START),
-    )
-    turn_dir = tmp_path / ".shikiru" / "runs" / task.id / "turns" / "01-triage-i0"
-    turn_dir.mkdir(parents=True)
-    (turn_dir / "report.kind").write_text("triage")
-    (turn_dir / "report.json").write_text(
-        '{"title":"triage","mode":"implement","complexity":"normal",'
-        '"acceptance_criteria":[],"references":[]}'
-    )
-    engine_output = tmp_path / ".shikiru" / "logs" / "engine.out"
-    engine_output.parent.mkdir(parents=True)
-    engine_output.write_text("startup failed")
+    _record_status_quota_windows(connection)
+    engine_output = _write_status_task_evidence(tmp_path, task.id)
 
     queries = _queries(tmp_path, reader, clock)
     detail = queries.get_task(task.id)
@@ -286,7 +323,21 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
                 "acceptance_criteria": [],
                 "references": [],
             },
-        }
+        },
+        {
+            "turn": "02-implement-i0",
+            "kind": "implementation",
+            "source": "agent",
+            "data": {
+                "status": "completed",
+                "summary": "latest implementation",
+                "commits": [],
+                "tests": [],
+                "trackers_updated": False,
+                "risks": [],
+                "question": "",
+            },
+        },
     ]
     task_view = queries.human_status(task.id)
     project_outputs = {
@@ -323,6 +374,14 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
         "T-2",
         "unknown",
         str(engine_output),
+        "codex",
+        "claude",
+        "42%",
+        "28%",
+        "primary",
+        "52%",
+        "secondary",
+        "20%",
     )
     missing_project_facts = {
         width: [
@@ -333,14 +392,17 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
     assert all(not facts for facts in missing_project_facts.values()), missing_project_facts
     task_facts = (
         "T-1 · literal [bold red] detail",
-        "escalated",
-        "Triage",
+        "Escalated",
+        "Triaging",
         "Leader",
         "intervention",
-        "Keep the parser strict?",
-        "01-triage-i0 · triage · triage",
-        "task_queued · queued",
+        question,
+        "02-implement-i0 · implementation · completed: latest implementation",
+        "2026-01-01T00:00:00+00:00",
+        "escalation",
+        "diagnostic detail: distinct event fact",
         branch,
+        f"{branch} → main",
         "base sha a",
         "refs/heads/main",
         base_sha,
@@ -354,6 +416,15 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
         for width, output in task_compact.items()
     }
     assert all(not facts for facts in missing_task_facts.values()), missing_task_facts
+    assert all("01-triage-i0" not in output for output in task_compact.values())
+    assert all("task_queued" not in output for output in task_compact.values())
+    assert all(output.count(question) == 1 for output in task_outputs.values())
+    assert all(
+        output.index(question)
+        < output.index("latest implementation")
+        < output.index("diagnostic detail: distinct event fact")
+        for output in task_outputs.values()
+    )
     assert all(
         not any(
             "".join(fact.split()) in output
@@ -403,8 +474,24 @@ async def test_task_detail_surfaces_a_corrupt_report(
     (turn_dir / "report.kind").write_text("consult")
     (turn_dir / "report.json").write_text("invalid")
 
+    queries = _queries(tmp_path, reader)
     with pytest.raises(InvalidTurnReportError):
-        _queries(tmp_path, reader).get_task(task.id)
+        queries.get_task(task.id)
+
+    view = queries.human_status(task.id)
+    output = plain_text(
+        status_renderable(
+            view,
+            width=80,
+            uptime_seconds=None,
+            quota_warn_pct=50,
+            quota_alert_pct=90,
+        ),
+        width=80,
+    )
+
+    assert task.id in output
+    assert "invalid JSON in report" in output
 
 
 async def test_missing_packet_and_session_are_operator_errors(
