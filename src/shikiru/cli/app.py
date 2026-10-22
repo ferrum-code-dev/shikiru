@@ -506,12 +506,12 @@ def submit(
     except ShikiruError as error:
         _fail(error)
     task_id = ack.result.get("task_id") if ack.result else None
-    if task_id is None:
+    if not state.json_output:
         emit_ack(state, ack)
-    elif state.json_output:
+    elif task_id is not None:
         _emit_value(state, {"task_id": task_id, "command_id": ack.id, "status": ack.status}, "")
     else:
-        typer.echo(task_id)
+        emit_ack(state, ack)
 
 
 @app.command()

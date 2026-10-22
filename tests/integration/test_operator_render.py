@@ -3,11 +3,13 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 from shikiru.agents.contracts import QuotaWindow
-from shikiru.cli.render import status_renderable
+from shikiru.cli.render import ack_renderable, error_renderable, status_renderable
 from shikiru.domain.escalation import Escalation, EscalationStatus
 from shikiru.domain.reports import ReportKind, Verdict
 from shikiru.domain.steps import Step
 from shikiru.domain.tasks import EscalationReason, Mode, Status
+from shikiru.errors import NotInitialisedError
+from shikiru.operator.commands import Ack, AckStatus
 from shikiru.operator.queries import (
     EscalationView,
     HumanStatusView,
@@ -23,6 +25,19 @@ from tests.support.factories import make_task
 from tests.support.render import RENDER_WIDTH, plain_text
 
 OBSERVED_AT = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def test_unconfirmed_stop_ack_does_not_claim_the_engine_stopped() -> None:
+    output = plain_text(ack_renderable(Ack(id=44, status=AckStatus.DONE), stopping=True))
+
+    assert "Engine stopped" not in output
+    assert "C-44" in output
+
+
+def test_unlocated_project_error_keeps_its_original_reason() -> None:
+    output = plain_text(error_renderable(NotInitialisedError("project lookup failed")))
+
+    assert "project lookup failed" in output
 
 
 def _summary(

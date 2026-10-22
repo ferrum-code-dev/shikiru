@@ -443,3 +443,15 @@ CLI second-review corrections (sequential on main; lead review after each):
   - Proof: Lead accepted the standalone five-art/five-editor HTML and design notes after reviewing the native artwork atlas and wide/narrow list-inspector captures. The state harness and `node --check` passed. Final native `uv run --offline poe check`: 1,689 passed, 14 skipped, 91.40% coverage (`/private/tmp/shikiru-init-272-check-native-recheck.log`); browser QA limitations are recorded in the design notes. No initializer runtime changes.
 - [x] Task 271: Report stale sessions without blocking healthy projects
   - Proof: The accepted implementation preserves healthy session rows and attachments beside retained sessions whose project state is missing, deleted, corrupt or malformed, while global tmux failures remain visible. Integration covers read-only local discovery, safely quoted applicable repairs, partial and empty JSON, all-unavailable output, unavailable explicit/current targets, actual numbered attachment through a private PTY, and remote repair scope plus a real shell boundary for a metacharacter-bearing accepted host. Focused session/tmux tests passed 57; Ruff, format, basedpyright and `git diff --check` passed. Final native `uv run --offline poe check` passed 1,703 tests, skipped 14, at 91.41% coverage in 598.89s (`/private/tmp/shikiru-task271-check-final.log`); the interrupted earlier attempt is preserved separately and not counted (`/private/tmp/shikiru-task271-check-incomplete.log`). Root accepted the implementation before the gate.
+
+- [x] Task 273: Review unified command examples and the specified initializer composition (examples only; runtime follows review)
+  - Proof: Operator accepted the refined examples and selected Operator briefing; lead static review completed. Task 273 records the examples and validation limits; Task 274 records the runtime implementation and its green full gate.
+
+
+- [x] Task 274: Apply approved shared human outcomes and adopt the design reference
+  - Proof: Lead accepted the final implementation. Focused CLI/plugin/render integration passed 20 tests; the native full gate passed 1,709, skipped 14, with 91.50% coverage (`/private/tmp/shikiru-task274-final-poe-check/command.log`). Adopted reference, companion and byte-identical artwork are included; `.DS_Store` files are preserved and excluded.
+- [ ] Task 275: Implement project status and Operator briefing task status
+- [ ] Task 276: Align session listings, partial diagnostics and attach prompts
+- [ ] Task 277: Support the ordered Helper fallback ladder
+- [ ] Task 278: Implement the dashboard-style initializer shell and non-ladder steps
+- [ ] Task 279: Replace the initializer ladder editor and complete native acceptance

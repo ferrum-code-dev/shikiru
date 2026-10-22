@@ -138,8 +138,14 @@ class Git:
 
     async def is_repository_root(self, path: Path) -> bool:
         """Return whether `path` is the top-level directory of a git working tree."""
+        return await self.repository_root(path) == path.resolve()
+
+    async def repository_root(self, path: Path) -> Path | None:
+        """Return the top-level directory containing `path`, or `None` outside a worktree."""
         result = await self._run(path, "rev-parse", "--show-toplevel", check=False)
-        return result.returncode == 0 and Path(result.stdout.strip()).resolve() == path.resolve()
+        if result.returncode != 0:
+            return None
+        return Path(result.stdout.strip()).resolve()
 
     async def has_commit(self, repo_dir: Path) -> bool:
         """Return whether `repo_dir` has a commit at `HEAD`."""

@@ -12,13 +12,17 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.bootstrap import build_operator
+from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
+from shikiru.domain.commands import Submit
 from shikiru.domain.escalation import options_for
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Hold, Status, Step
+from shikiru.engine.daemon import EngineLock
 from shikiru.operator.lifecycle import PALETTE_COMMAND, ProjectLifecycle, StartResult
-from shikiru.paths import state_db_path
+from shikiru.paths import engine_lock_path, state_db_path
 from shikiru.process import SubprocessRunner
+from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.tasks import TaskStore
@@ -32,6 +36,7 @@ from shikiru.tmux.session import (
 )
 from tests.support.clock import FakeClock
 from tests.support.store import seed_task
+from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -103,7 +108,9 @@ async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) 
     code, stdout, stderr = await _cli(tmp_path, "submit", "human task")
     assert code == 0
     assert stderr == ""
-    assert stdout.strip() == "T-1"
+    assert "T-1" in stdout
+    assert "C-1" in stdout
+    assert "pending" in stdout.lower()
 
     code, stdout, stderr = await _cli(tmp_path, "status")
     assert code == 0
@@ -114,8 +121,60 @@ async def test_cli_human_init_submit_status_and_already_stopped(tmp_path: Path) 
     code, stdout, stderr = await _cli(tmp_path, "stop")
     assert code == 0
     assert stderr == ""
-    assert stdout.strip() == "Engine already stopped"
+    assert stdout.lstrip().startswith("✔")
+    assert len(stdout.splitlines()) == 1
     assert "\x1b[" not in stdout
+
+
+@pytest.mark.parametrize("outcome", ["pending", "applied", "rejected"])
+async def test_human_submit_reports_the_engine_acknowledgement_and_allocated_identity(
+    tmp_path: Path,
+    outcome: str,
+) -> None:
+    await _git_project(tmp_path)
+    code, _, stderr = await _cli(tmp_path, "init", "--yes")
+    assert code == 0
+    assert stderr == ""
+
+    database = Database(state_db_path(tmp_path))
+    connection = database.connect()
+    queue = CommandQueue(connection, SystemClock())
+    lock = EngineLock(engine_lock_path(tmp_path))
+    if outcome != "pending":
+        lock.acquire()
+    unsafe_value = f"[bold]$(touch {tmp_path / 'must-not-exist'})"
+    try:
+        cli_task = asyncio.create_task(_cli(tmp_path, "submit", "human task"))
+        if outcome != "pending":
+            await wait_until(lambda: bool(queue.pending()), timeout=5)
+            command = queue.pending()[0]
+            assert isinstance(command.command, Submit)
+            if outcome == "applied":
+                queue.mark_done(command.id, {"task_id": command.command.task_id})
+            else:
+                queue.mark_rejected(command.id, {"error": unsafe_value})
+        code, stdout, stderr = await cli_task
+    finally:
+        if outcome != "pending":
+            lock.release()
+        connection.close()
+
+    assert stderr == ""
+    assert "T-1" in stdout
+    assert "C-1" in stdout
+    if outcome == "pending":
+        assert code == 0
+        assert stdout.lstrip().startswith("·")
+    elif outcome == "applied":
+        assert code == 0
+        assert stdout.lstrip().startswith("✔")
+        assert "shikiru status T-1" in " ".join(stdout.split())
+        assert not (tmp_path / "must-not-exist").exists()
+    else:
+        assert code == 4
+        assert stdout.lstrip().startswith("✕")
+        assert unsafe_value in stdout
+        assert not (tmp_path / "must-not-exist").exists()
 
 
 async def test_human_status_limits_rows_and_json_keeps_full_task_collections(
@@ -223,13 +282,26 @@ async def test_cli_requires_a_complete_project_and_shows_recovery_options(
     assert code == 3
     assert stdout == ""
     assert str(tmp_path) in stderr
-    assert "shikiru init" in stderr
+    assert "shikiru --project" in stderr
     assert "shikiru --project PATH COMMAND" in stderr
     assert "shikiru --help" in stderr
     assert "defaults.toml" not in stderr
     if partial_state:
         assert str(tmp_path / ".shikiru" / "config.toml") in stderr
     assert "\x1b[" not in stderr
+
+
+async def test_missing_project_repair_keeps_shell_metacharacters_literal(tmp_path: Path) -> None:
+    project = tmp_path / "[bold]$(unsafe); project"
+    await asyncio.to_thread(project.mkdir, parents=True)
+
+    code, stdout, stderr = await _cli(project, "status")
+
+    assert code == 3
+    assert stdout == ""
+    assert str(project) in stderr
+    assert shlex.quote(str(project)) in " ".join(stderr.split())
+    assert not (tmp_path / "unsafe").exists()
 
 
 async def test_cli_json_init_submit_status_and_stop(tmp_path: Path) -> None:
@@ -344,12 +416,20 @@ async def test_init_rejects_a_project_root_that_is_not_a_repository_root(
 ) -> None:
     project = tmp_path / "workspace" / "project"
     await asyncio.to_thread(project.mkdir, parents=True)
-    await _git_project((project / repo_relative).resolve())
+    repository = (project / repo_relative).resolve()
+    await _git_project(repository)
 
     code, _, stderr = await _cli(project, "init", "--yes")
+    flat_stderr = " ".join(stderr.split())
 
-    assert code != 0
+    assert code == 1
     assert str(project) in stderr
+    if repo_relative == "..":
+        assert shlex.quote(str(repository)) in flat_stderr
+        assert "init --yes" in flat_stderr
+    else:
+        assert f"git -C {shlex.quote(str(project))} init" in flat_stderr
+        assert "commit --allow-empty" in flat_stderr
     assert not (project / ".shikiru" / "config.toml").exists()
 
 
@@ -360,12 +440,13 @@ async def test_init_rejects_an_unborn_repository_before_writing_project_state(
     await SubprocessRunner().run(["git", "init", "-q"], timeout=10, cwd=tmp_path, check=True)
 
     code, stdout, stderr = await _cli(tmp_path, "init", "--yes")
+    flat_stderr = " ".join(stderr.split())
 
     assert code == 1
     assert stdout == ""
     assert str(tmp_path) in stderr
-    assert "initial commit" in stderr
-    assert "shikiru init" in stderr
+    assert f"git -C {shlex.quote(str(tmp_path))} commit --allow-empty" in flat_stderr
+    assert f"shikiru --project {shlex.quote(str(tmp_path))} init --yes" in flat_stderr
     assert "rev-parse" not in stderr
     assert not (tmp_path / ".shikiru").exists()
     exclude = tmp_path / ".git" / "info" / "exclude"

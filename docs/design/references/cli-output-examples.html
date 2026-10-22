@@ -1,0 +1,2185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+<title>Shikiru command output and initializer review</title>
+<style>
+:root {
+  color-scheme: dark;
+  --background: #11151b;
+  --surface: #171d25;
+  --detail: #1c2530;
+  --selected: #233340;
+  --border: #3d4654;
+  --primary: #dce2e9;
+  --secondary: #9aa5b5;
+  --steel: #83bddd;
+  --sage: #90cba6;
+  --amber: #dfb16c;
+  --rose: #e3a0a0;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+
+body {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 22px 48px;
+  background: #0b1016;
+  color: var(--primary);
+  font: 14px/1.5 system-ui, sans-serif;
+}
+
+h1 {
+  margin: 0 0 8px;
+  font-size: clamp(24px, 4vw, 34px);
+  font-weight: 550;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+h2 { margin: 30px 0 10px; font-size: 18px; font-weight: 600; }
+p { max-width: 82ch; margin: 8px 0 16px; color: var(--secondary); }
+code, pre, .terminal { font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+.eyebrow {
+  color: var(--steel);
+  font: 700 12px/1.5 ui-monospace, monospace;
+  letter-spacing: 0.04em;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  margin: 20px 0 12px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.controls label {
+  display: flex;
+  flex: 1 1 170px;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--secondary);
+  font-size: 12px;
+}
+
+.controls select {
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--primary);
+  font: inherit;
+}
+
+.controls .check {
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.fixture-note { flex: 2 1 290px; color: var(--secondary); font-size: 12px; }
+
+.terminal-scroll {
+  max-width: 100%;
+  margin: 14px 0 0;
+  overflow: auto;
+  scrollbar-color: var(--border) #0b1016;
+}
+
+.terminal {
+  position: relative;
+  container-name: terminal;
+  container-type: inline-size;
+  width: calc(140ch + 0px);
+  height: calc(82.5em + 0px);
+  overflow: hidden;
+  background: var(--background);
+  color: var(--primary);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.terminal[data-example="init"] { box-shadow: inset 0 0 0 1px var(--border); }
+.terminal[data-mono="true"] {
+  filter: grayscale(1);
+  --steel: #dce2e9;
+  --sage: #dce2e9;
+  --amber: #dce2e9;
+  --rose: #dce2e9;
+  --secondary: #aab1ba;
+}
+
+.art {
+  position: absolute;
+  z-index: 0;
+  inset: 0 auto auto 0;
+  margin: 0;
+  overflow: visible;
+  pointer-events: none;
+  user-select: none;
+  white-space: pre;
+  font: inherit;
+  line-height: inherit;
+}
+
+.screen-content {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: auto;
+  scrollbar-color: var(--border) var(--background);
+}
+
+.command-view { min-height: 100%; padding: 2ch; white-space: pre-wrap; overflow-wrap: anywhere; }
+.command-line { margin: 0 0 1.4em; color: var(--secondary); }
+.command-line::before { color: var(--steel); font-weight: 700; content: "$ "; }
+.line { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
+.line.muted, .table-heading { color: var(--secondary); }
+.line.strong { color: var(--primary); font-weight: 700; }
+.handoff-note, .protocol-note { color: var(--secondary); }
+.outcome { display: block; margin: 0 0 0.45em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.glyph { font-weight: 700; }
+.success .glyph { color: var(--sage); }
+.error .glyph { color: var(--rose); }
+.pending .glyph { color: var(--amber); }
+.summary { color: var(--primary); }
+.section-title { margin: 0.9em 0 0.2em; color: var(--steel); font-weight: 700; }
+.task-detail-title { margin: 0.9em 0 0.2em; color: var(--secondary); font-weight: 700; }
+.detail-row, .action-row { display: block; }
+.detail-label, .read-label { color: var(--secondary); }
+.detail-value, .read-value { color: var(--primary); }
+.action-command { color: var(--steel); }
+.check-row { display: block; white-space: normal; }
+.check-glyph.pass { color: var(--sage); font-weight: 700; }
+.check-glyph.fail { color: var(--rose); font-weight: 700; }
+.check-name { color: var(--primary); font-weight: 700; overflow-wrap: anywhere; }
+.check-separator { color: var(--secondary); }
+.check-value { color: var(--primary); overflow-wrap: anywhere; }
+.doctor-gap { min-height: 1.65em; }
+.ls-failure-gap { min-height: 1.4em; }
+.doctor-summary { font-weight: 700; }
+.doctor-summary.pass { color: var(--sage); }
+.doctor-summary.fail { color: var(--rose); }
+
+.task-row { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
+.status-facts { color: var(--primary); white-space: pre-wrap; overflow-wrap: anywhere; }
+.status-project { color: var(--primary); font-weight: 700; }
+.status-label, .task-meta-label, .task-timestamp, .task-branch-direction { color: var(--secondary); }
+.status-value, .task-role, .task-report-result, .task-timeline-event, .task-branch-target, .task-model, .task-meta-value { color: var(--primary); }
+.task-running, .task-report-state { color: var(--sage); font-weight: 700; }
+.task-branch, .task-provider, .task-session-id { color: var(--steel); }
+.uptime { color: var(--primary); }
+.session-table { width: max-content; max-width: 100%; }
+.session-row { display: grid; grid-template-columns: 24ch 12ch 8ch 8ch 10ch; column-gap: 2ch; white-space: nowrap; }
+.numbered-session-row { display: grid; grid-template-columns: 3ch 24ch 12ch 8ch 8ch 10ch; column-gap: 2ch; white-space: nowrap; }
+.session-number { color: var(--steel); font-weight: 700; }
+.session-heading { color: var(--secondary); }
+.session-name { color: var(--primary); font-weight: 700; }
+.session-engine.up { color: var(--sage); font-weight: 700; }
+.session-engine.down { color: var(--secondary); }
+.session-escalations.active { color: var(--amber); font-weight: 700; }
+.session-path { padding-left: 2ch; color: var(--secondary); }
+.task-id { color: var(--steel); font-weight: 700; }
+.task-title { color: var(--primary); }
+.task-state { font-weight: 700; }
+.task-state.escalated { color: var(--amber); }
+.task-state.implementing, .task-state.integrating, .task-state.verifying { color: var(--steel); }
+.task-state.queued { color: var(--secondary); }
+.task-state.done { color: var(--sage); }
+.watch-gap { height: 1.65em; }
+.status-usage { width: max-content; border-spacing: 2ch 0; color: var(--primary); text-align: left; }
+.status-usage th { color: var(--secondary); font-weight: 400; }
+.status-usage td { white-space: nowrap; }
+.quota-cell { white-space: nowrap; }
+.quota-label { color: var(--secondary); }
+.quota-good { color: var(--sage); font-weight: 700; }
+.quota-warn { color: var(--amber); font-weight: 700; }
+
+.wizard-positioner {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  place-items: center;
+}
+
+.wizard-panel {
+  display: grid;
+  grid-template-rows: auto 1px minmax(0, 1fr) auto 1px auto;
+  width: min(96ch, 100%);
+  height: min(36lh, 100%);
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 1lh 2ch;
+  border: 1px solid var(--steel);
+  background: var(--surface);
+  color: var(--primary);
+}
+
+.wizard-header { display: flex; min-width: 0; min-height: 1.65em; align-items: center; justify-content: space-between; gap: 1ch; }
+.wizard-title { min-width: 0; color: var(--primary); white-space: nowrap; }
+.wizard-brand { color: var(--steel); font-weight: 700; }
+.wizard-step { color: var(--primary); font-weight: 700; }
+.wizard-step-count { flex: 0 0 auto; color: var(--steel); text-align: right; white-space: nowrap; }
+.wizard-rule { width: 100%; height: 1px; background: var(--border); }
+.wizard-nav-rule { margin: 0.2lh 0; }
+.wizard-body { min-height: 0; overflow: auto; padding: 0.8lh 0 0.4lh; scrollbar-color: #344b5d #000008; scrollbar-width: thin; }
+.description { margin: 0 0 0.7lh; color: var(--primary); }
+.section-label { margin: 0.55lh 0 0.2lh; color: var(--steel); font-weight: 700; }
+.read-row { display: grid; grid-template-columns: 15ch minmax(0, 1fr); min-width: 0; gap: 1ch; }
+.read-value { min-width: 0; overflow-wrap: anywhere; }
+.checkout-branch { color: var(--primary); font-weight: 700; }
+.checkout-clean, .checkout-add { color: var(--sage); }
+.checkout-change { color: var(--amber); }
+.checkout-delete { color: var(--rose); }
+.agents-layout { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr); gap: 2ch; align-items: start; }
+.agents-overview, .agents-editor { min-width: 0; }
+.scope-list { display: grid; gap: 0.15lh; }
+.scope-row {
+  display: grid;
+  grid-template-columns: 19ch minmax(0, 1fr);
+  width: 100%;
+  min-height: 1.65em;
+  padding: 0 0.5ch;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.scope-row.selected { background: var(--selected); font-weight: 700; }
+.scope-row:focus-visible, .control:focus-visible, .wizard-nav button:focus-visible, .compact-actions button:focus-visible, .path-add:focus-visible {
+  outline: 1px solid var(--steel);
+  outline-offset: 1px;
+}
+.scope-name { color: var(--secondary); }
+.scope-value { min-width: 0; overflow-wrap: anywhere; }
+.inheritance { margin-bottom: 0.3lh; color: var(--secondary); }
+.field { display: grid; grid-template-columns: 15ch minmax(0, 1fr); align-items: start; gap: 1ch; margin: 0.3lh 0; }
+.agents-editor .field { grid-template-columns: 9ch minmax(0, 1fr); }
+.field-label { padding-top: 0.12lh; color: var(--secondary); }
+.control {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 1.8em;
+  padding: 0 1ch;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--primary);
+  font: inherit;
+}
+.control:focus { outline: 0; background: var(--selected); }
+.control:disabled { background: var(--surface); color: var(--secondary); }
+.control[aria-invalid="true"] { outline: 1px solid var(--rose); }
+.term-select { display: flex; align-items: center; justify-content: space-between; gap: 1ch; background: var(--detail); text-align: left; cursor: pointer; }
+.combo-wrap { position: relative; min-width: 0; }
+.combo-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.combo-chevron { flex: 0 0 auto; color: var(--secondary); }
+.combo-menu {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 1px);
+  left: 0;
+  width: 100%;
+  max-height: 12em;
+  overflow: auto;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  padding: 2px;
+}
+.combo-menu.opens-above { top: auto; bottom: calc(100% + 1px); }
+.combo-option {
+  display: block;
+  width: 100%;
+  min-height: 1.5em;
+  padding: 0.15em 1ch;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.combo-option[aria-current="true"], .combo-option:hover { background: var(--selected); font-weight: 700; }
+.validation { grid-column: 2; color: var(--rose); }
+.compact-actions, .wizard-nav { display: flex; flex-wrap: wrap; gap: 1ch; }
+.compact-actions { margin: 0.2lh 0 0.4lh; }
+.compact-actions button, .wizard-nav button, .path-add {
+  min-height: 1.65em;
+  padding: 0 0.3ch;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+}
+.compact-actions button:focus-visible, .wizard-nav button:focus-visible { background: var(--selected); }
+.compact-actions button:disabled, .wizard-nav button:disabled, .path-add:disabled { color: var(--secondary); cursor: default; }
+.wizard-nav { justify-content: flex-end; padding: 0.25lh 0 0; }
+.wizard-nav .primary { color: var(--steel); font-weight: 700; }
+.wizard-hint { display: flex; min-height: 1.65em; align-items: center; justify-content: space-between; gap: 2ch; color: var(--secondary); pointer-events: none; user-select: none; }
+.wizard-hint-left { min-width: 0; }
+.wizard-hint-right { flex: 0 0 auto; color: var(--secondary); white-space: nowrap; }
+.hint-key { color: var(--steel); font-weight: 700; }
+.hint-note { color: var(--secondary); }
+.path-list { display: grid; gap: 0.15lh; margin-bottom: 0.5lh; }
+.path-candidate { display: grid; grid-template-columns: minmax(0, 1fr) 20ch auto; align-items: center; gap: 1ch; }
+.path-name { color: var(--primary); }
+.path-evidence { color: var(--sage); }
+.path-add { color: var(--steel); }
+
+.below { margin: 12px 0 24px; padding: 12px 14px; border-left: 2px solid var(--border); background: #11151b; color: var(--secondary); }
+.below h2 { margin: 0 0 8px; color: var(--primary); font-size: 15px; }
+.below p { margin: 8px 0; }
+.below code { color: var(--steel); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 14px 0; padding: 12px 14px; background: #11151b; color: var(--secondary); font-size: 12px; }
+
+@container terminal (max-width: 82ch) {
+  .scope-row { grid-template-columns: 19ch minmax(0, 1fr); }
+}
+
+@container terminal (max-width: 65ch) {
+  .session-row, .numbered-session-row { display: block; white-space: normal; }
+  .session-row > span:not(:first-child)::before, .numbered-session-row > span:not(:first-child)::before { content: "  "; }
+  .session-path { padding-left: 0; }
+}
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">SHIKIRU · DESIGN REVIEW</div>
+  <h1>Command outcomes and initializer composition</h1>
+  <p>This offline review uses synthetic project fixtures. It runs no commands, reads no local project state, and writes no configuration. Terminal values, catalogs, Doctor reports, identifiers, repository facts, and simulated writes are illustrative.</p>
+  <div class="controls" aria-label="Review controls">
+    <label>Example<select id="example"></select></label>
+    <label>Scenario<select id="scenario"></select></label>
+    <label id="task-layout-label" hidden>Task layout<select id="task-layout">
+      <option value="briefing" selected>Operator briefing</option>
+      <option value="current">Current</option>
+      <option value="ledger">Task ledger</option>
+      <option value="evidence">Evidence view</option>
+    </select></label>
+    <label>Terminal size<select id="size">
+      <option value="140x50" selected>140 × 50</option>
+      <option value="100x40">100 × 40</option>
+      <option value="80x24">80 × 24</option>
+      <option value="60x18">60 × 18</option>
+      <option value="40x12">40 × 12</option>
+    </select></label>
+    <label id="repo-fixture-label" hidden>Checkout fixture<select id="repo-fixture">
+      <option value="clean">Clean worktree</option>
+      <option value="changed">Changed paths</option>
+    </select></label>
+    <label class="check"><input id="mono" type="checkbox"> Monochrome view</label>
+    <div class="fixture-note">Fixture catalogs outside the terminal: Codex (gpt-6-luna, gpt-6-codex, gpt-5.6-sol) and Claude Code (claude-sonnet-4-5, claude-opus-4-1). These are simulated choices, not live discovery.</div>
+  </div>
+  <div class="terminal-scroll">
+    <div class="terminal" id="terminal" aria-label="Simulated Shikiru terminal output">
+      <pre class="art" id="art" aria-hidden="true"></pre>
+      <div class="screen-content" id="content"></div>
+    </div>
+  </div>
+  <div class="legend" aria-label="Semantic color legend">
+    <span><b class="sage">✔</b> completed</span>
+    <span><b class="steel">Details</b> supporting facts</span>
+    <span><b class="amber">·</b> pending or attention</span>
+    <span><b class="rose">✕</b> problem summary</span>
+  </div>
+
+  <section>
+    <h2>Unchanged help and protocol exceptions</h2>
+    <p>Native help keeps its existing layout and content, including the white-bold Options, Commands, and Arguments labels, bold Default labels, conventional metavariables, and required-argument legend. This proposal does not redesign help. Version remains a bare version such as <code>0.1.0</code>; shell completion output and setup behavior stay native.</p>
+    <p>JSON, MCP stdio, hidden process entrypoints, pane streams, and evidence exports keep their current formats. The human outcome style never decorates protocol output. The page shows only the <code>shikiru mcp</code> command in its terminal example; its stdio boundary is described here. Attach and <code>start --attach</code> hand the terminal to tmux without adding a post-handoff CLI line.</p>
+    <div class="below">
+      <h2>Approved submit compatibility</h2>
+      <p>The Operator approved a shared human submit result: an applied request shows an explicit task-created outcome and its allocated task ID instead of a bare ID. Pending and rejected results retain the command and task identity without claiming an unapplied task was created or started. JSON keeps its existing object.</p>
+    </div>
+    <div class="below">
+      <h2>Session names and exact repair targets</h2>
+      <p>Session identities use clean names such as <code>[shikiru] demo</code>. A repair fixture may use <code>tmux kill-session -t '$7'</code>; Details maps <code>$7</code> to the clean session name. It is a synthetic native tmux ID, not a live target, and must be looked up in the intended tmux server. Shell quoting protects the ID from expansion. Tmux's <code>=</code> prefix is exact-name target syntax, not part of the session name; runtime exact targeting stays unchanged. A remote repair is explicitly labelled to run on that host.</p>
+    </div>
+    <div class="below">
+      <h2>Status fixture</h2>
+      <p>The task list is a coherent synthetic snapshot: escalated first, then all active tasks, queued tasks, and the latest completed task last. The displayed project counts describe the complete snapshot. Task, escalation, and usage groups are subsections within Details. The quota header is <code>Quota used 5h/7d</code>; both providers use two unlabeled gauges with two-space intrinsic table columns. An unknown task ID has a concise not-found error and Repair.</p>
+      <p>The outside-terminal Task layout selector appears only for <code>status T-n</code>, with the approved Operator briefing selected by default. Current remains available to compare the existing known-task output. Task ledger keeps the project-style identity row, compact progress facts, latest report and event, branch, and full session facts; Operator briefing puts escalation or decision context first, then recorded step/hold facts when present, latest report and event, branch, and full session facts; Evidence view keeps all recorded reports, newest-first event history, branch facts, and complete session identities. The same active <code>T-42</code>, escalated <code>T-41</code>, and completed <code>T-39</code> TaskDetail-shaped fixtures feed each proposal. Latest-only rows and bounded-history counts are stated, completed sessions stay closed, and <code>T-999</code> still fails regardless of layout. These are reference comparisons; runtime selection belongs to Task 275.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Initializer composition</h2>
+    <p>The wizard appears in a neutral dashboard viewport. Its preferred 96×36-cell panel is clamped to the selected terminal size. A normal top row shows cyan-bold SHIKIRU, the white-bold step title and N / 7 counter, followed by the dashboard divider; only the body scrolls. The bottom order is body, static hint, divider, then right-aligned actions. There are no global terminal header or footer rows. The supplied ANSI artwork is embedded as a literal copy, drawn top-left in original terminal-cell positions, unscaled and clipped. Ctrl+F hides the full panel for five seconds, then restores the unchanged state and focus. The shortcut does not intercept typing in editable fields or open combos. Ordinary command examples hide the artwork; the outer review page scrolls without shrinking terminal cells.</p>
+    <p>Repository displays the base and clean or changed worktree plus config destination. Agents keeps all six role/scope rows visible, each with an editable comma-separated ladder field. A dependent Agent/Model/Effort form sits below the scope list and Add appends a supported entry. Blank Implementer Low, Normal and High fields inherit Base; typing or Add creates an override. Multiple Helper entries are a selected proposal that requires later runtime/schema work. Tracker paths are project-relative Markdown files used as task trackers. Cache paths are registered for task worktrees. Path fields start blank; detected candidates add once and can be re-added after manual removal. Empty tracker input sends no tracker files to tasks; empty cache input copies no caches. The CoW row shows simulated filesystem evidence; unsupported CoW skips cache copies.</p>
+    <p>Parallelism states the maximum number of tasks the engine may run at once and shows its default of 2 without Current or Accepted rows. Pre-write Finish preserves the original explanation that it writes <code>.shikiru/config.toml</code>, excludes <code>.shikiru/</code> in Git, and runs Doctor; it shows the destination and selected summary without redundant Roles or Doctor fact rows. The <strong>Run doctor</strong> action writes the fixture configuration and displays the full post-write report in Finish, using the native check format: bold white names, grey separators, white detail, then a blank row and aggregate passed/failed line. The result is read-only with Exit and no duplicate report.</p>
+    <p>Drafts persist across steps and logical sizes. Narrow terminal sizes scroll and keep the type size fixed. The left hint is step-specific; Repository has no selection/scroll hint, and scroll appears only when the body overflows. Ctrl+F and <code>富士山</code> stay right-aligned on every step. Escape never cancels or exits; explicit Cancel and Exit actions remain. Hints are static and non-focusable. Browser controls stay outside the terminal. Values use text insertion, not HTML markup.</p>
+  </section>
+
+  <section>
+    <h2>Validation and limits</h2>
+    <p>The Operator verified this latest prototype, followed by static review of the approved selections and embedded artwork. An earlier temporary Node harness exhausted host resources and was abandoned; its results are not current validation proof. The review page remains standalone and has no external dependencies.</p>
+    <p>Browser review is unavailable in this environment. Rendered geometry and browser interaction remain unverified; the logical cell sizes and CSS layout rules were inspected statically.</p>
+  </section>
+</main>
+<script type="application/json" id="art-source">"                                                                                                                        \u001b[0m\n                                                                                                                        \u001b[0m\n                                                                                                                        \u001b[0m\n                                                                                                                        \u001b[0m\n                                                                                                                        \u001b[0m\n                                                                           \u001b[38;2;245;73;42m\u28c0\u28e4\u28f6\u28f6\u28ff\u28ff\u28ff\u28ff\u28ff\u28f7\u28f6\u28e6\u28c4\u2840\u001b[39m                               \u001b[0m\n                                                                        \u001b[38;2;245;73;42m\u28e0\u28f4\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28f7\u28c4\u2840\u001b[39m                            \u001b[0m\n                                                   \u001b[38;2;244;236;215m\u28c0\u2820\u28f4\u28f2\u28fe\u28ff\u001b[38;2;255;250;236m\u28f7\u28f6\u001b[38;2;244;236;215m\u28f6\u28f6\u001b[38;2;255;250;236m\u28e6\u28e4\u28e4\u28c0\u001b[38;2;244;236;215m\u28c0\u001b[39m    \u001b[38;2;245;73;42m\u28a0\u28fe\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28c4\u001b[39m                           \u001b[0m\n                                                \u001b[38;2;244;236;215m\u2860\u2892\u28ed\u001b[38;2;255;250;236m\u28f6\u28ff\u28ff\u28ff\u287f\u283f\u283f\u283f\u001b[38;2;244;236;215m\u283f\u289b\u28ff\u001b[38;2;255;250;236m\u28db\u001b[38;2;244;236;215m\u283f\u001b[38;2;255;250;236m\u283f\u28ff\u28ff\u28f6\u28e4\u001b[38;2;245;73;42m\u28f0\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28e7\u001b[39m                          \u001b[0m\n                                             \u001b[38;2;244;236;215m\u28e0\u28f4\u28f5\u001b[38;2;255;250;236m\u28fe\u28ff\u28ff\u283f\u281b\u2809\u001b[38;2;244;236;215m\u2801\u001b[39m          \u001b[38;2;244;236;215m\u2812\u282d\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u001b[38;2;245;73;42m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28c7\u001b[39m                         \u001b[0m\n                  \u001b[38;2;232;191;94m\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u2840\u001b[39m   \u001b[38;2;244;236;215m\u2880\u28fc\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u28ff\u001b[38;2;244;236;215m\u287f\u2801\u001b[39m                 \u001b[38;2;244;236;215m\u2819\u281b\u001b[38;2;255;250;236m\u28bf\u28ff\u28ff\u001b[38;2;245;73;42m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u2840\u001b[39m                        \u001b[0m\n                 \u001b[38;2;232;191;94m\u2818\u28bf\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u281f\u001b[39m  \u001b[38;2;255;250;236m\u28f0\u28ff\u28ff\u28ff\u28ff\u001b[38;2;244;236;215m\u2875\u280b\u001b[39m                      \u001b[38;2;244;236;215m\u2819\u001b[38;2;255;250;236m\u28bf\u28ff\u001b[38;2;245;73;42m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u2847\u001b[39m                        \u001b[0m\n      \u001b[38;2;232;191;94m\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28c0\u28e8\u28ff\u28ff\u28ff\u28ff\u28ef\u2840\u001b[39m          \u001b[38;2;244;236;215m\u28fc\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u001b[38;2;244;236;215m\u28af\u280e\u001b[39m                         \u001b[38;2;244;236;215m\u2808\u001b[38;2;255;250;236m\u28bf\u28ff\u001b[38;2;245;73;42m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u2807\u001b[39m                        \u001b[0m\n     \u001b[38;2;232;191;94m\u2818\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u287f\u283f\u283f\u283f\u283f\u283f\u283f\u281f\u001b[39m         \u001b[38;2;244;236;215m\u28f0\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u001b[38;2;244;236;215m\u28af\u280f\u001b[39m \u001b[38;2;255;250;236m\u28a0\u28e4\u001b[38;2;244;236;215m\u28c4\u001b[39m       \u001b[38;2;255;250;236m\u28e4\u28e4\u001b[38;2;244;236;215m\u2840\u001b[39m       \u001b[38;2;244;236;215m\u2880\u28e0\u001b[38;2;255;250;236m\u28e4\u28c0\u001b[39m  \u001b[38;2;244;236;215m\u2818\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;245;73;42m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u287f\u001b[39m                         \u001b[0m\n               \u001b[38;2;232;191;94m\u28e0\u28e4\u28e4\u28ff\u28ff\u28ff\u28ff\u28ff\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u2840\u001b[39m     \u001b[38;2;244;236;215m\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;244;236;215m\u28ff\u284e\u001b[39m  \u001b[38;2;244;236;215m\u28b8\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;244;236;215m\u2847\u001b[39m     \u001b[38;2;244;236;215m\u28c0\u28e8\u001b[38;2;255;250;236m\u28ff\u28f7\u28ff\u2826\u001b[39m   \u001b[38;2;255;250;236m\u28b2\u28fe\u28ff\u28ff\u28ff\u283f\u001b[39m   \u001b[38;2;244;236;215m\u2838\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;245;73;42m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u2803\u001b[39m                         \u001b[0m\n               \u001b[38;2;232;191;94m\u283b\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u283f\u280b\u001b[39m    \u001b[38;2;244;236;215m\u28b8\u285f\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;244;236;215m\u28ff\u2801\u001b[39m  \u001b[38;2;255;250;236m\u28fc\u28ff\u001b[38;2;244;236;215m\u285f\u001b[39m      \u001b[38;2;244;236;215m\u2819\u001b[38;2;255;250;236m\u283b\u281b\u28ff\u001b[38;2;244;236;215m\u28e5\u28f4\u28e6\u001b[39m   \u001b[38;2;244;236;215m\u28a8\u001b[38;2;255;250;236m\u28fe\u285f\u001b[38;2;244;236;215m\u2801\u001b[39m     \u001b[38;2;244;236;215m\u28b9\u001b[38;2;255;250;236m\u28bb\u001b[38;2;244;236;215m\u28ff\u001b[38;2;245;73;42m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u287f\u2801\u001b[39m \u001b[38;2;232;191;94m\u2880\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u28e4\u001b[39m         \u001b[0m\n                                       \u001b[38;2;255;250;236m\u28b8\u001b[38;2;244;236;215m\u2847\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;244;236;215m\u28ff\u001b[39m   \u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;244;236;215m\u2801\u001b[39m      \u001b[38;2;244;236;215m\u28a0\u001b[38;2;255;250;236m\u28e4\u28f6\u28ff\u28ff\u28df\u001b[38;2;244;236;215m\u2801\u001b[39m  \u001b[38;2;255;250;236m\u28f0\u28ff\u28ff\u001b[38;2;244;236;215m\u28fe\u283f\u28bf\u001b[38;2;255;250;236m\u28f6\u001b[38;2;244;236;215m\u28c4\u001b[39m   \u001b[38;2;244;236;215m\u28b8\u001b[38;2;255;250;236m\u28ff\u001b[38;2;245;73;42m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u287f\u280b\u001b[39m   \u001b[38;2;232;191;94m\u2808\u281b\u281b\u281b\u281b\u281b\u28bb\u28ff\u28ff\u28ff\u28ff\u281f\u281b\u281b\u281b\u280b\u001b[39m         \u001b[0m\n                                       \u001b[38;2;244;236;215m\u2808\u001b[39m \u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;244;236;215m\u28ff\u2840\u001b[39m \u001b[38;2;244;236;215m\u28b0\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[39m    \u001b[38;2;244;236;215m\u2880\u2844\u001b[39m  \u001b[38;2;244;236;215m\u2809\u2809\u2820\u28fc\u001b[38;2;255;250;236m\u28ff\u28e7\u001b[39m \u001b[38;2;255;250;236m\u28fe\u28ff\u281f\u2809\u001b[39m   \u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;244;236;215m\u2844\u001b[39m  \u001b[38;2;255;250;236m\u28b8\u001b[38;2;245;73;42m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u287f\u281f\u280b\u001b[39m         \u001b[38;2;232;191;94m\u28b0\u28f6\u28ff\u28ff\u28ff\u28ff\u28ff\u28f7\u28f6\u28f6\u28f6\u28f6\u28f6\u28f6\u28f6\u28f6\u28f6\u28f6\u001b[39m   \u001b[0m\n                                        \u001b[38;2;244;236;215m\u2886\u28b8\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;244;236;215m\u28c7\u001b[39m \u001b[38;2;244;236;215m\u2818\u001b[38;2;255;250;236m\u28ff\u28ff\u28c0\u001b[38;2;244;236;215m\u28c0\u001b[38;2;255;250;236m\u28e4\u28f6\u287f\u001b[39m  \u001b[38;2;255;250;236m\u28fe\u001b[38;2;244;236;215m\u28c4\u001b[39m   \u001b[38;2;244;236;215m\u2809\u2801\u001b[39m \u001b[38;2;244;236;215m\u2819\u280b\u28f4\u287f\u28bf\u001b[38;2;255;250;236m\u28e6\u001b[38;2;244;236;215m\u28e0\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;244;236;215m\u2801\u001b[39m  \u001b[38;2;244;236;215m\u28fe\u001b[38;2;245;73;42m\u2809\u2819\u281b\u281b\u281b\u281b\u281b\u281b\u2809\u2801\u001b[39m             \u001b[38;2;232;191;94m\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2801\u001b[39m   \u001b[0m\n                                        \u001b[38;2;244;236;215m\u2818\u28c6\u28ff\u001b[38;2;255;250;236m\u28ff\u28e7\u001b[38;2;244;236;215m\u2840\u001b[39m \u001b[38;2;244;236;215m\u2819\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u28ff\u281f\u001b[38;2;244;236;215m\u2801\u001b[39m  \u001b[38;2;244;236;215m\u2819\u28bf\u001b[38;2;255;250;236m\u28ff\u28ff\u28f7\u001b[39m     \u001b[38;2;244;236;215m\u283b\u001b[38;2;255;250;236m\u28f6\u28f6\u28ff\u28ff\u281f\u001b[38;2;244;236;215m\u2801\u001b[39m  \u001b[38;2;244;236;215m\u28b0\u2807\u001b[39m            \u001b[38;2;232;191;94m\u2830\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u2877\u001b[39m             \u001b[0m\n                                         \u001b[38;2;244;236;215m\u2818\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28f7\u001b[38;2;244;236;215m\u2840\u001b[39m  \u001b[38;2;244;236;215m\u2809\u2809\u001b[39m        \u001b[38;2;244;236;215m\u2809\u2809\u001b[39m       \u001b[38;2;244;236;215m\u2809\u001b[39m \u001b[38;2;244;236;215m\u2801\u001b[39m \u001b[38;2;244;236;215m\u2880\u28fe\u2884\u280f\u001b[39m              \u001b[38;2;232;191;94m\u2808\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u001b[39m               \u001b[0m\n                                     \u001b[38;2;46;122;214m\u2880\u28c0\u28c0\u001b[39m  \u001b[38;2;255;250;236m\u2808\u28bb\u28ff\u28ff\u28ff\u28ee\u28e2\u2840\u001b[39m                     \u001b[38;2;244;236;215m\u28e0\u001b[38;2;255;250;236m\u28ff\u001b[38;2;244;236;215m\u280f\u001b[39m        \u001b[38;2;232;191;94m\u2880\u001b[38;2;255;250;236m\u28f4\u28ff\u28ff\u28ff\u28ff\u28ff\u28f6\u001b[38;2;244;236;215m\u2840\u001b[39m                             \u001b[0m\n                                 \u001b[38;2;46;122;214m\u28e0\u001b[38;2;255;250;236m\u28f4\u28f6\u28ff\u28ff\u28ff\u28ff\u28ff\u28f7\u28e6\u2840\u2819\u28bf\u28ff\u28ff\u28ff\u28ff\u28f6\u28c4\u2840\u001b[39m               \u001b[38;2;244;236;215m\u2880\u001b[38;2;255;250;236m\u28e0\u28fe\u28ff\u001b[38;2;244;236;215m\u281f\u001b[39m       \u001b[38;2;255;250;236m\u28e0\u28fe\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28f7\u001b[38;2;46;122;214m\u28c4\u001b[39m                           \u001b[0m\n                              \u001b[38;2;255;250;236m\u2880\u28f4\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28e7\u001b[38;2;46;122;214m\u28ed\u001b[38;2;255;250;236m\u28e4\u28c4\u2819\u283b\u28bf\u28ff\u28ff\u28ff\u28ff\u28ff\u28f6\u28e4\u28e4\u28c0\u28c0\u28c0\u2840\u001b[39m    \u001b[38;2;244;236;215m\u28c0\u28e4\u001b[38;2;255;250;236m\u28f6\u28ff\u28ff\u281f\u001b[38;2;244;236;215m\u2801\u001b[39m     \u001b[38;2;244;236;215m\u28c0\u001b[38;2;255;250;236m\u28f4\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28f7\u001b[38;2;244;236;215m\u28c4\u001b[38;2;46;122;214m\u2840\u001b[39m                        \u001b[0m\n                            \u001b[38;2;255;250;236m\u2880\u28f4\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u28ff\u28ff\u28e3\u28c0\u001b[39m \u001b[38;2;255;250;236m\u2809\u281b\u283f\u28ff\u28ff\u28ff\u283f\u28bf\u28ff\u283f\u2837\u001b[39m  \u001b[38;2;255;250;236m\u2824\u28e4\u28f6\u28ff\u287f\u281f\u001b[38;2;244;236;215m\u280b\u001b[39m     \u001b[38;2;244;236;215m\u2880\u001b[38;2;255;250;236m\u28f4\u28fe\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u28ff\u28e6\u001b[38;2;244;236;215m\u2840\u001b[39m                      \u001b[0m\n                          \u001b[38;2;46;122;214m\u2880\u001b[38;2;255;250;236m\u28f4\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u287f\u001b[38;2;255;250;236m\u281b\u281b\u001b[38;2;46;122;214m\u2808\u001b[38;2;255;250;236m\u28ff\u28ff\u28bf\u28ff\u001b[38;2;46;122;214m\u28f7\u001b[39m    \u001b[38;2;255;250;236m\u2808\u2809\u2819\u2812\u2812\u2812\u2812\u2812\u2812\u281b\u280b\u2809\u001b[39m      \u001b[38;2;46;122;214m\u2880\u28f4\u28fe\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28f7\u001b[38;2;255;250;236m\u28c4\u001b[38;2;46;122;214m\u2840\u001b[39m                   \u001b[0m\n                         \u001b[38;2;255;250;236m\u28f0\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u2801\u001b[39m  \u001b[38;2;255;250;236m\u2818\u283f\u001b[38;2;46;122;214m\u280b\u001b[38;2;255;250;236m\u28a0\u28fd\u287f\u001b[39m                   \u001b[38;2;46;122;214m\u28e0\u28f4\u28fe\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28f6\u28c4\u001b[39m                 \u001b[0m\n             \u001b[38;2;46;122;214m\u28e0\u001b[38;2;255;250;236m\u28f4\u28fe\u28ff\u28ff\u28e6\u001b[39m    \u001b[38;2;46;122;214m\u28e0\u001b[38;2;255;250;236m\u28fe\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28c7\u001b[39m      \u001b[38;2;46;122;214m\u2809\u001b[39m  \u001b[38;2;255;250;236m\u28e0\u28f4\u28f6\u28ff\u28ff\u28ff\u28f7\u28e6\u001b[38;2;46;122;214m\u28c4\u001b[39m     \u001b[38;2;46;122;214m\u28c0\u28e4\u28f6\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28f6\u28c4\u2840\u001b[39m             \u001b[0m\n           \u001b[38;2;46;122;214m\u28e0\u001b[38;2;255;250;236m\u28fe\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28bf\u001b[38;2;46;122;214m\u2846\u28e0\u001b[38;2;255;250;236m\u28fe\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28c6\u001b[39m     \u001b[38;2;46;122;214m\u28e0\u001b[38;2;255;250;236m\u28f4\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;46;122;214m\u28df\u28c3\u28c0\u28e4\u28f4\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28f7\u28e4\u28c0\u001b[39m          \u001b[0m\n  \u001b[38;2;255;250;236m\u28e0\u28e4\u28e4\u2844\u001b[39m \u001b[38;2;46;122;214m\u28e0\u001b[38;2;255;250;236m\u28f4\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28c9\u2801\u001b[38;2;255;250;236m\u28e0\u28fe\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28e6\u28c4\u001b[38;2;255;250;236m\u28f4\u28fe\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u28ff\u28f7\u001b[38;2;46;122;214m\u28ce\u2809\u281b\u283f\u283f\u283f\u283f\u281b\u281b\u289b\u28fb\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28f6\u28c4\u2840\u001b[39m      \u001b[0m\n\u001b[38;2;46;122;214m\u28f4\u28fe\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28fe\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u284f\u001b[38;2;255;250;236m\u2809\u28b9\u28ff\u28e4\u2838\u283f\u001b[39m     \u001b[38;2;255;250;236m\u28c0\u28e4\u28fe\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u281b\u283f\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u28ff\u28ff\u28cd\u001b[38;2;46;122;214m\u2859\u281b\u283f\u28bf\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28f7\u28e6\u28c4\u2840\u001b[39m  \u001b[0m\n\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28f7\u28e6\u28c0\u001b[38;2;255;250;236m\u2809\u001b[38;2;46;122;214m\u2801\u001b[39m   \u001b[38;2;46;122;214m\u28c0\u001b[38;2;255;250;236m\u28e4\u28f4\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u280f\u283b\u001b[39m   \u001b[38;2;46;122;214m\u2808\u2809\u2819\u281b\u289b\u28fb\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28c2\u001b[39m   \u001b[38;2;46;122;214m\u2809\u2809\u2809\u2819\u2809\u28c9\u28ed\u001b[38;2;255;250;236m\u28ed\u001b[38;2;46;122;214m\u28ed\u2849\u2819\u281b\u2812\u001b[0m\n\u001b[38;2;46;122;214m\u283f\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28e6\u28c4\u28c0\u28c0\u28c0\u001b[38;2;255;250;236m\u28c0\u28e0\u28f4\u28fe\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u285f\u2807\u001b[39m  \u001b[38;2;46;122;214m\u2880\u001b[38;2;255;250;236m\u28c0\u28e4\u28f6\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;46;122;214m\u28c3\u001b[39m  \u001b[0m\n   \u001b[38;2;46;122;214m\u2808\u001b[38;2;255;250;236m\u2809\u281b\u281b\u001b[38;2;46;122;214m\u283f\u283f\u283f\u28ff\u28ff\u287f\u283f\u283f\u283f\u281b\u281b\u281b\u281b\u281b\u281b\u283b\u283f\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u001b[38;2;46;122;214m\u28ff\u001b[38;2;255;250;236m\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u287f\u283f\u281b\u281b\u281b\u281b\u281b\u283f\u28bf\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u001b[38;2;46;122;214m\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u001b[38;2;255;250;236m\u28ff\u28ff\u28ff\u28ff\u001b[38;2;46;122;214m\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u283f\u283f\u281b\u281b\u281b\u281b\u283f\u28bf\u28ff\u28ff\u28ff\u001b[0m\n                         \u001b[38;2;46;122;214m\u2809\u2819\u281b\u283f\u283f\u28bf\u28ff\u28ff\u28ff\u28ed\u28ed\u2825\u2834\u2816\u001b[39m        \u001b[38;2;46;122;214m\u2808\u2819\u281b\u283f\u28bf\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u287f\u283f\u283f\u28bf\u28ff\u28ff\u283f\u283f\u28bf\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u283f\u283f\u28bf\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u28ff\u283f\u283f\u2837\u281b\u281b\u001b[39m         \u001b[0m\n                                                     \u001b[38;2;46;122;214m\u2809\u2809\u2809\u281b\u281b\u281b\u281b\u281b\u2809\u2809\u2809\u001b[39m              \u001b[38;2;46;122;214m\u2808\u2809\u2809\u2809\u2809\u001b[39m          \u001b[38;2;46;122;214m\u2808\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2809\u2801\u001b[39m                 \u001b[0m\n                                                                                                                        \u001b[0m\n                                                                                                                        \u001b[0m\n                                                                                                                        \u001b[0m\n                                                                                                                        \u001b[0m\n"</script>
+<script>
+"use strict";
+
+const EXAMPLES = [
+  {id: "init", command: "shikiru init", scenarios: ["Doctor passes", "Provider unavailable after write"]},
+  {id: "init_yes", command: "shikiru init --yes", scenarios: ["Initialized", "Not a Git repository", "Not at repository root", "No commits"]},
+  {id: "start", command: "shikiru start", scenarios: ["Started", "Already running", "Project not initialized"]},
+  {id: "start_attach", command: "shikiru start --attach", scenarios: ["Session handoff", "Session already in use"]},
+  {id: "stop", command: "shikiru stop", scenarios: ["Stopped", "Already stopped", "Pending acknowledgement", "Rejected"]},
+  {id: "stop_kill", command: "shikiru stop --kill-session", scenarios: ["Stopped", "Already stopped"]},
+  {id: "ls", command: "shikiru ls", scenarios: ["Sessions · wide", "Partial discovery", "No sessions", "All unavailable"]},
+  {id: "ls_host", command: "shikiru ls --host buildbox", scenarios: ["Remote sessions", "Remote partial failure", "Remote empty", "Remote all unavailable"]},
+  {id: "attach", command: "shikiru attach", scenarios: ["Current project", "Numbered selection", "Session busy", "Missing project state"]},
+  {id: "attach_named", command: "shikiru attach '[shikiru] demo'", scenarios: ["Named local session", "Missing named session"]},
+  {id: "attach_remote", command: "shikiru attach '[shikiru] demo' --host buildbox", scenarios: ["Named remote session", "Remote session unavailable"]},
+  {id: "submit", command: "shikiru submit \"Add retry handling\" --mode implement --complexity normal --priority 2 --after T-18 --leader codex:gpt-6-luna:high --implementer claude:claude-sonnet-4-5:high", scenarios: ["Applied", "Pending", "Rejected"]},
+  {id: "usage_error", command: "shikiru submit", scenarios: ["Missing request"]},
+  {id: "status", command: "shikiru status", scenarios: ["Project status", "Empty project"]},
+  {id: "task_status", command: "shikiru status T-42", scenarios: ["Task detail", "Escalated task", "Completed task", "Unknown task ID"]},
+  {id: "watch", command: "shikiru status --watch", scenarios: ["Plain updates"]},
+  {id: "doctor", command: "shikiru doctor", scenarios: ["Passed", "Unsupported model ID", "Unsupported effort"]},
+  {id: "doctor_probe", command: "shikiru doctor --probe", scenarios: ["Probe passed", "Provider unavailable"]},
+  {id: "mcp", command: "shikiru mcp", scenarios: ["Stdio server"]}
+];
+
+const FIXTURE_CATALOGS = {
+  codex: {
+    "gpt-6-luna": ["low", "medium", "high", "xhigh"],
+    "gpt-6-codex": ["low", "medium", "high", "xhigh"],
+    "gpt-5.6-sol": null
+  },
+  claude: {
+    "claude-sonnet-4-5": ["low", "medium", "high"],
+    "claude-opus-4-1": ["low", "medium", "high"]
+  }
+};
+
+const CANDIDATES = {
+  trackers: ["tasks/plan.md", "tasks/todo.md", "docs/roadmap.md"],
+  caches: [".pytest_cache", "build"]
+};
+
+const INIT_DOCTOR_CHECKS = [
+  ["Tmux", "Version 3.7c", "pass"],
+  ["Git", "Version 2.55.0", "pass"],
+  ["Repository", "Root and base branch are valid", "pass"],
+  ["Configuration", "Parsed successfully", "pass"],
+  ["Database", "Schema 1", "pass"],
+  ["Copy-on-write", "Supported", "pass"],
+  ["Agent claude · binary", "claude", "pass"],
+  ["Agent claude · version", "CLI version available", "pass"],
+  ["Agent claude · login", "Authenticated", "pass"],
+  ["Agent claude · Model choices", "Configured IDs are supported", "pass"],
+  ["Agent codex · binary", "codex", "pass"],
+  ["Agent codex · version", "CLI version available", "pass"],
+  ["Agent codex · login", "Authenticated", "pass"],
+  ["Agent codex · sandbox", "Worktree and run directory are writable", "pass"],
+  ["Agent codex · context_window", "Configured model metadata is available", "pass"],
+  ["Agent codex · Model choices", "Configured IDs are supported", "pass"]
+];
+
+const INITIAL_STATE = {
+  step: 0,
+  repoState: "clean",
+  trackerText: "",
+  cacheText: "",
+  parallel: "2",
+  integration: "merge",
+  selectedScope: "leader:base",
+  newEntry: {agent: "", model: "", effort: ""},
+  lastFocus: {},
+  result: null,
+  written: false,
+  exit: null,
+  validation: false,
+  ladders: {
+    "leader:base": "codex:gpt-6-luna:high, claude:claude-sonnet-4-5:high",
+    "implementer:base": "codex:gpt-6-luna:high, claude:claude-sonnet-4-5:high",
+    "helper:base": "claude:claude-sonnet-4-5:medium"
+  },
+  inherited: {low: true, normal: true, high: true},
+  overrides: {low: "", normal: "", high: ""}
+};
+
+function clone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function createReviewState() {
+  return clone(INITIAL_STATE);
+}
+
+function scopeRows(state) {
+  const rows = [
+    {id: "leader:base", label: "Leader · Base", raw: state.ladders["leader:base"], inherited: false},
+    {id: "implementer:base", label: "Implementer · Base", raw: state.ladders["implementer:base"], inherited: false}
+  ];
+  for (const level of ["low", "normal", "high"]) {
+    rows.push({
+      id: `implementer:${level}`,
+      label: `Implementer · ${level[0].toUpperCase()}${level.slice(1)}`,
+      raw: state.overrides[level],
+      inherited: state.inherited[level],
+      effective: state.inherited[level] ? state.ladders["implementer:base"] : state.overrides[level]
+    });
+  }
+  rows.push({id: "helper:base", label: "Helper · Base", raw: state.ladders["helper:base"], inherited: false});
+  return rows;
+}
+
+function addUniquePath(value, candidate) {
+  const paths = value.split(",").map(item => item.trim()).filter(Boolean);
+  const path = candidate.trim();
+  if (path && !paths.includes(path)) paths.push(path);
+  return paths.join(", ");
+}
+
+function parseLadder(value) {
+  return value.split(",").map(item => item.trim()).map(raw => {
+    const [agent = "", model = "", effort = "", ...extra] = raw.split(":").map(item => item.trim());
+    return {raw, agent, model, effort, extra};
+  });
+}
+
+function selectedRaw(state) {
+  const [role, scope] = state.selectedScope.split(":");
+  if (role === "implementer" && scope !== "base") return state.overrides[scope];
+  return state.ladders[state.selectedScope];
+}
+
+function setSelectedRaw(state, value) {
+  const [role, scope] = state.selectedScope.split(":");
+  if (role === "implementer" && scope !== "base") {
+    state.overrides[scope] = value;
+    state.inherited[scope] = value.trim() === "";
+  } else {
+    state.ladders[state.selectedScope] = value;
+  }
+}
+
+function rungProblem(rung) {
+  if ((rung.extra || []).length || !Object.hasOwn(FIXTURE_CATALOGS, rung.agent)) return "Use agent:model[:effort] entries from the listed catalogs.";
+  if (!Object.hasOwn(FIXTURE_CATALOGS[rung.agent] || {}, rung.model)) return "Choose a listed model for this agent.";
+  const offered = FIXTURE_CATALOGS[rung.agent][rung.model];
+  if (rung.effort && (!offered || !offered.includes(rung.effort))) return "Choose a supported effort or omit it for the native default.";
+  return "";
+}
+
+function ladderProblem(value, allowEmpty = false) {
+  if (!value.trim()) return allowEmpty ? "" : "Enter at least one ladder entry.";
+  const entries = parseLadder(value);
+  for (const entry of entries) {
+    if (!entry.raw) return "Remove the empty ladder entry between commas.";
+    const problem = rungProblem(entry);
+    if (problem) return problem;
+  }
+  return "";
+}
+
+function chooseAgent(state, agent) {
+  if (!Object.hasOwn(FIXTURE_CATALOGS, agent)) return false;
+  state.newEntry = {agent, model: "", effort: ""};
+  return true;
+}
+
+function chooseModel(state, model) {
+  if (!Object.hasOwn(FIXTURE_CATALOGS[state.newEntry.agent] || {}, model)) return false;
+  state.newEntry.model = model;
+  state.newEntry.effort = "";
+  return true;
+}
+
+function setEffort(state, effort) {
+  const offered = FIXTURE_CATALOGS[state.newEntry.agent]?.[state.newEntry.model];
+  if (effort !== "" && (!offered || !offered.includes(effort))) return false;
+  state.newEntry.effort = effort;
+  return true;
+}
+
+function addSelectedEntry(state) {
+  if (rungProblem(state.newEntry)) return false;
+  const entry = `${state.newEntry.agent}:${state.newEntry.model}${state.newEntry.effort ? `:${state.newEntry.effort}` : ""}`;
+  const current = selectedRaw(state).trim();
+  setSelectedRaw(state, current ? `${current}, ${entry}` : entry);
+  return true;
+}
+
+function firstConfigurationProblem(state) {
+  for (const row of scopeRows(state)) {
+    if (row.inherited && !row.raw.trim()) continue;
+    const problem = ladderProblem(row.raw);
+    if (problem) return {scope: row.id, field: "ladder-input", message: problem};
+  }
+  const parallel = Number(state.parallel);
+  if (!Number.isInteger(parallel) || parallel < 1) {
+    return {step: 4, field: "parallel-input", message: "Enter a whole number greater than zero."};
+  }
+  return null;
+}
+
+function setStep(state, step) {
+  clearArtworkTimer();
+  state.step = Math.max(0, Math.min(6, step));
+  state.result = null;
+  state.validation = false;
+}
+
+function resizeState(state, size) {
+  state.size = size;
+  return state;
+}
+
+window.ReviewState = {
+  createReviewState,
+  scopeRows,
+  addUniquePath,
+  parseLadder,
+  selectedRaw,
+  setSelectedRaw,
+  chooseAgent,
+  chooseModel,
+  setEffort,
+  addSelectedEntry,
+  ladderProblem,
+  firstConfigurationProblem,
+  setStep,
+  resizeState,
+  FIXTURE_CATALOGS,
+  CANDIDATES,
+  hideWizardForArtwork
+};
+
+const $ = id => document.getElementById(id);
+const exampleSelect = $("example");
+const scenarioSelect = $("scenario");
+const sizeSelect = $("size");
+const terminal = $("terminal");
+const content = $("content");
+content.tabIndex = -1;
+const artNode = $("art");
+let wizard = createReviewState();
+let currentExample = "init";
+window.ReviewState.current = () => wizard;
+
+function node(tag, className, text) {
+  const item = document.createElement(tag);
+  if (className) item.className = className;
+  if (text !== undefined) item.textContent = String(text);
+  return item;
+}
+
+function appendLine(parent, text, className = "line") {
+  const item = node("div", className, text);
+  parent.append(item);
+  return item;
+}
+
+function appendSection(parent, title) {
+  return appendLine(parent, title, "section-title");
+}
+
+function appendOutcome(parent, kind, summary) {
+  const outcome = node("div", `outcome ${kind}`);
+  const glyph = kind === "success" ? "✔" : kind === "error" ? "✕" : "·";
+  outcome.append(node("span", "glyph", glyph), document.createTextNode(" "), node("span", "summary", summary));
+  parent.append(outcome);
+  return outcome;
+}
+
+function appendDetail(parent, label, value) {
+  const row = node("div", "detail-row");
+  row.append(node("span", "detail-label", `${label}: `), node("span", "detail-value", value));
+  parent.append(row);
+}
+
+function appendDetails(parent, rows) {
+  if (!rows.length) return;
+  appendSection(parent, "Details");
+  for (const [label, value] of rows) appendDetail(parent, label, value);
+}
+
+function appendActions(parent, title, actions) {
+  if (!actions.length) return;
+  appendSection(parent, title);
+  for (const action of actions) {
+    const row = node("div", "action-row");
+    row.append(node("span", "detail-label", `${action.label}: `));
+    if (action.instruction) row.append(node("span", "detail-value", action.instruction));
+    if (action.command) {
+      if (action.instruction) row.append(document.createTextNode(" · "));
+      row.append(node("span", "action-command", action.command));
+    }
+    parent.append(row);
+  }
+}
+
+function commandView(command) {
+  content.style.overflow = "auto";
+  content.replaceChildren();
+  const view = node("div", "command-view");
+  view.append(node("div", "command-line", command));
+  content.append(view);
+  artNode.hidden = true;
+  return view;
+}
+
+function newExample(id, scenario) {
+  const example = EXAMPLES.find(item => item.id === id);
+  const taskCommand = scenario === "Unknown task ID" ? "shikiru status T-999" : scenario === "Escalated task" ? "shikiru status T-41" : scenario === "Completed task" ? "shikiru status T-39" : example.command;
+  const command = id === "task_status" ? taskCommand : example.command;
+  const view = commandView(command);
+  renderCommand(id, scenario, view);
+}
+
+function readRow(parent, label, value) {
+  const row = node("div", "read-row");
+  row.append(node("span", "read-label", label), node("span", "read-value", value));
+  parent.append(row);
+}
+
+const openCombos = [];
+
+function closeOpenCombos() {
+  for (const combo of openCombos) combo.close(false);
+  openCombos.length = 0;
+}
+
+function makeCombo(parent, label, id, value, choices, onChange, options = {}) {
+  const wrap = node("div", "field");
+  const name = node("label", "field-label", label);
+  name.id = `${id}-label`;
+  wrap.append(name);
+  const controlWrap = node("div", "combo-wrap");
+  const trigger = node("button", "control term-select combo-trigger");
+  trigger.id = id;
+  trigger.type = "button";
+  trigger.value = value;
+  trigger.disabled = Boolean(options.disabled);
+  trigger.setAttribute("role", "combobox");
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+  trigger.setAttribute("aria-controls", `${id}-listbox`);
+  trigger.setAttribute("aria-labelledby", name.id);
+  if (options.problem) trigger.setAttribute("aria-invalid", "true");
+  const currentChoice = choices.find(([label, key]) => key === value) || choices[0] || ["", ""];
+  trigger.setAttribute("aria-label", `${label}: ${currentChoice[0]}`);
+  const current = node("span", "combo-value", currentChoice[0]);
+  const chevron = node("span", "combo-chevron", "▾");
+  chevron.setAttribute("aria-hidden", "true");
+  trigger.append(current, chevron);
+  const menu = node("div", "combo-menu");
+  menu.id = `${id}-listbox`;
+  menu.hidden = true;
+  menu.setAttribute("role", "listbox");
+  menu.setAttribute("aria-label", label);
+  let activeIndex = Math.max(0, choices.findIndex(([, key]) => key === value));
+
+  function paintOptions() {
+    menu.replaceChildren();
+    choices.forEach(([optionLabel, optionValue], index) => {
+      const option = node("button", "combo-option", optionLabel);
+      option.id = `${id}-option-${index}`;
+      option.value = optionValue;
+      option.type = "button";
+      option.setAttribute("role", "option");
+      option.setAttribute("aria-selected", String(optionValue === trigger.value));
+      option.setAttribute("aria-current", String(index === activeIndex));
+      option.setAttribute("tabindex", "-1");
+      option.addEventListener("mousedown", event => event.preventDefault());
+      option.addEventListener("click", () => choose(index));
+      menu.append(option);
+    });
+    const active = menu.children[activeIndex];
+    if (active) {
+      trigger.setAttribute("aria-activedescendant", active.id);
+      if (!menu.hidden && typeof active.scrollIntoView === "function") active.scrollIntoView({block: "nearest"});
+    }
+  }
+
+  function positionMenu() {
+    const body = document.getElementById("wizard-body");
+    if (typeof trigger.getBoundingClientRect !== "function" || !body || typeof body.getBoundingClientRect !== "function") return;
+    const triggerBox = trigger.getBoundingClientRect();
+    const bodyBox = body.getBoundingClientRect();
+    const wantedHeight = Math.min(12 * 16, choices.length * 24);
+    const above = Math.max(0, triggerBox.top - bodyBox.top - 2);
+    const below = Math.max(0, bodyBox.bottom - triggerBox.bottom - 2);
+    const opensAbove = below < wantedHeight && above > below;
+    menu.classList.toggle("opens-above", opensAbove);
+    menu.style.maxHeight = `${Math.max(20, Math.min(wantedHeight, opensAbove ? above : below))}px`;
+  }
+
+  function close(restoreFocus) {
+    menu.hidden = true;
+    trigger.setAttribute("aria-expanded", "false");
+    if (restoreFocus) { trigger.focus(); trigger.scrollIntoView?.({block: "nearest"}); }
+  }
+
+  function open(index) {
+    closeOpenCombos();
+    activeIndex = Math.max(0, Math.min(choices.length - 1, index));
+    paintOptions();
+    menu.hidden = false;
+    trigger.setAttribute("aria-expanded", "true");
+    paintOptions();
+    positionMenu();
+    openCombos.push({close, isOpen: () => !menu.hidden});
+  }
+
+  function choose(index) {
+    const choice = choices[index];
+    if (!choice || trigger.disabled) return;
+    trigger.value = choice[1];
+    current.textContent = choice[0];
+    trigger.setAttribute("aria-label", `${label}: ${choice[0]}`);
+    paintOptions();
+    close(true);
+    onChange(choice[1]);
+  }
+
+  trigger.addEventListener("click", () => {
+    if (menu.hidden) open(activeIndex);
+    else close(false);
+  });
+  trigger.addEventListener("keydown", event => {
+    if (event.key === "Escape") {
+      if (menu.hidden) return;
+      event.preventDefault();
+      event.stopPropagation();
+      close(true);
+      return;
+    }
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      if (menu.hidden) open(activeIndex);
+      else {
+        activeIndex = Math.max(0, Math.min(choices.length - 1, activeIndex + direction));
+        paintOptions();
+      }
+      return;
+    }
+    if (!menu.hidden && (event.key === "Home" || event.key === "End")) {
+      event.preventDefault();
+      activeIndex = event.key === "Home" ? 0 : choices.length - 1;
+      paintOptions();
+      return;
+    }
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      if (menu.hidden) open(activeIndex);
+      else choose(activeIndex);
+      return;
+    }
+    if (event.key === "Tab" && !menu.hidden) close(false);
+    if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+      const wanted = event.key.toLocaleLowerCase();
+      const match = choices.findIndex(([optionLabel]) => optionLabel.toLocaleLowerCase().startsWith(wanted));
+      if (match >= 0) {
+        event.preventDefault();
+        open(match);
+      }
+    }
+  });
+  paintOptions();
+  controlWrap.append(trigger, menu);
+  wrap.append(controlWrap);
+  if (options.problem) wrap.append(node("div", "validation", options.problem));
+  parent.append(wrap);
+  return trigger;
+}
+
+function updateFieldProblem(control, message) {
+  const problem = control._problem;
+  if (!problem) return;
+  problem.textContent = message;
+  problem.hidden = !message;
+  if (message) control.setAttribute("aria-invalid", "true");
+  else control.removeAttribute("aria-invalid");
+}
+
+function makeField(parent, label, id, value, type, onChange, options = {}) {
+  if (type === "select") return makeCombo(parent, label, id, value, options.choices, onChange, options);
+  const wrap = node("div", "field");
+  const name = node("label", "field-label", label);
+  name.htmlFor = id;
+  wrap.append(name);
+  const control = node("input", "control");
+  control.id = id;
+  control.type = type;
+  control.value = value;
+  if (id === "parallel-input") { control.min = "1"; control.step = "1"; }
+  control.addEventListener("input", () => onChange(control.value));
+  control.addEventListener("change", () => onChange(control.value));
+  wrap.append(control);
+  if (options.problem || options.keepValidation) {
+    if (options.problem) control.setAttribute("aria-invalid", "true");
+    const problem = node("div", "validation", options.problem || "");
+    problem.hidden = !options.problem;
+    control._problem = problem;
+    wrap.append(problem);
+  }
+  parent.append(wrap);
+  return control;
+}
+function makeButton(parent, label, id, onClick, options = {}) {
+  const button = node("button", options.className || "", label);
+  button.type = "button";
+  if (id) button.id = id;
+  if (options.disabled) button.disabled = true;
+  button.addEventListener("click", onClick);
+  parent.append(button);
+  return button;
+}
+
+function displaySessionRows(parent, wide) {
+  const rows = [
+    {name: "[shikiru] demo", path: "/Users/pavel/Projects/demo", engine: "up", running: 2, queued: 2, escalated: 1},
+    {name: "[shikiru] docs", path: "/Users/pavel/Projects/docs", engine: "down", running: 0, queued: 1, escalated: 0}
+  ];
+  const table = node("div", `session-table${wide ? " wide" : ""}`);
+  const heading = node("div", "session-row session-heading");
+  for (const label of ["Session", "Engine", "Running", "Queued", "Escalated"]) heading.append(node("span", "", label));
+  table.append(heading);
+  for (const row of rows) {
+    const line = node("div", "session-row");
+    line.append(
+      node("span", "session-name", row.name),
+      node("span", `session-engine ${row.engine}`, `⚙︎ ${row.engine}`),
+      node("span", "", String(row.running)),
+      node("span", "", String(row.queued)),
+      node("span", row.escalated ? "session-escalations active" : "session-escalations", String(row.escalated))
+    );
+    const path = node("div", "session-path", row.path);
+    table.append(line, path);
+  }
+  parent.append(table);
+}
+
+function displayNumberedSessionRows(parent, wide) {
+  const rows = [
+    {number: "1", name: "[shikiru] demo", path: "/Users/pavel/Projects/demo", engine: "up", running: 2, queued: 2, escalated: 1},
+    {number: "2", name: "[shikiru] docs", path: "/Users/pavel/Projects/docs", engine: "down", running: 0, queued: 1, escalated: 0}
+  ];
+  const table = node("div", `session-table numbered${wide ? " wide" : ""}`);
+  const heading = node("div", "numbered-session-row session-heading");
+  for (const label of ["", "Session", "Engine", "Running", "Queued", "Escalated"]) heading.append(node("span", "", label));
+  table.append(heading);
+  for (const row of rows) {
+    const line = node("div", "numbered-session-row");
+    line.append(
+      node("span", "session-number", row.number),
+      node("span", "session-name", row.name),
+      node("span", `session-engine ${row.engine}`, `⚙︎ ${row.engine}`),
+      node("span", "", String(row.running)),
+      node("span", "", String(row.queued)),
+      node("span", row.escalated ? "session-escalations active" : "session-escalations", String(row.escalated))
+    );
+    table.append(line, node("div", "session-path", row.path));
+  }
+  parent.append(table);
+}
+
+function unhealthySessions(remote) {
+  return remote ? [
+    {session: "[shikiru] build-cache", tmuxId: "$8", project: "/srv/build/cache"},
+    {session: "[shikiru] old-docs", tmuxId: "$9", project: "/srv/build/docs"}
+  ] : [
+    {session: "[shikiru] archive", tmuxId: "$7", project: "/Users/pavel/Projects/archive"},
+    {session: "[shikiru] old-docs", tmuxId: "$8", project: "/Users/pavel/Projects/old-docs"}
+  ];
+}
+
+function renderUnavailableSession(parent, session, host = "") {
+  appendLine(parent, "", "line ls-failure-gap");
+  appendOutcome(parent, "error", `Project state is missing for ${session.session}`);
+  appendSection(parent, "Details");
+  if (host) appendDetail(parent, "Host", host);
+  appendDetail(parent, "Session", session.session);
+  appendDetail(parent, "Tmux ID", session.tmuxId);
+  appendDetail(parent, "Project", session.project);
+  appendDetail(parent, "Cause", "Project state is missing: .shikiru/state.db and config.toml are absent.");
+  appendActions(parent, "Repair", [
+    {
+      label: host ? `On ${host}` : "Session",
+      instruction: host ? `Run on ${host} to remove this retained session.` : "Remove this retained session if it is no longer needed.",
+      command: `tmux kill-session -t '${session.tmuxId}'`
+    },
+    {
+      label: host ? `On ${host}` : "Project",
+      instruction: "Initialize fresh state only if intended; the missing database cannot be recovered.",
+      command: `shikiru --project ${session.project} init`
+    }
+  ]);
+}
+
+function renderCommand(id, scenario, view) {
+  if (id === "init") {
+    artNode.hidden = false;
+    renderWizard();
+    return;
+  }
+  if (id === "init_yes") {
+    if (scenario === "Initialized") {
+      appendOutcome(view, "success", "Project initialized");
+      appendDetails(view, [["Config", "/Users/pavel/Projects/demo/.shikiru/config.toml"], ["Models", "Generated model fields use editable defaults."]]);
+      appendActions(view, "Next step", [
+        {label: "Review", instruction: "Select supported models and efforts."},
+        {label: "Doctor", instruction: "Verify the project before start.", command: "shikiru doctor"}
+      ]);
+    } else if (scenario === "Not a Git repository") {
+      appendOutcome(view, "error", "The project directory is not inside a Git repository");
+      appendDetails(view, [["Project", "/Users/pavel/Projects/scratch"], ["Cause", "No Git worktree contains the selected directory."]]);
+      appendActions(view, "Repair", [
+        {label: "Repository", instruction: "For a new Git project, create its repository here.", command: "git -C /Users/pavel/Projects/scratch init"},
+        {label: "First commit", instruction: "After repository initialization, create an empty first commit.", command: "git -C /Users/pavel/Projects/scratch commit --allow-empty -m 'Initial commit'"},
+        {label: "Project", instruction: "Choose an existing repository root instead.", command: "shikiru --project /Users/pavel/Projects/repo init --yes"}
+      ]);
+    } else if (scenario === "Not at repository root") {
+      appendOutcome(view, "error", "The selected project directory is below the Git repository root");
+      appendDetails(view, [["Project", "/Users/pavel/Projects/repo/tools"], ["Repository root", "/Users/pavel/Projects/repo"]]);
+      appendActions(view, "Repair", [
+        {label: "Project", instruction: "Run initialization from the repository root.", command: "shikiru --project /Users/pavel/Projects/repo init --yes"}
+      ]);
+    } else {
+      appendOutcome(view, "error", "The Git repository has no commits");
+      appendDetails(view, [["Project", "/Users/pavel/Projects/scratch"], ["Cause", "The repository exists, but HEAD does not identify a commit."]]);
+      appendActions(view, "Repair", [
+        {label: "First commit", instruction: "Create an empty initial commit; no files need to be staged.", command: "git -C /Users/pavel/Projects/scratch commit --allow-empty -m 'Initial commit'"}
+      ]);
+    }
+    return;
+  }
+  if (id === "start") {
+    if (scenario === "Started") appendOutcome(view, "success", "Engine started");
+    else if (scenario === "Already running") appendOutcome(view, "success", "Engine already running");
+    else {
+      appendOutcome(view, "error", "This project has not been initialized");
+      appendDetails(view, [["Project", "/Users/pavel/Projects/demo"], ["Cause", ".shikiru/config.toml is missing."]]);
+      appendActions(view, "Repair", [
+        {label: "Initialize", instruction: "Create project state here.", command: "shikiru init"},
+        {label: "Project", instruction: "Choose another project root.", command: "shikiru --project PATH start"},
+        {label: "Help", instruction: "Review start options.", command: "shikiru start --help"}
+      ]);
+    }
+    return;
+  }
+  if (id === "start_attach") {
+    if (scenario !== "Session handoff") {
+      appendOutcome(view, "error", "The session already has another attached terminal");
+      appendDetails(view, [["Session", "[shikiru] demo"], ["Effect", "No session or engine change was made."]]);
+      appendActions(view, "Repair", [
+        {label: "Session", instruction: "Detach the other client, then retry.", command: "shikiru start --attach"}
+      ]);
+    }
+    return;
+  }
+  if (id === "stop" || id === "stop_kill") {
+    if (scenario === "Stopped") appendOutcome(view, "success", "Engine stopped");
+    else if (scenario === "Already stopped") appendOutcome(view, "success", "Engine already stopped");
+    else if (scenario === "Pending acknowledgement") {
+      appendOutcome(view, "pending", "Stop command remains pending");
+      appendDetails(view, [["Command", "C-44"], ["State", "The engine has not confirmed that it stopped."]]);
+      appendActions(view, "Next step", [{label: "Status", instruction: "Check whether the engine handled this request.", command: "shikiru status"}]);
+    } else {
+      appendOutcome(view, "error", "The engine rejected the stop request");
+      appendDetails(view, [["Command", "C-44"], ["Cause", "The engine is stopping after a recorded fault."]]);
+      appendActions(view, "Repair", [
+        {label: "Status", instruction: "Inspect project state and the recorded fault.", command: "shikiru status"},
+        {label: "Doctor", instruction: "Check the project environment.", command: "shikiru doctor"}
+      ]);
+    }
+    return;
+  }
+  if (id === "ls" || id === "ls_host") {
+    const remote = id === "ls_host";
+    if (scenario === "Sessions · wide" || scenario === "Remote sessions") {
+      appendOutcome(view, "success", "Shikiru sessions discovered");
+      appendSection(view, "Details");
+      if (remote) appendDetail(view, "Host", "buildbox");
+      displaySessionRows(view, Number(terminal.dataset.columns) >= 65);
+    } else if (scenario === "No sessions" || scenario === "Remote empty") {
+      appendOutcome(view, "success", "No Shikiru sessions found");
+      if (remote) appendDetails(view, [["Host", "buildbox"]]);
+    } else if (scenario === "All unavailable" || scenario === "Remote all unavailable") {
+      for (const session of unhealthySessions(remote)) renderUnavailableSession(view, session, remote ? "buildbox" : "");
+    } else {
+      appendOutcome(view, "pending", "Session discovery is partial");
+      appendSection(view, "Details");
+      if (remote) appendDetail(view, "Host", "buildbox");
+      displaySessionRows(view, Number(terminal.dataset.columns) >= 65);
+      for (const session of unhealthySessions(remote)) renderUnavailableSession(view, session, remote ? "buildbox" : "");
+    }
+    return;
+  }
+  if (id === "attach" || id === "attach_named" || id === "attach_remote") {
+    if (["Current project", "Named local session", "Named remote session"].includes(scenario)) return;
+    if (scenario === "Numbered selection") {
+      appendOutcome(view, "success", "Choose a session from the discovered list");
+      appendSection(view, "Details");
+      displayNumberedSessionRows(view, Number(terminal.dataset.columns) >= 65);
+      const prompt = node("div", "line");
+      prompt.append(document.createTextNode("Select a session number ("), node("span", "hint-key", "q"), document.createTextNode(" to cancel): 2"));
+      view.append(prompt);
+      return;
+    }
+    if (scenario === "Session busy") {
+      appendOutcome(view, "error", "The session is already attached to another terminal");
+      appendDetails(view, [["Session", "[shikiru] demo"], ["Cause", "A different terminal owns the live client."]]);
+      appendActions(view, "Repair", [{label: "Session", instruction: "Detach the other terminal or choose another session.", command: "shikiru attach '[shikiru] docs'"}]);
+      return;
+    }
+    if (scenario === "Missing project state") {
+      appendOutcome(view, "error", "The retained session has no usable project state");
+      appendDetails(view, [["Session", "[shikiru] archive"], ["Tmux ID", "$7"], ["Project", "/Users/pavel/Projects/archive"], ["Cause", "Project state is missing: .shikiru/state.db and config.toml are absent."]]);
+      appendActions(view, "Repair", [
+        {label: "Session", instruction: "Remove the retained session if it is no longer needed.", command: "tmux kill-session -t '$7'"},
+        {label: "Project", instruction: "Initialize fresh state if intended; this cannot recover task data if its database was already deleted.", command: "shikiru --project /Users/pavel/Projects/archive init"}
+      ]);
+      return;
+    }
+    if (scenario === "Missing named session") {
+      appendOutcome(view, "error", "The named session was not found");
+      appendDetails(view, [["Session", "[shikiru] demo"], ["Host", "local tmux server"]]);
+      appendActions(view, "Repair", [
+        {label: "List", instruction: "See available Shikiru sessions.", command: "shikiru ls"},
+        {label: "Attach", instruction: "Use the current project session when available.", command: "shikiru attach"}
+      ]);
+      return;
+    }
+    appendOutcome(view, "error", "The requested remote session is unavailable");
+    appendDetails(view, [["Host", "buildbox"], ["Session", "[shikiru] demo"], ["Cause", "No matching Shikiru session was returned by the host."]]);
+    appendActions(view, "Repair", [{label: "On buildbox", instruction: "Check the host's tmux server and project session, then retry the named attach.", command: "ssh buildbox 'tmux list-sessions'"}]);
+    return;
+  }
+  if (id === "submit") {
+    if (scenario === "Applied") {
+      appendOutcome(view, "success", "Task created");
+      appendDetails(view, [["Task ID", "T-42"], ["Command", "C-43"], ["Request", "Add retry handling"]]);
+      appendActions(view, "Next step", [{label: "Progress", instruction: "Follow the task after the engine schedules it.", command: "shikiru status T-42"}]);
+    } else if (scenario === "Pending") {
+      appendOutcome(view, "pending", "Task submission remains pending");
+      appendDetails(view, [["Command", "C-43"], ["Task ID", "T-42"], ["State", "The engine has not applied this request."]]);
+      appendActions(view, "Next step", [{label: "Status", instruction: "Check the command after the engine handles it.", command: "shikiru status T-42"}]);
+    } else {
+      appendOutcome(view, "error", "The engine rejected the task request");
+      appendDetails(view, [["Command", "C-43"], ["Task ID", "T-42"], ["Cause", "Dependency T-18 does not refer to an earlier existing task."]]);
+      appendActions(view, "Repair", [{label: "Dependency", instruction: "Correct the dependency and submit again.", command: "shikiru submit \"Add retry handling\" --after T-17"}]);
+    }
+    return;
+  }
+  if (id === "usage_error") {
+    appendOutcome(view, "error", "A task request is required");
+    appendDetails(view, [["Command", "shikiru submit"], ["Cause", "The required REQUEST argument is missing."]]);
+    appendActions(view, "Repair", [{label: "Syntax", instruction: "Provide a quoted request and review the unchanged command options.", command: "shikiru submit --help"}]);
+    return;
+  }
+  if (id === "status" || id === "task_status" || id === "watch") {
+    if (id === "task_status" && scenario === "Unknown task ID") {
+      appendOutcome(view, "error", "Task T-999 was not found");
+      appendDetails(view, [["Task ID", "T-999"], ["Cause", "No task with this ID exists in the project database."]]);
+      appendActions(view, "Repair", [{label: "Tasks", instruction: "Find an existing task ID in the project status.", command: "shikiru status"}]);
+      return;
+    }
+    if (id === "task_status") {
+      appendOutcome(view, "success", "Task status is available");
+      const details = appendDetailsBlock(view);
+      const layout = $("task-layout").value;
+      if (layout === "current") {
+        if (scenario === "Task detail") renderTaskDetail(details);
+        else renderCurrentTaskFixture(details, TASK_DETAIL_FIXTURES[scenario]);
+      } else {
+        renderTaskComparison(details, TASK_DETAIL_FIXTURES[scenario], layout);
+      }
+      return;
+    }
+    appendOutcome(view, "success", id === "watch" ? "Project status updates are available" : "Project status is available");
+    if (scenario === "Empty project") {
+      renderStatusSnapshot(view, {empty: true});
+      return;
+    }
+    if (id === "watch") {
+      renderStatusSnapshot(view, {time: "5h 12m", active: 2, queued: 2, stage: "Implementing"});
+      appendLine(view, "", "watch-gap");
+      renderStatusSnapshot(view, {time: "5h 13m", active: 1, queued: 2, stage: "Verifying", completedId: "T-40"});
+      return;
+    }
+    renderStatusSnapshot(view);
+    return;
+  }
+  if (id === "doctor" || id === "doctor_probe") {
+    renderDoctorExample(id, scenario, view);
+    return;
+  }
+  if (id === "mcp") return;
+}
+
+function renderDoctorExample(id, scenario, view) {
+  if (id === "doctor") {
+    if (scenario === "Passed") {
+      renderDoctorReport(view, [
+        ["Tmux", "Version 3.7c", "pass"],
+        ["Git", "Version 2.55.0", "pass"],
+        ["Repository", "Root and base branch are valid", "pass"],
+        ["Configuration", "Parsed successfully", "pass"],
+        ["Agents", "Configured providers are available", "pass"],
+        ["Copy-on-write", "Supported", "pass"]
+      ]);
+    } else if (scenario === "Unsupported model ID") {
+      renderDoctorReport(view, [
+        ["Tmux", "Version 3.7c", "pass"],
+        ["Git", "Version 2.55.0", "pass"],
+        ["Repository", "Root and base branch are valid", "pass"],
+        ["Configuration", "Parsed successfully", "pass"],
+        ["Agent codex · Model choices", "Configured model ID \"GPT-6-Luna\" is unsupported; use \"gpt-6-luna\".", "fail"],
+        ["Copy-on-write", "Supported", "pass"]
+      ]);
+    } else {
+      renderDoctorReport(view, [
+        ["Tmux", "Version 3.7c", "pass"],
+        ["Git", "Version 2.55.0", "pass"],
+        ["Configuration", "Agent codex · model gpt-6-luna · configured effort \"extreme\" is unsupported; supported: low, medium, high, xhigh; omit effort for native default.", "fail"]
+      ]);
+    }
+    return;
+  }
+  if (scenario === "Probe passed") {
+    renderDoctorReport(view, [
+      ["Agent codex · Probe", "gpt-6-luna · high · probe completed", "pass"],
+      ["Agent claude · Probe", "claude-sonnet-4-5 · high · probe completed", "pass"]
+    ]);
+  } else {
+    renderDoctorReport(view, [
+      ["Agent codex · Probe", "gpt-6-luna · high · probe completed", "pass"],
+      ["Agent claude · Probe", "claude-sonnet-4-5 · high · provider returned no report; restore Claude CLI access and run shikiru doctor --probe.", "fail"]
+    ]);
+  }
+}
+
+function renderDoctorReport(parent, checks) {
+  for (const [label, value, state] of checks) {
+    const row = node("div", "check-row");
+    const glyph = state === "fail" ? "✕" : "✔";
+    row.append(
+      node("span", `check-glyph ${state}`, glyph),
+      node("span", "check-name", label),
+      node("span", "check-separator", " · "),
+      node("span", "check-value", value)
+    );
+    parent.append(row);
+  }
+  appendLine(parent, "", "doctor-gap");
+  const failed = checks.filter(([, , state]) => state === "fail").length;
+  const state = failed ? "fail" : "pass";
+  const summary = node("div", `doctor-summary ${state}`);
+  summary.append(
+    node("span", `check-glyph ${state}`, failed ? "✕" : "✔"),
+    document.createTextNode(" "),
+    document.createTextNode(failed ? `Doctor failed · ${failed} of ${checks.length} checks` : `Doctor passed · ${checks.length} checks`)
+  );
+  parent.append(summary);
+}
+
+const STATUS_TASKS = [
+  {id: "T-41", title: "Review the production rollout checklist", status: "Escalated"},
+  {id: "T-42", title: "Add retry handling for transient API failures", status: "Implementing"},
+  {id: "T-40", title: "Verify the migration against a clean database", status: "Integrating"},
+  {id: "T-43", title: "Document the recovery workflow", status: "Queued"},
+  {id: "T-44", title: "Add structured request tracing", status: "Queued"},
+  {id: "T-39", title: "Update the operator guide with deployment notes", status: "Done"}
+];
+
+const TASK_DETAIL_FIXTURES = {
+  "Task detail": {
+    task: {id: "T-42", title: "Add retry handling for transient API failures", status: "running", step: "implement", iteration: 2, slot: 2, holds: [], repo: {branch: "task/T-42-add-retry", base: "main", base_ref: "refs/heads/main", base_sha: "9f1c8a4b2d6e7c0f3a5b8d1e4c6f2a7b9d0e3f5a"}},
+    attention: null,
+    reports: [
+      {turn: "6", kind: "implementation", data: {status: "completed", summary: "Retry path handles transient API failures"}},
+      {turn: "5", kind: "plan", data: {summary: "Retry once after a transient response; preserve the request body."}}
+    ],
+    events: [
+      {ts: "2026-10-22T12:14:00Z", kind: "turn_completed", message: "Turn 6 completed and returned control to the Leader."},
+      {ts: "2026-10-22T12:11:30Z", kind: "step_started", message: "Implementation step started."},
+      {ts: "2026-10-22T12:08:00Z", kind: "turn_completed", message: "Plan turn completed."}
+    ],
+    branches: ["task/T-42-add-retry"],
+    sessions: [{role: "implementer", agent: "codex", model: "gpt-6-luna", status: "live", session_id: "0199a67e-7f23-74b1-a400-63d22fbc1451", effort: "high"}]
+  },
+  "Escalated task": {
+    task: {id: "T-41", title: "Review the production rollout checklist", status: "escalated", step: "verify", iteration: 1, slot: null, holds: [], repo: {branch: "task/T-41-production-rollout", base: "main", base_ref: "refs/heads/main", base_sha: "6a2f0c18e5b94d73a1c6f8e2b0d4579c3a6f1d82"}},
+    attention: {id: "E-3", reason: "Decision required", headline: "Production validation needs an Operator decision."},
+    reports: [
+      {turn: "7", kind: "verdict", data: {decision: "escalate", summary: "Select the rollout window after reviewing the canary results."}},
+      {turn: "6", kind: "implementation", data: {status: "completed", summary: "Added production rollout checks"}}
+    ],
+    events: [
+      {ts: "2026-10-22T12:21:00Z", kind: "escalation", message: "Latest canary observation was added to the validation packet."},
+      {ts: "2026-10-22T12:19:00Z", kind: "verdict", message: "Verification returned a decision request."},
+      {ts: "2026-10-22T12:17:00Z", kind: "turn_completed", message: "Verification turn completed."}
+    ],
+    branches: ["task/T-41-production-rollout"],
+    sessions: [{role: "leader", agent: "claude", model: "claude-sonnet-4-5", status: "taken_over", session_id: "0199a67e-7f31-7bd0-b501-72e3b5ce4420", effort: "high"}]
+  },
+  "Completed task": {
+    task: {id: "T-39", title: "Update the operator guide with deployment notes", status: "done", step: null, iteration: 3, slot: null, holds: [], repo: {branch: "task/T-39-operator-guide", base: "main", base_ref: "refs/heads/main", base_sha: "4c9e2b71a5d3086f7c1e4a92b6d5f83c0a7e1d64"}},
+    attention: null,
+    reports: [
+      {turn: "8", kind: "verdict", data: {decision: "accept", summary: "Recovery workflow matches operator runbook conventions"}},
+      {turn: "7", kind: "implementation", data: {status: "completed", summary: "Documented recovery steps"}}
+    ],
+    events: [
+      {ts: "2026-10-22T10:42:00Z", kind: "task_done", message: "Final report validation was recorded in the task history."},
+      {ts: "2026-10-22T10:40:00Z", kind: "turn_completed", message: "Final verification turn completed."},
+      {ts: "2026-10-22T10:35:00Z", kind: "step_started", message: "Final verification step started."}
+    ],
+    branches: ["task/T-39-operator-guide"],
+    sessions: [{role: "implementer", agent: "codex", model: "gpt-6-luna", status: "closed", session_id: "0199a67e-7f42-71c2-a502-83f4c6df5531", effort: "medium"}]
+  }
+};
+
+function renderTaskComparison(parent, fixture, layout) {
+  if (layout === "ledger") renderTaskLedger(parent, fixture);
+  if (layout === "briefing") renderTaskBriefing(parent, fixture);
+  if (layout === "evidence") renderTaskEvidence(parent, fixture);
+}
+
+function renderTaskLedger(parent, fixture) {
+  appendTaskIdentity(parent, fixture.task);
+  appendSection(parent, "Progress");
+  appendDetail(parent, "Iteration", String(fixture.task.iteration));
+  if (fixture.task.slot !== null) appendDetail(parent, "Slot", String(fixture.task.slot));
+  if (fixture.task.status === "escalated" && fixture.task.step) appendDetail(parent, "Recorded step", displayTaskValue(fixture.task.step));
+  if (fixture.task.holds.length) appendDetail(parent, "Holds", fixture.task.holds.join(", "));
+  if (fixture.attention) renderTaskAttention(parent, fixture.attention);
+  appendTaskLatestReport(parent, fixture);
+  appendTaskLatestEvent(parent, fixture);
+  appendSection(parent, "Branches");
+  for (const branch of fixture.branches) {
+    appendRichLine(parent, [["task-branch", branch], ["task-branch-direction", " → "], ["task-branch-target", fixture.task.repo.base]]);
+  }
+  appendTaskSessions(parent, fixture.sessions);
+}
+
+function renderTaskBriefing(parent, fixture) {
+  appendTaskIdentity(parent, fixture.task);
+  if (fixture.attention) renderTaskAttention(parent, fixture.attention);
+  if (fixture.task.status === "escalated" && fixture.task.step) {
+    appendSection(parent, "Progress");
+    appendDetail(parent, "Recorded step", displayTaskValue(fixture.task.step));
+  }
+  if (fixture.task.holds.length) appendDetails(parent, [["Holds", fixture.task.holds.join(", ")]]);
+  appendTaskLatestReport(parent, fixture);
+  appendTaskLatestEvent(parent, fixture);
+  appendSection(parent, "Branches");
+  for (const branch of fixture.branches) {
+    appendRichLine(parent, [["task-branch", branch], ["task-branch-direction", " → "], ["task-branch-target", fixture.task.repo.base]]);
+  }
+  appendTaskSessions(parent, fixture.sessions);
+}
+
+function renderTaskEvidence(parent, fixture) {
+  appendTaskIdentity(parent, fixture.task);
+  if (fixture.attention) renderTaskAttention(parent, fixture.attention);
+  appendSection(parent, "Task facts");
+  appendDetail(parent, "Iteration", String(fixture.task.iteration));
+  if (fixture.task.slot !== null) appendDetail(parent, "Slot", String(fixture.task.slot));
+  if (fixture.task.step) appendDetail(parent, "Recorded step", displayTaskValue(fixture.task.step));
+  if (fixture.task.holds.length) appendDetail(parent, "Holds", fixture.task.holds.join(", "));
+  appendSection(parent, `Reports · ${fixture.reports.length} recorded`);
+  for (const report of fixture.reports) appendTaskReport(parent, report);
+  appendSection(parent, `Timeline · latest ${fixture.events.length}, newest first`);
+  for (const event of fixture.events) appendTaskEvent(parent, event);
+  appendSection(parent, "Branches");
+  for (const branch of fixture.branches) {
+    appendRichLine(parent, [["task-branch", branch]]);
+    if (fixture.task.repo && branch === fixture.task.repo.branch) {
+      appendDetail(parent, "base", fixture.task.repo.base);
+      appendDetail(parent, "base ref", fixture.task.repo.base_ref);
+      appendDetail(parent, "base sha", fixture.task.repo.base_sha);
+    }
+  }
+  appendTaskSessions(parent, fixture.sessions);
+}
+
+function renderCurrentTaskFixture(parent, fixture) {
+  appendRichLine(parent, [["task-id", fixture.task.id], " · ", ["task-title", fixture.task.title]], "line strong");
+  const state = taskStatePresentation(fixture.task);
+  appendRichLine(parent, [[`task-state ${state.className}`, state.label]]);
+  if (fixture.task.step) appendDetail(parent, "Recorded step", displayTaskValue(fixture.task.step));
+  if (fixture.attention) renderTaskAttention(parent, fixture.attention);
+  appendLine(parent, `Latest report · 1 of ${fixture.reports.length}`, "task-detail-title");
+  appendTaskReport(parent, fixture.reports[0]);
+  appendLine(parent, `Latest event · 1 of ${fixture.events.length}`, "task-detail-title");
+  appendTaskEvent(parent, fixture.events[0]);
+  appendLine(parent, "Branches", "task-detail-title");
+  for (const branch of fixture.branches) appendRichLine(parent, [["task-branch", branch], ["task-branch-direction", " → "], ["task-branch-target", fixture.task.repo.base]]);
+  appendTaskSessions(parent, fixture.sessions);
+}
+
+function appendTaskIdentity(parent, task) {
+  const state = taskStatePresentation(task);
+  appendRichLine(parent, [
+    ["task-id", task.id], " · ", ["task-title", task.title], " · ", [`task-state ${state.className}`, state.label]
+  ], "task-row");
+}
+
+function taskStatePresentation(task) {
+  if (task.status === "running" && task.step === "implement") return {label: "Implementing", className: "implementing"};
+  if (task.status === "escalated") return {label: "Escalated", className: "escalated"};
+  if (task.status === "done") return {label: "Done", className: "done"};
+}
+
+function displayTaskValue(value) {
+  return `${value[0].toUpperCase()}${value.slice(1)}`;
+}
+
+function renderTaskAttention(parent, attention) {
+  appendSection(parent, "Attention");
+  appendRichLine(parent, [
+    ["task-id", attention.id], " · ", ["task-state escalated", attention.reason], " · ", ["task-timeline-event", attention.headline]
+  ]);
+}
+
+function appendTaskLatestReport(parent, fixture) {
+  if (!fixture.reports.length) return;
+  appendSection(parent, `Latest report · 1 of ${fixture.reports.length}`);
+  appendTaskReport(parent, fixture.reports[0]);
+}
+
+function appendTaskLatestEvent(parent, fixture) {
+  if (!fixture.events.length) return;
+  appendSection(parent, `Latest event · 1 of ${fixture.events.length}`);
+  appendTaskEvent(parent, fixture.events[0]);
+}
+
+function appendTaskReport(parent, report) {
+  const segments = [["task-meta-label", `turn ${report.turn}`], " · ", ["task-meta-label", report.kind], " · ", ["task-report-result", taskReportSummary(report)]];
+  appendRichLine(parent, segments);
+}
+
+function taskReportSummary(report) {
+  if (report.kind === "implementation") return `${report.data.status}: ${report.data.summary}`;
+  if (report.kind === "verdict") return `${report.data.decision}: ${report.data.summary}`;
+  if (report.kind === "plan") return report.data.summary;
+}
+
+function appendTaskEvent(parent, event) {
+  appendRichLine(parent, [
+    ["task-timestamp", event.ts], " · ", ["task-meta-label", displayTaskEventKind(event.kind)], " · ", ["task-timeline-event", event.message]
+  ]);
+}
+
+function displayTaskEventKind(kind) {
+  if (kind === "turn_completed") return "Turn completed";
+  if (kind === "step_started") return "Step started";
+  if (kind === "task_done") return "Task completed";
+  if (kind === "escalation") return "Escalation";
+  if (kind === "verdict") return "Verdict";
+}
+
+function displayTaskSessionStatus(status) {
+  if (status === "live") return "Live";
+  if (status === "taken_over") return "Taken over";
+  if (status === "closed") return "Closed";
+}
+
+function appendTaskSessions(parent, sessions) {
+  appendSection(parent, "Sessions");
+  for (const session of sessions) {
+    const statusClass = session.status === "live" ? "task-running" : session.status === "taken_over" ? "task-state escalated" : "task-meta-label";
+    appendRichLine(parent, [
+      ["task-role", displayTaskValue(session.role)], " · ", ["task-provider", session.agent], "/", ["task-model", session.model], " · ",
+      [statusClass, displayTaskSessionStatus(session.status)], " · ", ["task-meta-label", "session ID "], ["task-session-id", session.session_id]
+    ]);
+    appendDetail(parent, "Effort", session.effort);
+  }
+}
+
+function appendDetailsBlock(parent) {
+  const block = node("div", "details-block");
+  appendSection(block, "Details");
+  parent.append(block);
+  return block;
+}
+
+function renderStatusSnapshot(parent, options = {}) {
+  const details = appendDetailsBlock(parent);
+  if (options.empty) {
+    appendStatusFacts(details, {project: "demo", engine: "down", active: 0, queued: 0, escalations: 0, time: "", space: "0B"});
+    appendSection(details, "Tasks");
+    appendLine(details, "No tasks or usage have been recorded.", "line muted");
+    return;
+  }
+  appendStatusFacts(details, {
+    project: "demo",
+    engine: "up",
+    active: options.active === undefined ? 2 : options.active,
+    queued: options.queued === undefined ? 2 : options.queued,
+    escalations: options.escalations === undefined ? 1 : options.escalations,
+    time: options.time || "5h 12m",
+    space: "16.1 MiB"
+  });
+  appendSection(details, "Tasks");
+  const tasks = STATUS_TASKS.filter(task => task.status !== "Done" && !(options.completedId && task.id === options.completedId)).map(task => ({...task}));
+  const active = tasks.find(task => task.id === "T-42");
+  if (active && options.stage) active.status = options.stage;
+  const latestDone = options.completedId
+    ? STATUS_TASKS.find(task => task.id === options.completedId)
+    : STATUS_TASKS.find(task => task.status === "Done");
+  if (latestDone) tasks.push({...latestDone, status: "Done"});
+  const stateRank = {Escalated: 0, Implementing: 1, Integrating: 1, Verifying: 1, Queued: 2, Done: 3};
+  tasks.sort((left, right) => stateRank[left.status] - stateRank[right.status]);
+  for (const task of tasks) {
+    const row = node("div", "task-row");
+    row.append(node("span", "task-id", task.id), document.createTextNode(" · "), node("span", "task-title", task.title), document.createTextNode(" · "), node("span", `task-state ${task.status.toLowerCase()}`, task.status));
+    details.append(row);
+  }
+  appendSection(details, "Escalations");
+  const escalation = node("div", "line");
+  escalation.append(node("span", "task-id", "E-3"), document.createTextNode(" · "), node("span", "task-id", "T-41"), document.createTextNode(" · Production validation needs an Operator decision."));
+  details.append(escalation);
+  appendUsage(details);
+}
+
+function appendStatusFacts(parent, facts) {
+  const line = node("div", "status-facts");
+  const separator = () => line.append(document.createTextNode(" · "));
+  line.append(node("span", "status-project", facts.project), document.createTextNode(" · "));
+  line.append(node("span", facts.engine === "up" ? "session-engine up" : "session-engine down", `⚙︎ ${facts.engine}`));
+  if (facts.time) line.append(document.createTextNode(" ("), node("span", "uptime", facts.time), document.createTextNode(")"));
+  separator();
+  line.append(node("span", "status-label", "slots "), node("span", "status-value", `${facts.active}/4`));
+  separator();
+  line.append(node("span", "status-label", "queued "), node("span", "status-value", String(facts.queued)));
+  separator();
+  line.append(node("span", "status-label", "escalations "));
+  line.append(node("span", facts.escalations ? "session-escalations active" : "session-escalations", String(facts.escalations)));
+  separator();
+  line.append(node("span", "status-label", "space used "), node("span", "status-value", facts.space));
+  parent.append(line);
+}
+
+function appendUsage(parent) {
+  appendSection(parent, "Usage");
+  const table = node("table", "status-usage");
+  const headers = ["Agent", "Runs", "Input", "Output", "Costs", "Quota used 5h/7d"];
+  const head = node("tr");
+  for (const label of headers) head.append(node("th", "", label));
+  const thead = node("thead");
+  thead.append(head);
+  table.append(thead);
+  const tbody = node("tbody");
+  const codex = node("tr");
+  for (const value of ["codex", "6", "16.0k", "4.2k", "unknown"]) codex.append(node("td", "", value));
+  const codexQuota = node("td", "quota-cell");
+  codexQuota.append(node("span", "quota-warn", "◑ 52%"), document.createTextNode(" / "), node("span", "quota-good", "◔ 28%"));
+  codex.append(codexQuota);
+  tbody.append(codex);
+  const claude = node("tr");
+  for (const value of ["claude", "2", "8.1k", "2.3k", "$0.00"]) claude.append(node("td", "", value));
+  const claudeQuota = node("td", "quota-cell");
+  claudeQuota.append(node("span", "quota-good", "◔ 20%"), document.createTextNode(" / "), node("span", "quota-good", "○ 8%"));
+  claude.append(claudeQuota);
+  tbody.append(claude);
+  table.append(tbody);
+  parent.append(table);
+}
+
+function renderTaskDetail(parent) {
+  appendRichLine(parent, [
+    ["task-id", "T-42"], " · ", ["task-title", "Add retry handling for transient API failures"]
+  ], "line strong");
+  appendRichLine(parent, [
+    ["task-state implementing", "Implementing"], " · ", ["task-role", "Implementer"], " · ", ["task-running", "running"]
+  ]);
+  appendLine(parent, "Reports", "task-detail-title");
+  appendRichLine(parent, [
+    ["task-meta-label", "Implementation"], " · ", ["task-report-result", "retry path handled"], " · ", ["task-report-state", "tests reported"]
+  ]);
+  appendLine(parent, "Timeline", "task-detail-title");
+  appendRichLine(parent, [
+    ["task-timestamp", "12:14"], " · ", ["task-role", "implementer"], " · ", ["task-timeline-event", "turn completed"]
+  ]);
+  appendLine(parent, "Branches", "task-detail-title");
+  appendRichLine(parent, [
+    ["task-branch", "task/T-42-add-retry"], ["task-branch-direction", " → "], ["task-branch-target", "main"]
+  ]);
+  appendLine(parent, "Sessions", "task-detail-title");
+  appendRichLine(parent, [
+    ["task-role", "Implementer"], " · ", ["task-provider", "codex"], "/", ["task-model", "gpt-6-luna"], " · ",
+    ["task-running", "running"], " · ", ["task-meta-label", "resume session "],
+    ["task-session-id", "0199a67e-7f23-74b1-a400-63d22fbc1451"]
+  ]);
+  appendRichLine(parent, [["task-meta-label", "Effort"], " · ", ["task-meta-value", "high"]]);
+}
+
+function appendRichLine(parent, segments, className = "line") {
+  const line = node("div", className);
+  for (const segment of segments) {
+    if (typeof segment === "string") line.append(document.createTextNode(segment));
+    else line.append(node("span", segment[0], segment[1]));
+  }
+  parent.append(line);
+  return line;
+}
+
+function scopeLabel(id) {
+  return scopeRows(wizard).find(row => row.id === id)?.label || "Leader · Base";
+}
+
+function updateScopeSummaries() {
+  for (const row of scopeRows(wizard)) {
+    const button = document.getElementById(`scope-${row.id.replaceAll(":", "-")}`);
+    if (!button || !button.children[1]) continue;
+    button.children[1].textContent = row.inherited
+      ? `inherits Base · ${row.effective}`
+      : row.raw || "(empty)";
+  }
+}
+
+function renderScopeOverview(parent) {
+  appendLine(parent, "Role and complexity ladders", "section-label");
+  const list = node("div", "scope-list");
+  list.id = "scope-list";
+  for (const row of scopeRows(wizard)) {
+    const selected = row.id === wizard.selectedScope;
+    const button = makeButton(list, "", `scope-${row.id.replaceAll(":", "-")}`, () => {
+      wizard.selectedScope = row.id;
+      wizard.newEntry = {agent: "", model: "", effort: ""};
+      renderWizard("ladder-input");
+    }, {className: `scope-row${selected ? " selected" : ""}`});
+    button.setAttribute("aria-pressed", String(selected));
+    button.tabIndex = selected ? 0 : -1;
+    button.setAttribute("tabindex", String(button.tabIndex));
+    const summary = row.inherited ? `inherits Base · ${row.effective}` : row.raw || "(empty)";
+    button.append(node("span", "scope-name", row.label), node("span", "scope-value", summary));
+  }
+  list.addEventListener("keydown", event => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      renderWizard("ladder-input");
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const rows = scopeRows(wizard);
+    const current = rows.findIndex(row => row.id === wizard.selectedScope);
+    const next = Math.max(0, Math.min(rows.length - 1, current + (event.key === "ArrowDown" ? 1 : -1)));
+    wizard.selectedScope = rows[next].id;
+    wizard.newEntry = {agent: "", model: "", effort: ""};
+    renderWizard(`scope-${rows[next].id.replaceAll(":", "-")}`);
+  });
+  parent.append(list);
+}
+
+function renderLadderEditor(parent) {
+  const row = scopeRows(wizard).find(item => item.id === wizard.selectedScope);
+  appendLine(parent, `Edit ${row.label}`, "section-label");
+  if (row.inherited) appendLine(parent, `Blank inherits Implementer · Base: ${row.effective}`, "inheritance");
+  const currentRaw = row.raw;
+  const problem = wizard.validation ? ladderProblem(currentRaw, row.inherited) : "";
+  const ladderInput = makeField(parent, "Ladder entries", "ladder-input", currentRaw, "text", value => {
+    setSelectedRaw(wizard, value);
+    updateScopeSummaries();
+    const activeRow = scopeRows(wizard).find(item => item.id === wizard.selectedScope);
+    updateFieldProblem(ladderInput, wizard.validation ? ladderProblem(activeRow.raw, activeRow.inherited) : "");
+  }, {problem, keepValidation: true});
+
+  const agent = makeField(parent, "Agent", "agent-input", wizard.newEntry.agent, "select", value => {
+    chooseAgent(wizard, value);
+    renderWizard("model-input");
+  }, {choices: [["Choose agent", ""], ["Codex", "codex"], ["Claude Code", "claude"]]});
+  const models = Object.keys(FIXTURE_CATALOGS[wizard.newEntry.agent] || {});
+  const model = makeField(parent, "Model", "model-input", wizard.newEntry.model, "select", value => {
+    chooseModel(wizard, value);
+    renderWizard("effort-input");
+  }, {choices: [["Choose model", ""], ...models.map(item => [item, item])], disabled: !wizard.newEntry.agent});
+  const offered = FIXTURE_CATALOGS[wizard.newEntry.agent]?.[wizard.newEntry.model];
+  const efforts = Array.isArray(offered) ? offered : [];
+  makeField(parent, "Effort", "effort-input", wizard.newEntry.effort, "select", value => {
+    setEffort(wizard, value);
+    renderWizard("effort-input");
+  }, {choices: [["Native default", ""], ...efforts.map(item => [item, item])], disabled: !wizard.newEntry.model || !efforts.length});
+  agent.setAttribute("aria-label", `Agent: ${wizard.newEntry.agent || "Choose agent"}`);
+  model.setAttribute("aria-label", `Model: ${wizard.newEntry.model || "Choose model"}`);
+  const actions = node("div", "compact-actions");
+  makeButton(actions, "Add", "ladder-add", () => {
+    if (!addSelectedEntry(wizard)) return;
+    ladderInput.value = selectedRaw(wizard);
+    updateScopeSummaries();
+    updateFieldProblem(ladderInput, wizard.validation ? ladderProblem(ladderInput.value) : "");
+    ladderInput.focus();
+    ladderInput.setSelectionRange(ladderInput.value.length, ladderInput.value.length);
+  }, {disabled: Boolean(rungProblem(wizard.newEntry))});
+  parent.append(actions);
+}
+
+function renderAgents(body) {
+  appendLine(body, "Leader, Implementer and Helper use ordered agent:model[:effort] entries. Blank Implementer Low, Normal and High fields inherit Base; entering text creates an override. Choose listed Codex or Claude Code values, then Add appends an entry.", "description");
+  renderScopeOverview(body);
+  renderLadderEditor(body);
+}
+
+function pathPresent(value, candidate) {
+  return value.split(",").map(item => item.trim()).includes(candidate);
+}
+
+function renderPathPage(body, kind) {
+  const tracker = kind === "trackers";
+  const fieldName = tracker ? "trackerText" : "cacheText";
+  const title = tracker ? "Tracker files" : "Cache paths";
+  appendLine(body, tracker
+    ? "Tracker files start blank. Select project-relative Markdown candidates used as task trackers; an empty field sends no tracker files to tasks."
+    : "Cache paths start blank and are registered for task worktrees. Select detected ignored directories to add; an empty field copies no caches. CoW is checked on this project filesystem.", "description");
+  appendLine(body, tracker ? "Detected tracker files" : "Detected cache directories", "section-label");
+  if (!tracker) readRow(body, "Copy-on-write", "Supported on this project filesystem");
+  const list = node("div", "path-list");
+  const candidateButtons = [];
+  let pathInput;
+  function updateCandidates() {
+    for (const [path, button] of candidateButtons) button.disabled = pathPresent(wizard[fieldName], path);
+  }
+  for (const path of CANDIDATES[kind]) {
+    const row = node("div", "path-candidate");
+    row.append(node("span", "path-name", path));
+    if (!tracker) row.append(node("span", "path-evidence", "CoW · supported"));
+    const button = makeButton(row, "Add", `add-${tracker ? "tracker" : "cache"}-${path.replaceAll(/[^a-z0-9]+/gi, "-")}`, () => {
+      wizard[fieldName] = addUniquePath(wizard[fieldName], path);
+      pathInput.value = wizard[fieldName];
+      updateCandidates();
+      pathInput.focus();
+      pathInput.setSelectionRange(pathInput.value.length, pathInput.value.length);
+    }, {disabled: pathPresent(wizard[fieldName], path), className: "path-add"});
+    candidateButtons.push([path, button]);
+    list.append(row);
+  }
+  body.append(list);
+  pathInput = makeField(body, title, "path-input", wizard[fieldName], "text", value => {
+    wizard[fieldName] = value;
+    updateCandidates();
+  });
+}
+
+function renderRepository(body) {
+  appendLine(body, "Read-only facts from the current checkout.", "description");
+  readRow(body, "Project", "/Users/pavel/Projects/demo");
+  readRow(body, "Base", "main");
+  readRow(body, "Config target", "/Users/pavel/Projects/demo/.shikiru/config.toml");
+  const row = node("div", "read-row");
+  row.append(node("span", "read-label", "Checkout"));
+  const value = node("span", "read-value", "");
+  if (wizard.repoState === "changed") {
+    value.append(node("span", "checkout-branch", "main"), document.createTextNode(" · "), node("span", "checkout-add", "+18"), document.createTextNode("  "), node("span", "checkout-delete", "−4"), document.createTextNode(" · "), node("span", "checkout-change", "1 untracked path"));
+  } else {
+    value.append(node("span", "checkout-branch", "main"), document.createTextNode(" · "), node("span", "checkout-clean", "clean"));
+  }
+  row.append(value);
+  body.append(row);
+}
+
+function renderFinish(body) {
+  appendLine(body, "Finish writes .shikiru/config.toml, excludes .shikiru/ in Git, and runs Doctor.", "description");
+  readRow(body, "Config", "/Users/pavel/Projects/demo/.shikiru/config.toml");
+  const summary = `Max parallel ${wizard.parallel} · ${wizard.integration === "merge" ? "Local merge" : "Pull request"}`;
+  readRow(body, "Summary", summary);
+}
+
+let artworkTimer = null;
+let artworkFocusId = "";
+
+function clearArtworkTimer() {
+  if (artworkTimer !== null) clearTimeout(artworkTimer);
+  artworkTimer = null;
+  artworkFocusId = "";
+}
+
+function hideWizardForArtwork() {
+  if (currentExample !== "init" || wizard.exit) return false;
+  const panel = document.getElementById("wizard-panel");
+  if (!panel || panel.hidden) return false;
+  clearArtworkTimer();
+  artworkFocusId = content.contains(document.activeElement) ? document.activeElement.id : "";
+  panel.hidden = true;
+  content.focus();
+  artworkTimer = setTimeout(() => {
+    artworkTimer = null;
+    if (currentExample !== "init" || wizard.exit) return;
+    const currentPanel = document.getElementById("wizard-panel");
+    if (!currentPanel) return;
+    currentPanel.hidden = false;
+    focusWizardTarget(artworkFocusId);
+    artworkFocusId = "";
+  }, 5000);
+  return true;
+}
+
+function firstFocusable(step) {
+  if (step === 1) return `scope-${wizard.selectedScope.replaceAll(":", "-")}`;
+  const targets = {
+    0: "wizard-next",
+    2: "path-input",
+    3: "path-input",
+    4: "parallel-input",
+    5: "integration-input",
+    6: "wizard-run-doctor"
+  };
+  return targets[step] || "";
+}
+
+function focusWizardTarget(requested) {
+  const target = document.getElementById(requested || wizard.lastFocus[wizard.step] || firstFocusable(wizard.step));
+  if (target && !target.disabled) { target.focus(); target.scrollIntoView?.({block: "nearest"}); }
+}
+
+function focusProblem(problem) {
+  if (!problem) return;
+  if (problem.step !== undefined) wizard.step = problem.step;
+  if (problem.scope) {
+    wizard.selectedScope = problem.scope;
+    wizard.selectedRung = problem.rung;
+  }
+  wizard.validation = true;
+  renderWizard(problem.field);
+}
+
+function tryAdvance() {
+  wizard.validation = true;
+  if (wizard.step === 1) {
+    const issue = firstConfigurationProblem(wizard);
+    if (issue && issue.scope) {
+      focusProblem(issue);
+      return;
+    }
+  }
+  if (wizard.step === 4) {
+    const parallel = Number(wizard.parallel);
+    if (!Number.isInteger(parallel) || parallel < 1) {
+      focusProblem({step: 4, field: "parallel-input"});
+      return;
+    }
+  }
+  setStep(wizard, wizard.step + 1);
+  renderWizard(firstFocusable(wizard.step));
+}
+
+function attemptWrite() {
+  const issue = firstConfigurationProblem(wizard);
+  if (issue) {
+    focusProblem(issue);
+    return;
+  }
+  wizard.written = true;
+  wizard.result = scenarioSelect.value === "Provider unavailable after write" ? "failed" : "passed";
+  renderWizard("wizard-exit");
+}
+
+function initDoctorChecks() {
+  const checks = INIT_DOCTOR_CHECKS.map(([label, value, state]) => [label, value, state]);
+  if (wizard.result !== "failed") return checks;
+  return checks.map(([label, value, state]) => {
+    if (["Agent claude · binary", "Agent claude · version", "Agent claude · login"].includes(label)) {
+      const detail = label.endsWith("binary")
+        ? "Claude Code executable is unavailable; install it on this host."
+        : "Claude Code provider is unavailable; restore access on this host.";
+      return [label, detail, "fail"];
+    }
+    return [label, value, state];
+  });
+}
+
+function renderWizardResult(body) {
+  readRow(body, "Config", "/Users/pavel/Projects/demo/.shikiru/config.toml");
+  renderDoctorReport(body, initDoctorChecks());
+}
+
+function renderWizardExitSummary(view) {
+  const checks = initDoctorChecks();
+  const failed = checks.some(([, , state]) => state === "fail");
+  appendOutcome(view, failed ? "error" : "success", failed ? "Project initialized; Doctor found unavailable provider checks" : "Project initialized and verified");
+  appendDetails(view, [["Config", "/Users/pavel/Projects/demo/.shikiru/config.toml"]]);
+  if (failed) appendActions(view, "Repair", [
+    {label: "Provider", instruction: "Restore Claude CLI access on this host."},
+    {label: "Doctor", instruction: "Check the written configuration and providers.", command: "shikiru doctor"}
+  ]);
+}
+
+function makeWizardHint(text) {
+  const hint = node("div", "wizard-hint");
+  hint.id = "wizard-hint";
+  hint.setAttribute("aria-label", "Static keyboard hint");
+  const left = node("span", "wizard-hint-left");
+  const pattern = /(PgUp|PgDn|Enter|Tab|↑↓)/g;
+  let offset = 0;
+  let match;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > offset) left.append(document.createTextNode(text.slice(offset, match.index)));
+    left.append(node("span", "hint-key", match[0]));
+    offset = pattern.lastIndex;
+  }
+  if (offset < text.length) left.append(document.createTextNode(text.slice(offset)));
+  const right = node("span", "wizard-hint-right");
+  right.append(node("span", "hint-key", "Ctrl+F"), document.createTextNode(" "), node("span", "hint-note", "富士山"));
+  hint.append(left, right);
+  return hint;
+}
+
+function renderWizardExit() {
+  clearArtworkTimer();
+  const view = commandView("shikiru init");
+  if (wizard.result) {
+    renderWizardExitSummary(view);
+    return;
+  }
+  appendOutcome(view, "pending", "Initialization cancelled");
+  appendDetails(view, [["Config", "No configuration was written."]]);
+}
+
+function renderWizard(restoreId = "") {
+  if (wizard.exit) {
+    renderWizardExit();
+    return;
+  }
+  const oldActiveId = content.contains(document.activeElement) ? document.activeElement.id : "";
+  content.style.overflow = "hidden";
+  closeOpenCombos();
+  content.replaceChildren();
+  const positioner = node("div", "wizard-positioner");
+  const panel = node("div", "popup-frame wizard-panel");
+  panel.id = "wizard-panel";
+  panel.setAttribute("role", "group");
+  panel.setAttribute("aria-labelledby", "wizard-title");
+  const header = node("div", "popup-header wizard-header");
+  const title = node("div", "popup-title wizard-title");
+  title.id = "wizard-title";
+  title.append(
+    node("span", "wizard-brand", "SHIKIRU"),
+    document.createTextNode(" · "),
+    node("span", "wizard-step", ["Repository", "Agents and ladders", "Trackers", "Caches and CoW", "Parallelism", "Integration mode", "Finish"][wizard.step])
+  );
+  const counter = node("div", "popup-step wizard-step-count", `${wizard.step + 1} / 7`);
+  counter.id = "wizard-step-count";
+  header.append(title, counter);
+  panel.append(header, node("div", "popup-rule wizard-rule"));
+  const body = node("div", "popup-body wizard-body");
+  body.id = "wizard-body";
+  panel.addEventListener("keydown", event => {
+    if (event.key === "PageUp" || event.key === "PageDown") {
+      event.preventDefault();
+      body.scrollBy({top: (event.key === "PageUp" ? -1 : 1) * body.clientHeight * 0.8});
+    }
+  }, {capture: true});
+  if (wizard.result) renderWizardResult(body);
+  else if (wizard.step === 0) renderRepository(body);
+  else if (wizard.step === 1) renderAgents(body);
+  else if (wizard.step === 2) renderPathPage(body, "trackers");
+  else if (wizard.step === 3) renderPathPage(body, "caches");
+  else if (wizard.step === 4) {
+    appendLine(body, "The project default is 2 active tasks; choose the maximum parallel tasks.", "description");
+    const invalid = wizard.validation && (!Number.isInteger(Number(wizard.parallel)) || Number(wizard.parallel) < 1);
+    const control = makeField(body, "Maximum parallel", "parallel-input", wizard.parallel, "number", value => {
+      const normalized = value.trim() === "" ? "" : Number.isFinite(Number(value)) && Number(value) < 1 ? "1" : value;
+      if (control.value !== normalized) control.value = normalized;
+      wizard.parallel = normalized;
+      const parallel = Number(normalized);
+      updateFieldProblem(control, wizard.validation && (!Number.isInteger(parallel) || parallel < 1) ? "Enter a whole number greater than zero." : "");
+    }, {problem: invalid ? "Enter a whole number greater than zero." : "", keepValidation: true});
+    control.min = "1";
+    control.step = "1";
+  } else if (wizard.step === 5) {
+    appendLine(body, "Choose how completed work is integrated back into the repository.", "description");
+    makeField(body, "Integration mode", "integration-input", wizard.integration, "select", value => {
+      wizard.integration = value;
+      renderWizard("integration-input");
+    }, {choices: [["Local merge", "merge"], ["Pull request", "pr"]]});
+    readRow(body, "Local merge", "merge a finished task branch locally");
+    readRow(body, "Pull request", "open a pull request for review");
+  } else renderFinish(body);
+  panel.append(body);
+  const nav = node("div", "wizard-nav");
+  const afterWrite = wizard.written && wizard.result;
+  if (!afterWrite) {
+    makeButton(nav, "Back", "wizard-back", () => {
+      setStep(wizard, wizard.step - 1);
+      renderWizard(firstFocusable(wizard.step));
+    }, {disabled: wizard.step === 0});
+  }
+  if (!wizard.result && wizard.step < 6) {
+    makeButton(nav, "Next", "wizard-next", tryAdvance, {className: "primary"});
+  } else if (!wizard.result) {
+    makeButton(nav, "Run doctor", "wizard-run-doctor", attemptWrite, {className: "primary"});
+  } else {
+    makeButton(nav, "Exit", "wizard-exit", () => {
+      wizard.exit = "closed";
+      renderWizardExit();
+    });
+  }
+  if (!wizard.result) {
+    makeButton(nav, "Cancel", "wizard-cancel", () => {
+      wizard.exit = "cancelled";
+      renderWizardExit();
+    });
+  }
+  const hints = [
+    "",
+    "↑↓ select scope · Enter edit",
+    "Tab / Enter add",
+    "Tab / Enter add",
+    "Tab / Enter edit",
+    "Tab / Enter choose",
+    "Enter run Doctor"
+  ];
+  const hintText = wizard.result ? "Enter Exit" : hints[wizard.step];
+  const hint = makeWizardHint(hintText);
+  const navRule = node("div", "popup-rule wizard-rule wizard-nav-rule");
+  panel.append(hint, navRule, nav);
+  positioner.append(panel);
+  content.replaceChildren(positioner);
+  if (body.clientHeight > 0 && body.scrollHeight > body.clientHeight) {
+    const leftHint = hint.children[0];
+    leftHint.append(document.createTextNode(" · "), node("span", "hint-key", "PgUp / PgDn"), document.createTextNode(" scroll"));
+  }
+  artNode.hidden = false;
+  const focusId = restoreId || oldActiveId || "";
+  if (artworkTimer !== null) {
+    panel.hidden = true;
+    content.focus();
+  } else {
+    focusWizardTarget(focusId);
+  }
+}
+
+function renderExample() {
+  clearArtworkTimer();
+  const selected = EXAMPLES.find(item => item.id === exampleSelect.value) || EXAMPLES[0];
+  currentExample = selected.id;
+  terminal.dataset.example = selected.id;
+  scenarioSelect.replaceChildren();
+  for (const scenario of selected.scenarios) {
+    const option = node("option", "", scenario);
+    option.value = scenario;
+    scenarioSelect.append(option);
+  }
+  $("repo-fixture-label").hidden = currentExample !== "init";
+  $("task-layout-label").hidden = currentExample !== "task_status";
+  if (currentExample === "init") {
+    wizard = createReviewState();
+    wizard.repoState = $("repo-fixture").value;
+    renderWizard();
+  } else {
+    newExample(currentExample, scenarioSelect.value);
+  }
+}
+
+function rerender() {
+  if (currentExample === "init" && wizard.exit) renderWizardExit();
+  else if (currentExample === "init") renderWizard();
+  else newExample(currentExample, scenarioSelect.value);
+}
+
+function setSize() {
+  const [columns, rows] = sizeSelect.value.split("x").map(Number);
+  terminal.dataset.columns = String(columns);
+  terminal.dataset.rows = String(rows);
+  terminal.style.width = `calc(${columns}ch + 0px)`;
+  terminal.style.height = `calc(${rows * 1.65}em + 0px)`;
+  resizeState(wizard, sizeSelect.value);
+  rerender();
+}
+
+function renderAnsi(target, source) {
+  target.replaceChildren();
+  let color = "";
+  let index = 0;
+  const pattern = /\u001b\[([0-9;]*)m/g;
+  let match;
+  while ((match = pattern.exec(source)) !== null) {
+    if (match.index > index) {
+      const span = node("span", "", source.slice(index, match.index));
+      if (color) span.style.color = color;
+      target.append(span);
+    }
+    const codes = match[1].split(";").map(Number);
+    for (let position = 0; position < codes.length; position += 1) {
+      if (codes[position] === 0 || codes[position] === 39) color = "";
+      else if (codes[position] === 38 && codes[position + 1] === 2) {
+        color = `rgb(${codes[position + 2]}, ${codes[position + 3]}, ${codes[position + 4]})`;
+        position += 4;
+      }
+    }
+    index = pattern.lastIndex;
+  }
+  if (index < source.length) {
+    const span = node("span", "", source.slice(index));
+    if (color) span.style.color = color;
+    target.append(span);
+  }
+}
+
+for (const example of EXAMPLES) {
+  const option = node("option", "", example.command);
+  option.value = example.id;
+  exampleSelect.append(option);
+}
+
+exampleSelect.addEventListener("change", () => renderExample());
+scenarioSelect.addEventListener("change", () => rerender());
+$("task-layout").addEventListener("change", () => {
+  if (currentExample === "task_status") rerender();
+});
+sizeSelect.addEventListener("change", () => setSize());
+$("repo-fixture").addEventListener("change", event => {
+  wizard.repoState = event.target.value;
+  if (wizard.exit) renderWizardExit();
+  else renderWizard("repo-fixture");
+});
+$("mono").addEventListener("change", event => terminal.dataset.mono = String(event.target.checked));
+document.addEventListener("keydown", event => {
+  const target = event.target;
+  const tag = target?.tagName?.toLowerCase();
+  const openCombo = target?.getAttribute?.("role") === "combobox" && target.getAttribute("aria-expanded") === "true";
+  const editing = ["input", "textarea", "select"].includes(tag) || target?.isContentEditable || openCombo;
+  const menuOpen = openCombos.some(combo => combo.isOpen());
+  if (event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey && event.key.toLowerCase() === "f" && !editing && !menuOpen) {
+    if (hideWizardForArtwork()) event.preventDefault();
+  }
+});
+
+document.addEventListener("focusin", event => {
+  if (content.contains(event.target) && event.target.id) wizard.lastFocus[wizard.step] = event.target.id;
+});
+
+terminal.dataset.mono = "false";
+renderAnsi(artNode, JSON.parse($("art-source").textContent));
+exampleSelect.value = "init";
+sizeSelect.value = "140x50";
+setSize();
+renderExample();
+
+</script>
+</body>
+</html>

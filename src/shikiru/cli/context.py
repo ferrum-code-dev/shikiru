@@ -37,13 +37,13 @@ def project_root(state: CliState, *, require_config: bool = True) -> Path:
     state_dir = project_state_dir(root)
     if not state_dir.is_dir():
         message = f"no {SHIKIRU_DIR_NAME}/ directory found from {root}"
-        raise NotInitialisedError(message)
+        raise NotInitialisedError(message, project_root=root, missing_path=state_dir)
     config_path = project_config_path(root)
     if require_config and not config_path.is_file():
         message = (
             f"{config_path} is missing; initialize the repository before running project commands"
         )
-        raise NotInitialisedError(message)
+        raise NotInitialisedError(message, project_root=root, missing_path=config_path)
     return root
 
 
@@ -55,5 +55,9 @@ def nearest_project(start: Path) -> Path:
             return current
         if current.parent == current:
             message = f"no {SHIKIRU_DIR_NAME}/ directory found from {start}"
-            raise NotInitialisedError(message)
+            raise NotInitialisedError(
+                message,
+                project_root=start.resolve(),
+                missing_path=project_state_dir(start),
+            )
         current = current.parent

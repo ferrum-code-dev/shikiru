@@ -7,7 +7,7 @@ from datetime import timedelta
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, PrivateAttr
 
 from shikiru.domain.commands import (
     COMMAND_POLL_SECONDS,
@@ -68,6 +68,28 @@ class Ack(BaseModel):
     status: AckStatus
     result: dict[str, Any] | None = None
     message: str | None = None
+    _submitted_task_id: str | None = PrivateAttr(default=None)
+
+    @property
+    def submitted_task_id(self) -> str | None:
+        """Return the task identity allocated for a submitted command, when applicable."""
+        return self._submitted_task_id
+
+    @classmethod
+    def from_command(
+        cls,
+        command: Command,
+        *,
+        command_id: int,
+        status: AckStatus,
+        result: dict[str, Any] | None,
+        message: str | None,
+    ) -> Ack:
+        """Create an acknowledgement while retaining submitted task identity for human output."""
+        ack = cls(id=command_id, status=status, result=result, message=message)
+        if isinstance(command, Submit):
+            ack._submitted_task_id = command.task_id
+        return ack
 
 
 class OperatorCommands:
@@ -105,8 +127,9 @@ class OperatorCommands:
                     AckStatus.DONE if outcome.status is CommandStatus.DONE else AckStatus.REJECTED
                 )
                 message = _result_message(outcome.result)
-                return Ack(
-                    id=outcome.id,
+                return Ack.from_command(
+                    queued.command,
+                    command_id=outcome.id,
                     status=status,
                     result=outcome.result,
                     message=message,
@@ -285,7 +308,13 @@ def _title_from_request(request: str) -> str:
 
 def _queued_ack(command_id: int, command: Command, message: str) -> Ack:
     result = {"task_id": command.task_id} if isinstance(command, Submit) else None
-    return Ack(id=command_id, status=AckStatus.QUEUED, result=result, message=message)
+    return Ack.from_command(
+        command,
+        command_id=command_id,
+        status=AckStatus.QUEUED,
+        result=result,
+        message=message,
+    )
 
 
 def _result_message(result: dict[str, Any] | None) -> str | None:

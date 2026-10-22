@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import ModelCatalog, Rung
 from shikiru.config.loader import validate_project_config_text
-from shikiru.errors import ConfigError
+from shikiru.errors import ConfigError, ProjectNotRepositoryRootError, RepositoryHasNoCommitsError
 from shikiru.paths import EXCLUDE_LINE, SHIKIRU_DIR_NAME, project_config_path
 from shikiru.private import create_private_text, make_private_dir
 
@@ -154,14 +154,19 @@ class ProjectDetectors:
         return await self._plugin_checks.model_catalog(name, options)
 
     async def _validate_root(self) -> None:
-        if not await self._git.is_repository_root(self._root):
-            raise ConfigError(not_repository_root(self._root))
+        repository_root = await self._git.repository_root(self._root)
+        if repository_root != self._root:
+            raise ProjectNotRepositoryRootError(
+                not_repository_root(self._root),
+                project_root=self._root,
+                repository_root=repository_root,
+            )
         if not await self._git.has_commit(self._root):
             message = (
                 f"{self._root} is a git repository without commits; create an initial commit, "
                 "then run shikiru init"
             )
-            raise ConfigError(message)
+            raise RepositoryHasNoCommitsError(message, project_root=self._root)
 
     async def _write_and_exclude(self, config_path: Path, contents: str) -> None:
         try:

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
 EXIT_GENERIC_ERROR = 1
 EXIT_USAGE_ERROR = 2
@@ -32,6 +33,18 @@ class UsageError(ShikiruError):
 class NotInitialisedError(ShikiruError):
     """No `.shikiru/` project was found where one was required."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        project_root: Path | None = None,
+        missing_path: Path | None = None,
+    ) -> None:
+        """Record the missing project location when the CLI can identify it."""
+        super().__init__(message)
+        self.project_root = project_root
+        self.missing_path = missing_path
+
     exit_code = EXIT_NOT_INITIALISED
 
 
@@ -47,6 +60,31 @@ class StaleTaskBranchError(ShikiruError):
 
 class ConfigError(ShikiruError):
     """Project or default configuration is missing or invalid."""
+
+
+class ProjectNotRepositoryRootError(ConfigError):
+    """The selected project directory is outside or below a Git repository root."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        project_root: Path,
+        repository_root: Path | None,
+    ) -> None:
+        """Record both the selected directory and an enclosing repository, when available."""
+        super().__init__(message)
+        self.project_root = project_root
+        self.repository_root = repository_root
+
+
+class RepositoryHasNoCommitsError(ConfigError):
+    """The selected Git repository does not have a commit at HEAD."""
+
+    def __init__(self, message: str, *, project_root: Path) -> None:
+        """Record the repository whose first commit is required."""
+        super().__init__(message)
+        self.project_root = project_root
 
 
 class HeadlessOutputError(ShikiruError):

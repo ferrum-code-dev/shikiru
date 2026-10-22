@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -23,7 +24,23 @@ from shikiru.domain.reports import (
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import ACTING_ROLE, Step
 from shikiru.domain.tasks import Hold, Status, Task
-from shikiru.errors import NotInitialisedError, ShikiruError
+from shikiru.errors import (
+    CommandFailed,
+    CommandRejectedError,
+    CommandTimeoutError,
+    ConfigError,
+    DatabaseError,
+    DetachedProcessError,
+    HeadlessOutputError,
+    InvariantError,
+    NotInitialisedError,
+    ProcessReplacementError,
+    ProjectNotRepositoryRootError,
+    RepositoryHasNoCommitsError,
+    ShikiruError,
+    StaleTaskBranchError,
+    UsageError,
+)
 from shikiru.operator.commands import AckStatus
 from shikiru.operator.doctor import (
     PLUGIN_CHECK_PREFIX,
@@ -40,7 +57,6 @@ from shikiru.ui.glyphs import (
     GLYPH_DONE,
     GLYPH_ENGINE,
     GLYPH_PENDING,
-    GLYPH_STALLED,
     GLYPH_STOPPED,
     ROLE_GLYPHS,
     STAGE_IMPLEMENT,
@@ -94,6 +110,7 @@ if TYPE_CHECKING:
         UsageView,
     )
     from shikiru.operator.sessions import SessionDiagnostic, SessionRow
+from shikiru.paths import project_config_path
 
 STATUS_ROW_STACKED_BELOW_WIDTH = 60
 SESSION_TABLE_MIN_WIDTH = 65
@@ -107,6 +124,19 @@ SESSION_ENGINE_LABEL = "Engine"
 STATUS_COST_FORMAT = ".2f"
 STOPPED_RESULT_FIELD = "stopped"
 STOPPING_RESULT_FIELD = "stopping"
+_ERROR_SUMMARIES: dict[type[ShikiruError], str] = {
+    InvariantError: "Shikiru encountered an internal invariant failure",
+    UsageError: "The command arguments are invalid",
+    CommandRejectedError: "The engine rejected the command",
+    StaleTaskBranchError: "The existing task branch does not match the task base",
+    ConfigError: "Configuration is missing or invalid",
+    HeadlessOutputError: "An agent returned invalid structured output",
+    DatabaseError: "The project state database operation failed",
+    CommandFailed: "A command exited unsuccessfully",
+    CommandTimeoutError: "A command timed out",
+    DetachedProcessError: "A background process could not be launched",
+    ProcessReplacementError: "The terminal handoff could not be started",
+}
 STATUS_USAGE_COLUMN_GAP = 2
 PLUGIN_AGGREGATE_PART_COUNT = 2
 PLUGIN_CHILD_PART_COUNT = 3
@@ -155,54 +185,109 @@ def init_renderable(
     """Render the config path and the applicable model-review warning."""
     absolute_path = config_path.resolve()
     config_text = _path_text(absolute_path, linked=supports_osc8(console))
-    result = _outcome_line(GLYPH_DONE, "Initialized", SUCCESS_COLOR)
-    result.append(" ")
-    result.append_text(config_text)
-    result.no_wrap = True
     if not include_placeholder_warning:
+        result = _outcome_line(GLYPH_DONE, "Initialized", SUCCESS_COLOR)
+        result.append(" ")
+        result.append_text(config_text)
+        result.no_wrap = True
         return result
-    warning = Text.assemble(
-        (GLYPH_STALLED, f"{STYLE_BOLD} {AMBER}"),
-        (" Generated model fields are placeholders; ", AMBER),
-        ("edit role ladders and run ", PRIMARY_TEXT_COLOR),
-        ("shikiru doctor", BOLD_STEEL),
-        (" before start.", PRIMARY_TEXT_COLOR),
+    next_step = (
+        (
+            "Models",
+            "Generated model fields are placeholders; review role ladders before start.",
+            None,
+        ),
+        ("Doctor", "Verify the project environment before start.", "shikiru doctor"),
     )
-    return Group(result, warning)
+    return _outcome_renderable(
+        "Project initialized",
+        GLYPH_DONE,
+        SUCCESS_COLOR,
+        details=(("Config", config_text),),
+        next_step=next_step,
+    )
 
 
 def start_renderable(result: StartResult) -> Text:
     """Render the engine outcome of `start`."""
     label = "Engine started" if result.started else "Engine already running"
-    return Text(label, style=PRIMARY_TEXT_COLOR)
+    return _outcome_line_for_cli(label, GLYPH_DONE, SUCCESS_COLOR)
 
 
 def error_renderable(error: ShikiruError) -> RenderableType:
     """Render a domain error with its cause and any known recovery action."""
-    text = Text()
-    text.append(GLYPH_STOPPED, style=f"{STYLE_BOLD} {ALERT_COLOR}")
-    text.append(" ")
-    text.append(str(error), style=PRIMARY_TEXT_COLOR)
-    if isinstance(error, NotInitialisedError):
-        return Group(
-            text,
-            Text.assemble(
-                ("Initialize this repository with ", PRIMARY_TEXT_COLOR),
-                ("shikiru init", BOLD_STEEL),
-                (".", PRIMARY_TEXT_COLOR),
+    if isinstance(error, ProjectNotRepositoryRootError):
+        return _repository_root_error_renderable(error)
+    if isinstance(error, RepositoryHasNoCommitsError):
+        project = shlex.quote(str(error.project_root))
+        return _outcome_renderable(
+            "Git repository has no commits",
+            GLYPH_STOPPED,
+            ALERT_COLOR,
+            details=(
+                ("Project", str(error.project_root)),
+                ("Cause", "HEAD does not identify a commit."),
             ),
-            Text.assemble(
-                ("Select another project with ", PRIMARY_TEXT_COLOR),
-                ("shikiru --project PATH COMMAND", BOLD_STEEL),
-                (".", PRIMARY_TEXT_COLOR),
-            ),
-            Text.assemble(
-                ("Run ", PRIMARY_TEXT_COLOR),
-                ("shikiru --help", BOLD_STEEL),
-                (" to see available commands.", PRIMARY_TEXT_COLOR),
+            repair=(
+                (
+                    "First commit",
+                    "Create an initial commit without staging project files.",
+                    f"git -C {project} commit --allow-empty -m 'Initial commit'",
+                ),
+                (
+                    "Initialize",
+                    "Run initialization after the first commit exists.",
+                    f"shikiru --project {project} init --yes",
+                ),
             ),
         )
-    return text
+    if isinstance(error, NotInitialisedError):
+        project_root = error.project_root
+        missing_path = error.missing_path
+        project = shlex.quote(str(project_root)) if project_root is not None else None
+        missing_config = project_root is not None and missing_path == project_config_path(
+            project_root
+        )
+        summary = (
+            "Project configuration is missing" if missing_config else "Project state is missing"
+        )
+        details = tuple(
+            (label, str(value))
+            for label, value in (("Project", project_root), ("Missing", missing_path))
+            if value is not None
+        )
+        if project_root is None or missing_path is None:
+            details += (("Cause", str(error)),)
+        initialize = f"shikiru --project {project} init" if project is not None else "shikiru init"
+        return _outcome_renderable(
+            summary if project_root is not None else "Project is not initialized",
+            GLYPH_STOPPED,
+            ALERT_COLOR,
+            details=details,
+            repair=(
+                (
+                    "Initialize",
+                    "Create fresh Shikiru state for this repository.",
+                    initialize,
+                ),
+                (
+                    "Project root",
+                    "Run this command for a different project root.",
+                    "shikiru --project PATH COMMAND",
+                ),
+                ("Help", "Review available commands.", "shikiru --help"),
+            ),
+        )
+    return _outcome_renderable(
+        _error_summary(error),
+        GLYPH_STOPPED,
+        ALERT_COLOR,
+        details=(("Cause", str(error)),),
+    )
+
+
+def _error_summary(error: ShikiruError) -> str:
+    return _ERROR_SUMMARIES.get(type(error), str(error)) or "Shikiru reported an unspecified error"
 
 
 def status_renderable(
@@ -351,21 +436,53 @@ def ack_renderable(ack: Ack, *, stopping: bool = False) -> RenderableType:
     if stopping and ack.status is AckStatus.DONE:
         outcome = _stop_outcome(ack)
         if outcome is not None:
-            return Text(outcome, style=PRIMARY_TEXT_COLOR)
+            return _outcome_renderable(outcome, GLYPH_DONE, SUCCESS_COLOR)
+        return _outcome_renderable(
+            "Stop command acknowledged",
+            GLYPH_DONE,
+            SUCCESS_COLOR,
+            details=_ack_details(ack, None),
+        )
+    task_id = _ack_task_id(ack)
     match ack.status:
         case AckStatus.DONE:
-            label, glyph, color = "Applied", GLYPH_DONE, SUCCESS_COLOR
+            next_step = (
+                (
+                    (
+                        "Progress",
+                        "Follow the accepted task in project status.",
+                        f"shikiru status {task_id}",
+                    ),
+                )
+                if task_id is not None
+                else ()
+            )
+            return _outcome_renderable(
+                "Task created" if task_id is not None else "Command applied",
+                GLYPH_DONE,
+                SUCCESS_COLOR,
+                details=_ack_details(ack, task_id),
+                next_step=next_step,
+            )
         case AckStatus.QUEUED:
-            label, glyph, color = "Pending", GLYPH_PENDING, AMBER
+            return _outcome_renderable(
+                "Task submission remains pending"
+                if task_id is not None
+                else "Command remains pending",
+                GLYPH_PENDING,
+                AMBER,
+                details=_ack_details(ack, task_id),
+                next_step=(
+                    ("Status", "Check whether the engine handled this request.", "shikiru status"),
+                ),
+            )
         case AckStatus.REJECTED:
-            label, glyph, color = "Rejected", GLYPH_STOPPED, ALERT_COLOR
-    text = _outcome_line(glyph, label, color)
-    text.append(" · command ", style=SECONDARY_TEXT_COLOR)
-    text.append(str(ack.id), style=BOLD_PRIMARY)
-    if ack.message:
-        text.append(" · ", style=SECONDARY_TEXT_COLOR)
-        text.append(ack.message, style=PRIMARY_TEXT_COLOR)
-    return text
+            return _outcome_renderable(
+                "Task submission was rejected" if task_id is not None else "Command was rejected",
+                GLYPH_STOPPED,
+                ALERT_COLOR,
+                details=_ack_details(ack, task_id),
+            )
 
 
 def doctor_renderable(report: DoctorReport, *, width: int) -> RenderableType:
@@ -1042,6 +1159,135 @@ def _outcome_line(glyph: str, label: str, color: str) -> Text:
     text.append(" ")
     text.append(label, style=f"{STYLE_BOLD} {color}")
     return text
+
+
+def _outcome_line_for_cli(summary: str, glyph: str, color: str) -> Text:
+    text = Text()
+    text.append(glyph, style=f"{STYLE_BOLD} {color}")
+    text.append(" ")
+    text.append(summary, style=PRIMARY_TEXT_COLOR)
+    return text
+
+
+def _outcome_renderable(
+    summary: str,
+    glyph: str,
+    color: str,
+    *,
+    details: tuple[tuple[str, str | Text], ...] = (),
+    repair: tuple[tuple[str, str, str | None], ...] = (),
+    next_step: tuple[tuple[str, str, str | None], ...] = (),
+) -> RenderableType:
+    lines: list[RenderableType] = [_outcome_line_for_cli(summary, glyph, color)]
+    _append_outcome_section(lines, "Details", details)
+    _append_outcome_actions(lines, "Repair", repair)
+    _append_outcome_actions(lines, "Next step", next_step)
+    return Group(*lines)
+
+
+def _append_outcome_section(
+    lines: list[RenderableType], title: str, rows: tuple[tuple[str, str | Text], ...]
+) -> None:
+    if not rows:
+        return
+    lines.append(Text(""))
+    lines.append(Text(title, style=f"{STYLE_BOLD} {STEEL_BLUE}"))
+    for label, value in rows:
+        row = Text("  ")
+        row.append(label, style=SECONDARY_TEXT_COLOR)
+        row.append(": ", style=SECONDARY_TEXT_COLOR)
+        if isinstance(value, Text):
+            row.append_text(value)
+        else:
+            row.append(value, style=PRIMARY_TEXT_COLOR)
+        lines.append(row)
+
+
+def _append_outcome_actions(
+    lines: list[RenderableType],
+    title: str,
+    rows: tuple[tuple[str, str, str | None], ...],
+) -> None:
+    if not rows:
+        return
+    lines.append(Text(""))
+    lines.append(Text(title, style=f"{STYLE_BOLD} {STEEL_BLUE}"))
+    for label, instruction, command in rows:
+        row = Text("  ")
+        row.append(label, style=SECONDARY_TEXT_COLOR)
+        row.append(": ", style=SECONDARY_TEXT_COLOR)
+        row.append(instruction, style=PRIMARY_TEXT_COLOR)
+        if command is not None:
+            row.append(" · ", style=SECONDARY_TEXT_COLOR)
+            row.append(command, style=BOLD_STEEL)
+        lines.append(row)
+
+
+def _repository_root_error_renderable(
+    error: ProjectNotRepositoryRootError,
+) -> RenderableType:
+    project_path = shlex.quote(str(error.project_root))
+    if error.repository_root is None:
+        return _outcome_renderable(
+            "Project directory is not inside a Git repository",
+            GLYPH_STOPPED,
+            ALERT_COLOR,
+            details=(
+                ("Project", str(error.project_root)),
+                ("Cause", "No Git worktree contains the selected directory."),
+            ),
+            repair=(
+                (
+                    "Repository",
+                    "Initialize Git in this directory.",
+                    f"git -C {project_path} init",
+                ),
+                (
+                    "First commit",
+                    "Create an empty initial commit.",
+                    f"git -C {project_path} commit --allow-empty -m 'Initial commit'",
+                ),
+            ),
+        )
+    repository_path = shlex.quote(str(error.repository_root))
+    return _outcome_renderable(
+        "Selected project directory is below the Git repository root",
+        GLYPH_STOPPED,
+        ALERT_COLOR,
+        details=(
+            ("Project", str(error.project_root)),
+            ("Repository root", str(error.repository_root)),
+        ),
+        repair=(
+            (
+                "Initialize",
+                "Run initialization from the repository root.",
+                f"shikiru --project {repository_path} init --yes",
+            ),
+        ),
+    )
+
+
+def _ack_task_id(ack: Ack) -> str | None:
+    if ack.submitted_task_id is not None:
+        return ack.submitted_task_id
+    result = ack.result
+    task_id = result.get("task_id") if result is not None else None
+    return task_id if isinstance(task_id, str) and task_id else None
+
+
+def _ack_details(ack: Ack, task_id: str | None) -> tuple[tuple[str, str], ...]:
+    rows = [("Command", f"C-{ack.id}")]
+    if task_id is not None:
+        rows.append(("Task ID", task_id))
+    message = ack.message
+    if message is None and ack.result is not None:
+        error = ack.result.get("error")
+        message = str(error) if error is not None else None
+    if message is not None:
+        label = "Cause" if ack.status is AckStatus.REJECTED else "State"
+        rows.append((label, message))
+    return tuple(rows)
 
 
 def _stop_outcome(ack: Ack) -> str | None:
