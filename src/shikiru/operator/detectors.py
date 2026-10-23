@@ -59,6 +59,7 @@ class DetectedProject:
 
     name: str
     base: str
+    worktree_clean: bool
     caches: tuple[str, ...]
     trackers: tuple[str, ...]
     agents: tuple[str, ...]
@@ -100,9 +101,12 @@ class ProjectDetectors:
         if not agents:
             message = "no shikiru.agents plugin is installed"
             raise ConfigError(message)
+        base = await self._git.current_branch(self._root)
+        worktree_clean = not await self._git.status_porcelain(self._root)
         return DetectedProject(
             name=self._root.name,
-            base=await self._git.current_branch(self._root),
+            base=base,
+            worktree_clean=worktree_clean,
             caches=tuple(await self._caches()),
             trackers=tuple(self._trackers()),
             agents=agents,

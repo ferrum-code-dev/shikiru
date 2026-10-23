@@ -12,6 +12,7 @@ from rich.console import Console
 from textual.widgets import Button, Input, Select, Static
 
 import shikiru.agents.registry as registry_module
+import shikiru.dashboard.wizard as wizard_module
 from shikiru.agents.contracts import AgentContext, CheckResult, Rung
 from shikiru.agents.registry import AgentRegistry
 from shikiru.bootstrap import build_doctor, build_project_detectors, run_init_wizard
@@ -47,7 +48,8 @@ pytestmark = pytest.mark.asyncio
 
 WIZARD_SIZE = (100, 40)
 COMPACT_WIZARD_SIZE = (40, 12)
-TINY_WIZARD_SIZE = (40, 8)
+TRANSIENT_SMALL_SIZE = (40, 8)
+WIZARD_TIMER_TEST_SECONDS = 1.5
 MODEL_WITH_LITERAL_BRACKETS = "claude-fable-5-1[1m]"
 SELECTOR_OPTIONS = {
     "#ladder-role": ("leader", "implementer", "helper"),
@@ -377,6 +379,30 @@ async def _resize(pilot: Pilot[InitWizardResult | None], size: tuple[int, int]) 
     )
 
 
+async def _exercise_candidate_readd(
+    pilot: Pilot[InitWizardResult | None],
+    *,
+    list_id: str,
+    input_id: str,
+    candidate: str,
+    manual_path: str,
+) -> None:
+    candidate_list = pilot.app.query_one(f"#{list_id}")
+    field = pilot.app.query_one(f"#{input_id}", Input)
+    assert field.value == ""
+    candidate_list.focus()
+    await wait_until(lambda: pilot.app.focused is candidate_list, timeout=1)
+    await pilot.press("enter")
+    await wait_until(lambda: field.value == candidate, timeout=1)
+    await pilot.press("enter")
+    await wait_until(lambda: field.value == candidate, timeout=1)
+    await _replace_input(pilot, f"#{input_id}", manual_path)
+    candidate_list.focus()
+    await wait_until(lambda: pilot.app.focused is candidate_list, timeout=1)
+    await pilot.press("enter")
+    await wait_until(lambda: field.value == f"{manual_path}, {candidate}", timeout=1)
+
+
 async def _verify_back_navigation_and_fill_project_fields(
     pilot: Pilot[InitWizardResult | None],
 ) -> None:
@@ -385,15 +411,33 @@ async def _verify_back_navigation_and_fill_project_fields(
     await _resize(pilot, (100, 12))
     await _resize(pilot, WIZARD_SIZE)
     await _click_next(pilot, "#wizard-page-2")
-    await _replace_input(pilot, "#trackers", "tasks/plan.md, docs/todo.md")
+    await _exercise_candidate_readd(
+        pilot,
+        list_id=wizard_module.TRACKERS_LIST_ID,
+        input_id=wizard_module.TRACKERS_INPUT_ID,
+        candidate="tasks/plan.md",
+        manual_path="docs/todo.md",
+    )
     await _click_back(pilot, "#wizard-page-1")
     await _resize(pilot, COMPACT_WIZARD_SIZE)
     await _click_next(pilot, "#wizard-page-2")
     await _resize(pilot, WIZARD_SIZE)
     await _click_next(pilot, "#wizard-page-3")
-    await _replace_input(pilot, "#caches", "node_modules, build-cache")
+    await _exercise_candidate_readd(
+        pilot,
+        list_id=wizard_module.CACHES_LIST_ID,
+        input_id=wizard_module.CACHES_INPUT_ID,
+        candidate="node_modules",
+        manual_path="build-cache",
+    )
     await _click_next(pilot, "#wizard-page-4")
-    await _replace_input(pilot, "#max-parallel", "3")
+    parallel = pilot.app.query_one(f"#{wizard_module.MAX_PARALLEL_INPUT_ID}", Input)
+    await _replace_input(pilot, f"#{wizard_module.MAX_PARALLEL_INPUT_ID}", "0")
+    await wait_until(lambda: parallel.value == "1", timeout=1)
+    await _replace_input(pilot, f"#{wizard_module.MAX_PARALLEL_INPUT_ID}", "-2")
+    await wait_until(lambda: parallel.value == "1", timeout=1)
+    await _replace_input(pilot, f"#{wizard_module.MAX_PARALLEL_INPUT_ID}", "")
+    await wait_until(lambda: parallel.value == "", timeout=1)
     await _click_next(pilot, "#wizard-page-5")
     await _choose(pilot, "#integration", "pr")
     await _click_next(pilot, "#wizard-page-6")
@@ -424,8 +468,8 @@ def _assert_written_mixed_config(tmp_path: Path, result: InitWizardResult) -> No
     assert settings.roles.helper.ladder == [
         Rung(agent="fake-copy", model=MODEL_WITH_LITERAL_BRACKETS, effort="high")
     ]
-    assert settings.project.trackers == ["tasks/plan.md", "docs/todo.md"]
-    assert settings.repo.caches == ["node_modules", "build-cache"]
+    assert settings.project.trackers == ["docs/todo.md", "tasks/plan.md"]
+    assert settings.repo.caches == ["build-cache", "node_modules"]
     assert settings.orchestration.max_parallel == 3
     assert settings.orchestration.integration == "pr"
     assert "/.shikiru/" in (tmp_path / ".git" / "info" / "exclude").read_text()
@@ -444,6 +488,9 @@ async def test_init_writes_mixed_multirung_config_and_runtime_resolves_complexit
     )
 
     async with app.run_test(size=WIZARD_SIZE) as pilot:
+        frame = app.query_one("#wizard-frame")
+        await wait_until(lambda: frame.visible and frame.region.width > 0, timeout=3)
+        preferred_frame_size = (frame.region.width, frame.region.height)
         await _click_next(pilot, "#wizard-page-1")
         await _configure_leader_ladder(pilot)
         await _configure_implementer_ladder(pilot)
@@ -451,24 +498,46 @@ async def test_init_writes_mixed_multirung_config_and_runtime_resolves_complexit
         await _configure_helper_rung(pilot)
         await _verify_back_navigation_and_fill_project_fields(pilot)
         await _click_button(pilot, "#wizard-finish")
+        parallel = app.query_one(f"#{wizard_module.MAX_PARALLEL_INPUT_ID}", Input)
+        await wait_until(
+            lambda: (
+                app.query_one("#wizard-page-4").display
+                and app.focused is parallel
+                and bool(str(app.query_one("#wizard-error", Static).render()).strip())
+            ),
+            timeout=3,
+        )
+        assert not (tmp_path / ".shikiru" / "config.toml").exists()
+        await _replace_input(pilot, f"#{wizard_module.MAX_PARALLEL_INPUT_ID}", "3")
+        await _click_next(pilot, "#wizard-page-5")
+        await _click_next(pilot, "#wizard-page-6")
+        assert (frame.region.width, frame.region.height) == preferred_frame_size
+        await _click_button(pilot, "#wizard-finish")
         config_path = tmp_path / ".shikiru" / "config.toml"
         await wait_until(config_path.is_file, timeout=3)
         await wait_until(
             lambda: bool(_doctor_text(app.query_one("#doctor-report", Static)).strip()),
             timeout=60,
         )
-        await _resize(pilot, TINY_WIZARD_SIZE)
-        body = app.query_one("#wizard-body")
+        body = app.query_one("#wizard-body", wizard_module.InitWizardBody)
+        await _resize(pilot, COMPACT_WIZARD_SIZE)
+        await wait_until(lambda: body.max_scroll_y > 0, timeout=3)
         await pilot.press("pagedown")
         await wait_until(lambda: body.scroll_y > 0, timeout=3)
         await pilot.press("pageup")
         await wait_until(lambda: body.scroll_y == 0, timeout=3)
+        await _resize(pilot, TRANSIENT_SMALL_SIZE)
+        await _resize(pilot, WIZARD_SIZE)
+        await wait_until(
+            lambda: (frame.region.width, frame.region.height) == preferred_frame_size,
+            timeout=3,
+        )
         await pilot.click("#wizard-finish")
 
     _assert_written_mixed_config(tmp_path, cast("InitWizardResult", app.return_value))
 
 
-async def test_footer_stays_navigable_at_tiny_terminal_height(
+async def test_transient_small_resize_preserves_drafts_and_recovers_navigation(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
 ) -> None:
@@ -476,21 +545,140 @@ async def test_footer_stays_navigable_at_tiny_terminal_height(
     monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
     app = await _app_with_agents(tmp_path, {"fake": create_fake_agent})
 
+    config_path = tmp_path / ".shikiru" / "config.toml"
+
     async with app.run_test(size=WIZARD_SIZE) as pilot:
         await _click_next(pilot, "#wizard-page-1")
         await _set_base_ladders(pilot)
         await _click_next(pilot, "#wizard-page-2")
-        await pilot.resize_terminal(*TINY_WIZARD_SIZE)
+        tracker_field = app.query_one(f"#{wizard_module.TRACKERS_INPUT_ID}", Input)
+        await _replace_input(pilot, f"#{wizard_module.TRACKERS_INPUT_ID}", "draft.md")
+        await _resize(pilot, TRANSIENT_SMALL_SIZE)
         await wait_until(
             lambda: (
-                app.size.width == TINY_WIZARD_SIZE[0] and app.size.height == TINY_WIZARD_SIZE[1]
+                app.is_running
+                and app.query_one("#wizard-page-2").display
+                and tracker_field.value == "draft.md"
             ),
             timeout=3,
         )
+        assert not config_path.exists()
+        await _resize(pilot, COMPACT_WIZARD_SIZE)
+        await wait_until(
+            lambda: app.query_one("#wizard-page-2").display and tracker_field.value == "draft.md",
+            timeout=3,
+        )
         await _click_next(pilot, "#wizard-page-3")
-        await pilot.press("escape")
+        assert not config_path.exists()
+        await _click_button(pilot, "#wizard-cancel")
 
     assert app.return_value is None
+    assert not config_path.exists()
+
+
+async def test_art_reveal_preserves_wizard_state_across_resize(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    monkeypatch.setattr(wizard_module, "ART_REVEAL_SECONDS", WIZARD_TIMER_TEST_SECONDS)
+    app = await _app_with_agents(tmp_path, {"fake": create_fake_agent})
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        frame = app.query_one("#wizard-frame")
+        await wait_until(lambda: frame.visible, timeout=3)
+        body = app.query_one("#wizard-body", wizard_module.InitWizardBody)
+        await _click_next(pilot, "#wizard-page-1")
+        await _set_base_ladders(pilot)
+        await _click_next(pilot, "#wizard-page-2")
+        await _resize(pilot, (40, 12))
+        tracker_field = app.query_one(f"#{wizard_module.TRACKERS_INPUT_ID}", Input)
+        await _replace_input(pilot, f"#{wizard_module.TRACKERS_INPUT_ID}", "draft.md")
+        candidate_list = app.query_one(f"#{wizard_module.TRACKERS_LIST_ID}", wizard_module.RowList)
+        candidate_list.focus()
+        await wait_until(lambda: app.focused is candidate_list, timeout=1)
+        body.scroll_home(animate=False)
+        await wait_until(lambda: body.scroll_y == 0, timeout=1)
+        await wait_until(lambda: body.max_scroll_y > 0, timeout=3)
+        body.scroll_to(y=body.max_scroll_y, animate=False, immediate=True)
+        await wait_until(lambda: body.scroll_y == body.max_scroll_y, timeout=1)
+        saved_scroll_y = body.scroll_y
+        await pilot.press("ctrl+f")
+        await wait_until(lambda: not frame.visible, timeout=1)
+        await _resize(pilot, (80, 12))
+        await wait_until(lambda: frame.visible, timeout=3)
+        await wait_until(lambda: app.focused is candidate_list, timeout=1)
+        await wait_until(
+            lambda: body.scroll_y == min(saved_scroll_y, body.max_scroll_y),
+            timeout=1,
+        )
+        await wait_until(lambda: tracker_field.value == "draft.md", timeout=1)
+        await wait_until(lambda: app.query_one("#wizard-page-2").display, timeout=1)
+
+        await _resize(pilot, (80, 24))
+        await _click_button(pilot, "#wizard-cancel")
+
+
+async def test_hidden_wizard_frame_ignores_navigation_keys(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    monkeypatch.setattr(wizard_module, "ART_REVEAL_SECONDS", WIZARD_TIMER_TEST_SECONDS)
+    app = await _app_with_agents(tmp_path, {"fake": create_fake_agent})
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        frame = app.query_one("#wizard-frame")
+        repository_page = app.query_one("#wizard-page-0")
+        next_button = app.query_one("#wizard-next", Button)
+        await wait_until(lambda: frame.visible, timeout=3)
+        next_button.focus()
+        await wait_until(lambda: app.focused is next_button, timeout=1)
+        await pilot.press("ctrl+f")
+        await wait_until(lambda: not frame.visible, timeout=1)
+        await pilot.press("enter", "tab")
+        await wait_until(lambda: not frame.visible and repository_page.display, timeout=1)
+        await wait_until(lambda: frame.visible, timeout=3)
+        await wait_until(lambda: app.focused is next_button, timeout=1)
+        await _click_button(pilot, "#wizard-cancel")
+
+
+async def test_art_reveal_does_not_interrupt_editors_or_expanded_selects(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    monkeypatch.setattr(wizard_module, "ART_REVEAL_SECONDS", WIZARD_TIMER_TEST_SECONDS)
+    app = await _app_with_agents(tmp_path, {"fake": create_fake_agent})
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        frame = app.query_one("#wizard-frame")
+        await wait_until(lambda: frame.visible, timeout=3)
+        await _click_next(pilot, "#wizard-page-1")
+        await _set_base_ladders(pilot)
+        await _click_next(pilot, "#wizard-page-2")
+        tracker_field = app.query_one(f"#{wizard_module.TRACKERS_INPUT_ID}", Input)
+        await _replace_input(pilot, f"#{wizard_module.TRACKERS_INPUT_ID}", "draft.md")
+        await pilot.press("ctrl+f")
+        await wait_until(lambda: frame.visible and tracker_field.value == "draft.md", timeout=1)
+        await _click_next(pilot, "#wizard-page-3")
+        await _click_next(pilot, "#wizard-page-4")
+        await _click_next(pilot, "#wizard-page-5")
+        integration = cast(
+            "Select[str]", app.query_one(f"#{wizard_module.INTEGRATION_SELECT_ID}", Select)
+        )
+        integration.focus()
+        await wait_until(lambda: app.focused is integration, timeout=1)
+        await pilot.press("enter")
+        await wait_until(lambda: integration.expanded, timeout=1)
+        await pilot.press("ctrl+f")
+        await wait_until(lambda: frame.visible and integration.expanded, timeout=1)
+        await pilot.press("escape")
+        await wait_until(lambda: app.is_running and not integration.expanded, timeout=1)
+        await _click_button(pilot, "#wizard-cancel")
 
 
 async def test_hidden_incomplete_complexity_draft_blocks_write_with_its_context(
@@ -530,7 +718,10 @@ async def test_hidden_incomplete_complexity_draft_blocks_write_with_its_context(
             lambda: bool(_doctor_text(app.query_one("#doctor-report", Static)).strip()),
             timeout=60,
         )
-        await pilot.press("escape")
+        result_button = app.query_one("#wizard-finish", Button)
+        await pilot.press("escape", "ctrl+q")
+        await wait_until(lambda: app.is_running and result_button.label == "Exit", timeout=1)
+        await _click_button(pilot, "#wizard-finish")
 
     settings = load_settings(tmp_path)
     assert settings.roles.implementer.complexity["high"].ladder == [
@@ -567,6 +758,8 @@ async def test_unavailable_model_catalog_is_explained_and_prevents_config_write(
         )
         assert not (tmp_path / ".shikiru" / "config.toml").exists()
         await pilot.press("escape")
+        assert app.is_running
+        await _click_button(pilot, "#wizard-cancel")
 
 
 async def test_written_config_remains_truthful_when_doctor_fails(
@@ -602,6 +795,8 @@ async def test_written_config_remains_truthful_when_doctor_fails(
         result_button = app.query_one("#wizard-finish", Button)
         await wait_until(lambda: result_button.label == "Exit", timeout=3)
         await pilot.press("escape")
+        await wait_until(lambda: app.is_running and result_button.display, timeout=1)
+        await _click_button(pilot, "#wizard-finish")
 
     result = cast("InitWizardResult", app.return_value)
     assert result.config_path == config_path.resolve()
@@ -635,13 +830,42 @@ async def test_init_wizard_cancellation_does_not_write_project_state(tmp_path: P
     app = await _app(tmp_path)
 
     async with app.run_test(size=WIZARD_SIZE) as pilot:
-        await pilot.press("escape")
+        frame = app.query_one("#wizard-frame")
+        await wait_until(lambda: frame.visible, timeout=3)
+        screen = app.screen
+        for key in ("escape", "ctrl+q", "ctrl+p"):
+            await pilot.press(key)
+            await wait_until(
+                lambda: app.is_running and app.screen is screen and frame.visible,
+                timeout=1,
+            )
+        assert not (tmp_path / ".shikiru" / "config.toml").exists()
+        await _click_button(pilot, "#wizard-cancel")
 
     assert app.return_value is None
     assert not (tmp_path / ".shikiru" / "config.toml").exists()
     exclude_path = tmp_path / ".git" / "info" / "exclude"
     exclude = exclude_path.read_text() if exclude_path.exists() else ""
     assert "/.shikiru/" not in exclude
+
+
+@pytest.mark.parametrize(
+    ("worktree_changed", "expected_status"), [(False, "clean"), (True, "changed")]
+)
+async def test_repository_checkout_indicator_uses_git_status(
+    tmp_path: Path,
+    worktree_changed: bool,
+    expected_status: str,
+) -> None:
+    await _git_project(tmp_path)
+    if worktree_changed:
+        (tmp_path / "tasks" / "plan.md").write_text("changed\n")
+    app = await _app(tmp_path)
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        checkout = app.query_one(f"#{wizard_module.REPOSITORY_CHECKOUT_ID}", Static)
+        await wait_until(lambda: expected_status in str(checkout.render()), timeout=3)
+        await _click_button(pilot, "#wizard-cancel")
 
 
 @pytest.mark.parametrize("entrypoint", ["wizard", "yes"])

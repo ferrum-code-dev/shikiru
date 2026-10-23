@@ -94,6 +94,7 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import QuotaWindow
     from shikiru.domain.escalation import Escalation
     from shikiru.operator.commands import Ack
+    from shikiru.operator.detectors import InitWizardResult
     from shikiru.operator.doctor import DoctorCheck, DoctorReport
     from shikiru.operator.lifecycle import StartResult
     from shikiru.operator.queries import (
@@ -195,6 +196,48 @@ def init_renderable(
         SUCCESS_COLOR,
         details=(("Config", config_text),),
         next_step=next_step,
+    )
+
+
+def init_wizard_result_renderable(
+    result: InitWizardResult,
+    *,
+    console: Console,
+) -> RenderableType:
+    """Render the concise CLI acknowledgement for the wizard's actual Doctor result."""
+    config_text = _path_text(result.config_path.resolve(), linked=supports_osc8(console))
+    if result.doctor_error is not None:
+        summary = "Project initialized; Doctor could not complete"
+        doctor_detail = result.doctor_error
+    elif result.doctor_report is None:
+        summary = "Project initialized; Doctor did not return a report"
+        doctor_detail = "Doctor did not return a report."
+    elif result.doctor_report.ok:
+        return _outcome_renderable(
+            "Project initialized and verified",
+            GLYPH_DONE,
+            SUCCESS_COLOR,
+            details=(("Config", config_text),),
+        )
+    else:
+        summary = "Project initialized; Doctor found issues"
+        doctor_detail = None
+    details: tuple[tuple[str, str | Text], ...] = (("Config", config_text),)
+    if doctor_detail is not None:
+        details += (("Doctor", doctor_detail),)
+    project_path = shlex.quote(str(result.config_path.resolve().parent.parent))
+    return _outcome_renderable(
+        summary,
+        GLYPH_STOPPED,
+        ALERT_COLOR,
+        details=details,
+        repair=(
+            (
+                "Doctor",
+                "Review the checks and run Doctor again.",
+                f"shikiru --project {project_path} doctor",
+            ),
+        ),
     )
 
 

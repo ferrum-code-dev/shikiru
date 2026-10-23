@@ -32,6 +32,7 @@ from shikiru.cli.render import (
     doctor_renderable,
     error_renderable,
     init_renderable,
+    init_wizard_result_renderable,
     session_diagnostics_renderable,
     session_rows_renderable,
     start_renderable,
@@ -205,29 +206,38 @@ def init(
     """Initialize a project from detected repositories, plugins and trackers."""
     state = state_from(context)
     root = state.project.resolve() if state.project is not None else Path.cwd().resolve()
+    wizard_result = None
     try:
         if yes:
             config_path = _run(build_project_detectors(root).initialize())
         else:
-            result = _run(run_init_wizard(root))
-            if result is None:
+            wizard_result = _run(run_init_wizard(root))
+            if wizard_result is None:
                 return
-            if result.doctor_report is None or not result.doctor_report.ok:
-                raise typer.Exit(code=EXIT_GENERIC_ERROR)
-            config_path = result.config_path
+            config_path = wizard_result.config_path
     except ShikiruError as error:
         _fail(error)
     value = {"config": str(config_path)}
+    wizard_failed = wizard_result is not None and (
+        wizard_result.doctor_error is not None
+        or wizard_result.doctor_report is None
+        or not wizard_result.doctor_report.ok
+    )
     if not state.json_output:
-        console = human_console()
-        console.print(
+        console = human_console(stderr=wizard_failed)
+        renderable = (
             init_renderable(
                 config_path,
                 console=console,
                 include_placeholder_warning=yes,
             )
+            if wizard_result is None
+            else init_wizard_result_renderable(wizard_result, console=console)
         )
-    else:
+        console.print(renderable)
+    if wizard_failed:
+        raise typer.Exit(code=EXIT_GENERIC_ERROR)
+    if state.json_output:
         _emit_value(
             state,
             value,
