@@ -338,6 +338,25 @@ def _error_summary(error: ShikiruError) -> str:
     return _ERROR_SUMMARIES.get(type(error), str(error)) or "Shikiru reported an unspecified error"
 
 
+def missing_submit_request_renderable() -> RenderableType:
+    return _outcome_renderable(
+        "A task request is required",
+        GLYPH_STOPPED,
+        ALERT_COLOR,
+        details=(
+            ("Command", "shikiru submit"),
+            ("Cause", "The required REQUEST argument is missing."),
+        ),
+        repair=(
+            (
+                "Syntax",
+                "Provide a quoted request and review the unchanged command options.",
+                "shikiru submit --help",
+            ),
+        ),
+    )
+
+
 def status_renderable(
     view: HumanStatusView,
     *,

@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Annotated, NoReturn
 import typer
 import typer.rich_utils as typer_rich_utils
 from pydantic import BaseModel
+from typer._click.exceptions import MissingParameter
+from typer.core import TyperCommand
 
 from shikiru.agents.contracts import parse_rung
 from shikiru.bootstrap import (
@@ -33,6 +35,7 @@ from shikiru.cli.render import (
     error_renderable,
     init_renderable,
     init_wizard_result_renderable,
+    missing_submit_request_renderable,
     session_diagnostics_renderable,
     session_rows_renderable,
     start_renderable,
@@ -77,6 +80,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable
 
     from rich.console import RenderableType
+    from typer._click.core import Context as ClickContext
 
     from shikiru.operator.services import OperatorServices
     from shikiru.operator.sessions import (
@@ -121,6 +125,7 @@ PROBE_OPTION = typer.Option(
     ),
 )
 REQUIRED_LEGEND = f"[bold {ALERT_COLOR}]*[/] marks a required argument."
+SUBMIT_REQUEST_ARGUMENT_NAME = "request"
 
 
 def _configure_typer_help_palette() -> None:
@@ -154,6 +159,21 @@ def _configure_typer_help_palette() -> None:
 
 
 _configure_typer_help_palette()
+
+
+class SubmitCommand(TyperCommand):
+    def parse_args(self, ctx: ClickContext, args: list[str]) -> list[str]:
+        try:
+            return super().parse_args(ctx, args)
+        except MissingParameter as error:
+            if error.param is None or error.param.name != SUBMIT_REQUEST_ARGUMENT_NAME:
+                raise
+            state = ctx.find_root().obj
+            if not isinstance(state, CliState) or state.json_output:
+                raise
+            human_console(stderr=True).print(missing_submit_request_renderable())
+            raise typer.Exit(code=EXIT_USAGE_ERROR) from None
+
 
 app = typer.Typer(name=PACKAGE_NAME, no_args_is_help=True)
 app.command(name="report", hidden=True)(report_command)
@@ -442,7 +462,7 @@ def _print_session_diagnostics(listing: SessionListing, host: str | None) -> Non
             typer.echo(err=True)
 
 
-@app.command(epilog=REQUIRED_LEGEND)
+@app.command(cls=SubmitCommand, epilog=REQUIRED_LEGEND)
 def submit(
     context: typer.Context,
     *,

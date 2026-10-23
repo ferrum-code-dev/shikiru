@@ -294,6 +294,47 @@ async def test_cli_requires_a_complete_project_and_shows_recovery_options(
     assert "\x1b[" not in stderr
 
 
+async def test_submit_parser_rejects_missing_request_before_project_or_queue_writes(
+    tmp_path: Path,
+) -> None:
+    await _git_project(tmp_path)
+
+    for arguments in (("submit",), ("--json", "submit"), ("submit", "--priority", "invalid")):
+        code, stdout, stderr = await _cli(tmp_path, *arguments)
+        assert code == 2
+        assert stdout == ""
+        assert stderr
+        assert not (tmp_path / ".shikiru").exists()
+
+    code, _, stderr = await _cli(tmp_path, "init", "--yes")
+    assert code == 0
+    assert stderr == ""
+
+    connection = Database(state_db_path(tmp_path)).connect()
+    queue = CommandQueue(connection, SystemClock())
+    try:
+        code, stdout, stderr = await _cli(tmp_path, "submit")
+        assert code == 2
+        assert stdout == ""
+        assert stderr
+        assert queue.pending() == []
+
+        code, stdout, stderr = await _cli(tmp_path, "--json", "submit", "")
+        assert code == 0
+        assert stderr == ""
+        acknowledgement = json.loads(stdout)
+        assert acknowledgement["task_id"] == "T-1"
+        assert acknowledgement["status"] == "queued"
+
+        pending = queue.pending()
+        assert len(pending) == 1
+        assert isinstance(pending[0].command, Submit)
+        assert pending[0].command.task_id == "T-1"
+        assert pending[0].command.request == ""
+    finally:
+        connection.close()
+
+
 async def test_missing_project_repair_keeps_shell_metacharacters_literal(tmp_path: Path) -> None:
     project = tmp_path / "[bold]$(unsafe); project"
     await asyncio.to_thread(project.mkdir, parents=True)
