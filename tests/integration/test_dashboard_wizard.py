@@ -13,7 +13,7 @@ from textual.widgets import Button, Input, Select, Static
 
 import shikiru.agents.registry as registry_module
 import shikiru.dashboard.wizard as wizard_module
-from shikiru.agents.contracts import AgentContext, CheckResult, Rung
+from shikiru.agents.contracts import AgentContext, CheckResult, ModelCatalog, ModelChoice, Rung
 from shikiru.agents.registry import AgentRegistry
 from shikiru.bootstrap import build_doctor, build_project_detectors, run_init_wizard
 from shikiru.cli.render import doctor_renderable
@@ -52,8 +52,6 @@ TRANSIENT_SMALL_SIZE = (40, 8)
 WIZARD_TIMER_TEST_SECONDS = 1.5
 MODEL_WITH_LITERAL_BRACKETS = "claude-fable-5-1[1m]"
 SELECTOR_OPTIONS = {
-    "#ladder-role": ("leader", "implementer", "helper"),
-    "#ladder-context": ("base", "low", "normal", "high"),
     "#ladder-agent": ("", "fake", "fake-copy", "legacy"),
     "#ladder-model": (
         "",
@@ -65,6 +63,14 @@ SELECTOR_OPTIONS = {
     ),
     "#integration": ("merge", "pr"),
 }
+LADDER_SCOPES = (
+    "Leader",
+    "Implementer · Base",
+    "Implementer · Low",
+    "Implementer · Normal",
+    "Implementer · High",
+    "Helper",
+)
 
 
 class _LegacyAgent:
@@ -75,8 +81,23 @@ class _LegacyAgent:
         return [CheckResult(name="binary", ok=True, detail="available")]
 
 
+class _CatalogWithoutHeadlessAgent:
+    name = "legacy"
+
+    async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
+        del models
+        return [CheckResult(name="binary", ok=True, detail="available")]
+
+    async def model_catalog(self) -> ModelCatalog:
+        return ModelCatalog(models=(ModelChoice("listed-model", ()),), complete=True)
+
+
 def _create_legacy_agent(_context: AgentContext) -> Agent:
     return cast("Agent", _LegacyAgent())
+
+
+def _create_catalog_without_headless_agent(_context: AgentContext) -> Agent:
+    return cast("Agent", _CatalogWithoutHeadlessAgent())
 
 
 def _no_entry_points(*, group: str) -> list[object]:
@@ -218,6 +239,10 @@ async def _choose(pilot: Pilot[InitWizardResult | None], selector: str, value: s
 
 
 def _selection_order(pilot: Pilot[InitWizardResult | None], selector: str) -> tuple[str, ...]:
+    if selector == "#ladder-model":
+        agent = cast("Select[str]", pilot.app.query_one("#ladder-agent", Select)).value
+        if agent == "legacy":
+            return ("", "listed-model")
     if selector == "#ladder-effort":
         selected_model = cast("Select[str]", pilot.app.query_one("#ladder-model", Select)).value
         if selected_model == "default":
@@ -288,71 +313,85 @@ async def _assign_rung(
     await _choose(pilot, "#ladder-model", model)
     if effort is not None:
         await _choose(pilot, "#ladder-effort", effort)
+    await _click_button(pilot, "#ladder-add")
 
 
 async def _set_role(pilot: Pilot[InitWizardResult | None], role: str) -> None:
-    await _choose(pilot, "#ladder-role", role)
+    scope_by_role = {
+        "leader": LADDER_SCOPES[0],
+        "implementer": LADDER_SCOPES[1],
+        "helper": LADDER_SCOPES[-1],
+    }
+    scope = scope_by_role[role]
+    await _set_scope(pilot, scope)
+
+
+async def _set_scope(pilot: Pilot[InitWizardResult | None], scope: str) -> None:
+    row_list = pilot.app.query_one("#ladder-scopes", wizard_module.RowList)
+    row_list.focus()
+    await wait_until(lambda: pilot.app.focused is row_list, timeout=1)
+    target = LADDER_SCOPES.index(scope)
+    distance = target - row_list.selected
+    if distance:
+        await pilot.press(*(("down" if distance > 0 else "up",) * abs(distance)))
+    await wait_until(
+        lambda: (
+            row_list.selected == target
+            and scope in str(pilot.app.query_one("#ladder-input-title", Static).render())
+        ),
+        timeout=1,
+    )
+
+
+async def _set_scope_text(
+    pilot: Pilot[InitWizardResult | None],
+    scope: str,
+    value: str,
+) -> None:
+    await _set_scope(pilot, scope)
+    await _replace_input(pilot, "#ladder-input", value)
 
 
 async def _set_base_ladders(pilot: Pilot[InitWizardResult | None]) -> None:
-    for role in ("leader", "implementer", "helper"):
-        await _set_role(pilot, role)
+    for scope in (LADDER_SCOPES[0], LADDER_SCOPES[1], LADDER_SCOPES[-1]):
+        await _set_scope(pilot, scope)
         await _assign_rung(pilot, agent="fake", model="smoke", effort="low")
 
 
 async def _configure_leader_ladder(pilot: Pilot[InitWizardResult | None]) -> None:
-    await _assign_rung(pilot, agent="fake", model="smoke", effort="low")
-    await _click_button(pilot, "#ladder-add")
-    await _assign_rung(pilot, agent="fake", model="default", effort="low")
+    await _set_scope(pilot, LADDER_SCOPES[0])
     await _assign_rung(pilot, agent="fake-copy", model="strong", effort="high")
-    await _click_button(pilot, "#ladder-add")
     await _assign_rung(pilot, agent="fake", model="default", effort=None)
-    await _click_button(pilot, "#ladder-up")
-    await _click_button(pilot, "#ladder-up")
-    await _click_button(pilot, "#ladder-remove")
-    await _click_button(pilot, "#ladder-remove")
-    await _click_button(pilot, "#ladder-remove")
-    await _click_button(pilot, "#ladder-add")
-    await _assign_rung(pilot, agent="fake", model="default", effort=None)
-    await _click_button(pilot, "#ladder-add")
-    await _assign_rung(pilot, agent="fake-copy", model="strong", effort="high")
-    await _click_button(pilot, "#ladder-up")
 
 
 async def _configure_implementer_ladder(pilot: Pilot[InitWizardResult | None]) -> None:
-    await _set_role(pilot, "implementer")
-    await _assign_rung(pilot, agent="fake", model="strong", effort="high")
-    await _click_button(pilot, "#ladder-add")
+    await _set_scope(pilot, LADDER_SCOPES[1])
     await _assign_rung(pilot, agent="fake-copy", model="smoke", effort="low")
-    await _click_button(pilot, "#ladder-up")
+    await _assign_rung(pilot, agent="fake", model="strong", effort="high")
 
 
 async def _configure_complexity_ladders(pilot: Pilot[InitWizardResult | None]) -> None:
-    await _choose(pilot, "#ladder-context", "low")
-    await _click_button(pilot, "#ladder-customize")
+    await _set_scope(pilot, LADDER_SCOPES[2])
     await _assign_rung(pilot, agent="fake", model="compact-visible", effort="high")
-    await _choose(pilot, "#ladder-context", "normal")
-    await _click_button(pilot, "#ladder-customize")
-    await _assign_rung(
-        pilot,
-        agent="fake-copy",
-        model=MODEL_WITH_LITERAL_BRACKETS,
-        effort="high",
-    )
-    await _click_button(pilot, "#ladder-use-base")
-    await _choose(pilot, "#ladder-context", "high")
-    await _click_button(pilot, "#ladder-customize")
-    await _assign_rung(pilot, agent="fake-copy", model="strong", effort="high")
+    await _set_scope(pilot, LADDER_SCOPES[3])
+    await wait_until(lambda: app_field_value(pilot) == "", timeout=1)
+    assert app_field_value(pilot) == ""
+    await _set_scope_text(pilot, LADDER_SCOPES[4], "fake-copy:strong:high")
 
 
 async def _configure_helper_rung(pilot: Pilot[InitWizardResult | None]) -> None:
-    await _set_role(pilot, "helper")
+    await _set_scope(pilot, LADDER_SCOPES[-1])
     await _assign_rung(
         pilot,
         agent="fake-copy",
         model=MODEL_WITH_LITERAL_BRACKETS,
         effort="high",
     )
+    await _assign_rung(pilot, agent="fake", model="default", effort="high")
+
+
+def app_field_value(pilot: Pilot[InitWizardResult | None]) -> str:
+    return pilot.app.query_one("#ladder-input", Input).value
 
 
 def _doctor_text(report: Static) -> str:
@@ -466,7 +505,8 @@ def _assert_written_mixed_config(tmp_path: Path, result: InitWizardResult) -> No
         agent="fake-copy", model="strong", effort="high"
     )
     assert settings.roles.helper.ladder == [
-        Rung(agent="fake-copy", model=MODEL_WITH_LITERAL_BRACKETS, effort="high")
+        Rung(agent="fake-copy", model=MODEL_WITH_LITERAL_BRACKETS, effort="high"),
+        Rung(agent="fake", model="default", effort="high"),
     ]
     assert settings.project.trackers == ["docs/todo.md", "tasks/plan.md"]
     assert settings.repo.caches == ["build-cache", "node_modules"]
@@ -492,6 +532,24 @@ async def test_init_writes_mixed_multirung_config_and_runtime_resolves_complexit
         await wait_until(lambda: frame.visible and frame.region.width > 0, timeout=3)
         preferred_frame_size = (frame.region.width, frame.region.height)
         await _click_next(pilot, "#wizard-page-1")
+        body = app.query_one("#wizard-body", wizard_module.InitWizardBody)
+        scopes = app.query_one("#ladder-scopes", wizard_module.RowList)
+        editor_controls = (
+            app.query_one("#ladder-input", Input),
+            cast("Select[str]", app.query_one("#ladder-agent", Select)),
+            cast("Select[str]", app.query_one("#ladder-model", Select)),
+            cast("Select[str]", app.query_one("#ladder-effort", Select)),
+            app.query_one("#ladder-add", Button),
+        )
+        await wait_until(
+            lambda: (
+                len(scopes.query(".row-list-row")) == len(LADDER_SCOPES)
+                and body.max_scroll_y == 0
+                and all(row.is_on_screen for row in scopes.query(".row-list-row"))
+                and all(control.is_on_screen for control in editor_controls)
+            ),
+            timeout=3,
+        )
         await _configure_leader_ladder(pilot)
         await _configure_implementer_ladder(pilot)
         await _configure_complexity_ladders(pilot)
@@ -693,10 +751,8 @@ async def test_hidden_incomplete_complexity_draft_blocks_write_with_its_context(
     async with app.run_test(size=WIZARD_SIZE) as pilot:
         await _click_next(pilot, "#wizard-page-1")
         await _set_base_ladders(pilot)
-        await _set_role(pilot, "implementer")
-        await _choose(pilot, "#ladder-context", "high")
-        await _click_button(pilot, "#ladder-customize")
-        await _click_button(pilot, "#ladder-add")
+        await _set_scope_text(pilot, LADDER_SCOPES[3], "   ")
+        await _set_scope_text(pilot, LADDER_SCOPES[4], "broken")
         await _set_role(pilot, "leader")
         await _click_next(pilot)
         error = app.query_one("#wizard-error", Static)
@@ -704,8 +760,16 @@ async def test_hidden_incomplete_complexity_draft_blocks_write_with_its_context(
             lambda: "Implementer" in str(error.render()) and "High" in str(error.render()),
             timeout=3,
         )
+        await wait_until(
+            lambda: (
+                app.query_one("#ladder-scopes", wizard_module.RowList).selected
+                == LADDER_SCOPES.index("Implementer · High")
+                and app.focused is app.query_one("#ladder-input", Input)
+            ),
+            timeout=1,
+        )
         assert not (tmp_path / ".shikiru" / "config.toml").exists()
-        await _assign_rung(pilot, agent="fake", model="default", effort="high")
+        await _set_scope_text(pilot, LADDER_SCOPES[4], "fake:default:high")
         await _click_next(pilot, "#wizard-page-2")
         await _click_next(pilot, "#wizard-page-3")
         await _click_next(pilot, "#wizard-page-4")
@@ -724,12 +788,15 @@ async def test_hidden_incomplete_complexity_draft_blocks_write_with_its_context(
         await _click_button(pilot, "#wizard-finish")
 
     settings = load_settings(tmp_path)
+    assert settings.roles.implementer.complexity.keys() == {"high"}
     assert settings.roles.implementer.complexity["high"].ladder == [
-        Rung(agent="fake", model="smoke", effort="low"),
         Rung(agent="fake", model="default", effort="high"),
     ]
-    assert pick_rung(make_task(complexity="high"), Role.IMPLEMENTER, settings) == Rung(
+    assert pick_rung(make_task(complexity="normal"), Role.IMPLEMENTER, settings) == Rung(
         agent="fake", model="smoke", effort="low"
+    )
+    assert pick_rung(make_task(complexity="high"), Role.IMPLEMENTER, settings) == Rung(
+        agent="fake", model="default", effort="high"
     )
 
 
@@ -759,6 +826,96 @@ async def test_unavailable_model_catalog_is_explained_and_prevents_config_write(
         assert not (tmp_path / ".shikiru" / "config.toml").exists()
         await pilot.press("escape")
         assert app.is_running
+        await _click_button(pilot, "#wizard-cancel")
+
+
+async def test_helper_requires_headless_agent_capability(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    app = await _app_with_agents(tmp_path, {"legacy": _create_catalog_without_headless_agent})
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await _click_next(pilot, "#wizard-page-1")
+        await _set_scope_text(pilot, LADDER_SCOPES[0], "legacy:listed-model")
+        await _set_scope_text(pilot, LADDER_SCOPES[1], "legacy:listed-model")
+        await _set_scope_text(pilot, LADDER_SCOPES[-1], "legacy:listed-model")
+        await _set_scope(pilot, LADDER_SCOPES[0])
+        await _choose(pilot, "#ladder-agent", "legacy")
+        await _choose(pilot, "#ladder-model", "listed-model")
+        await _click_next(pilot)
+        error = app.query_one("#wizard-error", Static)
+        await wait_until(lambda: "headless support" in str(error.render()), timeout=3)
+        assert not (tmp_path / ".shikiru" / "config.toml").exists()
+        await wait_until(
+            lambda: (
+                app.query_one("#ladder-scopes", wizard_module.RowList).selected
+                == LADDER_SCOPES.index("Helper")
+                and pilot.app.focused is app.query_one("#ladder-input", Input)
+            ),
+            timeout=1,
+        )
+        assert app.query_one("#ladder-agent", Select).disabled
+        await _click_button(pilot, "#wizard-cancel")
+
+
+async def test_ladder_draft_and_caret_survive_scope_changes(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    app = await _app_with_agents(tmp_path, {"fake": create_fake_agent})
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await _click_next(pilot, "#wizard-page-1")
+        await _set_scope_text(pilot, LADDER_SCOPES[0], "fake:smoke,,unfinished")
+        field = app.query_one("#ladder-input", Input)
+        cursor_position = field.cursor_position
+        await _choose(pilot, "#ladder-agent", "fake")
+        await _choose(pilot, "#ladder-model", "smoke")
+        await _click_button(pilot, "#ladder-add")
+        assert field.value == "fake:smoke,,unfinished"
+        await wait_until(lambda: field.cursor_position == cursor_position, timeout=1)
+        await _set_scope(pilot, LADDER_SCOPES[2])
+        await wait_until(lambda: field.value == "", timeout=1)
+        assert field.value == ""
+        await _set_scope(pilot, LADDER_SCOPES[0])
+        await wait_until(lambda: field.value == "fake:smoke,,unfinished", timeout=1)
+        await wait_until(lambda: field.cursor_position == cursor_position, timeout=1)
+        assert field.value == "fake:smoke,,unfinished"
+        assert field.cursor_position == cursor_position
+        await _click_button(pilot, "#wizard-cancel")
+
+
+async def test_agent_and_model_changes_clear_dependent_add_choices(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    app = await _app_with_agents(
+        tmp_path,
+        {"fake": create_fake_agent, "fake-copy": create_fake_agent},
+    )
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await _click_next(pilot, "#wizard-page-1")
+        await _set_scope(pilot, LADDER_SCOPES[0])
+        await _choose(pilot, "#ladder-agent", "fake")
+        await _choose(pilot, "#ladder-model", "default")
+        await _choose(pilot, "#ladder-effort", "high")
+        await _choose(pilot, "#ladder-model", "smoke")
+        effort = cast("Select[str]", app.query_one("#ladder-effort", Select))
+        await wait_until(lambda: effort.value is Select.BLANK, timeout=1)
+        await _choose(pilot, "#ladder-agent", "fake-copy")
+        model = cast("Select[str]", app.query_one("#ladder-model", Select))
+        await wait_until(
+            lambda: model.value is Select.BLANK and effort.value is Select.BLANK,
+            timeout=1,
+        )
         await _click_button(pilot, "#wizard-cancel")
 
 

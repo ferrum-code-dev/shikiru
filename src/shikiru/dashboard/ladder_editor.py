@@ -4,15 +4,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from rich.text import Text
-from textual import events, on
+from textual import on
 from textual.containers import Horizontal, Vertical
-from textual.widgets import Button, Label, Select, Static
+from textual.widgets import Button, Input, Label, Select, Static
 
 from shikiru.agents.contracts import Rung, assess_model_choice
 from shikiru.dashboard.row_list import RowCells, RowList
+from shikiru.domain.ladder_text import LadderTextError, parse_ladder_text
 from shikiru.domain.tasks import Role
 from shikiru.errors import ConfigError
-from shikiru.ui.tokens import PRIMARY_TEXT_COLOR
+from shikiru.ui.section import BOLD_STEEL
+from shikiru.ui.tokens import DUSTY_ROSE, PRIMARY_TEXT_COLOR, SECONDARY_TEXT_COLOR, STYLE_BOLD
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -22,44 +24,53 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import ModelCatalog, ModelChoice
     from shikiru.config.settings import ComplexityName
+    from shikiru.operator.plugin_checks import AgentCapabilityResult
 
-ROLE_VALUES = (Role.LEADER.value, Role.IMPLEMENTER.value, Role.HELPER.value)
-EDITABLE_ROLES = (Role.LEADER.value, Role.IMPLEMENTER.value)
 COMPLEXITY_VALUES: tuple[ComplexityName, ...] = ("low", "normal", "high")
-BASE_CONTEXT = "base"
-CONTEXT_OPTIONS = (
-    ("Base ladder", BASE_CONTEXT),
-    *((value.title(), value) for value in COMPLEXITY_VALUES),
+SCOPE_KEYS: tuple[tuple[str, ComplexityName | None], ...] = (
+    (Role.LEADER.value, None),
+    (Role.IMPLEMENTER.value, None),
+    *((Role.IMPLEMENTER.value, value) for value in COMPLEXITY_VALUES),
+    (Role.HELPER.value, None),
 )
-ROLE_OPTIONS = tuple((value.title(), value) for value in ROLE_VALUES)
-NARROW_WIDTH = 74
+SCOPE_LABELS: dict[tuple[str, ComplexityName | None], str] = {
+    (Role.LEADER.value, None): "Leader",
+    (Role.IMPLEMENTER.value, None): "Implementer · Base",
+    **{
+        (Role.IMPLEMENTER.value, value): f"Implementer · {value.title()}"
+        for value in COMPLEXITY_VALUES
+    },
+    (Role.HELPER.value, None): "Helper",
+}
 ADD_RUNG = "ladder-add"
-REMOVE_RUNG = "ladder-remove"
-MOVE_RUNG_UP = "ladder-up"
-MOVE_RUNG_DOWN = "ladder-down"
-CUSTOMIZE_OVERRIDE = "ladder-customize"
-USE_BASE_LADDER = "ladder-use-base"
+AGENT_SELECT = "#ladder-agent"
+MODEL_SELECT = "#ladder-model"
+EFFORT_SELECT = "#ladder-effort"
+LADDER_INPUT = "#ladder-input"
 MODEL_PROMPT = "Choose model"
-NATIVE_EFFORT_LABEL = "Native default"
-MODEL_CONTEXT_LABEL = "Selected model: "
-EMPTY_RUNG_LABEL = "Choose a listed agent and model"
+AGENT_PROMPT = "Choose installed agent"
+EFFORT_PROMPT = "Native default"
+EMPTY_LADDER_LABEL = "No entries yet"
+LADDER_SEPARATOR = ", "
+RUNG_SEPARATOR = ":"
+HELPER_CAPABILITY_GUIDANCE = "Helper entries require an installed agent with headless support."
 MODEL_CATALOG_GUIDANCE = (
     "Install or repair the agent CLI, restart init, or choose an available agent."
 )
 LADDER_ACTION_CSS = """
-#wizard-frame #ladder-editor #ladder-rung-actions Button {
-    border: none; margin: 0; padding: 0;
+#wizard-frame #ladder-editor #ladder-add {
+    width: auto; min-width: 0; height: 1; min-height: 1;
+    margin: 0; padding: 0 1; border: none; border-top: none;
+    border-right: none; border-bottom: none; border-left: none;
+    background: $surface; color: $primary-text; text-opacity: 1; text-style: none;
+}
+#wizard-frame #ladder-editor #ladder-add:disabled {
+    color: $secondary-text; text-opacity: 1;
+}
+#wizard-frame #ladder-editor #ladder-add:focus {
+    color: $primary-text; background: $selected-surface; text-style: reverse;
 }
 """
-RUNG_SEPARATOR = " · "
-ROLE_SELECT = "#ladder-role"
-CONTEXT_SELECT = "#ladder-context"
-AGENT_SELECT = "#ladder-agent"
-MODEL_SELECT = "#ladder-model"
-EFFORT_SELECT = "#ladder-effort"
-MODEL_DETAIL = "#ladder-model-detail"
-RUNG_SELECTORS = (AGENT_SELECT, MODEL_SELECT, EFFORT_SELECT)
-RUNG_SELECT_IDS = (AGENT_SELECT[1:], MODEL_SELECT[1:], EFFORT_SELECT[1:])
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,150 +80,135 @@ class LadderConfiguration:
 
 
 class LadderEditor(Vertical):
-    """Edit role ladders and explicit Implementer complexity overrides."""
+    """Edit the six initializer ladder scopes using text and catalog-backed additions."""
 
     DEFAULT_CSS = """
     LadderEditor { height: auto; min-height: 0; }
-    #ladder-role-row, #ladder-context-row { height: auto; width: 100%; }
-    #ladder-role-row Label, #ladder-context-row Label {
-        width: 12; height: 1; color: $secondary-text;
+    #ladder-scope-title, #ladder-form-title {
+        width: 100%; height: auto; color: $steel-blue; text-style: bold;
     }
-    #ladder-role, #ladder-context { width: 1fr; height: 1; }
-    #ladder-state { height: auto; color: $secondary-text; }
-    #ladder-workspace { height: auto; width: 100%; layout: horizontal; }
-    #ladder-list-column { width: 1fr; height: auto; padding: 0 1 0 0; }
-    #ladder-rungs { height: auto; }
-    #ladder-rung-form { width: 2fr; height: auto; }
-    #ladder-rung-form Label { width: 100%; height: 1; color: $secondary-text; }
-    #ladder-rung-form Select { width: 100%; height: 1; margin-bottom: 0; }
-    #ladder-rung-actions { height: auto; width: 100%; }
-    #ladder-rung-actions-main, #ladder-rung-actions-override { height: 1; width: 100%; }
-    #ladder-editor #ladder-rung-actions Button.-style-default {
-        width: auto; min-width: 0; height: 1; min-height: 1; margin: 0 1 0 0;
-        padding: 0;
+    #ladder-input-title, #ladder-input-guidance {
+        width: 100%; height: auto; color: $secondary-text;
     }
-    #ladder-editor #ladder-rung-actions Button.-style-default:focus {
-        color: $primary-text; background: $selected-surface; text-style: reverse;
+    #ladder-input-guidance { color: $primary-text; }
+    #ladder-scopes { height: auto; }
+    #ladder-input { width: 100%; height: 1; margin: 0; }
+    #ladder-input:focus { background: $selected-surface; }
+    #ladder-problem { height: auto; color: $dusty-rose; }
+    #ladder-form { height: auto; width: 100%; }
+    #ladder-form Label { width: 100%; height: 1; color: $secondary-text; }
+    #ladder-form Select { width: 100%; height: 1; margin: 0; }
+    #ladder-add-row { height: 1; width: 100%; align: right middle; }
+    #ladder-add {
+        width: auto; min-width: 0; height: 1; min-height: 1; margin: 0;
+        padding: 0 1; border: none;
     }
-    #ladder-model-detail { height: auto; color: $primary-text; }
+    #ladder-add:focus { color: $primary-text; background: $selected-surface; text-style: reverse; }
     #ladder-guidance { height: auto; color: $secondary-text; }
-    LadderEditor.narrow #ladder-workspace { layout: vertical; }
-    LadderEditor.narrow #ladder-list-column { width: 100%; padding: 0; }
-    LadderEditor.narrow #ladder-rung-form { width: 100%; }
-    LadderEditor.narrow #ladder-role-row Label,
-    LadderEditor.narrow #ladder-context-row Label { width: 9; }
-    LadderEditor.narrow #ladder-rung-actions Button { padding: 0; }
     """
 
     def __init__(self) -> None:
         super().__init__(id="ladder-editor")
         self._catalogs: dict[str, ModelCatalog] = {}
         self._catalog_errors: dict[str, str] = {}
-        self._drafts: dict[tuple[str, ComplexityName | None], list[Rung]] = {
-            (role, None): [Rung(agent="", model="")] for role in ROLE_VALUES
-        }
-        self._overrides: dict[ComplexityName, list[Rung]] = {}
-        self._selected: dict[tuple[str, ComplexityName | None], int] = {}
-        self._role = Role.LEADER.value
-        self._complexity: ComplexityName | None = None
+        self._capabilities: dict[str, AgentCapabilityResult] = {}
+        self._drafts: dict[tuple[str, ComplexityName | None], str] = dict.fromkeys(SCOPE_KEYS, "")
+        self._draft_cursors: dict[tuple[str, ComplexityName | None], int] = dict.fromkeys(
+            SCOPE_KEYS, 0
+        )
+        self._selected_scope = 0
+        self._new_agent = ""
+        self._new_model = ""
+        self._new_effort: str | None = None
 
     def compose(self) -> ComposeResult:
-        with Horizontal(id="ladder-role-row"):
-            yield Label("Role")
-            yield Select(ROLE_OPTIONS, value=self._role, allow_blank=False, id=ROLE_SELECT[1:])
-        with Horizontal(id="ladder-context-row"):
-            yield Label("Context")
-            yield Select(
-                CONTEXT_OPTIONS,
-                value=BASE_CONTEXT,
-                allow_blank=False,
-                id=CONTEXT_SELECT[1:],
-            )
-        yield Static("Base ladder", id="ladder-state", markup=False)
-        with Horizontal(id="ladder-workspace"):
-            with Vertical(id="ladder-list-column"):
-                yield Label("Ordered rungs")
-                yield RowList(widget_id="ladder-rungs")
-                with Vertical(id="ladder-rung-actions"):
-                    with Horizontal(id="ladder-rung-actions-main"):
-                        yield Button("Add", id=ADD_RUNG)
-                        yield Button("Remove", id=REMOVE_RUNG)
-                        yield Button("Up", id=MOVE_RUNG_UP)
-                        yield Button("Down", id=MOVE_RUNG_DOWN)
-                    with Horizontal(id="ladder-rung-actions-override"):
-                        yield Button("Customize", id=CUSTOMIZE_OVERRIDE)
-                        yield Button("Use base", id=USE_BASE_LADDER)
-            with Vertical(id="ladder-rung-form"):
-                yield Label("Edit selected rung", id="ladder-rung-title")
-                yield Label("Agent")
-                yield Select((), allow_blank=True, prompt="Choose agent", id=AGENT_SELECT[1:])
-                yield Label("Model")
-                yield Select((), allow_blank=True, prompt=MODEL_PROMPT, id=MODEL_SELECT[1:])
-                yield Label("Effort")
-                yield Select(
-                    (),
-                    allow_blank=True,
-                    prompt="Choose a model first",
-                    id=EFFORT_SELECT[1:],
-                )
-                yield Static(EMPTY_RUNG_LABEL, id="ladder-model-detail", markup=False)
+        yield Label(Text("Agent ladders", style=BOLD_STEEL), id="ladder-scope-title")
+        yield RowList(widget_id="ladder-scopes")
+        yield Label(
+            Text(
+                "Selected ladder · comma-separated agent:model[:effort]",
+                style=SECONDARY_TEXT_COLOR,
+            ),
+            id="ladder-input-title",
+        )
+        yield Label(
+            Text(
+                "Edit text directly; blank Low/Normal/High inherit Base. "
+                "Agent/Model/Effort plus Add appends.",
+                style=PRIMARY_TEXT_COLOR,
+            ),
+            id="ladder-input-guidance",
+        )
+        yield Input(value="", id=LADDER_INPUT[1:])
+        yield Static("", id="ladder-problem", markup=False)
+        with Vertical(id="ladder-form"):
+            yield Label(Text("Add a supported entry", style=BOLD_STEEL), id="ladder-form-title")
+            yield Label(Text("Agent", style=SECONDARY_TEXT_COLOR))
+            yield Select((), allow_blank=True, prompt=AGENT_PROMPT, id=AGENT_SELECT[1:])
+            yield Label(Text("Model", style=SECONDARY_TEXT_COLOR))
+            yield Select((), allow_blank=True, prompt=MODEL_PROMPT, id=MODEL_SELECT[1:])
+            yield Label(Text("Effort", style=SECONDARY_TEXT_COLOR))
+            yield Select((), allow_blank=True, prompt=EFFORT_PROMPT, id=EFFORT_SELECT[1:])
+            with Horizontal(id="ladder-add-row"):
+                yield Button("Add", id=ADD_RUNG)
         yield Static("", id="ladder-guidance", markup=False)
 
     def on_mount(self) -> None:
-        self._set_narrow_layout()
         self._refresh_scope()
 
-    def on_resize(self, event: events.Resize) -> None:
-        del event
-        self._set_narrow_layout()
+    @on(RowList.Moved, "#ladder-scopes")
+    def _scope_moved(self, message: RowList.Moved) -> None:
+        message.stop()
+        self._remember_cursor()
+        self._selected_scope = message.index
+        self._clear_form()
+        self._refresh_scope()
 
-    async def on_button_pressed(self, event: Button.Pressed) -> None:
-        button_id = event.button.id
-        if button_id == ADD_RUNG:
-            self._add_rung()
-        elif button_id == REMOVE_RUNG:
-            self._remove_rung()
-        elif button_id == MOVE_RUNG_UP:
-            self._move_rung(-1)
-        elif button_id == MOVE_RUNG_DOWN:
-            self._move_rung(1)
-        elif button_id == CUSTOMIZE_OVERRIDE:
-            self._customize_override()
-        elif button_id == USE_BASE_LADDER:
-            self._use_base_ladder()
-        else:
-            return
-        event.stop()
+    @on(RowList.Opened, "#ladder-scopes")
+    def _scope_opened(self, message: RowList.Opened) -> None:
+        message.stop()
+        self._remember_cursor()
+        self._selected_scope = message.index
+        self._clear_form()
+        self._refresh_scope()
+        self.call_after_refresh(self.query_one(LADDER_INPUT, Input).focus)
+
+    @on(Input.Changed, LADDER_INPUT)
+    def _ladder_changed(self, event: Input.Changed) -> None:
+        self._drafts[self._scope_key()] = event.value
+        self._draft_cursors[self._scope_key()] = event.input.cursor_position
+        self._refresh_rows()
+        self._refresh_problem()
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.value != event.select.value:
             event.stop()
             return
-        control_id = event.select.id or ""
-        if control_id == ROLE_SELECT[1:]:
-            self._change_role(event.value)
-        elif control_id == CONTEXT_SELECT[1:]:
-            self._change_context(event.value)
-        elif control_id in RUNG_SELECT_IDS:
-            self._change_rung(control_id, event.value)
+        control_id = event.select.id
+        if control_id == AGENT_SELECT[1:]:
+            selected = event.value if isinstance(event.value, str) else ""
+            self._new_agent = selected if selected in self._agent_names() else ""
+            self._new_model = ""
+            self._new_effort = None
+            self._refresh_form()
+        elif control_id == MODEL_SELECT[1:]:
+            selected = event.value if isinstance(event.value, str) else ""
+            self._new_model = selected if self._model_offered(self._new_agent, selected) else ""
+            self._new_effort = None
+            self._refresh_form()
+        elif control_id == EFFORT_SELECT[1:]:
+            selected = event.value if isinstance(event.value, str) else ""
+            self._new_effort = selected or None
+            self._refresh_add_button()
         else:
             return
         event.stop()
 
-    def _change_role(self, value: object) -> None:
-        if isinstance(value, str) and value in ROLE_VALUES:
-            self._role = value
-            if self._role != Role.IMPLEMENTER.value:
-                self._complexity = None
-            self._refresh_scope()
-
-    def _change_context(self, value: object) -> None:
-        if isinstance(value, str):
-            if value == BASE_CONTEXT:
-                self._complexity = None
-            elif value in COMPLEXITY_VALUES:
-                self._complexity = value
-            self._refresh_scope()
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id != ADD_RUNG:
+            return
+        self._append_entry()
+        event.stop()
 
     def set_model_catalogs(
         self,
@@ -223,253 +219,191 @@ class LadderEditor(Vertical):
             agent: catalog for agent, catalog in catalogs.items() if self._offered_choices(catalog)
         }
         self._catalog_errors = dict(errors)
-        agent_select = cast("Select[str]", self.query_one(AGENT_SELECT, Select))
-        with agent_select.prevent(Select.Changed):
-            agent_select.set_options(self._agent_options())
+        self._refresh_scope()
+
+    def set_agent_capabilities(self, capabilities: Mapping[str, AgentCapabilityResult]) -> None:
+        self._capabilities = dict(capabilities)
         self._refresh_scope()
 
     def set_scope(self, role: Role, complexity: ComplexityName | None = None) -> None:
-        """Select a role/context scope without changing any saved draft."""
-        if complexity is not None and (
-            role is not Role.IMPLEMENTER or complexity not in COMPLEXITY_VALUES
-        ):
+        """Select a scope for measuring the wizard's preferred content size."""
+        key = (role.value, complexity)
+        if key not in SCOPE_KEYS:
             message = "complexity scopes belong to the Implementer role"
             raise ValueError(message)
-        self._role = role.value
-        self._complexity = complexity
-        role_select = cast("Select[str]", self.query_one(ROLE_SELECT, Select))
-        self._set_select_value(role_select, role.value)
-        self._refresh_scope()
+        if self.is_mounted:
+            self._remember_cursor()
+        self._selected_scope = SCOPE_KEYS.index(key)
+        if self.is_mounted:
+            self._clear_form()
+            self._refresh_scope()
 
     def configuration(self) -> LadderConfiguration:
-        for role in ROLE_VALUES:
-            self._validate_scope(role, None, self._drafts[(role, None)])
-        for complexity, rungs in self._overrides.items():
-            self._validate_scope(Role.IMPLEMENTER.value, complexity, rungs)
-        ladders = {role: tuple(self._drafts[(role, None)]) for role in ROLE_VALUES}
-        complexity_ladders: dict[ComplexityName, tuple[Rung, ...]] = {
-            complexity: tuple(rungs) for complexity, rungs in self._overrides.items()
-        }
-        return LadderConfiguration(ladders, complexity_ladders)
+        ladders: dict[str, tuple[Rung, ...]] = {}
+        complexity: dict[ComplexityName, tuple[Rung, ...]] = {}
+        for index, key in enumerate(SCOPE_KEYS):
+            role, context = key
+            raw = self._drafts[key]
+            if role == Role.IMPLEMENTER.value and context is not None and not raw.strip():
+                continue
+            rungs = self._validated_scope(index, key, raw)
+            if context is None:
+                ladders[role] = rungs
+            else:
+                complexity[context] = rungs
+        return LadderConfiguration(ladders, complexity)
 
-    def _validate_scope(
+    def _validated_scope(
         self,
-        role: str,
-        complexity: ComplexityName | None,
-        rungs: list[Rung],
-    ) -> None:
-        context = self._scope_label(role, complexity)
+        index: int,
+        key: tuple[str, ComplexityName | None],
+        raw: str,
+    ) -> tuple[Rung, ...]:
+        label = SCOPE_LABELS[key]
+        try:
+            rungs = parse_ladder_text(raw)
+        except LadderTextError as error:
+            self._focus_invalid(index)
+            message = f"{label} · entry {error.entry_index + 1}: {error.detail}"
+            raise ConfigError(message) from error
         if not rungs:
-            self._focus_invalid(role, complexity, 0, "agent")
-            message = f"{context}: ladder must contain at least one rung"
+            self._focus_invalid(index)
+            message = f"{label}: enter at least one ladder entry"
             raise ConfigError(message)
-        if role == Role.HELPER.value and len(rungs) != 1:
-            self._focus_invalid(role, complexity, 0, "agent")
-            message = f"{context}: Helper must contain exactly one rung"
-            raise ConfigError(message)
-        for index, rung in enumerate(rungs):
-            if rung.agent not in self._catalogs:
-                self._focus_invalid(role, complexity, index, "agent")
-                detail = self._catalog_errors.get(rung.agent, "choose a listed agent")
-                message = f"{context} · rung {index + 1}: {detail}"
+        for rung_index, rung in enumerate(rungs):
+            if _is_helper_scope(key) and not self._headless_available(rung.agent):
+                self._focus_invalid(index)
+                message = f"{label} · entry {rung_index + 1}: {self._headless_detail(rung.agent)}"
                 raise ConfigError(message)
-            catalog = self._catalogs[rung.agent]
-            choices = {choice.model for choice in self._offered_choices(catalog)}
-            if rung.model not in choices:
-                self._focus_invalid(role, complexity, index, "model")
-                message = f"{context} · rung {index + 1}: choose a listed model"
+            catalog = self._catalogs.get(rung.agent)
+            if catalog is None:
+                self._focus_invalid(index)
+                detail = self._catalog_errors.get(rung.agent, "choose a listed agent")
+                message = f"{label} · entry {rung_index + 1}: {detail}"
                 raise ConfigError(message)
             assessment = assess_model_choice(rung.model, rung.effort, catalog)
             if assessment.supported is not True:
-                self._focus_invalid(role, complexity, index, "effort")
-                message = f"{context} · rung {index + 1}: {assessment.detail}"
+                self._focus_invalid(index)
+                message = f"{label} · entry {rung_index + 1}: {assessment.detail}"
                 raise ConfigError(message)
+        return rungs
 
-    def _change_rung(self, control_id: str, value: object) -> None:
-        index = self._selected_index()
-        rungs = self._editing_rungs()
-        if index >= len(rungs) or not self._is_editable():
-            return
-        current = rungs[index]
-        if control_id == AGENT_SELECT[1:]:
-            agent = value if isinstance(value, str) and value in self._catalogs else ""
-            self._store_rung(index, Rung(agent=agent, model=""))
-            model_select = cast("Select[str]", self.query_one(MODEL_SELECT, Select))
-            effort_select = cast("Select[str]", self.query_one(EFFORT_SELECT, Select))
-            self._set_select_options(
-                model_select, self._model_options(agent) if agent else (), None
+    def _append_entry(self) -> None:
+        rung = self._selected_rung()
+        if rung is None or not self._valid_catalog_choice(rung):
+            self._update_problem(
+                "Choose an available agent and model, plus a supported effort when offered."
             )
-            effort_select.prompt = "Choose a model first"
-            self._set_select_options(effort_select, (), None)
-            effort_select.disabled = True
-        elif control_id == MODEL_SELECT[1:]:
-            model = value if isinstance(value, str) else ""
-            catalog = self._catalogs.get(current.agent)
-            offered: set[str] = (
-                {choice.model for choice in self._offered_choices(catalog)}
-                if catalog is not None
-                else set()
-            )
-            self._store_rung(
-                index,
-                Rung(agent=current.agent, model=model if model in offered else ""),
-            )
-            selected_model = model if model in offered else ""
-            effort_select = cast("Select[str]", self.query_one(EFFORT_SELECT, Select))
-            effort_select.prompt = NATIVE_EFFORT_LABEL if selected_model else "Choose a model first"
-            self._set_select_options(
-                effort_select,
-                self._effort_options(current.agent, selected_model),
-                None,
-            )
-            effort_select.disabled = not selected_model
-        else:
-            effort = value if isinstance(value, str) and value else None
-            self._store_rung(index, Rung(agent=current.agent, model=current.model, effort=effort))
-        self._update_model_detail(self._editing_rungs()[index])
-        self._refresh_rows()
-
-    def _add_rung(self) -> None:
-        if self._role not in EDITABLE_ROLES or not self._is_editable():
             return
-        rungs = self._editing_rungs()
-        rungs.append(Rung(agent="", model=""))
-        self._set_selected_index(len(rungs) - 1)
+        key = self._scope_key()
+        raw = self._drafts[key]
+        try:
+            parse_ladder_text(raw)
+        except LadderTextError as error:
+            self._update_problem(f"Entry {error.entry_index + 1}: {error.detail}")
+            self.call_after_refresh(self.query_one(LADDER_INPUT, Input).focus)
+            return
+        if _is_helper_scope(key) and not self._headless_available(rung.agent):
+            self._update_problem(HELPER_CAPABILITY_GUIDANCE)
+            return
+        value = f"{rung.agent}{RUNG_SEPARATOR}{rung.model}"
+        if rung.effort is not None:
+            value = f"{value}{RUNG_SEPARATOR}{rung.effort}"
+        updated = f"{raw}{LADDER_SEPARATOR}{value}" if raw.strip() else value
+        field = self.query_one(LADDER_INPUT, Input)
+        self._drafts[key] = updated
+        self._draft_cursors[key] = len(updated)
+        field.value = updated
+        field.cursor_position = len(updated)
+        self._clear_form()
         self._refresh_scope()
-        self.call_after_refresh(self.query_one(AGENT_SELECT, Select).focus)
-
-    def _remove_rung(self) -> None:
-        if self._role not in EDITABLE_ROLES or not self._is_editable():
-            return
-        rungs = self._editing_rungs()
-        index = self._selected_index()
-        if index >= len(rungs):
-            return
-        rungs.pop(index)
-        self._set_selected_index(min(index, len(rungs) - 1))
-        self._refresh_scope()
-
-    def _move_rung(self, direction: int) -> None:
-        if self._role not in EDITABLE_ROLES or not self._is_editable():
-            return
-        rungs = self._editing_rungs()
-        index = self._selected_index()
-        target = index + direction
-        if not 0 <= target < len(rungs):
-            return
-        rungs[index], rungs[target] = rungs[target], rungs[index]
-        self._set_selected_index(target)
-        self._refresh_scope()
-
-    def _customize_override(self) -> None:
-        if self._role != Role.IMPLEMENTER.value or self._complexity is None:
-            return
-        self._overrides[self._complexity] = list(self._drafts[(self._role, None)])
-        self._selected[(self._role, self._complexity)] = self._selected_index()
-        self._refresh_scope()
-        self.call_after_refresh(self.query_one(AGENT_SELECT, Select).focus)
-
-    def _use_base_ladder(self) -> None:
-        if self._complexity is None:
-            return
-        self._overrides.pop(self._complexity, None)
-        self._selected.pop((self._role, self._complexity), None)
-        self._refresh_scope()
+        self.call_after_refresh(field.focus)
 
     def _refresh_scope(self) -> None:
         if not self.is_mounted:
             return
-        context_select = cast("Select[str]", self.query_one(CONTEXT_SELECT, Select))
-        self._set_select_value(context_select, self._complexity or BASE_CONTEXT)
-        context_select.disabled = self._role != Role.IMPLEMENTER.value
-        self.query_one("#ladder-context-row", Horizontal).display = (
-            self._role == Role.IMPLEMENTER.value
+        field = self.query_one(LADDER_INPUT, Input)
+        self.query_one("#ladder-input-title", Label).update(
+            Text(
+                f"{SCOPE_LABELS[self._scope_key()]} · comma-separated agent:model[:effort]",
+                style=SECONDARY_TEXT_COLOR,
+            )
         )
-        context = self._complexity if self._role == Role.IMPLEMENTER.value else None
-        inherited = context is not None and context not in self._overrides
-        rungs = self._drafts[(self._role, None)] if inherited else self._editing_rungs()
-        state = self.query_one("#ladder-state", Static)
-        state.update(self._scope_label(self._role, context, inherited=inherited))
-        self.query_one("#ladder-rung-actions-main", Horizontal).display = (
-            self._role in EDITABLE_ROLES
-        )
-        self.query_one("#ladder-rung-actions-override", Horizontal).display = (
-            self._role == Role.IMPLEMENTER.value and context is not None
-        )
-        self.query_one(f"#{CUSTOMIZE_OVERRIDE}", Button).display = inherited
-        self.query_one(f"#{USE_BASE_LADDER}", Button).display = (
-            context is not None and not inherited
-        )
-        for selector in RUNG_SELECTORS:
-            self.query_one(selector, Select).disabled = inherited or not rungs
+        raw = self._drafts[self._scope_key()]
+        if field.value != raw:
+            field.value = raw
+        field.cursor_position = min(self._draft_cursors[self._scope_key()], len(raw))
         self._refresh_rows()
-        self._refresh_controls()
-        self.query_one("#ladder-guidance", Static).update(self._guidance())
+        self._refresh_form()
+        self._refresh_problem()
+        self.query_one("#ladder-guidance", Static).update(
+            Text(self._guidance(), style=SECONDARY_TEXT_COLOR)
+        )
 
     def _refresh_rows(self) -> None:
-        row_list = self.query_one("#ladder-rungs", RowList)
-        rungs = self._editing_rungs()
         rows = tuple(
-            RowCells(
-                lead=str(index + 1),
-                text=self._rung_summary(rung),
-            )
-            for index, rung in enumerate(rungs)
+            RowCells(lead=str(index + 1), text=self._scope_summary(key))
+            for index, key in enumerate(SCOPE_KEYS)
         )
-        selected = self._selected_index()
-        row_list.set_rows(rows, selected=selected, empty="No rungs")
-        if self._is_editable():
-            self._set_selected_index(row_list.selected)
-        self._refresh_actions(rungs)
-
-    def _refresh_actions(self, rungs: list[Rung]) -> None:
-        editable = self._role in EDITABLE_ROLES and self._is_editable()
-        selected = self._selected_index()
-        self.query_one(f"#{ADD_RUNG}", Button).disabled = not editable
-        self.query_one(f"#{REMOVE_RUNG}", Button).disabled = not editable or not rungs
-        self.query_one(f"#{MOVE_RUNG_UP}", Button).disabled = not editable or selected == 0
-        self.query_one(f"#{MOVE_RUNG_DOWN}", Button).disabled = (
-            not editable or selected >= len(rungs) - 1
+        self.query_one("#ladder-scopes", RowList).set_rows(
+            rows,
+            selected=self._selected_scope,
+            empty=EMPTY_LADDER_LABEL,
         )
 
-    def _refresh_controls(self) -> None:
-        rungs = self._editing_rungs()
-        index = self._selected_index()
-        rung = rungs[index] if index < len(rungs) else None
+    def _scope_summary(self, key: tuple[str, ComplexityName | None]) -> Text:
+        raw = self._drafts[key]
+        label = SCOPE_LABELS[key]
+        selected = SCOPE_KEYS.index(key) == self._selected_scope
+        emphasis = f"{STYLE_BOLD} " if selected else ""
+        if key[0] == Role.IMPLEMENTER.value and key[1] is not None and not raw.strip():
+            summary = "inherits Base"
+        elif not raw:
+            summary = "needs entries"
+        else:
+            try:
+                parse_ladder_text(raw)
+            except LadderTextError:
+                summary = "check entries"
+            else:
+                summary = raw
+        text = Text()
+        text.append(label, style=f"{emphasis}{SECONDARY_TEXT_COLOR}")
+        text.append(" · ", style=SECONDARY_TEXT_COLOR)
+        text.append(summary, style=f"{emphasis}{PRIMARY_TEXT_COLOR}")
+        return text
+
+    def _refresh_form(self) -> None:
         agent_select = cast("Select[str]", self.query_one(AGENT_SELECT, Select))
         model_select = cast("Select[str]", self.query_one(MODEL_SELECT, Select))
         effort_select = cast("Select[str]", self.query_one(EFFORT_SELECT, Select))
-        self._set_select_value(
-            agent_select,
-            rung.agent if rung and rung.agent in self._catalogs else None,
-        )
-        model_options = (
-            self._model_options(rung.agent) if rung and rung.agent in self._catalogs else ()
-        )
-        self._set_select_options(
-            model_select,
-            model_options,
-            rung.model if rung and rung.model in {value for _, value in model_options} else None,
-        )
-        has_model = bool(rung and rung.model)
-        effort_options = self._effort_options(rung.agent, rung.model) if has_model and rung else ()
-        effort_select.prompt = NATIVE_EFFORT_LABEL if has_model else "Choose a model first"
-        effort_select.disabled = not self._is_editable() or not has_model
-        self._set_select_options(
-            effort_select,
-            effort_options,
-            rung.effort if rung and rung.effort in {value for _, value in effort_options} else None,
-        )
-        self._update_model_detail(rung)
-        self.query_one("#ladder-rung-title", Label).update(
-            f"Edit rung {index + 1}" if rung else "Edit selected rung"
-        )
+        agents = self._agent_options()
+        self._set_select_options(agent_select, agents, self._new_agent or None)
+        agent_select.disabled = not agents
+        models = self._model_options(self._new_agent) if self._new_agent else ()
+        self._set_select_options(model_select, models, self._new_model or None)
+        model_select.disabled = not self._new_agent or not models
+        efforts = self._effort_options(self._new_agent, self._new_model)
+        self._set_select_options(effort_select, efforts, self._new_effort)
+        effort_select.disabled = not self._new_model
+        self._refresh_add_button()
 
-    def _update_model_detail(self, rung: Rung | None) -> None:
-        if rung and rung.model:
-            self.query_one(MODEL_DETAIL, Static).update(f"{MODEL_CONTEXT_LABEL}{rung.model}")
+    def _refresh_add_button(self) -> None:
+        button = self.query_one(f"#{ADD_RUNG}", Button)
+        rung = self._selected_rung()
+        button.disabled = rung is None or not self._valid_catalog_choice(rung)
+
+    def _refresh_problem(self) -> None:
+        raw = self._drafts[self._scope_key()]
+        try:
+            parse_ladder_text(raw)
+        except LadderTextError as error:
+            self._update_problem(f"Entry {error.entry_index + 1}: {error.detail}")
         else:
-            self.query_one(MODEL_DETAIL, Static).update(EMPTY_RUNG_LABEL)
+            self._update_problem("")
+
+    def _update_problem(self, message: str) -> None:
+        self.query_one("#ladder-problem", Static).update(Text(message, style=DUSTY_ROSE))
 
     def _set_select_options(
         self,
@@ -483,99 +417,49 @@ class LadderEditor(Vertical):
             if select.value != target:
                 select.value = target
 
-    def _set_select_value(self, select: Select[str], value: str | None) -> None:
-        target = Select.BLANK if value is None else value
-        if select.value != target:
-            with select.prevent(Select.Changed):
-                select.value = target
+    def _clear_form(self) -> None:
+        self._new_agent = ""
+        self._new_model = ""
+        self._new_effort = None
 
-    @on(RowList.Moved, "#ladder-rungs")
-    def _on_ladder_rungs_moved(self, message: RowList.Moved) -> None:
-        message.stop()
-        self._set_selected_index(message.index)
-        self._refresh_controls()
-        self._refresh_rows()
+    def _remember_cursor(self) -> None:
+        if self.is_mounted:
+            field = self.query_one(LADDER_INPUT, Input)
+            self._draft_cursors[self._scope_key()] = field.cursor_position
 
-    @on(RowList.Opened, "#ladder-rungs")
-    def _on_ladder_rungs_opened(self, message: RowList.Opened) -> None:
-        message.stop()
-        self._set_selected_index(message.index)
-        self._refresh_controls()
-
-    def _editing_rungs(self) -> list[Rung]:
-        context = self._active_context()
-        if context is not None and context in self._overrides:
-            return self._overrides[context]
-        return self._drafts[(self._role, None)]
-
-    def _active_context(self) -> ComplexityName | None:
-        return self._complexity if self._role == Role.IMPLEMENTER.value else None
-
-    def _is_editable(self) -> bool:
-        context = self._active_context()
-        return context is None or context in self._overrides
-
-    def _store_rung(self, index: int, rung: Rung) -> None:
-        rungs = self._editing_rungs()
-        if index < len(rungs):
-            rungs[index] = rung
-
-    def _selected_index(self) -> int:
-        return self._selected.get((self._role, self._active_context()), 0)
-
-    def _set_selected_index(self, index: int) -> None:
-        self._selected[(self._role, self._active_context())] = max(index, 0)
-
-    def _focus_invalid(
-        self,
-        role: str,
-        complexity: ComplexityName | None,
-        index: int,
-        field: str,
-    ) -> None:
-        self._role = role
-        self._complexity = complexity
-        self._set_selected_index(index)
-        self._set_select_value(cast("Select[str]", self.query_one(ROLE_SELECT, Select)), role)
+    def _focus_invalid(self, scope_index: int) -> None:
+        self._remember_cursor()
+        self._clear_form()
+        self._selected_scope = scope_index
         self._refresh_scope()
-        control = cast("Select[str]", self.query_one(f"#ladder-{field}", Select))
-        self.call_after_refresh(control.focus)
+        self.call_after_refresh(self.query_one(LADDER_INPUT, Input).focus)
 
-    def _set_narrow_layout(self) -> None:
-        if self.screen.size.width < NARROW_WIDTH:
-            self.add_class("narrow")
-        else:
-            self.remove_class("narrow")
+    def _scope_key(self) -> tuple[str, ComplexityName | None]:
+        return SCOPE_KEYS[self._selected_scope]
 
-    def _guidance(self) -> str:
-        if self._catalog_errors:
-            failures = "; ".join(
-                f"{agent}: {detail}" for agent, detail in self._catalog_errors.items()
-            )
-            return f"Model discovery unavailable for {failures}. {MODEL_CATALOG_GUIDANCE}"
-        return "Choose only listed models and their reported efforts."
+    def _selected_rung(self) -> Rung | None:
+        if not self._new_agent or not self._new_model:
+            return None
+        return Rung(agent=self._new_agent, model=self._new_model, effort=self._new_effort)
 
-    def _scope_label(
-        self,
-        role: str,
-        complexity: ComplexityName | None,
-        *,
-        inherited: bool = False,
-    ) -> str:
-        if complexity is None:
-            return f"{role.title()} base ladder"
-        label = f"Implementer · {complexity.title()}"
-        return f"{label} · inherits base ladder" if inherited else f"{label} · custom override"
+    def _valid_catalog_choice(self, rung: Rung) -> bool:
+        catalog = self._catalogs.get(rung.agent)
+        if (
+            catalog is None
+            or assess_model_choice(rung.model, rung.effort, catalog).supported is not True
+        ):
+            return False
+        return not _is_helper_scope(self._scope_key()) or self._headless_available(rung.agent)
 
-    @staticmethod
-    def _rung_summary(rung: Rung) -> Text:
-        parts = [rung.agent or "Choose agent", rung.model or "Choose model"]
-        if rung.effort:
-            parts.append(rung.effort)
-        return Text(RUNG_SEPARATOR.join(parts), style=PRIMARY_TEXT_COLOR)
+    def _agent_names(self) -> tuple[str, ...]:
+        if _is_helper_scope(self._scope_key()):
+            return tuple(agent for agent in self._catalogs if self._headless_available(agent))
+        return tuple(self._catalogs)
 
     def _agent_options(self) -> tuple[tuple[RenderableType, str], ...]:
-        return tuple((Text(agent, style=PRIMARY_TEXT_COLOR), agent) for agent in self._catalogs)
+        return tuple(
+            (Text(agent, style=PRIMARY_TEXT_COLOR), agent) for agent in self._agent_names()
+        )
 
     def _model_options(self, agent: str) -> tuple[tuple[RenderableType, str], ...]:
         catalog = self._catalogs.get(agent)
@@ -595,6 +479,37 @@ class LadderEditor(Vertical):
             (Text(effort, style=PRIMARY_TEXT_COLOR), effort) for effort in choice.efforts or ()
         )
 
+    def _model_offered(self, agent: str, model: str) -> bool:
+        catalog = self._catalogs.get(agent)
+        return catalog is not None and model in {
+            choice.model for choice in self._offered_choices(catalog)
+        }
+
+    def _headless_available(self, agent: str) -> bool:
+        capability = self._capabilities.get(agent)
+        return capability is not None and capability.headless
+
+    def _headless_detail(self, agent: str) -> str:
+        capability = self._capabilities.get(agent)
+        if capability is not None and capability.error:
+            return f"headless support unavailable: {capability.error}"
+        return "Helper requires an agent with headless support"
+
+    def _guidance(self) -> str:
+        parts = ["Choose only listed models and their reported efforts."]
+        if _is_helper_scope(self._scope_key()):
+            parts.append(HELPER_CAPABILITY_GUIDANCE)
+        if self._catalog_errors:
+            failures = "; ".join(
+                f"{agent}: {detail}" for agent, detail in self._catalog_errors.items()
+            )
+            parts.append(f"Model discovery unavailable for {failures}. {MODEL_CATALOG_GUIDANCE}")
+        return " ".join(parts)
+
     @staticmethod
     def _offered_choices(catalog: ModelCatalog) -> tuple[ModelChoice, ...]:
         return tuple(choice for choice in catalog.models if choice.offered)
+
+
+def _is_helper_scope(key: tuple[str, ComplexityName | None]) -> bool:
+    return key[0] == Role.HELPER.value

@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import ModelCatalog
     from shikiru.config.settings import OrchestrationConfig
     from shikiru.operator.doctor import Doctor, DoctorReport
+    from shikiru.operator.plugin_checks import AgentCapabilityResult
 
 STEP_REPOSITORY = "Repository"
 STEP_AGENTS = "Agents and ladders"
@@ -121,7 +122,6 @@ MINIMUM_PARALLEL = 1
 MINIMUM_PARALLEL_TEXT = "1"
 NO_CANDIDATES = "No detected candidates."
 DETAIL_LABEL_WIDTH = 15
-PREFERRED_SIZE_COMPLEXITY = "low"
 
 WIZARD_LAYER_CSS = f"""
 #wizard-art {{
@@ -189,7 +189,6 @@ class InitWizardApp(App[InitWizardResult | None]):
     ]
     CSS = (
         POPUP_CSS
-        + LADDER_ACTION_CSS
         + WIZARD_LAYER_CSS
         + """
     Screen {
@@ -270,6 +269,7 @@ class InitWizardApp(App[InitWizardResult | None]):
     }
     #wizard-cow-result { height: auto; }
     """
+        + LADDER_ACTION_CSS
     )
 
     def __init__(
@@ -300,6 +300,7 @@ class InitWizardApp(App[InitWizardResult | None]):
         self._error = ""
         self._model_catalogs: dict[str, ModelCatalog] = {}
         self._catalog_errors: dict[str, str] = {}
+        self._agent_capabilities: dict[str, AgentCapabilityResult] = {}
         self._catalogs_loaded = False
         self._frame_ready = False
         self._writing_config = False
@@ -374,13 +375,18 @@ class InitWizardApp(App[InitWizardResult | None]):
 
     def _capture_agent_page_size(self) -> None:
         editor = self.query_one("#ladder-editor", LadderEditor)
-        editor.set_scope(Role.IMPLEMENTER, PREFERRED_SIZE_COMPLEXITY)
+        editor.set_scope(Role.HELPER)
         self._step = AGENTS_STEP_INDEX
         self._update_pages()
         self.call_after_refresh(self._mark_frame_content_ready)
 
     def _mark_frame_content_ready(self) -> None:
-        self.query_one("#wizard-frame", PopupFrame).content_ready()
+        frame = self.query_one("#wizard-frame", PopupFrame)
+        frame.content_ready()
+        self.call_after_refresh(self._capture_completed_frame_size)
+
+    def _capture_completed_frame_size(self) -> None:
+        self.query_one("#wizard-frame", PopupFrame).update_preferred_size()
         self.call_after_refresh(self._restore_repository_page)
 
     def _restore_repository_page(self) -> None:
@@ -526,7 +532,7 @@ class InitWizardApp(App[InitWizardResult | None]):
         if self._art_focus_id:
             target = self.query(f"#{self._art_focus_id}")
             if target:
-                target.first().focus()
+                target.first().focus(scroll_visible=False)
         self.call_after_refresh(self._restore_art_scroll)
 
     def _restore_art_scroll(self) -> None:
@@ -608,6 +614,7 @@ class InitWizardApp(App[InitWizardResult | None]):
 
     async def _load_model_catalogs(self) -> None:
         for agent in self._project.agents:
+            self._agent_capabilities[agent] = self._detectors.agent_capabilities(agent, {})
             try:
                 catalog = await self._detectors.model_catalog(agent, {})
             except (OSError, ShikiruError, ValueError) as error:
@@ -624,6 +631,9 @@ class InitWizardApp(App[InitWizardResult | None]):
         self.query_one("#catalog-discovery", Static).update(self._catalog_summary())
         self.query_one("#ladder-editor", LadderEditor).set_model_catalogs(
             self._model_catalogs, self._catalog_errors
+        )
+        self.query_one("#ladder-editor", LadderEditor).set_agent_capabilities(
+            self._agent_capabilities
         )
         self._catalogs_loaded = True
         self._update_pages()
@@ -668,7 +678,7 @@ class InitWizardApp(App[InitWizardResult | None]):
         if self._step == REPOSITORY_STEP_INDEX:
             self.query_one("#wizard-next", Button).focus()
         elif self._step == AGENTS_STEP_INDEX:
-            self.query_one("#ladder-role", Select).focus()
+            self.query_one("#ladder-scopes", RowList).focus()
         elif self._step == TRACKERS_STEP_INDEX:
             self._focus_candidate_list(TRACKERS_LIST_ID, TRACKERS_INPUT_ID)
         elif self._step == COW_STEP_INDEX:
@@ -703,7 +713,7 @@ class InitWizardApp(App[InitWizardResult | None]):
         try:
             ladders = self._read_ladders()
         except ConfigError as error:
-            self._show_step_error(AGENTS_STEP_INDEX, "ladder-role", error)
+            self._show_step_error(AGENTS_STEP_INDEX, "ladder-input", error)
             return
         try:
             trackers = self._read_paths(TRACKERS_INPUT_ID)

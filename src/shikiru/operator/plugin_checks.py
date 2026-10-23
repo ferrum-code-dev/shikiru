@@ -49,6 +49,14 @@ class PluginCheckResult:
         return "; ".join(failures) if failures else "all checks passed"
 
 
+@dataclass(frozen=True)
+class AgentCapabilityResult:
+    """Generic capabilities an operator surface may use to offer an agent."""
+
+    headless: bool
+    error: str | None = None
+
+
 class PluginChecks:
     """Run `Agent.doctor()` through the same registry for init, start and doctor."""
 
@@ -107,6 +115,30 @@ class PluginChecks:
         except (ShikiruError, OSError, TimeoutError) as error:
             detail = str(error) or type(error).__name__
             return ModelCatalog(error=detail)
+
+    def capabilities(self, name: str, options: Mapping[str, Any]) -> AgentCapabilityResult:
+        """Report generic optional capabilities without exposing plugin implementation details."""
+        try:
+            agent = self._registry.create(
+                name,
+                AgentContext(options=options, runner=self._runner, clock=self._clock),
+            )
+        except (ShikiruError, OSError, TimeoutError) as error:
+            detail = str(error) or type(error).__name__
+            return AgentCapabilityResult(headless=False, error=detail)
+        provider = getattr(agent, "headless", None)
+        if provider is None:
+            return AgentCapabilityResult(headless=False)
+        if not callable(provider):
+            return AgentCapabilityResult(
+                headless=False,
+                error="agent returned an invalid headless capability",
+            )
+        try:
+            return AgentCapabilityResult(headless=provider() is not None)
+        except (ShikiruError, OSError, TimeoutError) as error:
+            detail = str(error) or type(error).__name__
+            return AgentCapabilityResult(headless=False, error=detail)
 
 
 async def _agent_model_catalog(agent: Agent) -> ModelCatalog | None:

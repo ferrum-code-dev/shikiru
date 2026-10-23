@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     from shikiru.config.settings import ComplexityName
     from shikiru.operator.doctor import DoctorReport
-    from shikiru.operator.plugin_checks import PluginChecks
+    from shikiru.operator.plugin_checks import AgentCapabilityResult, PluginChecks
     from shikiru.workspace.caches import CacheCloner
     from shikiru.workspace.git import Git
 
@@ -156,6 +156,10 @@ class ProjectDetectors:
     async def model_catalog(self, name: str, options: Mapping[str, Any]) -> ModelCatalog | None:
         """Return an agent's optional authoritative choices through the injected plugin boundary."""
         return await self._plugin_checks.model_catalog(name, options)
+
+    def agent_capabilities(self, name: str, options: Mapping[str, Any]) -> AgentCapabilityResult:
+        """Return generic optional capabilities through the injected plugin boundary."""
+        return self._plugin_checks.capabilities(name, options)
 
     async def _validate_root(self) -> None:
         repository_root = await self._git.repository_root(self._root)
