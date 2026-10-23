@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from shikiru.operator.doctor import DoctorReport
     from shikiru.operator.plugin_checks import AgentCapabilityResult, PluginChecks
     from shikiru.workspace.caches import CacheCloner
-    from shikiru.workspace.git import Git
+    from shikiru.workspace.git import Git, LineChangeStats
 
 MAX_SCAN_DEPTH = 4
 TRACKER_DIRECTORY = "tasks"
@@ -152,6 +152,10 @@ class ProjectDetectors:
     async def check_cow_support(self) -> bool:
         """Probe copy-on-write support using disposable files on the project filesystem."""
         return await self._cache_cloner.check_support(self._root)
+
+    async def working_tree_line_changes(self) -> LineChangeStats:
+        """Return tracked and untracked working-tree change totals for the project repository."""
+        return await self._git.working_tree_line_changes(self._root)
 
     async def model_catalog(self, name: str, options: Mapping[str, Any]) -> ModelCatalog | None:
         """Return an agent's optional authoritative choices through the injected plugin boundary."""

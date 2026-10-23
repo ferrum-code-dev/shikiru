@@ -50,6 +50,7 @@ from shikiru.ui.keys import key_hint
 from shikiru.ui.popup import (
     POPUP_BODY_CLASS,
     POPUP_CLOSE_CLASS,
+    POPUP_COMPACT_CONTROL_CSS,
     POPUP_CSS,
     POPUP_EDIT_CLASS,
     POPUP_FRAME_CLASS,
@@ -390,22 +391,9 @@ class PaletteScreen(ModalScreen[str | None]):
         border: round $focus;
         text-style: reverse;
     }
-    .palette-row { layout: horizontal; margin-bottom: 0; }
-    .palette-row Label { width: 9; }
-    .palette-row Input, .palette-row Select { width: 1fr; }
-    .palette-row Input {
-        height: 1; border: none; padding: 0 1; background: $surface;
-    }
-    .palette-row Input:focus {
-        border: none; background: $selected-surface; text-style: none;
-    }
-    .popup-frame .palette-row SelectCurrent {
-        height: 1; border: none; padding: 0 1; background: $detail-surface;
-    }
-    .popup-frame .palette-row Select:focus > SelectCurrent,
-    .popup-frame .palette-row Select.-expanded > SelectCurrent {
-        border: none; background: $selected-surface;
-    }
+    """
+        + POPUP_COMPACT_CONTROL_CSS
+        + """
     #palette-options-fold { height: auto; margin: 0 0 1 0; color: $secondary-text; }
     #palette-options-fold:focus { background: $selected-surface; background-tint: transparent; }
     #palette-options { height: auto; margin-top: 1; }

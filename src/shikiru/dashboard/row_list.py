@@ -37,6 +37,8 @@ class RowCells:
     lead: str
     text: str | Text
     tail: Text | None = None
+    columns: tuple[str | Text, str | Text] | None = None
+    column_width: int = 0
 
 
 @dataclass(frozen=True)
@@ -45,7 +47,9 @@ class _RowLine:
     selected: bool
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        del console
+        if self.cells.columns is not None:
+            yield from self._column_lines(console, options)
+            return
         line = Text(ROW_LEAD)
         line.append_text(grey(f"{self.cells.lead}{_LEAD_GAP}" if self.cells.lead else ""))
         tail = self.cells.tail or Text()
@@ -61,6 +65,27 @@ class _RowLine:
         line.append_text(tail)
         line.truncate(max(options.max_width, 1), overflow="ellipsis", pad=True)
         yield line
+
+    def _column_lines(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        columns = self.cells.columns
+        if columns is None:
+            return
+        label, value = columns
+        label_text = Text(label) if isinstance(label, str) else label.copy()
+        value_text = Text(value) if isinstance(value, str) else value.copy()
+        label_text.pad_right(max(self.cells.column_width - label_text.cell_len, 0))
+        prefix_width = len(ROW_LEAD) + self.cells.column_width + 1
+        value_width = max(options.max_width - prefix_width, 1)
+        lines = value_text.wrap(console, value_width, overflow="fold") or [Text()]
+        for index, value_line in enumerate(lines):
+            line = Text(ROW_LEAD)
+            if index == 0:
+                line.append_text(label_text)
+            else:
+                line.append(" " * self.cells.column_width)
+            line.append(" ")
+            line.append_text(value_line)
+            yield line
 
 
 class _Row(Static):

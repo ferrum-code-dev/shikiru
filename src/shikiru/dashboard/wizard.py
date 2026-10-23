@@ -9,11 +9,12 @@ from textual import on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.widgets import Button, Input, Label, Rule, Select, Static
 
 from shikiru.config.settings import MERGE_INTEGRATION, PULL_REQUEST_INTEGRATION
 from shikiru.dashboard.ladder_editor import LADDER_ACTION_CSS, LadderConfiguration, LadderEditor
-from shikiru.dashboard.row_list import RowCells, RowList
+from shikiru.dashboard.row_list import RowList
 from shikiru.domain.tasks import Role
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.detectors import (
@@ -25,6 +26,7 @@ from shikiru.paths import project_config_path
 from shikiru.ui.keys import key_hint
 from shikiru.ui.popup import (
     POPUP_BODY_CLASS,
+    POPUP_COMPACT_CONTROL_CSS,
     POPUP_CSS,
     POPUP_FRAME_CLASS,
     POPUP_HEADER_CLASS,
@@ -56,6 +58,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import OrchestrationConfig
     from shikiru.operator.doctor import Doctor, DoctorReport
     from shikiru.operator.plugin_checks import AgentCapabilityResult
+    from shikiru.workspace.git import LineChangeStats
 
 STEP_REPOSITORY = "Repository"
 STEP_AGENTS = "Agents and ladders"
@@ -96,6 +99,7 @@ INTEGRATION_UNSELECTED = "needs a choice"
 WIZARD_TITLE = "SHIKIRU"
 LEGACY_CATALOG_DETAIL = "agent does not expose an authoritative model catalog"
 WIZARD_FRAME_MAX_WIDTH = 96
+WIZARD_FRAME_HEIGHT = 36
 WIZARD_HINT_NARROW_WIDTH = 72
 WIZARD_ART_WIDTH = 120
 WIZARD_ART_HEIGHT = 40
@@ -122,6 +126,7 @@ MINIMUM_PARALLEL = 1
 MINIMUM_PARALLEL_TEXT = "1"
 NO_CANDIDATES = "No detected candidates."
 DETAIL_LABEL_WIDTH = 15
+MINUS_SIGN = "\N{MINUS SIGN}"
 
 WIZARD_LAYER_CSS = f"""
 #wizard-art {{
@@ -130,7 +135,8 @@ WIZARD_LAYER_CSS = f"""
 }}
 #wizard-frame {{
     layer: panel; width: auto; min-width: 0; max-width: {WIZARD_FRAME_MAX_WIDTH};
-    height: auto; max-height: 100%; margin: 0; padding: 1 2;
+    height: {WIZARD_FRAME_HEIGHT}; min-height: {WIZARD_FRAME_HEIGHT};
+    max-height: 100%; margin: 0; padding: 1 2;
     background: $surface; color: $primary-text;
 }}
 """
@@ -157,19 +163,181 @@ def _step_title(step: int) -> Text:
     return title
 
 
-def _detail_row(label: str, value: str, value_style: str = PRIMARY_TEXT_COLOR) -> Text:
-    row = Text()
-    row.append(label.ljust(DETAIL_LABEL_WIDTH), style=SECONDARY_TEXT_COLOR)
-    row.append(value, style=value_style)
-    return row
+class WizardDetailRow(Horizontal):
+    """Render read-only facts with a fixed label and wrapping value column."""
+
+    def __init__(
+        self,
+        label: str,
+        value: str | Text,
+        value_style: str = PRIMARY_TEXT_COLOR,
+        *,
+        widget_id: str | None = None,
+    ) -> None:
+        super().__init__(id=widget_id, classes="wizard-detail-row")
+        self._label = label
+        self._value = value if isinstance(value, Text) else Text(value, style=value_style)
+
+    def compose(self) -> ComposeResult:
+        yield Static(
+            Text(self._label, style=SECONDARY_TEXT_COLOR),
+            classes="wizard-detail-label",
+            markup=False,
+        )
+        yield Static(self._value, classes="wizard-detail-value", markup=False)
+
+    def update_value(self, value: str | Text) -> None:
+        """Replace the complete read-only value while keeping its label column."""
+        self._value = value if isinstance(value, Text) else Text(value, style=PRIMARY_TEXT_COLOR)
+        self.query_one(".wizard-detail-value", Static).update(self._value)
+
+
+def _detail_row(
+    label: str,
+    value: str | Text,
+    value_style: str = PRIMARY_TEXT_COLOR,
+    *,
+    widget_id: str | None = None,
+) -> WizardDetailRow:
+    if isinstance(value, str):
+        value = Text(value, style=value_style)
+    return WizardDetailRow(label, value, widget_id=widget_id)
 
 
 def _section_heading(value: str) -> Text:
     return Text(value, style=f"{STYLE_BOLD} {STEEL_BLUE}")
 
 
-def _entered_path_count(value: str) -> int:
-    return sum(bool(entry.strip()) for entry in value.split(PATH_SEPARATOR))
+def _candidate_add_id(field_id: str, index: int) -> str:
+    return f"{field_id}-candidate-add-{index}"
+
+
+def _repository_checkout(
+    base: str,
+    *,
+    clean: bool,
+    changes: LineChangeStats | None = None,
+    error: str | None = None,
+) -> Text:
+    checkout = Text()
+    checkout.append(base, style=PRIMARY_TEXT_COLOR)
+    checkout.append(" · ", style=SECONDARY_TEXT_COLOR)
+    if clean:
+        checkout.append("clean", style=f"{STYLE_BOLD} {SUCCESS_COLOR}")
+    elif changes is None and error is None:
+        checkout.append("changed · loading line totals…", style=PRIMARY_TEXT_COLOR)
+    elif changes is None:
+        checkout.append(
+            f"changed · line totals unavailable: {error or 'unknown error'}",
+            style=f"{STYLE_BOLD} {AMBER}",
+        )
+    else:
+        checkout.append(f"+{changes.added_lines}", style=SUCCESS_COLOR)
+        checkout.append("  ", style=SECONDARY_TEXT_COLOR)
+        checkout.append(f"{MINUS_SIGN}{changes.deleted_lines}", style=ALERT_COLOR)
+        details: list[str] = []
+        if changes.untracked_paths:
+            label = "path" if changes.untracked_paths == 1 else "paths"
+            details.append(f"{changes.untracked_paths} untracked {label}")
+        if changes.binary_entries:
+            label = "entry" if changes.binary_entries == 1 else "entries"
+            details.append(f"{changes.binary_entries} binary {label}")
+        if details:
+            checkout.append(f" · {' · '.join(details)}", style=AMBER)
+    return checkout
+
+
+class _CandidatePath(Static):
+    class Chosen(Message):
+        def __init__(self, index: int) -> None:
+            super().__init__()
+            self.index = index
+
+    def __init__(self, path: str, index: int) -> None:
+        super().__init__(path, markup=False, classes="candidate-path")
+        self._index = index
+
+    def on_click(self, event: events.Click) -> None:
+        event.stop()
+        self.post_message(self.Chosen(self._index))
+
+
+class CandidateRows(Vertical, can_focus=True):
+    """Render detected paths beside their own Add actions, wrapping paths in place."""
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("up", "move(-1)", "Previous", show=False),
+        Binding("down", "move(1)", "Next", show=False),
+        Binding("enter", "open", "Add", show=False),
+    ]
+
+    class Opened(Message):
+        """The selected candidate was added."""
+
+        def __init__(self, candidate_rows: CandidateRows, index: int) -> None:
+            super().__init__()
+            self._candidate_rows = candidate_rows
+            self.index = index
+
+        @property
+        def control(self) -> CandidateRows:
+            """The candidate rows that posted this message."""
+            return self._candidate_rows
+
+    def __init__(self, widget_id: str, field_id: str, candidates: tuple[str, ...]) -> None:
+        super().__init__(id=widget_id, classes="candidate-list")
+        self._field_id = field_id
+        self._candidates = candidates
+        self._selected = 0
+        self._rows: list[Horizontal] = []
+
+    @property
+    def candidates(self) -> tuple[str, ...]:
+        """Detected project-relative paths in display order."""
+        return self._candidates
+
+    def compose(self) -> ComposeResult:
+        if not self._candidates:
+            yield Static(NO_CANDIDATES, classes="candidate-empty", markup=False)
+        for index, path in enumerate(self._candidates):
+            with Horizontal(classes="wizard-candidate-row") as row:
+                row.set_class(index == self._selected, "-selected")
+                yield _CandidatePath(path, index)
+                yield Button(
+                    "Add",
+                    id=_candidate_add_id(self._field_id, index),
+                    variant="primary",
+                )
+            self._rows.append(row)
+
+    @on(_CandidatePath.Chosen)
+    def _path_chosen(self, message: _CandidatePath.Chosen) -> None:
+        message.stop()
+        self._choose(message.index)
+        self.action_open()
+
+    def set_included(self, included: set[str]) -> None:
+        """Disable Add for paths already included in the editable field."""
+        for index, path in enumerate(self._candidates):
+            button = self.query_one(f"#{_candidate_add_id(self._field_id, index)}", Button)
+            button.disabled = path in included
+
+    def action_move(self, step: int) -> None:
+        """Move the selected candidate within the detected paths."""
+        self._choose(min(max(self._selected + step, 0), max(len(self._candidates) - 1, 0)))
+
+    def action_open(self) -> None:
+        """Add the selected candidate to its editable path field."""
+        if self._candidates:
+            self.post_message(self.Opened(self, self._selected))
+
+    def _choose(self, index: int) -> None:
+        if not 0 <= index < len(self._candidates) or index == self._selected:
+            return
+        self._selected = index
+        for row_index, row in enumerate(self._rows):
+            row.set_class(row_index == index, "-selected")
+        self._rows[index].scroll_visible(animate=False)
 
 
 class InitWizardBody(VerticalScroll):
@@ -208,33 +376,15 @@ class InitWizardApp(App[InitWizardResult | None]):
     }
     #wizard-frame.stable > #wizard-body { height: 1fr; min-height: 0; }
     .wizard-page { height: auto; padding: 0; }
+    #wizard-frame.height-clamped { min-height: 0; }
     #wizard-frame.compact { padding: 0 1; }
     #wizard-frame.compact > #wizard-header { height: auto; min-height: 1; align: left top; }
     #wizard-frame.compact #wizard-title { height: auto; min-height: 1; }
     #wizard-frame.compact > #wizard-body { padding: 0; }
     #wizard-frame.narrow #wizard-hint-left { height: 2; min-height: 2; }
-    .wizard-page Label { height: auto; color: $secondary-text; }
     #wizard-finish-before, #wizard-finish-after { height: auto; min-height: 0; padding: 0; }
-    .wizard-page Input {
-        width: 100%; height: 2; margin-bottom: 1; border: none;
-        border-bottom: solid $neutral-border; padding: 0 1;
-        background: $detail-surface; color: $primary-text;
-    }
-    .wizard-page Input:focus {
-        border-bottom: solid $focus; background: $selected-surface; text-style: reverse;
-    }
-    .wizard-page Select { width: 100%; margin-bottom: 0; }
-    #wizard-frame Select { height: 1; }
-    #wizard-frame SelectCurrent {
-        height: 1; border: none; border-left: solid $neutral-border;
-        padding: 0 1; background: $surface;
-    }
-    #wizard-frame Select:focus > SelectCurrent,
-    #wizard-frame Select.-expanded > SelectCurrent {
-        border-left: solid $focus; background: $selected-surface; text-style: reverse;
-    }
-    #wizard-frame SelectOverlay { border: solid $neutral-border; }
-    #wizard-frame SelectOverlay:focus { border: solid $focus; }
+    #wizard-frame Select { height: 1; margin: 0; }
+    .wizard-description { margin-bottom: 1; }
     .wizard-page Button {
         width: auto; min-width: 0; height: 1; min-height: 1;
         margin: 0 1 0 0; padding: 0 1; border: none;
@@ -257,12 +407,36 @@ class InitWizardApp(App[InitWizardResult | None]):
         border-top: none; border-right: none; border-bottom: none; border-left: none;
     }
     #wizard-navigation Button:focus {
-        color: $primary-text; background: $selected-surface; text-style: reverse;
+        color: $primary-text; background: $selected-surface; text-style: none;
         border: none; border-top: none; border-right: none; border-bottom: none; border-left: none;
     }
     #wizard-navigation Button:disabled {
         color: $secondary-text;
         border: none; border-top: none; border-right: none; border-bottom: none; border-left: none;
+    }
+    #wizard-navigation Button.-primary {
+        color: $steel-blue; background: $surface; text-style: bold;
+    }
+    #wizard-navigation Button.-primary:focus {
+        color: $steel-blue; background: $selected-surface; text-style: bold;
+    }
+    #wizard-navigation Button.-primary:disabled {
+        color: $secondary-text; background: $surface; text-style: none;
+    }
+    .candidate-list { width: 100%; height: auto; }
+    .wizard-candidate-row { width: 100%; height: auto; }
+    .wizard-candidate-row.-selected { background: $selected-surface; }
+    .wizard-candidate-row .candidate-path { width: 1fr; height: auto; }
+    #wizard-frame .wizard-candidate-row Button {
+        width: auto; min-width: 4; height: 1; min-height: 1;
+        margin: 0; padding: 0 1; border: none;
+        color: $steel-blue; background: $surface; text-style: bold;
+    }
+    #wizard-frame .wizard-candidate-row Button:focus {
+        border: none; color: $primary-text; background: $selected-surface; text-style: bold;
+    }
+    #wizard-frame .wizard-candidate-row Button:disabled {
+        border: none; color: $secondary-text; background: $surface; text-style: none;
     }
     #wizard-page-2 .section-heading, #wizard-page-3 .section-heading {
         height: auto; color: $steel-blue; text-style: bold;
@@ -270,6 +444,20 @@ class InitWizardApp(App[InitWizardResult | None]):
     #wizard-cow-result { height: auto; }
     """
         + LADDER_ACTION_CSS
+        + POPUP_COMPACT_CONTROL_CSS
+        + """
+    .wizard-page .palette-row Label { color: $secondary-text; text-style: none; }
+    .wizard-page .wizard-long-label Label { height: auto; }
+    """
+        + f"""
+    #wizard-frame .wizard-wide-label Label {{ width: {DETAIL_LABEL_WIDTH}; }}
+    #wizard-frame .wizard-long-label Label {{ width: {DETAIL_LABEL_WIDTH}; }}
+    .wizard-detail-row {{ width: 100%; height: auto; }}
+    .wizard-detail-row .wizard-detail-label {{
+        width: {DETAIL_LABEL_WIDTH}; height: auto; color: $secondary-text; text-style: none;
+    }}
+    .wizard-detail-row .wizard-detail-value {{ width: 1fr; height: auto; }}
+    """
     )
 
     def __init__(
@@ -358,6 +546,7 @@ class InitWizardApp(App[InitWizardResult | None]):
         )
         frame.set_class(compact, "compact")
         frame.set_class(self.size.width <= WIZARD_HINT_NARROW_WIDTH, "narrow")
+        frame.set_class(self.size.height < WIZARD_FRAME_HEIGHT, "height-clamped")
         frame.update_preferred_size()
         if self._config_path is not None:
             self.call_after_refresh(self._update_doctor_report)
@@ -365,10 +554,16 @@ class InitWizardApp(App[InitWizardResult | None]):
 
     def on_mount(self) -> None:
         self.query_one("#wizard-frame", PopupFrame).visible = False
+        for input_widget in self.query(Input):
+            input_widget.cursor_blink = False
         self._update_pages()
         self._refresh_candidate_rows()
         self.call_after_refresh(self._capture_agent_page_size)
         self.run_worker(self._load_model_catalogs(), group="model-catalogs", exclusive=True)
+        if not self._project.worktree_clean:
+            self.run_worker(
+                self._load_checkout_line_changes(), group="checkout-lines", exclusive=True
+            )
 
     def on_unmount(self) -> None:
         self._stop_art_timer()
@@ -406,6 +601,12 @@ class InitWizardApp(App[InitWizardResult | None]):
         if not self.query_one("#wizard-frame", PopupFrame).visible:
             return
         button_id = event.button.id or ""
+        for field_id, _, candidates in self._candidate_rows():
+            for index, candidate in enumerate(candidates):
+                if button_id == _candidate_add_id(field_id, index):
+                    self._add_candidate(field_id, candidate)
+                    event.stop()
+                    return
         match button_id:
             case "wizard-back":
                 await self._move(-1)
@@ -436,19 +637,17 @@ class InitWizardApp(App[InitWizardResult | None]):
         if event.select.id == INTEGRATION_SELECT_ID:
             self._update_finish_summary()
 
-    @on(RowList.Opened)
-    def _candidate_opened(self, message: RowList.Opened) -> None:
+    @on(CandidateRows.Opened)
+    def _candidate_opened(self, message: CandidateRows.Opened) -> None:
         list_id = message.control.id
         if list_id == TRACKERS_LIST_ID:
             field_id = TRACKERS_INPUT_ID
-            candidates = self._project.trackers
         elif list_id == CACHES_LIST_ID:
             field_id = CACHES_INPUT_ID
-            candidates = self._project.caches
         else:
             return
         message.stop()
-        self._add_candidate(field_id, candidates[message.index])
+        self._add_candidate(field_id, message.control.candidates[message.index])
 
     def _clamp_parallelism(self, field: Input) -> None:
         raw = field.value.strip()
@@ -470,36 +669,45 @@ class InitWizardApp(App[InitWizardResult | None]):
         if candidate not in entries:
             entries.append(candidate)
             field.value = f"{PATH_SEPARATOR} ".join(entries)
+            field.cursor_position = len(field.value)
         self._refresh_candidate_rows()
+        self.call_after_refresh(field.focus)
 
     def _refresh_candidate_rows(self) -> None:
-        rows = (
-            (TRACKERS_INPUT_ID, TRACKERS_LIST_ID, self._project.trackers),
-            (CACHES_INPUT_ID, CACHES_LIST_ID, self._project.caches),
-        )
-        for field_id, list_id, candidates in rows:
+        for field_id, list_id, _candidates in self._candidate_rows():
             input_widget = self.query_one(f"#{field_id}", Input)
-            candidate_list = self.query_one(f"#{list_id}", RowList)
+            candidate_list = self.query_one(f"#{list_id}", CandidateRows)
             included = {
                 entry.strip() for entry in input_widget.value.split(PATH_SEPARATOR) if entry.strip()
             }
-            cells = [
-                RowCells(
-                    lead="",
-                    text=path,
-                    tail=(
-                        Text("Added", style=f"{STYLE_BOLD} {SUCCESS_COLOR}")
-                        if path in included
-                        else None
-                    ),
-                )
-                for path in candidates
-            ]
-            candidate_list.set_rows(
-                cells,
-                selected=candidate_list.selected,
-                empty=NO_CANDIDATES,
+            candidate_list.set_included(included)
+
+    def _candidate_rows(
+        self,
+    ) -> tuple[tuple[str, str, tuple[str, ...]], ...]:
+        return (
+            (TRACKERS_INPUT_ID, TRACKERS_LIST_ID, self._project.trackers),
+            (CACHES_INPUT_ID, CACHES_LIST_ID, self._project.caches),
+        )
+
+    async def _load_checkout_line_changes(self) -> None:
+        try:
+            changes = await self._detectors.working_tree_line_changes()
+        except (OSError, ShikiruError) as error:
+            checkout = _repository_checkout(
+                self._project.base,
+                clean=False,
+                error=str(error) or type(error).__name__,
             )
+        else:
+            checkout = _repository_checkout(
+                self._project.base,
+                clean=False,
+                changes=changes,
+            )
+        if self._config_path is not None:
+            return
+        self.query_one(f"#{REPOSITORY_CHECKOUT_ID}", WizardDetailRow).update_value(checkout)
 
     def action_show_art(self) -> None:
         if self._art_timer is not None:
@@ -577,8 +785,6 @@ class InitWizardApp(App[InitWizardResult | None]):
         return WIZARD_HINTS[self._step]
 
     def _update_finish_summary(self) -> None:
-        tracker_count = _entered_path_count(self.query_one(f"#{TRACKERS_INPUT_ID}", Input).value)
-        cache_count = _entered_path_count(self.query_one(f"#{CACHES_INPUT_ID}", Input).value)
         parallel = self.query_one(f"#{MAX_PARALLEL_INPUT_ID}", Input).value.strip()
         integration_value = cast(
             "Select[str]", self.query_one(f"#{INTEGRATION_SELECT_ID}", Select)
@@ -588,11 +794,8 @@ class InitWizardApp(App[InitWizardResult | None]):
             if isinstance(integration_value, str)
             else INTEGRATION_UNSELECTED
         )
-        summary = (
-            f"{tracker_count} tracker paths · {cache_count} cache paths · "
-            f"Max parallel {parallel or 'needs a value'} · {integration}"
-        )
-        self.query_one("#wizard-summary", Static).update(_detail_row("Summary", summary))
+        summary = f"Max parallel {parallel or 'needs a value'} · {integration}"
+        self.query_one("#wizard-summary", WizardDetailRow).update_value(summary)
 
     def action_cancel(self) -> None:
         if self._writing_config:
@@ -628,13 +831,13 @@ class InitWizardApp(App[InitWizardResult | None]):
                 self._model_catalogs[agent] = catalog
             else:
                 self._catalog_errors[agent] = "agent reported no offered model identifiers"
-        self.query_one("#catalog-discovery", Static).update(self._catalog_summary())
         self.query_one("#ladder-editor", LadderEditor).set_model_catalogs(
             self._model_catalogs, self._catalog_errors
         )
         self.query_one("#ladder-editor", LadderEditor).set_agent_capabilities(
             self._agent_capabilities
         )
+        self.query_one("#catalog-discovery", Static).display = False
         self._catalogs_loaded = True
         self._update_pages()
 
@@ -656,7 +859,7 @@ class InitWizardApp(App[InitWizardResult | None]):
             try:
                 self._read_ladders()
             except ConfigError as error:
-                self._show_error(str(error))
+                self._show_step_error(AGENTS_STEP_INDEX, "ladder-input", error)
                 return
         focused = self.focused
         if focused is not None and focused.id:
@@ -691,9 +894,8 @@ class InitWizardApp(App[InitWizardResult | None]):
             self.query_one("#wizard-finish", Button).focus()
 
     def _focus_candidate_list(self, list_id: str, input_id: str) -> None:
-        candidate_list = self.query_one(f"#{list_id}", RowList)
-        candidates = self._project.trackers if list_id == TRACKERS_LIST_ID else self._project.caches
-        if candidates:
+        candidate_list = self.query_one(f"#{list_id}", CandidateRows)
+        if candidate_list.candidates:
             candidate_list.focus()
         else:
             self.query_one(f"#{input_id}", Input).focus()
@@ -703,7 +905,7 @@ class InitWizardApp(App[InitWizardResult | None]):
             self._cow_supported = await self._detectors.check_cow_support()
         except (OSError, ShikiruError) as error:
             self._error = f"CoW check failed: {error}"
-            self.query_one("#cow-result", Static).update(
+            self.query_one("#cow-result", WizardDetailRow).update_value(
                 Text(self._error, style=f"{STYLE_BOLD} {ALERT_COLOR}")
             )
 
@@ -766,7 +968,10 @@ class InitWizardApp(App[InitWizardResult | None]):
         self._step = step
         self._error = ""
         self._update_pages()
-        self._show_error(str(error))
+        if step == AGENTS_STEP_INDEX:
+            self.query_one("#ladder-editor", LadderEditor).show_validation_error(str(error))
+        else:
+            self._show_error(str(error))
         self.call_after_refresh(lambda: self.query_one(f"#{focus_id}").focus())
 
     def _result(self) -> InitWizardResult:
@@ -844,9 +1049,9 @@ class InitWizardApp(App[InitWizardResult | None]):
         cancel = self.query_one("#wizard-cancel", Button)
         cancel.display = self._config_path is None
         cancel.disabled = self._writing_config
-        cow_result = self.query_one("#cow-result", Static)
+        cow_result = self.query_one("#cow-result", WizardDetailRow)
         if self._cow_supported is not None:
-            cow_result.update(self._cow_status())
+            cow_result.update_value(self._cow_status())
         wizard_error = self.query_one("#wizard-error", Static)
         wizard_error.update(self._error if self._config_path is None else "")
         wizard_error.display = self._config_path is None and bool(self._error)
@@ -884,18 +1089,15 @@ class InitWizardApp(App[InitWizardResult | None]):
         self.call_after_refresh(self._update_navigation_hint)
 
     def _render_doctor_report(self, report_widget: Static, width: int) -> None:
-        path = _detail_row("Config", str(self._config_path))
+        self.query_one("#doctor-config", WizardDetailRow).update_value(str(self._config_path))
         if self._doctor_report is not None:
-            report_widget.update(
-                Group(path, self._doctor_renderer(self._doctor_report, width=width))
-            )
+            report_widget.update(self._doctor_renderer(self._doctor_report, width=width))
         else:
             detail = self._doctor_error or "Doctor did not return a report."
-            report_widget.update(Group(path, Text(detail, style=ALERT_COLOR)))
+            report_widget.update(Text(detail, style=ALERT_COLOR))
 
     def _cow_status(self) -> Text:
-        status = Text("Copy-on-write", style=SECONDARY_TEXT_COLOR)
-        status.append("  ")
+        status = Text()
         if self._cow_supported is None:
             status.append("checking this project filesystem", style=PRIMARY_TEXT_COLOR)
         elif self._cow_supported:
@@ -909,33 +1111,21 @@ class InitWizardApp(App[InitWizardResult | None]):
             )
         return status
 
-    def _catalog_summary(self) -> str:
-        if self._model_catalogs:
-            summary = "Available model choices: " + ", ".join(self._model_catalogs)
-        else:
-            summary = "No detected agent reported selectable model choices."
-        if self._catalog_errors:
-            unavailable = "; ".join(
-                f"{agent}: {detail}" for agent, detail in self._catalog_errors.items()
-            )
-            summary = f"{summary}. Discovery unavailable for {unavailable}."
-        return summary
-
     def _repository_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-0", classes="wizard-page"):
-            yield Static("Read-only facts from the current checkout.", markup=False)
-            yield Static(_detail_row("Project", str(self._root)), markup=False)
-            yield Static(_detail_row("Base", self._project.base), markup=False)
-            yield Static(_detail_row("Config target", str(self._config_target)), markup=False)
-            checkout = Text()
-            checkout.append("Checkout".ljust(DETAIL_LABEL_WIDTH), style=SECONDARY_TEXT_COLOR)
-            checkout.append(self._project.base, style=PRIMARY_TEXT_COLOR)
-            checkout.append(" · ", style=SECONDARY_TEXT_COLOR)
-            checkout.append(
-                "clean" if self._project.worktree_clean else "changed",
-                style=f"{STYLE_BOLD} {SUCCESS_COLOR if self._project.worktree_clean else AMBER}",
+            yield Static(
+                "Read-only facts from the current checkout.",
+                classes="wizard-description",
+                markup=False,
             )
-            yield Static(checkout, id=REPOSITORY_CHECKOUT_ID, markup=False)
+            yield _detail_row("Project", str(self._root))
+            yield _detail_row("Base", self._project.base)
+            yield _detail_row("Config target", str(self._config_target))
+            yield _detail_row(
+                "Checkout",
+                _repository_checkout(self._project.base, clean=self._project.worktree_clean),
+                widget_id=REPOSITORY_CHECKOUT_ID,
+            )
             yield Static("Discovering supported agent model choices…", id="catalog-discovery")
 
     def _trackers_page(self) -> ComposeResult:
@@ -943,12 +1133,14 @@ class InitWizardApp(App[InitWizardResult | None]):
             yield Static(
                 "Tracker files start blank. Select project-relative Markdown candidates "
                 "used as task trackers; an empty field sends no tracker files to tasks.",
+                classes="wizard-description",
                 markup=False,
             )
             yield Static(_section_heading("Detected tracker files"), classes="section-heading")
-            yield RowList(widget_id=TRACKERS_LIST_ID)
-            yield Label("Tracker files")
-            yield Input(id=TRACKERS_INPUT_ID)
+            yield CandidateRows(TRACKERS_LIST_ID, TRACKERS_INPUT_ID, self._project.trackers)
+            with Horizontal(classes="palette-row wizard-wide-label"):
+                yield Label("Tracker files")
+                yield Input(id=TRACKERS_INPUT_ID)
 
     def _caches_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-3", classes="wizard-page"):
@@ -956,48 +1148,47 @@ class InitWizardApp(App[InitWizardResult | None]):
                 "Cache paths start blank and are registered for task worktrees. Select "
                 "detected ignored directories to add; an empty field copies no caches. "
                 "CoW is checked on this project filesystem.",
+                classes="wizard-description",
                 markup=False,
             )
             yield Static(_section_heading("Detected cache directories"), classes="section-heading")
-            yield Static(self._cow_status(), id="cow-result", markup=False)
-            yield RowList(widget_id=CACHES_LIST_ID)
-            yield Label("Cache paths")
-            yield Input(id=CACHES_INPUT_ID)
+            yield _detail_row("Copy-on-write", self._cow_status(), widget_id="cow-result")
+            yield CandidateRows(CACHES_LIST_ID, CACHES_INPUT_ID, self._project.caches)
+            with Horizontal(classes="palette-row wizard-wide-label"):
+                yield Label("Cache paths")
+                yield Input(id=CACHES_INPUT_ID)
 
     def _parallelism_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-4", classes="wizard-page"):
             yield Static(
                 f"The project default is {self._orchestration_defaults.max_parallel} active tasks; "
                 "choose the maximum parallel tasks.",
+                classes="wizard-description",
                 markup=False,
             )
-            yield Label("Maximum parallel tasks")
-            yield Input(
-                value=str(self._orchestration_defaults.max_parallel),
-                id=MAX_PARALLEL_INPUT_ID,
-            )
+            with Horizontal(classes="palette-row wizard-long-label"):
+                yield Label("Maximum parallel")
+                yield Input(
+                    value=str(self._orchestration_defaults.max_parallel), id=MAX_PARALLEL_INPUT_ID
+                )
 
     def _integration_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-5", classes="wizard-page"):
             yield Static(
                 "Choose how completed work is integrated back into the repository.",
+                classes="wizard-description",
                 markup=False,
             )
-            yield Label("Task integration strategy")
-            yield Select(
-                INTEGRATION_OPTIONS,
-                value=self._orchestration_defaults.integration,
-                allow_blank=False,
-                id=INTEGRATION_SELECT_ID,
-            )
-            yield Static(
-                _detail_row("Local merge", "merge a finished task branch locally"),
-                markup=False,
-            )
-            yield Static(
-                _detail_row("Pull request", "open a pull request for review"),
-                markup=False,
-            )
+            with Horizontal(classes="palette-row wizard-long-label"):
+                yield Label("Integration mode")
+                yield Select(
+                    INTEGRATION_OPTIONS,
+                    value=self._orchestration_defaults.integration,
+                    allow_blank=False,
+                    id=INTEGRATION_SELECT_ID,
+                )
+            yield _detail_row("Local merge", "merge a finished task branch locally")
+            yield _detail_row("Pull request", "open a pull request for review")
 
     def _finish_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-6", classes="wizard-page"):
@@ -1006,9 +1197,13 @@ class InitWizardApp(App[InitWizardResult | None]):
                     "Finish writes .shikiru/config.toml, excludes .shikiru/ in Git, "
                     "and runs Doctor.",
                     id="wizard-finish-hint",
+                    classes="wizard-description",
                     markup=False,
                 )
-                yield Static(_detail_row("Config", str(self._config_target)), markup=False)
-                yield Static("", id="wizard-summary", markup=False)
+                yield _detail_row(
+                    "Config", str(self._config_target), widget_id="wizard-config-target"
+                )
+                yield _detail_row("Summary", "", widget_id="wizard-summary")
             with Vertical(id="wizard-finish-after"):
+                yield _detail_row("Config", str(self._config_target), widget_id="doctor-config")
                 yield Static("", id="doctor-report", markup=False)

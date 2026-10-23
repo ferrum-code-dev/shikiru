@@ -53,6 +53,7 @@ EFFORT_PROMPT = "Native default"
 EMPTY_LADDER_LABEL = "No entries yet"
 LADDER_SEPARATOR = ", "
 RUNG_SEPARATOR = ":"
+SCOPE_LABEL_WIDTH = 22
 HELPER_CAPABILITY_GUIDANCE = "Helper entries require an installed agent with headless support."
 MODEL_CATALOG_GUIDANCE = (
     "Install or repair the agent CLI, restart init, or choose an available agent."
@@ -62,13 +63,13 @@ LADDER_ACTION_CSS = """
     width: auto; min-width: 0; height: 1; min-height: 1;
     margin: 0; padding: 0 1; border: none; border-top: none;
     border-right: none; border-bottom: none; border-left: none;
-    background: $surface; color: $primary-text; text-opacity: 1; text-style: none;
+    background: $selected-surface; color: $primary-text; text-opacity: 1; text-style: bold;
 }
 #wizard-frame #ladder-editor #ladder-add:disabled {
-    color: $secondary-text; text-opacity: 1;
+    background: $surface; color: $secondary-text; text-opacity: 1; text-style: none;
 }
 #wizard-frame #ladder-editor #ladder-add:focus {
-    color: $primary-text; background: $selected-surface; text-style: reverse;
+    color: $background; background: $focus; text-style: bold;
 }
 """
 
@@ -84,26 +85,22 @@ class LadderEditor(Vertical):
 
     DEFAULT_CSS = """
     LadderEditor { height: auto; min-height: 0; }
-    #ladder-scope-title, #ladder-form-title {
+    #ladder-description { margin-bottom: 1; }
+    #ladder-scope-title, #ladder-input-title {
         width: 100%; height: auto; color: $steel-blue; text-style: bold;
     }
-    #ladder-input-title, #ladder-input-guidance {
-        width: 100%; height: auto; color: $secondary-text;
-    }
-    #ladder-input-guidance { color: $primary-text; }
+    #ladder-inheritance-context { width: 100%; height: auto; color: $secondary-text; }
     #ladder-scopes { height: auto; }
-    #ladder-input { width: 100%; height: 1; margin: 0; }
+    #ladder-scopes .row-list-row { height: auto; }
+    #ladder-input { width: 1fr; height: 1; margin: 0; }
     #ladder-input:focus { background: $selected-surface; }
     #ladder-problem { height: auto; color: $dusty-rose; }
     #ladder-form { height: auto; width: 100%; }
-    #ladder-form Label { width: 100%; height: 1; color: $secondary-text; }
-    #ladder-form Select { width: 100%; height: 1; margin: 0; }
-    #ladder-add-row { height: 1; width: 100%; align: right middle; }
+    #ladder-add-row { height: 1; width: 100%; align: left middle; }
     #ladder-add {
         width: auto; min-width: 0; height: 1; min-height: 1; margin: 0;
         padding: 0 1; border: none;
     }
-    #ladder-add:focus { color: $primary-text; background: $selected-surface; text-style: reverse; }
     #ladder-guidance { height: auto; color: $secondary-text; }
     """
 
@@ -120,37 +117,38 @@ class LadderEditor(Vertical):
         self._new_agent = ""
         self._new_model = ""
         self._new_effort: str | None = None
+        self._validation_requested = False
+        self._validation_errors: dict[tuple[str, ComplexityName | None], tuple[str, str]] = {}
 
     def compose(self) -> ComposeResult:
-        yield Label(Text("Agent ladders", style=BOLD_STEEL), id="ladder-scope-title")
+        yield Static(
+            "Leader, Implementer and Helper use ordered agent:model[:effort] entries. "
+            "Blank Implementer Low, Normal and High fields inherit Base; entering text "
+            "creates an override. Choose installed agents and supported models, then Add "
+            "appends an entry.",
+            id="ladder-description",
+            markup=False,
+        )
+        yield Label(Text("Role and complexity ladders", style=BOLD_STEEL), id="ladder-scope-title")
         yield RowList(widget_id="ladder-scopes")
-        yield Label(
-            Text(
-                "Selected ladder · comma-separated agent:model[:effort]",
-                style=SECONDARY_TEXT_COLOR,
-            ),
-            id="ladder-input-title",
-        )
-        yield Label(
-            Text(
-                "Edit text directly; blank Low/Normal/High inherit Base. "
-                "Agent/Model/Effort plus Add appends.",
-                style=PRIMARY_TEXT_COLOR,
-            ),
-            id="ladder-input-guidance",
-        )
-        yield Input(value="", id=LADDER_INPUT[1:])
+        yield Label("", id="ladder-input-title")
+        yield Static("", id="ladder-inheritance-context", markup=False)
+        with Horizontal(classes="palette-row wizard-long-label"):
+            yield Label("Ladder entries")
+            yield Input(value="", id=LADDER_INPUT[1:], select_on_focus=False)
         yield Static("", id="ladder-problem", markup=False)
         with Vertical(id="ladder-form"):
-            yield Label(Text("Add a supported entry", style=BOLD_STEEL), id="ladder-form-title")
-            yield Label(Text("Agent", style=SECONDARY_TEXT_COLOR))
-            yield Select((), allow_blank=True, prompt=AGENT_PROMPT, id=AGENT_SELECT[1:])
-            yield Label(Text("Model", style=SECONDARY_TEXT_COLOR))
-            yield Select((), allow_blank=True, prompt=MODEL_PROMPT, id=MODEL_SELECT[1:])
-            yield Label(Text("Effort", style=SECONDARY_TEXT_COLOR))
-            yield Select((), allow_blank=True, prompt=EFFORT_PROMPT, id=EFFORT_SELECT[1:])
+            with Horizontal(classes="palette-row"):
+                yield Label("Agent")
+                yield Select((), allow_blank=True, prompt=AGENT_PROMPT, id=AGENT_SELECT[1:])
+            with Horizontal(classes="palette-row"):
+                yield Label("Model")
+                yield Select((), allow_blank=True, prompt=MODEL_PROMPT, id=MODEL_SELECT[1:])
+            with Horizontal(classes="palette-row"):
+                yield Label("Effort")
+                yield Select((), allow_blank=True, prompt=EFFORT_PROMPT, id=EFFORT_SELECT[1:])
             with Horizontal(id="ladder-add-row"):
-                yield Button("Add", id=ADD_RUNG)
+                yield Button("Add", id=ADD_RUNG, variant="primary")
         yield Static("", id="ladder-guidance", markup=False)
 
     def on_mount(self) -> None:
@@ -191,11 +189,15 @@ class LadderEditor(Vertical):
             self._new_model = ""
             self._new_effort = None
             self._refresh_form()
+            self.call_after_refresh(self.query_one(MODEL_SELECT, Select).focus)
         elif control_id == MODEL_SELECT[1:]:
             selected = event.value if isinstance(event.value, str) else ""
             self._new_model = selected if self._model_offered(self._new_agent, selected) else ""
             self._new_effort = None
             self._refresh_form()
+            effort_select = cast("Select[str]", self.query_one(EFFORT_SELECT, Select))
+            if not effort_select.disabled:
+                self.call_after_refresh(effort_select.focus)
         elif control_id == EFFORT_SELECT[1:]:
             selected = event.value if isinstance(event.value, str) else ""
             self._new_effort = selected or None
@@ -239,6 +241,8 @@ class LadderEditor(Vertical):
             self._refresh_scope()
 
     def configuration(self) -> LadderConfiguration:
+        self._validation_requested = True
+        self._validation_errors.clear()
         ladders: dict[str, tuple[Rung, ...]] = {}
         complexity: dict[ComplexityName, tuple[Rung, ...]] = {}
         for index, key in enumerate(SCOPE_KEYS):
@@ -252,6 +256,13 @@ class LadderEditor(Vertical):
             else:
                 complexity[context] = rungs
         return LadderConfiguration(ladders, complexity)
+
+    def show_validation_error(self, message: str) -> None:
+        """Show the submitted scope error beside its editable ladder field."""
+        self._validation_requested = True
+        key = self._scope_key()
+        self._validation_errors[key] = (self._drafts[key], message)
+        self._update_problem(message)
 
     def _validated_scope(
         self,
@@ -300,6 +311,7 @@ class LadderEditor(Vertical):
         try:
             parse_ladder_text(raw)
         except LadderTextError as error:
+            self._validation_requested = True
             self._update_problem(f"Entry {error.entry_index + 1}: {error.detail}")
             self.call_after_refresh(self.query_one(LADDER_INPUT, Input).focus)
             return
@@ -315,7 +327,6 @@ class LadderEditor(Vertical):
         self._draft_cursors[key] = len(updated)
         field.value = updated
         field.cursor_position = len(updated)
-        self._clear_form()
         self._refresh_scope()
         self.call_after_refresh(field.focus)
 
@@ -323,55 +334,55 @@ class LadderEditor(Vertical):
         if not self.is_mounted:
             return
         field = self.query_one(LADDER_INPUT, Input)
+        key = self._scope_key()
         self.query_one("#ladder-input-title", Label).update(
-            Text(
-                f"{SCOPE_LABELS[self._scope_key()]} · comma-separated agent:model[:effort]",
-                style=SECONDARY_TEXT_COLOR,
-            )
+            Text(f"Edit {SCOPE_LABELS[key]}", style=BOLD_STEEL)
         )
-        raw = self._drafts[self._scope_key()]
+        raw = self._drafts[key]
+        inherited = key[0] == Role.IMPLEMENTER.value and key[1] is not None and not raw.strip()
+        base = self._drafts[(Role.IMPLEMENTER.value, None)]
+        inheritance = f"Blank inherits Implementer · Base: {base or '(empty)'}" if inherited else ""
+        inheritance_widget = self.query_one("#ladder-inheritance-context", Static)
+        inheritance_widget.update(inheritance)
+        inheritance_widget.display = bool(inheritance)
         if field.value != raw:
             field.value = raw
-        field.cursor_position = min(self._draft_cursors[self._scope_key()], len(raw))
+        field.cursor_position = min(self._draft_cursors[key], len(raw))
         self._refresh_rows()
         self._refresh_form()
         self._refresh_problem()
-        self.query_one("#ladder-guidance", Static).update(
-            Text(self._guidance(), style=SECONDARY_TEXT_COLOR)
-        )
+        guidance = self.query_one("#ladder-guidance", Static)
+        guidance_text = self._guidance()
+        guidance.update(Text(guidance_text, style=SECONDARY_TEXT_COLOR))
+        guidance.display = bool(guidance_text)
 
     def _refresh_rows(self) -> None:
-        rows = tuple(
-            RowCells(lead=str(index + 1), text=self._scope_summary(key))
-            for index, key in enumerate(SCOPE_KEYS)
-        )
+        rows = tuple(self._scope_row(key) for key in SCOPE_KEYS)
         self.query_one("#ladder-scopes", RowList).set_rows(
             rows,
             selected=self._selected_scope,
             empty=EMPTY_LADDER_LABEL,
         )
 
-    def _scope_summary(self, key: tuple[str, ComplexityName | None]) -> Text:
+    def _scope_row(self, key: tuple[str, ComplexityName | None]) -> RowCells:
         raw = self._drafts[key]
         label = SCOPE_LABELS[key]
         selected = SCOPE_KEYS.index(key) == self._selected_scope
         emphasis = f"{STYLE_BOLD} " if selected else ""
         if key[0] == Role.IMPLEMENTER.value and key[1] is not None and not raw.strip():
-            summary = "inherits Base"
-        elif not raw:
-            summary = "needs entries"
+            base = self._drafts[(Role.IMPLEMENTER.value, None)]
+            summary = f"inherits Base · {base or '(empty)'}"
         else:
-            try:
-                parse_ladder_text(raw)
-            except LadderTextError:
-                summary = "check entries"
-            else:
-                summary = raw
-        text = Text()
-        text.append(label, style=f"{emphasis}{SECONDARY_TEXT_COLOR}")
-        text.append(" · ", style=SECONDARY_TEXT_COLOR)
-        text.append(summary, style=f"{emphasis}{PRIMARY_TEXT_COLOR}")
-        return text
+            summary = raw or "(empty)"
+        return RowCells(
+            lead="",
+            text="",
+            columns=(
+                Text(label, style=f"{emphasis}{SECONDARY_TEXT_COLOR}"),
+                Text(summary, style=f"{emphasis}{PRIMARY_TEXT_COLOR}"),
+            ),
+            column_width=SCOPE_LABEL_WIDTH,
+        )
 
     def _refresh_form(self) -> None:
         agent_select = cast("Select[str]", self.query_one(AGENT_SELECT, Select))
@@ -385,7 +396,7 @@ class LadderEditor(Vertical):
         model_select.disabled = not self._new_agent or not models
         efforts = self._effort_options(self._new_agent, self._new_model)
         self._set_select_options(effort_select, efforts, self._new_effort)
-        effort_select.disabled = not self._new_model
+        effort_select.disabled = not self._new_model or not efforts
         self._refresh_add_button()
 
     def _refresh_add_button(self) -> None:
@@ -394,7 +405,17 @@ class LadderEditor(Vertical):
         button.disabled = rung is None or not self._valid_catalog_choice(rung)
 
     def _refresh_problem(self) -> None:
-        raw = self._drafts[self._scope_key()]
+        if not self._validation_requested:
+            self._update_problem("")
+            return
+        key = self._scope_key()
+        raw = self._drafts[key]
+        validation = self._validation_errors.get(key)
+        if validation is not None:
+            if validation[0] == raw:
+                self._update_problem(validation[1])
+                return
+            del self._validation_errors[key]
         try:
             parse_ladder_text(raw)
         except LadderTextError as error:
@@ -403,7 +424,9 @@ class LadderEditor(Vertical):
             self._update_problem("")
 
     def _update_problem(self, message: str) -> None:
-        self.query_one("#ladder-problem", Static).update(Text(message, style=DUSTY_ROSE))
+        problem = self.query_one("#ladder-problem", Static)
+        problem.update(Text(message, style=DUSTY_ROSE))
+        problem.display = bool(message)
 
     def _set_select_options(
         self,
@@ -496,14 +519,18 @@ class LadderEditor(Vertical):
         return "Helper requires an agent with headless support"
 
     def _guidance(self) -> str:
-        parts = ["Choose only listed models and their reported efforts."]
-        if _is_helper_scope(self._scope_key()):
-            parts.append(HELPER_CAPABILITY_GUIDANCE)
+        parts: list[str] = []
+        if not self._catalogs and not self._catalog_errors:
+            parts.append(MODEL_CATALOG_GUIDANCE)
         if self._catalog_errors:
             failures = "; ".join(
                 f"{agent}: {detail}" for agent, detail in self._catalog_errors.items()
             )
             parts.append(f"Model discovery unavailable for {failures}. {MODEL_CATALOG_GUIDANCE}")
+        if _is_helper_scope(self._scope_key()) and not any(
+            self._headless_available(agent) for agent in self._catalogs
+        ):
+            parts.append(HELPER_CAPABILITY_GUIDANCE)
         return " ".join(parts)
 
     @staticmethod

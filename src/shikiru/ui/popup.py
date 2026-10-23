@@ -260,6 +260,25 @@ POPUP_CONTROL_CSS = """
 }
 """
 
+POPUP_COMPACT_CONTROL_CSS = """
+.palette-row { layout: horizontal; height: auto; margin-bottom: 0; }
+.palette-row Label { width: 9; height: 1; color: $secondary-text; text-style: none; }
+.palette-row Input, .palette-row Select { width: 1fr; }
+.palette-row Input {
+    height: 1; border: none; padding: 0 1; background: $surface;
+}
+.palette-row Input:focus {
+    border: none; background: $selected-surface; text-style: none;
+}
+.popup-frame .palette-row SelectCurrent {
+    height: 1; border: none; padding: 0 1; background: $detail-surface;
+}
+.popup-frame .palette-row Select:focus > SelectCurrent,
+.popup-frame .palette-row Select.-expanded > SelectCurrent {
+    border: none; background: $selected-surface;
+}
+"""
+
 POPUP_CSS = (
     """
 .popup-frame {
