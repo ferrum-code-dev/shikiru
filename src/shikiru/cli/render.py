@@ -1002,7 +1002,12 @@ def _quota_cell(windows: list[QuotaWindow], *, quota_warn_pct: int, quota_alert_
         if cell:
             cell.append(" · " if reported_periods else " / ", style=SECONDARY_TEXT_COLOR)
         cell.append_text(
-            Gauge(window.name, window.used_pct, quota_warn_pct, quota_alert_pct).render()
+            Gauge(
+                "" if window.name in QUOTA_PROVIDER_SLOTS else window.name,
+                window.used_pct,
+                quota_warn_pct,
+                quota_alert_pct,
+            ).render()
         )
     return cell
 

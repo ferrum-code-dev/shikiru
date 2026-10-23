@@ -378,9 +378,7 @@ async def test_task_detail_contains_events_reports_branches_and_sessions(
         "claude",
         "42%",
         "28%",
-        "primary",
         "52%",
-        "secondary",
         "20%",
     )
     missing_project_facts = {
