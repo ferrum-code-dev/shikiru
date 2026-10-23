@@ -10,10 +10,12 @@ from shikiru.config.settings import (
     ComplexityLadder,
     DashboardConfig,
     GaugesConfig,
+    RoleConfig,
+    RolesConfig,
     Settings,
     TitlesConfig,
 )
-from tests.support.factories import HELPER_RUNG, make_settings
+from tests.support.factories import make_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -43,9 +45,16 @@ def test_settings_rejects_a_ladder_agent_with_no_agents_table(
         build()
 
 
-def test_settings_rejects_multiple_helper_rungs() -> None:
+def test_settings_rejects_an_empty_helper_ladder() -> None:
+    settings = make_settings()
+    roles = RolesConfig(
+        leader=settings.roles.leader,
+        implementer=settings.roles.implementer,
+        helper=RoleConfig(ladder=[]),
+    )
+
     with pytest.raises(ValidationError):
-        make_settings(helper_ladder=[HELPER_RUNG, Rung(agent="codex", model="sol", effort="high")])
+        Settings.model_validate({**dict(settings), "roles": roles})
 
 
 def test_dashboard_rejects_a_recent_limit_smaller_than_its_window() -> None:

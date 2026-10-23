@@ -333,8 +333,8 @@ class Settings(ConfigModel):
         return self
 
     @model_validator(mode="after")
-    def _helper_ladder_has_one_rung(self) -> Settings:
-        if len(self.roles.helper.ladder) != 1:
-            message = "roles.helper.ladder must contain exactly one rung"
+    def _helper_ladder_is_nonempty(self) -> Settings:
+        if not self.roles.helper.ladder:
+            message = "roles.helper.ladder must contain at least one rung"
             raise ValueError(message)
         return self

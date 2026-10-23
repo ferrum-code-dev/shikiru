@@ -311,7 +311,7 @@ After exit the plugin reads the session log `~/.codex/sessions/**/rollout-*-<thr
 
 ## 6. Helper (Joshu)
 
-The `Helper` uses the single `roles.helper.ladder` rung through `Agent.headless()`. Settings reject a helper ladder with more than one rung because helper fallback is not implemented. `bootstrap` rejects a helper whose agent has no headless support.
+The `Helper` uses `roles.helper.ladder` in order through `Agent.headless()`. Settings require at least one rung, preserve single-entry configurations, and validate each configured agent through its plugin factory and headless capability in `bootstrap`. Each call uses the rung's agent, model and effort. The first valid structured answer ends the ladder; failed calls and invalid or explicit unrecoverable answers continue to the next rung. A valid `UNKNOWN` or low-confidence classification is still an answer, and the engine applies its existing classification policy. Exhaustion returns `Unrecoverable` with the attempt evidence. Cancellation stops the ladder. The configured Helper timeout is one maximum duration for the whole call, shared across rungs.
 
 | Call | Input | Output |
 |---|---|---|

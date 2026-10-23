@@ -76,8 +76,6 @@ class TurnHeld(Exception):
 
 
 class _HelperCall(TypedDict):
-    model: str
-    effort: str | None
     cwd: Path
     timeout: timedelta
 
@@ -312,10 +310,7 @@ class TurnRunner:
         link.symlink_to(turn_dir)
 
     def _helper_call(self, task: Task) -> _HelperCall:
-        rung = self._settings.roles.helper.ladder[0]
         return _HelperCall(
-            model=rung.model,
-            effort=rung.effort,
             cwd=task_root(self._project_root, task.id),
             timeout=timedelta(seconds=self._settings.orchestration.timeouts.helper),
         )

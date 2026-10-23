@@ -80,7 +80,7 @@ from shikiru.engine.turn_loop import TurnLoop
 from shikiru.engine.turn_processes import TurnProcesses
 from shikiru.engine.turns import TurnRunner
 from shikiru.errors import ConfigError
-from shikiru.helper.helper import Helper
+from shikiru.helper.helper import Helper, HelperEntry
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.detectors import InitWizardResult, ProjectDetectors
 from shikiru.operator.doctor import Doctor
@@ -687,8 +687,11 @@ def build_engine(
     agent_pool = AgentPool(
         resolved_registry.create, resolved_runner, resolved_settings, resolved_clock
     )
-    helper_rung = resolved_settings.roles.helper.ladder[0]
-    helper = Helper(agent_pool.get(helper_rung.agent))
+    helper_entries = tuple(
+        HelperEntry(rung, agent_pool.get(rung.agent))
+        for rung in resolved_settings.roles.helper.ladder
+    )
+    helper = Helper(helper_entries, resolved_clock)
     connection = Database(state_db_path(project_root)).connect()
     tasks = TaskStore(connection, resolved_clock)
     runs = RunStore(connection, resolved_clock)

@@ -48,7 +48,7 @@ tool = 7200                                     # no stream event while a tool r
 max_quota_wait = 28800
 integration_wait = 1800
 pr_wait = 604800                                # an open PR unmerged this long escalates
-helper = 300                                    # maximum duration for helper turns
+helper = 300                                    # maximum duration for the complete Helper ladder
 cache_copy = 600                                # one `repo.caches` copy-on-write copy
 git_command = 120                               # one git call (status, worktree add/remove, rebase, merge)
 
@@ -92,8 +92,6 @@ ladder = [
 
 [roles.helper]
 ladder = [ { agent = "claude", model = "haiku", effort = "low" } ]
-
-# `roles.helper.ladder` must contain exactly one rung until helper fallback is implemented.
 
 [dashboard]
 widgets = ["header", "escalations", "strips", "queue", "dialogue", "usage", "resources", "docker", "disk", "faults"]
@@ -160,6 +158,10 @@ command_days = 30                               # answered commands
 probe_timeout = 180                             # seconds per `doctor --probe` live turn
 probe_stream_tail_lines = 20                    # stream lines shown when a probe fails
 ```
+
+`roles.helper.ladder` must be nonempty. Its entries are tried in order, and existing one-entry
+configurations remain valid. `orchestration.timeouts.helper` bounds the complete Helper call;
+each rung receives the time remaining in that shared budget.
 
 Projects without an explicit `dashboard.layout` inherit this packaged task-window layout. Existing
 project files that declare a layout keep that override unchanged; remove or edit the override to

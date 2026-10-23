@@ -31,7 +31,7 @@ from shikiru.engine.titles import TaskTitles
 from shikiru.engine.transitions import TransitionWriter
 from shikiru.engine.turn_processes import TurnProcesses
 from shikiru.engine.turns import TurnRunner
-from shikiru.helper.helper import Helper
+from shikiru.helper.helper import Helper, HelperEntry
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
 from shikiru.store.commands import CommandQueue, CommandStatus
@@ -229,7 +229,10 @@ def build_turn_system(
         project_root=project_root,
         settings=settings,
     )
-    helper = Helper(agents.get(settings.roles.helper.ladder[0].agent))
+    helper_entries = tuple(
+        HelperEntry(rung, agents.get(rung.agent)) for rung in settings.roles.helper.ladder
+    )
+    helper = Helper(helper_entries, clock)
 
     async def refresh_titles(task: Task) -> None:
         await titles.refresh(task)

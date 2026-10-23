@@ -583,7 +583,9 @@ async def test_unrecoverable_report_escalates_as_agent_protocol(
     [helper_event] = build_flow(engine_env, settings, clock=clock).events.since(
         0, kinds=[EventKind.HELPER_ACTION], task_id=task_id
     )
-    assert helper_event.data == {"role": Role.LEADER.value, "reason": "no report"}
+    assert helper_event.data["role"] == Role.LEADER.value
+    assert "fake:fake-1/None" in helper_event.data["reason"]
+    assert "no report" in helper_event.data["reason"]
 
 
 @pytest.mark.parametrize("hold", [Hold.PAUSED, Hold.INTERVENTION])
