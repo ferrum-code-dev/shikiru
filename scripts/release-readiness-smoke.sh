@@ -113,7 +113,7 @@ data = {
     "home_dashboard_pane_after_merge": sys.argv[8],
     "task_result": "T-1 merged on main and A1 ticked from interactive quickstart" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
     "agent_cost": "unknown; test-only fake agent reports no billed cost",
-    "limitation": "The existing test-only fake-agent plugin and pytest (needed by its test-kit import) were injected only into this disposable tool environment for repeatable unauthenticated packaging and CLI smoke coverage; native E1-E6 evidence is separate.",
+    "limitation": "The existing test-only fake-agent plugin and pytest (needed by its test-kit import) were injected only into this disposable tool environment for repeatable unauthenticated packaging and CLI smoke coverage; no paid-provider or real-project reliability claim is made.",
     "log": f"build/release-readiness/{sys.argv[4]}.log",
 }
 artifact.write_text(json.dumps(data, indent=2) + "\n")

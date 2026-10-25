@@ -958,8 +958,8 @@ function makeButton(parent, label, id, onClick, options = {}) {
 
 function displaySessionRows(parent, wide) {
   const rows = [
-    {name: "[shikiru] demo", path: "/Users/pavel/Projects/demo", engine: "up", running: 2, queued: 2, escalated: 1},
-    {name: "[shikiru] docs", path: "/Users/pavel/Projects/docs", engine: "down", running: 0, queued: 1, escalated: 0}
+    {name: "[shikiru] demo", path: "/projects/demo", engine: "up", running: 2, queued: 2, escalated: 1},
+    {name: "[shikiru] docs", path: "/projects/docs", engine: "down", running: 0, queued: 1, escalated: 0}
   ];
   const table = node("div", `session-table${wide ? " wide" : ""}`);
   const heading = node("div", "session-row session-heading");
@@ -982,8 +982,8 @@ function displaySessionRows(parent, wide) {
 
 function displayNumberedSessionRows(parent, wide) {
   const rows = [
-    {number: "1", name: "[shikiru] demo", path: "/Users/pavel/Projects/demo", engine: "up", running: 2, queued: 2, escalated: 1},
-    {number: "2", name: "[shikiru] docs", path: "/Users/pavel/Projects/docs", engine: "down", running: 0, queued: 1, escalated: 0}
+    {number: "1", name: "[shikiru] demo", path: "/projects/demo", engine: "up", running: 2, queued: 2, escalated: 1},
+    {number: "2", name: "[shikiru] docs", path: "/projects/docs", engine: "down", running: 0, queued: 1, escalated: 0}
   ];
   const table = node("div", `session-table numbered${wide ? " wide" : ""}`);
   const heading = node("div", "numbered-session-row session-heading");
@@ -1009,8 +1009,8 @@ function unhealthySessions(remote) {
     {session: "[shikiru] build-cache", tmuxId: "$8", project: "/srv/build/cache"},
     {session: "[shikiru] old-docs", tmuxId: "$9", project: "/srv/build/docs"}
   ] : [
-    {session: "[shikiru] archive", tmuxId: "$7", project: "/Users/pavel/Projects/archive"},
-    {session: "[shikiru] old-docs", tmuxId: "$8", project: "/Users/pavel/Projects/old-docs"}
+    {session: "[shikiru] archive", tmuxId: "$7", project: "/projects/archive"},
+    {session: "[shikiru] old-docs", tmuxId: "$8", project: "/projects/old-docs"}
   ];
 }
 
@@ -1046,30 +1046,30 @@ function renderCommand(id, scenario, view) {
   if (id === "init_yes") {
     if (scenario === "Initialized") {
       appendOutcome(view, "success", "Project initialized");
-      appendDetails(view, [["Config", "/Users/pavel/Projects/demo/.shikiru/config.toml"], ["Models", "Generated model fields use editable defaults."]]);
+      appendDetails(view, [["Config", "/projects/demo/.shikiru/config.toml"], ["Models", "Generated model fields use editable defaults."]]);
       appendActions(view, "Next step", [
         {label: "Review", instruction: "Select supported models and efforts."},
         {label: "Doctor", instruction: "Verify the project before start.", command: "shikiru doctor"}
       ]);
     } else if (scenario === "Not a Git repository") {
       appendOutcome(view, "error", "The project directory is not inside a Git repository");
-      appendDetails(view, [["Project", "/Users/pavel/Projects/scratch"], ["Cause", "No Git worktree contains the selected directory."]]);
+      appendDetails(view, [["Project", "/projects/scratch"], ["Cause", "No Git worktree contains the selected directory."]]);
       appendActions(view, "Repair", [
-        {label: "Repository", instruction: "For a new Git project, create its repository here.", command: "git -C /Users/pavel/Projects/scratch init"},
-        {label: "First commit", instruction: "After repository initialization, create an empty first commit.", command: "git -C /Users/pavel/Projects/scratch commit --allow-empty -m 'Initial commit'"},
-        {label: "Project", instruction: "Choose an existing repository root instead.", command: "shikiru --project /Users/pavel/Projects/repo init --yes"}
+        {label: "Repository", instruction: "For a new Git project, create its repository here.", command: "git -C /projects/scratch init"},
+        {label: "First commit", instruction: "After repository initialization, create an empty first commit.", command: "git -C /projects/scratch commit --allow-empty -m 'Initial commit'"},
+        {label: "Project", instruction: "Choose an existing repository root instead.", command: "shikiru --project /projects/repo init --yes"}
       ]);
     } else if (scenario === "Not at repository root") {
       appendOutcome(view, "error", "The selected project directory is below the Git repository root");
-      appendDetails(view, [["Project", "/Users/pavel/Projects/repo/tools"], ["Repository root", "/Users/pavel/Projects/repo"]]);
+      appendDetails(view, [["Project", "/projects/repo/tools"], ["Repository root", "/projects/repo"]]);
       appendActions(view, "Repair", [
-        {label: "Project", instruction: "Run initialization from the repository root.", command: "shikiru --project /Users/pavel/Projects/repo init --yes"}
+        {label: "Project", instruction: "Run initialization from the repository root.", command: "shikiru --project /projects/repo init --yes"}
       ]);
     } else {
       appendOutcome(view, "error", "The Git repository has no commits");
-      appendDetails(view, [["Project", "/Users/pavel/Projects/scratch"], ["Cause", "The repository exists, but HEAD does not identify a commit."]]);
+      appendDetails(view, [["Project", "/projects/scratch"], ["Cause", "The repository exists, but HEAD does not identify a commit."]]);
       appendActions(view, "Repair", [
-        {label: "First commit", instruction: "Create an empty initial commit; no files need to be staged.", command: "git -C /Users/pavel/Projects/scratch commit --allow-empty -m 'Initial commit'"}
+        {label: "First commit", instruction: "Create an empty initial commit; no files need to be staged.", command: "git -C /projects/scratch commit --allow-empty -m 'Initial commit'"}
       ]);
     }
     return;
@@ -1079,7 +1079,7 @@ function renderCommand(id, scenario, view) {
     else if (scenario === "Already running") appendOutcome(view, "success", "Engine already running");
     else {
       appendOutcome(view, "error", "This project has not been initialized");
-      appendDetails(view, [["Project", "/Users/pavel/Projects/demo"], ["Cause", ".shikiru/config.toml is missing."]]);
+      appendDetails(view, [["Project", "/projects/demo"], ["Cause", ".shikiru/config.toml is missing."]]);
       appendActions(view, "Repair", [
         {label: "Initialize", instruction: "Create project state here.", command: "shikiru init"},
         {label: "Project", instruction: "Choose another project root.", command: "shikiru --project PATH start"},
@@ -1155,10 +1155,10 @@ function renderCommand(id, scenario, view) {
     }
     if (scenario === "Missing project state") {
       appendOutcome(view, "error", "The retained session has no usable project state");
-      appendDetails(view, [["Session", "[shikiru] archive"], ["Tmux ID", "$7"], ["Project", "/Users/pavel/Projects/archive"], ["Cause", "Project state is missing: .shikiru/state.db and config.toml are absent."]]);
+      appendDetails(view, [["Session", "[shikiru] archive"], ["Tmux ID", "$7"], ["Project", "/projects/archive"], ["Cause", "Project state is missing: .shikiru/state.db and config.toml are absent."]]);
       appendActions(view, "Repair", [
         {label: "Session", instruction: "Remove the retained session if it is no longer needed.", command: "tmux kill-session -t '$7'"},
-        {label: "Project", instruction: "Initialize fresh state if intended; this cannot recover task data if its database was already deleted.", command: "shikiru --project /Users/pavel/Projects/archive init"}
+        {label: "Project", instruction: "Initialize fresh state if intended; this cannot recover task data if its database was already deleted.", command: "shikiru --project /projects/archive init"}
       ]);
       return;
     }
@@ -1786,9 +1786,9 @@ function renderPathPage(body, kind) {
 
 function renderRepository(body) {
   appendLine(body, "Read-only facts from the current checkout.", "description");
-  readRow(body, "Project", "/Users/pavel/Projects/demo");
+  readRow(body, "Project", "/projects/demo");
   readRow(body, "Base", "main");
-  readRow(body, "Config target", "/Users/pavel/Projects/demo/.shikiru/config.toml");
+  readRow(body, "Config target", "/projects/demo/.shikiru/config.toml");
   const row = node("div", "read-row");
   row.append(node("span", "read-label", "Checkout"));
   const value = node("span", "read-value", "");
@@ -1803,7 +1803,7 @@ function renderRepository(body) {
 
 function renderFinish(body) {
   appendLine(body, "Finish writes .shikiru/config.toml, excludes .shikiru/ in Git, and runs Doctor.", "description");
-  readRow(body, "Config", "/Users/pavel/Projects/demo/.shikiru/config.toml");
+  readRow(body, "Config", "/projects/demo/.shikiru/config.toml");
   const summary = `Max parallel ${wizard.parallel} · ${wizard.integration === "merge" ? "Local merge" : "Pull request"}`;
   readRow(body, "Summary", summary);
 }
@@ -1912,7 +1912,7 @@ function initDoctorChecks() {
 }
 
 function renderWizardResult(body) {
-  readRow(body, "Config", "/Users/pavel/Projects/demo/.shikiru/config.toml");
+  readRow(body, "Config", "/projects/demo/.shikiru/config.toml");
   renderDoctorReport(body, initDoctorChecks());
 }
 
@@ -1920,7 +1920,7 @@ function renderWizardExitSummary(view) {
   const checks = initDoctorChecks();
   const failed = checks.some(([, , state]) => state === "fail");
   appendOutcome(view, failed ? "error" : "success", failed ? "Project initialized; Doctor found unavailable provider checks" : "Project initialized and verified");
-  appendDetails(view, [["Config", "/Users/pavel/Projects/demo/.shikiru/config.toml"]]);
+  appendDetails(view, [["Config", "/projects/demo/.shikiru/config.toml"]]);
   if (failed) appendActions(view, "Repair", [
     {label: "Provider", instruction: "Restore Claude CLI access on this host."},
     {label: "Doctor", instruction: "Check the written configuration and providers.", command: "shikiru doctor"}

@@ -1,83 +1,183 @@
 # Design
 
-## Purpose
+Shikiru is a local coordinator for coding agents. It turns Operator requests into tasks, runs a
+fixed development/review workflow and integrates accepted changes. Agents propose results through
+structured reports; engine code validates them and decides what can happen next. The
+[README](../README.md) describes the complete user-facing capability set and operating commands.
 
-Shikiru runs a fixed software-development workflow around coding agents. The engine decides which
-step runs and validates each result; agents perform the work. The Operator submits requests,
-observes progress and resolves decisions that need human input.
+## Participants and terms
 
-## Architecture
+| Term | Meaning |
+| --- | --- |
+| Operator | The person submitting work, configuring policy, resolving decisions and intervening in sessions. |
+| Leader | The agent role for triage, planning, implementation consultation and review. |
+| Implementer | The agent role that changes code, verifies its changes, updates selected trackers and repairs integration conflicts. |
+| Helper | A headless support role that reconstructs a missing report or classifies an unrecognized failure; it cannot approve work or choose workflow transitions. |
+| Engine | One asynchronous orchestration process per project, protected by a project lock. |
+| Task / escalation | A persisted request (`T-n`) and a decision requiring Operator input (`E-n`). |
+| Agent / rung / ladder | A provider CLI plugin; one agent/model/effort choice; an ordered sequence of those choices. Roles are responsibilities, so they may use the same agent or different agents. |
+| Turn / session / slot | One prompted agent execution; its resumable provider conversation; capacity for one running task. A session can span multiple turns. |
 
-- One detached asynchronous engine runs per project. SQLite stores project state and a durable
-  command queue; CLI, MCP and dashboard clients read state and submit commands.
-- tmux is the live operator view. Losing a terminal or tmux session does not stop a running engine.
-- Each task uses a Git worktree and task branch under `.shikiru/worktrees/`. The project root is
-  one Git repository; submodules and multi-repository projects are unsupported.
-- The Leader triages, plans and verifies. The Implementer changes the project and resolves merge
-  conflicts. Shikiru moves through triage, planning, implementation, review and integration in
-  code; an agent report selects only a validated outcome.
-- Each agent turn is a headless process on a new or resumed agent session. Plugin adapters
-  normalize structured output into the shared contract. The engine does not parse provider
-  protocols.
+The project is one committed Git repository. Each task receives its own branch and worktree under
+`.shikiru/worktrees/`, keeping concurrent task files separate. Tracker files are optional project
+plans/checklists included in agent context and updated as work proceeds. Optional ignored caches
+are cloned into worktrees using copy-on-write; unsupported filesystems produce a warning and no
+cache clone. Neither worktrees nor cache cloning are a sandbox.
 
-## Task flow and recovery
+## Components and authority
 
-Reports are validated before a transition. The Leader may split planned work into dependent tasks;
-otherwise work follows the configured review loop. Accepted work is integrated using the selected
-strategy, local merge by default. Retries, quota waits and rung changes are automatic within the
-configured policy; critical unresolved issues become Operator decisions.
+```mermaid
+flowchart LR
+    O[Operator: CLI, dashboard or MCP] --> C[Durable command queue]
+    C --> E[Project engine]
+    E --> A[Agent plugins: Leader, Implementer, Helper]
+    A --> R[Reports and observed signals]
+    R --> E
+    E --> G[Git worktrees and integration]
+    E --> S[SQLite state and events]
+    S --> O
+```
 
-The engine owns task-state transitions. CLI, MCP and dashboard clients submit durable commands;
-the submit path also allocates task IDs. On restart, the engine reloads the database, reconciles
-unfinished work and resumes eligible tasks on their existing agent sessions. Agent run files,
-reports, streams and logs live under `.shikiru/`; retention bounds completed history.
+Operator services are shared by CLI, Textual/tmux dashboard and stdio MCP. Readers expose stored
+state and collected evidence; mutations enter a typed durable command queue. An acknowledgement
+records whether a command is pending, applied or rejected, not whether its task is complete. Submit
+allocates the task ID at enqueue time. The engine owns task-state transitions; UI clients and
+agents do not directly choose state changes.
 
-## Agent contract
+SQLite records tasks, holds, dependencies, commands, events, agent runs/sessions, escalations,
+quota and recovery facts. Turn directories under `.shikiru/runs/` contain prompts, facts, reports,
+streams and diagnostics. Git is the authority for branches, commits, cleanliness and integration;
+agent statements about Git are not accepted as a substitute for observed repository facts.
 
-Plugins own process arguments, session resume, provider output parsing, reported usage and
-provider-specific failures. The core sees normalized turn signals, reports, quota facts and failure
-kinds through [`agents/contracts.py`](../src/shikiru/agents/contracts.py). The small
-[agent SDK](../src/shikiru/agents/sdk/) and [contract test kit](../src/shikiru/agents/testing/)
-support plugins without moving provider logic into the engine.
+## Workflow
 
-## State and configuration
+1. **Triage:** Leader selects an implementation or planning route and task complexity. Explicit
+   submission mode skips triage; supplied complexity or role overrides take precedence.
+2. **Plan route:** Leader commits planning/tracker changes. A request to execute the plan can emit
+   follow-up tasks with dependencies; a planning-only request need not emit work. The plan task
+   integrates its changes. Follow-up tasks are scheduled when their dependencies are satisfied.
+3. **Implement route:** Implementer changes the task worktree and reports its changes/checks.
+   Questions can go to Leader consultation; unresolved judgment becomes an escalation.
+4. **Review:** Leader accepts, requests rework, escalates, or supersedes the task with replacement
+   tasks. Rework consumes a bounded iteration budget and may advance the Implementer ladder.
+   Supersession repoints dependents to replacement work rather than silently dropping it.
+5. **Integration:** Engine rebases accepted work onto the selected base and applies the configured
+   strategy. Conflicts invoke bounded Implementer repair and Leader verification. Completion is
+   recorded only after integration settles; an open PR is still unfinished work.
 
-Project configuration at `.shikiru/config.toml` overrides packaged defaults; repeated `--set`
-values override both for one command. Defaults and accepted settings are defined in
-[`defaults.toml`](../src/shikiru/config/defaults.toml) and
-[`settings.py`](../src/shikiru/config/settings.py). Agent-specific options are validated by each
-plugin.
+Each turn receives the request, relevant earlier reports, Operator messages and workspace facts.
+A report must match the expected schema and allowed outcomes. Accepting or superseding a task with
+uncommitted work or the wrong checked-out task branch is rejected by engine checks. This validates
+the workflow contract; it does not establish the correctness of the implementation or its tests.
 
-The engine writes SQLite state and task worktrees. Operator clients use a durable command queue;
-agent processes work in task worktrees and write turn reports through `shikiru report`. Git facts
-are read by Shikiru rather than accepted from agent claims.
+## Scheduling, agent selection and recovery
 
-## Operator surface
+The scheduler respects dependency completion, task priority, available parallel slots, task holds,
+CPU/free-RAM dispatch gates and provider quota blocks. A cancelled prerequisite cancels dependent
+queued work. Limits on dispatch do not cap resources already-running agent processes can consume.
 
-The CLI covers initialization, engine lifecycle, task submission and status, diagnostics, and tmux
-session discovery and attachment. The Textual dashboard provides task detail, decisions and
-contextual actions. MCP exposes the operator services over stdio. Remote session access uses SSH.
+Leader and Implementer resolve their own ordered ladders; Implementer can select a low/normal/high
+complexity override, otherwise its base ladder applies. A task-specific rung override selects its
+agent/model/effort from the next turn. Same-provider sessions can resume; a provider change starts
+a fresh session with handoff context from recorded work. Plugins own the actual resume and context
+compaction behavior.
 
-The [CLI output examples](design/references/cli-output-examples.html) and
-[Focus dashboard reference](design/references/focus-steel-approved.html) are the retained visual
-references.
+Recovery is explicit and bounded by failure type: unavailable providers receive backoff/retries,
+quota failures wait for reset within policy or move to a later different-provider rung, and stalls
+receive limited continuation attempts. Authentication errors, unsupported/unclassified failures,
+missing reports and exhausted limits produce visible decisions. Helper can rebuild a missing
+report or classify an otherwise unknown failure, trying its own ladder after call failures or
+unusable answers within one shared timeout. Its output is validated before recovery uses it.
 
-## Trust boundary
+An escalation retains the question, evidence, what was tried and applicable resolutions. Operator
+answers can return to Leader consultation; retry, accept-as-is or cancellation is offered only
+where applicable. An escalated or held task does not prevent independent eligible tasks from
+progressing. Engine infrastructure faults are recorded and retried with backoff; repeated
+unexpected faults can stop the engine instead of looping silently.
 
-Shikiru orchestrates; it does not sandbox. Agents run with the Operator's privileges and
-environment. Claude Code defaults to `bypassPermissions`; Codex runs `workspace-write` with the
-task worktree's Git metadata and shared repository `.git` directory writable. Worktree isolation
-is a prompt and scheduling convention, not an enforced security boundary. Owner-only `.shikiru/`
-files protect stored state from other local users, not from an agent running as the Operator.
-Configured notification commands and project instructions also run with the Operator's
-privileges. Use Shikiru only on repositories and hosts you trust.
+## Git integration and lifecycle
 
-## Implementation boundaries
+Local **merge** rebases the task branch, then fast-forwards a checked-out base or updates its ref
+with an expected-old-value check. Dirty paths overlapping the incoming changes block integration;
+blocked prerequisites are retried within a limit and then escalated. Task worktrees are checked
+before integration so off-branch or uncommitted work is not silently discarded.
 
-- The engine imports agent contracts and does not import provider-specific agent modules; those
-  details stay in `plugins/agents/*`.
-- SQL stays in `store`; subprocesses use `process.SubprocessRunner`; time uses `clock.Clock`.
-- `domain` decisions are pure functions. Constructors receive dependencies; `bootstrap.py` wires
-  concrete components.
-- Operator tunables live in packaged defaults. Protocol values and implementation constants have
-  names and are checked by the project's lint rules.
+**Pull-request** mode pushes the rebased task branch and creates or adopts a GitHub PR through
+`gh`. The engine polls its state, requires the merge to land, fetches and verifies the resulting
+base, and handles conflicts, failed checks, closure and timeout explicitly. Repository review and
+merge policy remain in force. Integration progress is recorded for restart reconciliation.
+
+Successful tasks release their active sessions/worktrees. Cancellation retains the branch and
+preserves a worktree when it contains unintegrated work. Terminal detach leaves engine and agents
+running. Engine Stop interrupts supervised agent turns and ends orchestration while retaining the
+tmux session; task pause/cancel controls have separate semantics. Start reloads persisted state,
+reconciles unfinished turns, integration and pending commands, and resumes eligible work. It also ensures the project tmux
+session; losing a view does not itself delete task state.
+
+## Operator intervention and views
+
+Pause holds after a turn; Pause now interrupts it. Messages are delivered to a role at the next
+turn. Retry re-runs the current step, and prioritization changes dispatch order. These actions use
+the same queued-command path from dashboard or MCP.
+
+Take over holds task automation, interrupts its active flow and opens an existing role session
+interactively in its tmux pane. Other eligible tasks keep running. Hand back restores engine
+ownership and queues notice that the Operator worked in the session; an independent pause remains
+until resumed. Ownership changes and their command IDs are recorded together so command replay
+does not duplicate the transition. A lost takeover pane is released and reported.
+
+The dashboard combines task briefings with results, relationships, reports/Git evidence, event and
+agent activity, usage and workspace access. Actions are contextual; disabled operations explain
+why they are unavailable. History distinguishes recorded evidence from current observations and
+missing data. Export writes retained evidence as Markdown/JSON, optionally including agent signals,
+without changing engine state. Command history and diagnostics expose delivery failures, engine
+faults and resource conditions.
+
+CLI provides setup/lifecycle/status/discovery; its JSON results support scripts. MCP additionally
+exposes task controls, decisions, session peeks and event waiting. SSH supports remote discovery
+and attachment, not a separate distributed scheduler. Discovery isolates stale-project errors so
+healthy sessions stay usable, and offers explicit repair actions without mutating project state.
+Shikiru admits one attached client per project session; direct raw tmux use is outside that policy.
+
+## Configuration, observability and extensions
+
+Configuration merges packaged defaults, project `.shikiru/config.toml` and invocation `--set`
+overrides, then validates common and plugin-specific settings. The wizard configures repository,
+role ladders, trackers, caches, parallelism and integration, and finishes with Doctor. Model catalogs
+come from installed plugin/CLI capabilities; lack of authoritative data is visible rather than a
+claim that an arbitrary model is supported. Probe mode runs live checks; ordinary diagnostics do
+not run workflow turns.
+
+Plugins normalize streamed signals, reports, session identity, errors, usage, billing and quota
+into [agent contracts](../src/shikiru/agents/contracts.py). The engine imports those contracts,
+not provider implementations. Agent and widget plugins are discovered through entry points;
+the [SDK](../src/shikiru/agents/sdk/) and [contract kit](../src/shikiru/agents/testing/) support
+additional agents. Built-in widgets cover tasks, decisions, usage/quota, host/process resources,
+Docker, disk and faults. Layout, titles, warning thresholds, refresh and motion are configurable.
+
+Usage preserves provenance and uncertainty: absent tokens/cost/context/billing are not invented,
+and quota readings can be stale. CPU/RAM, disk, Docker and fault diagnostics complement task
+progress. Notifications go to tmux and an optional external command receiving JSON on stdin.
+A durable delivery cursor replays undelivered urgent events after restart; delivery is not
+exactly-once, so external hooks must tolerate repeats.
+
+Rotating engine logs and configurable retention bound stored history. Retention removes eligible
+finished run files/events and completed commands while protecting unresolved work, holds, retained
+worktrees and unsettled cancelled PRs. Export before expiry when long-term evidence is needed.
+Deleting `.shikiru/` destroys its local state; initialization cannot reconstruct deleted history.
+
+## Trust and implementation boundaries
+
+Agents run with the Operator's privileges and environment. Claude Code defaults to
+`bypassPermissions`; Codex uses `workspace-write` with the run directory and task/shared Git metadata
+writable. Worktree separation is a convention, not enforced host isolation. Owner-only state files
+protect against other local users, not an agent running as the Operator. Project instructions,
+provider tools and notification commands can execute with those privileges; reports/exports may
+contain sensitive project data. Agent review is assistance, not a correctness or security proof.
+
+Implementation boundaries keep decisions auditable: pure domain rules; SQL in `store`; subprocesses
+through `process.SubprocessRunner`; time through `clock.Clock`; constructor-injected dependencies;
+concrete wiring in `bootstrap.py`; provider details in `plugins/agents/*`. Tunables and validation
+live in [defaults](../src/shikiru/config/defaults.toml) and
+[settings](../src/shikiru/config/settings.py). The [CLI examples](design/references/cli-output-examples.html)
+and [dashboard reference](design/references/dashboard-example.html) retain the visual direction.
