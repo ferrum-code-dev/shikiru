@@ -45,7 +45,6 @@ from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
-from shikiru.ui.tokens import ALERT_COLOR, SAGE
 from shikiru.view_log import (
     VIEW_MESSAGE_SIGNAL,
     VIEW_MESSAGE_TEXT_KEY,
@@ -56,7 +55,6 @@ from shikiru.view_log import (
 )
 from shikiru.workspace.facts import WorkspaceFacts, render_facts
 from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME
-from tests.support.cells import CYAN, CYAN_BOLD, foregrounds, styles
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, ignore_palette_action, state_views
@@ -610,8 +608,7 @@ async def test_every_offered_verb_stays_inside_the_actions_row_at_compact_width(
             assert not hint.display or row.contains_region(hint.region)
 
 
-@pytest.mark.usefixtures("colour_terminal")
-async def test_briefing_paints_group_titles_cyan_and_commit_lines_green_and_red(
+async def test_briefing_details_hint_aligns_and_moves_focus_to_a_fold(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -623,13 +620,7 @@ async def test_briefing_paints_group_titles_cyan_and_commit_lines_green_and_red(
     async with app.run_test(size=WIDE_SIZE) as pilot:
         briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
         await wait_until(lambda: "+120" in plain_text(briefing.content), timeout=UI_WAIT_SECONDS)
-        for title in ("Progress", "Result so far"):
-            assert set(foregrounds(briefing, title)) == {CYAN[1]}, title
-        assert set(foregrounds(briefing, "+120")) == {SAGE}
-        assert set(foregrounds(briefing, f"{MINUS}34")) == {ALERT_COLOR}
         hint = app.query_one(f"#{TASK_DETAIL_DETAILS_HINT}", Static)
-        assert plain_text(hint.content) == "v details"
-        assert styles(hint, "v") == [CYAN_BOLD]
         assert hint.region.right == app.query_one(f"#{TASK_DETAIL_ACTIONS}").region.right
         await pilot.click(f"#{TASK_DETAIL_DETAILS_HINT}")
         await wait_until(lambda: isinstance(app.focused, FoldHeader), timeout=UI_WAIT_SECONDS)

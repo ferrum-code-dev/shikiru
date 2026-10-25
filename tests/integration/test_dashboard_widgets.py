@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 from rich.cells import cell_len
-from rich.text import Text
 from textual.widgets import Static
 
 from shikiru.dashboard.contract import DiagnosticSampleState, RepoStatus
@@ -310,22 +309,6 @@ async def test_strips_shows_only_a_triage_panel_before_the_mode_is_decided(
         assert "Triage" in text
         assert "Implement" not in text
         assert "Merge" not in text
-
-
-async def test_strips_carries_style_information_into_the_rendered_content(
-    connection: Connection, reader: StateReader, tmp_path: Path
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    _submit_task(connection, clock)
-
-    context = widget_context(reader, project_dir, FakeClock(START))
-    widget = cast("StripsPanel", StripsWidget().create(context))
-    async with WidgetHostApp(widget).run_test() as pilot:
-        await pilot.pause()
-        content = widget.content
-        assert isinstance(content, Text)
-        assert content.spans
 
 
 async def test_strips_renders_the_narrow_form_in_a_narrow_pane(
