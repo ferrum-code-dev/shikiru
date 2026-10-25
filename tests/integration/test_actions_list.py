@@ -568,13 +568,13 @@ async def _refuse_stale_stop(
     popup = await _wait_for_popup(app)
     button = popup.query_one("#palette-submit", Button)
     await wait_until(lambda: not button.disabled, timeout=UI_WAIT_SECONDS)
-    stopped = await lifecycle.stop(root, (), kill_session=False)
-    assert stopped.status is AckStatus.DONE
-    history_size = services.queries.command_history().total_count
     await pilot.press("enter")
     await wait_until(
         lambda: "Enter again to stop engine" in str(button.label), timeout=UI_WAIT_SECONDS
     )
+    stopped = await lifecycle.stop(root, (), kill_session=False)
+    assert stopped.status is AckStatus.DONE
+    history_size = services.queries.command_history().total_count
     await pilot.press("enter")
     await wait_until(
         lambda: bool(str(popup.query_one("#palette-result", Static).content)),

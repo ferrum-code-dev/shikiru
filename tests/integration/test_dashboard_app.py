@@ -3234,9 +3234,20 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
     try:
         app = _app(reader, project_dir, widget_names=["header", "queue"])
         async with app.run_test(size=size) as pilot:
-            await pilot.pause()
             status = app.query_one("#workspace-command-status", Button)
             footer = app.query_one("#focus-footer", Grid)
+            await wait_until(
+                lambda: (
+                    footer.display is (height >= 9)
+                    and footer.region.right <= width
+                    and (
+                        not status.is_on_screen
+                        if height < 9
+                        else status.is_on_screen and status.region.bottom <= height
+                    )
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
             assert footer.display is (height >= 9)
             assert not status.is_on_screen if height < 9 else status.region.bottom <= height
             assert footer.region.right <= width
@@ -3253,8 +3264,12 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
                 page = cast("Static", history_screen.query_one("#command-history-page"))
                 frame = history_screen.query_one("#command-history-frame")
                 if page.display:
-                    assert page.is_on_screen
-                    assert frame.content_region.contains_region(page.region)
+                    await wait_until(
+                        lambda: (
+                            page.is_on_screen and frame.content_region.contains_region(page.region)
+                        ),
+                        timeout=UI_WAIT_SECONDS,
+                    )
                 await pilot.press("escape")
                 await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
             else:

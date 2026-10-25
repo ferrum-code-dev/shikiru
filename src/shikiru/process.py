@@ -7,6 +7,8 @@ import errno
 import os
 import shutil
 import signal
+import subprocess
+import threading
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn, cast
@@ -28,8 +30,6 @@ if TYPE_CHECKING:
 TURN_STOP_GRACE = 10.0
 STDERR_DRAIN_TIMEOUT = 2.0
 STDOUT_DRAIN_TIMEOUT = 2.0
-STDOUT_FILENO = 1
-STDERR_FILENO = 2
 _STDERR_READ_SIZE = 65536
 _STDOUT_READ_SIZE = 65536
 _TERMINAL_READ_SIZE = 65536
@@ -434,20 +434,19 @@ class SubprocessRunner:
         argv_tuple = tuple(argv)
         output_fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, PRIVATE_FILE_MODE)
         try:
-            file_actions = (
-                (os.POSIX_SPAWN_DUP2, output_fd, STDOUT_FILENO),
-                (os.POSIX_SPAWN_DUP2, output_fd, STDERR_FILENO),
-            )
             try:
-                return os.posix_spawnp(
-                    argv_tuple[0],
+                process = subprocess.Popen(  # noqa: S603 # keep: gateway executes argv without a shell
                     argv_tuple,
-                    dict(env) if env is not None else dict(os.environ),
-                    file_actions=file_actions,
-                    setsid=True,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=output_fd,
+                    stderr=output_fd,
+                    start_new_session=True,
                 )
             except OSError as error:
                 raise DetachedProcessError(argv_tuple, error) from error
+            threading.Thread(target=process.wait, daemon=True).start()
+            return process.pid
         finally:
             os.close(output_fd)
 

@@ -2491,10 +2491,9 @@ async def test_each_fold_opens_by_key_or_click_without_creating_commands(
 async def _open_fold(
     app: DashboardApp, pilot: Pilot[None], panel: TaskDetailPanel, case: _SectionCase
 ) -> None:
+    fold = panel.query_one(DetailFolds).all_folds[list(DetailsSection).index(case.section)]
     if case.by_click:
-        header = (
-            panel.query_one(DetailFolds).all_folds[list(DetailsSection).index(case.section)].header
-        )
+        header = fold.header
         header.scroll_visible(animate=False, immediate=True)
         await wait_until(
             lambda: (
@@ -2506,7 +2505,10 @@ async def _open_fold(
         await pilot.click(header)
     else:
         await choose_details_entry(pilot, case.view)
-    await wait_until(lambda: case.view in panel.open_views, timeout=UI_WAIT_SECONDS)
+    await wait_until(
+        lambda: case.view in panel.open_views and app.focused is fold.focus_target,
+        timeout=UI_WAIT_SECONDS,
+    )
 
 
 async def test_escape_steps_from_home_inspector_fold_list_to_header_to_cleared_selection(

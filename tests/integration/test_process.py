@@ -24,6 +24,45 @@ _PID_FILE_WAIT_TIMEOUT = 30.0
 _KILL_TIMEOUT_SECONDS = 5.0
 _STOP_BOUND_SECONDS = 5.0
 
+_DETACHED_CHILD_PROGRAM = (
+    "import os, pathlib, sys, threading; "
+    "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); "
+    "print(os.getpid(), os.getsid(0), sys.stdin.read() == '', flush=True); "
+    "print('detached stderr', file=sys.stderr, flush=True); "
+    "threading.Event().wait()"
+)
+_DETACHED_LAUNCHER_PROGRAM = (
+    "import pathlib, sys; from shikiru.process import SubprocessRunner; "
+    f"pid = SubprocessRunner().spawn_detached([sys.executable, '-c', {_DETACHED_CHILD_PROGRAM!r}, "
+    "sys.argv[2]], output=pathlib.Path(sys.argv[1])); print(pid, flush=True)"
+)
+
+
+async def test_detached_process_survives_its_launcher_in_its_own_session(tmp_path: Path) -> None:
+    runner = SubprocessRunner()
+    output = tmp_path / "detached.log"
+    pid_file = tmp_path / "detached.pid"
+    pid = None
+    try:
+        result = await runner.run(
+            [sys.executable, "-c", _DETACHED_LAUNCHER_PROGRAM, str(output), str(pid_file)],
+            timeout=_PID_FILE_WAIT_TIMEOUT,
+        )
+        assert result.returncode == 0, result.stderr
+        pid = int(result.stdout.strip())
+        await wait_until(
+            lambda: output.exists() and "detached stderr" in output.read_text(),
+            timeout=_PID_FILE_WAIT_TIMEOUT,
+        )
+        assert runner.identify(pid) is not None
+        assert output.read_text().splitlines() == [f"{pid} {pid} True", "detached stderr"]
+    finally:
+        if pid is None and pid_file.exists() and pid_file.read_text():
+            pid = int(pid_file.read_text())
+        if pid is not None and (identity := runner.identify(pid)) is not None:
+            runner.signal_group(identity, signal.SIGTERM)
+            await wait_until(lambda: runner.identify(pid) is None, timeout=_PID_FILE_WAIT_TIMEOUT)
+
 
 async def test_run_feeds_stdin_runs_in_the_given_cwd_and_returns_the_exit_status_without_raising(
     tmp_path: Path,

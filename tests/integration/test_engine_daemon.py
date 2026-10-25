@@ -1325,9 +1325,15 @@ async def _select_takeover_rung(operator: _Operator, task_id: str, case: _Takeov
         SetRung(task_id=task_id, role=Role.IMPLEMENTER, rung=case.selected_rung)
     )
     assert changed.status is CommandStatus.DONE
+    expected = f"next {case.selected_rung.agent}:{case.selected_rung.model}/high"
+
+    async def rung_is_visible() -> bool:
+        return expected in await operator.pane_title(task_id, Role.IMPLEMENTER)
+
+    await wait_until(rung_is_visible, _TAKEOVER_REPL_WAIT_SECONDS)
     before_takeover = await operator.pane_title(task_id, Role.IMPLEMENTER)
     assert "fake:fake-1/" in before_takeover
-    assert f"next {case.selected_rung.agent}:{case.selected_rung.model}/high" in before_takeover
+    assert expected in before_takeover
 
 
 def _failed_report_row(signal_path: Path) -> dict[str, Any] | None:

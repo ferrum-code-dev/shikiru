@@ -599,13 +599,23 @@ async def test_every_offered_verb_stays_inside_the_actions_row_at_compact_width(
                 lambda app=app: _shown_verbs(app) == CASES["running"].verbs,
                 timeout=UI_WAIT_SECONDS,
             )
-            row = app.query_one(f"#{TASK_DETAIL_ACTIONS}").region
+            row = app.query_one(f"#{TASK_DETAIL_ACTIONS}")
             hint = app.query_one(f"#{TASK_DETAIL_DETAILS_HINT}")
             for button in app.query(f"#{TASK_DETAIL_VERBS} Button"):
                 if button.display:
-                    assert row.contains_region(button.region), (size, focus_task, button.id)
-                    assert not hint.display or not hint.region.overlaps(button.region)
-            assert not hint.display or row.contains_region(hint.region)
+                    await wait_until(
+                        lambda button=button, row=row, hint=hint: (
+                            row.region.contains_region(button.region)
+                            and (not hint.display or not hint.region.overlaps(button.region))
+                        ),
+                        timeout=UI_WAIT_SECONDS,
+                    )
+            await wait_until(
+                lambda row=row, hint=hint: (
+                    not hint.display or row.region.contains_region(hint.region)
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
 
 
 async def test_briefing_details_hint_aligns_and_moves_focus_to_a_fold(
