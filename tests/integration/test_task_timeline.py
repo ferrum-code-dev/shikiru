@@ -15,6 +15,7 @@ from textual.widgets import Static
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.detail import (
     AGENT_TIMELINE_IDS,
+    TASK_DETAIL_BRIEFING,
     TASK_DETAIL_TIMELINE_LIST,
     TASK_DETAIL_TIMELINE_SELECTED,
     TASK_VIEW_AGENT,
@@ -43,6 +44,7 @@ from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.tokens import DETAIL_SURFACE_COLOR
 from tests.support.cells import painted_backgrounds
 from tests.support.cells import rendered_lines as painted_lines
@@ -100,6 +102,10 @@ FAILED_COMMAND_EXIT_CODE = 2
 async def _open_timeline_view(
     panel: TaskDetailPanel, pilot: Pilot[None], view: str = TASK_VIEW_EVIDENCE
 ) -> None:
+    await wait_until(
+        lambda: bool(panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).content),
+        timeout=UI_WAIT_SECONDS,
+    )
     panel.focus_folds()
     await pick_details_entry(pilot, view)
     await wait_until(lambda: view in panel.open_views, timeout=UI_WAIT_SECONDS)
