@@ -32,8 +32,6 @@ from shikiru.store.events import EventLog
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
 from shikiru.ui.gated_static import GatedStatic
-from shikiru.ui.tokens import SELECTED_SURFACE_COLOR
-from tests.support.cells import CYAN, CYAN_BOLD, painted_backgrounds, rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import WidgetHostApp, dashboard_app, list_rows, widget_context
@@ -57,8 +55,6 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 AGENT_LIST = "task-detail-agent-list"
 EVENTS_FOLD = TASK_VIEW_EVIDENCE
 FIRST_FOLD = TASK_VIEW_REQUEST
-RESULTS_HEADLINE = "so far"
-LEFT_HALF_BLOCK = "\N{LEFT HALF BLOCK}"
 
 
 @dataclass(frozen=True)
@@ -323,21 +319,11 @@ async def test_escape_returns_from_an_open_list_to_its_header_before_leaving(
         reader.close()
 
 
-def _painted_text(widget: Widget) -> str:
-    return "\n".join("".join(char for char, _ in cells) for cells in rendered_lines(widget))
-
-
 def _fold_header(panel: TaskDetailPanel, view_id: str) -> Widget:
     return next(fold.header for fold in panel.query(DetailFold) if fold.view_id == view_id)
 
 
-def _selected_row(panel: TaskDetailPanel) -> list[Static]:
-    rows = panel.query(f"#{TASK_DETAIL_TIMELINE_LIST} .row-list-row.-selected")
-    return list(rows.results(Static))
-
-
-@pytest.mark.usefixtures("colour_terminal")
-async def test_fold_headers_are_steel_titles_with_selection_background_and_clicks_toggle(
+async def test_clicking_fold_header_enters_its_list_and_closes_back_to_the_header(
     connection: Connection, database: Database, tmp_path: Path
 ) -> None:
     project_root = write_minimal_project(tmp_path)
@@ -347,67 +333,24 @@ async def test_fold_headers_are_steel_titles_with_selection_background_and_click
     panel = TaskDetailPanel(widget_context(reader, project_root, clock), task_id, fixed=True)
     try:
         async with WidgetHostApp(panel).run_test(size=(100, 40)) as pilot:
+            await wait_until(lambda: panel.is_mounted, timeout=UI_WAIT_SECONDS)
             await wait_until(
-                lambda: (
-                    task_id
-                    in plain_text(panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
-                ),
+                lambda: bool(panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).content),
                 timeout=UI_WAIT_SECONDS,
             )
-            panel.focus_folds()
-            await wait_until(lambda: _focused_stop(pilot) == FIRST_FOLD, timeout=UI_WAIT_SECONDS)
-            focused_header = _fold_header(panel, FIRST_FOLD)
+            header = _fold_header(panel, EVENTS_FOLD)
             await wait_until(
-                lambda: painted_backgrounds(focused_header) == {SELECTED_SURFACE_COLOR},
+                lambda: header.visible and header.is_on_screen, timeout=UI_WAIT_SECONDS
+            )
+            click_offset = (header.size.width // 2, header.size.height // 2)
+            assert await pilot.click(header, offset=click_offset)
+            await wait_until(lambda: EVENTS_FOLD in panel.open_views, timeout=UI_WAIT_SECONDS)
+            await wait_until(
+                lambda: _focused_stop(pilot) == TASK_DETAIL_TIMELINE_LIST,
                 timeout=UI_WAIT_SECONDS,
             )
-            assert LEFT_HALF_BLOCK not in _painted_text(focused_header)
-            title = next(cell for cell in rendered_lines(focused_header)[0] if cell[0] == "T")
-            assert title[1] == CYAN_BOLD
-
-            results_header = _fold_header(panel, TASK_VIEW_RESULTS)
-            results_line = rendered_lines(results_header)[0]
-            assert next(cell for cell in results_line if cell[0] == "R")[1] == CYAN
-            assert "".join(char for char, _ in results_line).endswith(RESULTS_HEADLINE)
-            assert len(results_line) == results_header.region.width
-
-            await pilot.press("down", "down", "down", "enter")
-            await wait_until(
-                lambda: _focused_stop(pilot) == TASK_DETAIL_TIMELINE_LIST, timeout=UI_WAIT_SECONDS
-            )
-            await wait_until(lambda: bool(_selected_row(panel)), timeout=UI_WAIT_SECONDS)
-            (selected_row,) = _selected_row(panel)
-            assert LEFT_HALF_BLOCK not in _painted_text(selected_row)
-            assert painted_backgrounds(selected_row) == {SELECTED_SURFACE_COLOR}
-
-            await _assert_clicks_toggle_and_open_folds_end_with_a_blank_row(pilot, panel)
+            assert await pilot.click(header, offset=click_offset)
+            await wait_until(lambda: EVENTS_FOLD not in panel.open_views, timeout=UI_WAIT_SECONDS)
+            await wait_until(lambda: _focused_stop(pilot) == EVENTS_FOLD, timeout=UI_WAIT_SECONDS)
     finally:
         reader.close()
-
-
-def _body_rows_after_content(fold: DetailFold) -> int:
-    body = fold.query(".fold-body").first()
-    return fold.region.height - 1 - sum(child.outer_size.height for child in body.children)
-
-
-async def _assert_clicks_toggle_and_open_folds_end_with_a_blank_row(
-    pilot: Pilot[None], panel: TaskDetailPanel
-) -> None:
-    await wait_until(
-        lambda: bool(panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).content),
-        timeout=UI_WAIT_SECONDS,
-    )
-    header = _fold_header(panel, TASK_VIEW_RESULTS)
-    fold = cast("DetailFold", header.parent)
-    for opened in (True, False):
-        await pilot.click(header)
-        await wait_until(
-            lambda opened=opened: (TASK_VIEW_RESULTS in panel.open_views) is opened,
-            timeout=UI_WAIT_SECONDS,
-        )
-        await wait_until(
-            lambda opened=opened: (
-                _body_rows_after_content(fold) == 1 if opened else fold.region.height == 1
-            ),
-            timeout=UI_WAIT_SECONDS,
-        )

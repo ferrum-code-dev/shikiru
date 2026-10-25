@@ -23,7 +23,7 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15]
     env:
-      PYTEST_ADDOPTS: -n 2 --dist=loadfile
+      PYTEST_ADDOPTS: -n 2 --dist=loadfile --durations=15
       UV_NO_PROGRESS: "true"
       NODE_OPTIONS: --max-old-space-size=1536
       TERM: xterm-256color
@@ -44,7 +44,21 @@ jobs:
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
             sudo apt-get update
-            sudo apt-get install --yes git tmux
+            sudo apt-get install --yes \
+              bison build-essential ca-certificates curl git libevent-dev libncurses-dev pkg-config
+            TMUX_VERSION=3.5a
+            TMUX_SHA256=16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951
+            TMUX_ARCHIVE="$RUNNER_TEMP/tmux-$TMUX_VERSION.tar.gz"
+            TMUX_SOURCE="$RUNNER_TEMP/tmux-$TMUX_VERSION"
+            curl --fail --location --silent --show-error \
+              "https://github.com/tmux/tmux/releases/download/$TMUX_VERSION/tmux-$TMUX_VERSION.tar.gz" \
+              --output "$TMUX_ARCHIVE"
+            printf '%s  %s\n' "$TMUX_SHA256" "$TMUX_ARCHIVE" | sha256sum --check
+            tar --extract --gzip --file "$TMUX_ARCHIVE" --directory "$RUNNER_TEMP"
+            cd "$TMUX_SOURCE"
+            ./configure --prefix=/usr/local
+            make -j2
+            sudo make install
           else
             brew install git tmux
           fi

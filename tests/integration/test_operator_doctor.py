@@ -295,7 +295,8 @@ def _tool_reporting(directory: Path, tool: str, flag: str, output: str) -> Path:
     ("tool", "flag", "output", "ok"),
     [
         ("tmux", "-V", "tmux 3.3a", False),
-        ("tmux", "-V", "tmux 3.4", True),
+        ("tmux", "-V", "tmux 3.4", False),
+        ("tmux", "-V", "tmux 3.5", True),
         ("tmux", "-V", "tmux 3.10", True),
         ("tmux", "-V", "tmux master", False),
         ("git", "--version", "git version 2.44.0", False),

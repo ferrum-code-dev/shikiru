@@ -27,14 +27,17 @@ _STOP_BOUND_SECONDS = 5.0
 _DETACHED_CHILD_PROGRAM = (
     "import os, pathlib, sys, threading; "
     "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); "
-    "print(os.getpid(), os.getsid(0), sys.stdin.read() == '', flush=True); "
+    "print(os.getpid(), os.getsid(0), repr(sys.stdin.read()), flush=True); "
+    "print(os.read(int(sys.argv[2]), 1024).decode(), flush=True); "
     "print('detached stderr', file=sys.stderr, flush=True); "
     "threading.Event().wait()"
 )
 _DETACHED_LAUNCHER_PROGRAM = (
-    "import pathlib, sys; from shikiru.process import SubprocessRunner; "
+    "import os, pathlib, sys; from shikiru.process import SubprocessRunner; "
+    "descriptor = os.open(sys.argv[3], os.O_RDONLY); os.set_inheritable(descriptor, True); "
     f"pid = SubprocessRunner().spawn_detached([sys.executable, '-c', {_DETACHED_CHILD_PROGRAM!r}, "
-    "sys.argv[2]], output=pathlib.Path(sys.argv[1])); print(pid, flush=True)"
+    "sys.argv[2], str(descriptor)], output=pathlib.Path(sys.argv[1])); "
+    "os.close(descriptor); print(pid, flush=True)"
 )
 
 
@@ -42,11 +45,21 @@ async def test_detached_process_survives_its_launcher_in_its_own_session(tmp_pat
     runner = SubprocessRunner()
     output = tmp_path / "detached.log"
     pid_file = tmp_path / "detached.pid"
+    inherited = tmp_path / "inherited.txt"
+    inherited.write_text("inherited descriptor")
     pid = None
     try:
         result = await runner.run(
-            [sys.executable, "-c", _DETACHED_LAUNCHER_PROGRAM, str(output), str(pid_file)],
+            [
+                sys.executable,
+                "-c",
+                _DETACHED_LAUNCHER_PROGRAM,
+                str(output),
+                str(pid_file),
+                str(inherited),
+            ],
             timeout=_PID_FILE_WAIT_TIMEOUT,
+            input_text="inherited input",
         )
         assert result.returncode == 0, result.stderr
         pid = int(result.stdout.strip())
@@ -55,7 +68,11 @@ async def test_detached_process_survives_its_launcher_in_its_own_session(tmp_pat
             timeout=_PID_FILE_WAIT_TIMEOUT,
         )
         assert runner.identify(pid) is not None
-        assert output.read_text().splitlines() == [f"{pid} {pid} True", "detached stderr"]
+        assert output.read_text().splitlines() == [
+            f"{pid} {pid} 'inherited input'",
+            "inherited descriptor",
+            "detached stderr",
+        ]
     finally:
         if pid is None and pid_file.exists() and pid_file.read_text():
             pid = int(pid_file.read_text())
@@ -234,10 +251,10 @@ async def test_an_exited_leader_ends_the_output_stream_and_its_descendant_within
     async with asyncio.timeout(STDOUT_DRAIN_TIMEOUT + _STOP_BOUND_SECONDS):
         lines = [line async for line in process.stdout_lines()]
         returncode = await process.wait()
-
-    assert (lines, returncode) == ([b"done\n"], 0)
-    descendant = runner.identify(int(pid_file.read_text()))
-    assert descendant is None or not runner.is_running(descendant)
+        assert (lines, returncode) == ([b"done\n"], 0)
+        descendant = runner.identify(int(pid_file.read_text()))
+        if descendant is not None:
+            await wait_until(lambda: not runner.is_running(descendant), _STOP_BOUND_SECONDS)
 
 
 _MARKER_PROGRAM = "import pathlib, sys, time; pathlib.Path(sys.argv[1]).touch(); time.sleep(300)"

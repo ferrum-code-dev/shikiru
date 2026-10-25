@@ -5,7 +5,6 @@ from __future__ import annotations
 import shlex
 from typing import TYPE_CHECKING
 
-from shikiru.domain.versions import parse_version
 from shikiru.errors import ConfigError
 from shikiru.palette import (
     BACKGROUND_COLOR,
@@ -50,9 +49,6 @@ LEGACY_HOME_WINDOW_NAME = "shikiru"
 DETACHED_SIZE = (240, 64)
 _HOME_WINDOW_INDEX = "0"
 _HOME_INDEX_TARGET = f":{_HOME_WINDOW_INDEX}"
-_TMUX_SERVER_VERSION_FORMAT = "#{version}"
-_ALLOW_SET_TITLE_OPTION = "allow-set-title"
-ALLOW_SET_TITLE_MINIMUM_VERSION = (3, 5)
 
 _PALETTE_KEY = "Space"
 _DASHBOARD_PALETTE_EVENT = "F12"
@@ -101,7 +97,7 @@ _OWNED_WINDOW_BEHAVIOR_OPTIONS: dict[str, str] = {
     "remain-on-exit": "on",
     "allow-rename": "off",
     "automatic-rename": "off",
-    _ALLOW_SET_TITLE_OPTION: "off",
+    "allow-set-title": "off",
 }
 
 _PANE_TITLE_OPTIONS: dict[str, str] = {
@@ -309,18 +305,6 @@ class SessionView:
 
     async def _apply_options(self, window_target: str, options: dict[str, str]) -> None:
         for option, value in options.items():
-            if option == _ALLOW_SET_TITLE_OPTION:
-                server_version_text = await self._tmux.display(
-                    window_target, _TMUX_SERVER_VERSION_FORMAT
-                )
-                server_version = parse_version(server_version_text)
-                if server_version is None:
-                    message = (
-                        f"tmux server returned an unrecognized version: {server_version_text!r}"
-                    )
-                    raise ConfigError(message)
-                if server_version < ALLOW_SET_TITLE_MINIMUM_VERSION:
-                    continue
             await self._tmux.set_window_option(window_target, option, value)
 
 

@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.domain.versions import parse_version
 from shikiru.errors import ConfigError
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.decorator import (
@@ -14,11 +13,7 @@ from shikiru.tmux.decorator import (
     PANE_GLYPH_OPTION,
     PaneDecorator,
 )
-from shikiru.tmux.session import (
-    ALLOW_SET_TITLE_MINIMUM_VERSION,
-    HOME_WINDOW_NAME,
-    SessionView,
-)
+from shikiru.tmux.session import HOME_WINDOW_NAME, SessionView
 from shikiru.ui.tokens import (
     BACKGROUND_COLOR,
     PRIMARY_TEXT_COLOR,
@@ -56,34 +51,6 @@ async def _show_option_values(
     tmux_server: TmuxServer, command: tuple[str, ...], options: Iterable[str]
 ) -> dict[str, str]:
     return {option: (await tmux_server.run(*command, option)).stdout.strip() for option in options}
-
-
-def _with_allow_set_title(options: Mapping[str, str], enabled: bool, value: str) -> dict[str, str]:
-    return {**options, "allow-set-title": value} if enabled else dict(options)
-
-
-def _owned_chrome_options(border_status: str, has_allow_set_title: bool) -> dict[str, str]:
-    options = {
-        "remain-on-exit": "on",
-        "allow-rename": "off",
-        "automatic-rename": "off",
-        "pane-border-status": border_status,
-        "pane-border-lines": "heavy",
-    }
-    return _with_allow_set_title(options, has_allow_set_title, "off")
-
-
-async def _assert_recovery_state(
-    tmux: Tmux,
-    active_window: str,
-    inactive_panes: tuple[str, ...],
-    pane_titles: Mapping[str, str],
-) -> None:
-    assert await tmux.display(active_window, "#{window_active}") == "1"
-    for pane in inactive_panes:
-        assert await tmux.display(pane, "#{window_active}") == "0"
-    for pane, title in pane_titles.items():
-        assert await tmux.display(pane, "#{pane_title}") == title
 
 
 async def test_pane_state_and_title_render_and_are_readable_back(
@@ -268,10 +235,6 @@ async def test_project_chrome_is_local_and_recovered_without_changing_focus(
     session_target = await project.ensure(
         "chrome-recovery", tmp_path, home_command=("sh", "-c", "exec sleep 300")
     )
-    server_version_text = await tmux.display(session_target, "#{version}")
-    server_version = parse_version(server_version_text)
-    assert server_version is not None
-    has_allow_set_title = server_version >= ALLOW_SET_TITLE_MINIMUM_VERSION
     home_pane = await tmux.display(f"{session_target}:{HOME_WINDOW_NAME}", "#{pane_id}")
     home_window = await tmux.window_id(home_pane)
     task_pane = await project.create_task_window(
@@ -299,8 +262,8 @@ async def test_project_chrome_is_local_and_recovered_without_changing_focus(
         "pane-border-style": _INHERITED_STYLE,
         "pane-active-border-style": _INHERITED_STYLE,
         "pane-border-format": "operator #[fg=red]#{pane_title}",
+        "allow-set-title": "on",
     }
-    operator_options = _with_allow_set_title(operator_options, has_allow_set_title, "on")
     await _set_window_options(tmux, operator_window, operator_options)
 
     await tmux.set_session_option(session_target, "status-style", _INHERITED_STYLE)
@@ -311,26 +274,32 @@ async def test_project_chrome_is_local_and_recovered_without_changing_focus(
         "automatic-rename": "on",
         "pane-border-status": "bottom",
         "pane-border-lines": "single",
+        "allow-set-title": "on",
     }
-    owned_window_options = _with_allow_set_title(owned_window_options, has_allow_set_title, "on")
     await _set_window_options(tmux, home_window, owned_window_options)
     await _set_window_options(tmux, task_window, owned_window_options)
     await tmux.select_window(operator_window)
     await project.ensure("chrome-recovery", tmp_path, home_command=("sh", "-c", "exec sleep 300"))
 
-    await _assert_recovery_state(
-        tmux,
-        operator_window,
-        (home_pane, task_pane),
-        {task_pane: task_title, operator_pane: operator_title},
-    )
+    assert await tmux.display(operator_window, "#{window_active}") == "1"
+    assert await tmux.display(home_pane, "#{window_active}") == "0"
+    assert await tmux.display(task_pane, "#{window_active}") == "0"
+    assert await tmux.display(task_pane, "#{pane_title}") == task_title
+    assert await tmux.display(operator_pane, "#{pane_title}") == operator_title
     operator_actual = await _show_option_values(
         tmux_server, ("show-window-options", "-v", "-t", operator_window), operator_options
     )
     assert operator_actual == operator_options
 
     for window_target, border_status in ((home_window, "off"), (task_window, "top")):
-        expected_options = _owned_chrome_options(border_status, has_allow_set_title)
+        expected_options = {
+            "remain-on-exit": "on",
+            "allow-rename": "off",
+            "automatic-rename": "off",
+            "allow-set-title": "off",
+            "pane-border-status": border_status,
+            "pane-border-lines": "heavy",
+        }
         actual_options = await _show_option_values(
             tmux_server,
             ("show-window-options", "-v", "-t", window_target),

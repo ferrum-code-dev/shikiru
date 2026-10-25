@@ -266,11 +266,10 @@ async def _click_button(pilot: Pilot[InitWizardResult | None], selector: str) ->
     await wait_until(lambda: not button.has_class("-active"), timeout=1)
     body = pilot.app.query_one("#wizard-body")
     body.scroll_to_widget(button, animate=False, immediate=True, top=True)
-    await wait_until(lambda: button.is_on_screen, timeout=3)
+    await wait_until(lambda: button.visible and button.is_on_screen, timeout=3)
     await wait_until(lambda: not button.disabled, timeout=3)
-    button.focus()
-    await wait_until(lambda: pilot.app.focused is button, timeout=1)
-    await pilot.press("enter")
+    clicked = await pilot.click(button, offset=(button.region.width // 2, 0))
+    assert clicked
 
 
 async def _click_next(
@@ -325,6 +324,8 @@ async def _assign_rung(
     if effort is not None:
         await _choose(pilot, "#ladder-effort", effort)
     await _click_button(pilot, "#ladder-add")
+    field = pilot.app.query_one("#ladder-input", Input)
+    await wait_until(lambda: pilot.app.focused is field, timeout=1)
 
 
 async def _set_role(pilot: Pilot[InitWizardResult | None], role: str) -> None:
@@ -950,6 +951,7 @@ async def test_ladder_draft_and_caret_survive_scope_changes(
         await _choose(pilot, "#ladder-agent", "fake")
         await _choose(pilot, "#ladder-model", "smoke")
         await _click_button(pilot, "#ladder-add")
+        await wait_until(lambda: pilot.app.focused is field, timeout=1)
         assert field.value == "fake:smoke,,unfinished"
         await wait_until(lambda: field.cursor_position == cursor_position, timeout=1)
         await _set_scope(pilot, LADDER_SCOPES[2])

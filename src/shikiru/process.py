@@ -437,10 +437,11 @@ class SubprocessRunner:
             try:
                 process = subprocess.Popen(  # noqa: S603 # keep: gateway executes argv without a shell
                     argv_tuple,
-                    env=env,
-                    stdin=subprocess.DEVNULL,
+                    env=dict(env) if env is not None else dict(os.environ),
                     stdout=output_fd,
                     stderr=output_fd,
+                    close_fds=False,
+                    restore_signals=False,
                     start_new_session=True,
                 )
             except OSError as error:

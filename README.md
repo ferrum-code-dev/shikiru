@@ -35,7 +35,7 @@ and a timeline so you can understand both its result and how it got there.
 
 ## Requirements and installation
 
-- Python 3.14+ and uv; Git 2.45+ and tmux 3.4+.
+- Python 3.14+ and uv; Git 2.45+ and tmux 3.5+.
 - A single Git repository per project, initialized at its root with at least one commit.
   Submodules and multi-repository projects are unsupported.
 - Claude Code or Codex CLI installed and configured for your account.
