@@ -1,4 +1,4 @@
-"""Git facts for `facts.md`, outranking the Implementer's claims (03 §2)."""
+"""Git facts for `facts.md`, outranking the Implementer's claims."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ OFF_BRANCH_ISSUE = (
 
 
 def describe_off_branch(branch: str, head_branch: str | None, commits: Sequence[str]) -> str:
-    """Describe a worktree whose `HEAD` is not on `branch`, naming the commits at risk (03 §6)."""
+    """Describe a worktree whose `HEAD` is not on `branch`, naming the commits at risk."""
     return OFF_BRANCH_ISSUE.format(
         actual=head_branch or DETACHED_HEAD,
         branch=branch,
@@ -48,7 +48,7 @@ def describe_off_branch(branch: str, head_branch: str | None, commits: Sequence[
 
 
 def render_facts(facts: WorkspaceFacts) -> str:
-    """Render `facts` as the markdown text a `verify`/`conflicts`/`handoff` prompt embeds (03 §2).
+    """Render `facts` as the markdown text a `verify`/`conflicts`/`handoff` prompt embeds.
 
     These facts outrank the Implementer's claims, so they carry no interpretation, only the
     raw `git` output `GitFacts.collect` gathered.

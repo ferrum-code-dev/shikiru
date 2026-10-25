@@ -1,4 +1,4 @@
-"""Paged window over the most recent terminal tasks (docs/design/06-operator.md §5.4)."""
+"""Paged window over the most recent terminal tasks."""
 
 from __future__ import annotations
 

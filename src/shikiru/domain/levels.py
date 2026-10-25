@@ -1,4 +1,4 @@
-"""Usage levels: how full a share of a limit is against its warn and alert thresholds (06 §5.3)."""
+"""Usage levels: how full a share of a limit is against its warn and alert thresholds."""
 
 from __future__ import annotations
 

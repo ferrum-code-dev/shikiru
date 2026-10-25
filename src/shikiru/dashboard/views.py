@@ -1,4 +1,4 @@
-"""Compose ready-to-render dashboard data from state, settings and services (06 §5.4)."""
+"""Compose ready-to-render dashboard data from state, settings and services."""
 
 from __future__ import annotations
 

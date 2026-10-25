@@ -1,4 +1,4 @@
-"""Integration tests for `SessionView` on the private `tmux_server` (06 §5.1)."""
+"""Integration tests for `SessionView` on the private `tmux_server`."""
 
 from __future__ import annotations
 

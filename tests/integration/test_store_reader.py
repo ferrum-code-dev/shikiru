@@ -1,4 +1,4 @@
-"""Integration tests for `StateReader`, including a cross-process reader (06 §1, §5)."""
+"""Integration tests for `StateReader`, including a cross-process reader."""
 
 from __future__ import annotations
 

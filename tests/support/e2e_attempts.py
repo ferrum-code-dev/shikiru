@@ -1,4 +1,4 @@
-"""One real-agent E2E attempt as the results artifact records it (07 §5)."""
+"""One real-agent E2E attempt as the results artifact records it."""
 
 from __future__ import annotations
 

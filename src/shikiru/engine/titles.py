@@ -1,4 +1,4 @@
-"""`TaskTitles`: pane and window titles, and window state decorations (03 §4.2; 06 §5.3).
+"""`TaskTitles`: pane and window titles, and window state decorations.
 
 Refreshed at every task state boundary (dispatch, step, iteration, status, hold, rung and usage
 change). The window's `@shk_state_color`/`@shk_state_glyph` mirror the task's own state — its
@@ -115,9 +115,9 @@ def _rung_label(rung: Rung) -> str:
 
 
 class TaskTitles:
-    """Sets `task`'s window/pane titles and window state from `dashboard.titles` (06 §5.3).
+    """Sets `task`'s window/pane titles and window state from `dashboard.titles`.
 
-    A role's pane taken over by the Operator (03 §9) is titled and coloured as the Operator's;
+    A role's pane taken over by the Operator  is titled and coloured as the Operator's;
     otherwise it shows the pause hold or the role's own colour and glyph.
     """
 

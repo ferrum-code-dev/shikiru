@@ -1,4 +1,4 @@
-"""The no-comments rule of docs/design/07-engineering.md §2.8, checked mechanically."""
+"""The project rule against comments, checked mechanically."""
 
 from __future__ import annotations
 

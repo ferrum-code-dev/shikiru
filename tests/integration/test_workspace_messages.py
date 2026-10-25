@@ -1,4 +1,4 @@
-"""Operator message filing under a task's run directory (03 §4.3, §9)."""
+"""Operator message filing under a task's run directory."""
 
 from __future__ import annotations
 

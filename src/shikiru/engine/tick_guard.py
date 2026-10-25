@@ -1,4 +1,4 @@
-"""The fault barrier around one engine tick or command pass (02 §1, 06 §5.7)."""
+"""The fault barrier around one engine tick or command pass."""
 
 from __future__ import annotations
 

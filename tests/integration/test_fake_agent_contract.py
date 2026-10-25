@@ -1,4 +1,4 @@
-"""The per-turn fake agent proves the headless plugin contract (04 §3)."""
+"""The per-turn fake agent proves the headless plugin contract."""
 
 from __future__ import annotations
 

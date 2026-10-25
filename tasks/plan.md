@@ -1,13 +1,13 @@
 # Shikiru Implementation Plan
 
-Source of truth: [`docs/design`](../docs/design/README.md). Progress: [`todo.md`](todo.md).
+Source of truth: [`docs/design.md`](../docs/design.md). Progress: [`todo.md`](todo.md).
 
 Phase 8 target specification: [Operator Workspace](../docs/tui-workspace.md). Its tasks update the normative design as each slice ships.
 
 Phase 9 target specification: [Compact Operator TUI](../docs/tui-focus.md). It converts the Phase 8 presentation to the approved Focus layout and Flight deck palette while preserving operator behavior.
 
 **Rules**:
-- Follow `CLAUDE.md`/`AGENTS.md` and 07 §2–3.
+- Follow `CLAUDE.md`/`AGENTS.md` and [`docs/design.md`](../docs/design.md).
 - Work on one task at a time.
 - `uv run poe check` must be green before every commit.
 - Tick each AC here and the task in `todo.md` when done.
@@ -2568,9 +2568,10 @@ Refs: Task 282 full-gate timeout in timeline details selection; approved reliabi
 ### Task 285: Simplify user and design documentation
 
 Refs: approved lean personal-use scope; README, existing normative docs, packaged defaults and source contracts.
-- [ ] Replace README history with accurate installation, requirements, configuration, common commands, dashboard usage, safety, recovery and concise real-project validation instructions. Replace the accumulated written design with one brief docs/design.md covering architecture and essential invariants; no CONTRIBUTING.md or community scaffolding. Preserve necessary information through direct source/defaults links rather than duplicating exhaustive implementation history.
-- [ ] Remove historical reviews, readiness records and obsolete prototypes; apply the Operator's answer about retaining the two current approved HTML references. Preserve runtime assets and protocol/test fixtures. Update stale documentation pointers in code/tooling minimally without changing behavior; keep root instruction/task files until the final removal task, updating their active design pointer meanwhile.
-- [ ] Check links and referenced commands against current code, obtain lead review, run a bounded green full gate, record proof and commit; no claims of hosted Linux verification or successful paid-agent runs without evidence.
+- [x] Replace README history with accurate installation, requirements, configuration, common commands, dashboard usage, safety, recovery and concise real-project validation instructions. Replace the accumulated written design with one brief docs/design.md covering architecture and essential invariants; no CONTRIBUTING.md or community scaffolding. Preserve necessary information through direct source/defaults links rather than duplicating exhaustive implementation history.
+- [x] Remove historical reviews, readiness records and obsolete prototypes; apply the stated default to retain the two current approved HTML references. Preserve runtime assets and protocol/test fixtures. Update stale documentation pointers in code/tooling minimally; keep root instruction/task files until the final removal task, updating their active design pointer meanwhile.
+- [x] Check links and referenced commands against current code, obtain lead review, run a bounded green full gate and record proof; make no claims of hosted Linux verification or successful paid-agent runs without evidence.
+  - Proof: Lead accepted the lean README and 83-line design, with the stated default to retain both approved HTML references; the Operator's optional preference question remained unanswered. Replaced the old README and accumulated design/history with a 163-line README and concise `docs/design.md`, linked to packaged defaults and source contracts. Removed 74 tracked historical/readiness/review/prototype files; retained both approved HTML files and the runtime ASCII artwork byte-identically. Checked 18 README/design links, all 10 CLI help invocations, Python/TOML parsing and stale source/tooling pointers. The disposable-clone instructions distinguish fake-agent integration tests from optional provider-backed manual checks; no user repository, paid probe or provider turn was run, and Linux remains unverified. AST comparison after stripping standalone documentation strings found no control/data-flow changes; the only other string changes remove obsolete numbered citations from an internal invalid-transition error and an E2E diagnostic. The guarded offline `uv run poe check` passed 1,739 tests, skipped 14, at 91.41% coverage (pytest 628.84s; total 637.65s; peak 1,421.7 MiB; `/private/tmp/shikiru-task285-20261025-quality-final2/command.log`).
 
 ### Task 286: Add bounded GitHub CI and package verification
 

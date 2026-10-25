@@ -1,4 +1,4 @@
-"""Recreates the project's tmux session after the tmux server or session is lost (06 §5.1)."""
+"""Recreates the project's tmux session after the tmux server or session is lost."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Rebase, conflict hand-off, local merge and pull request orchestration (03-workflow.md §6)."""
+"""Rebase, conflict hand-off, local merge and pull request orchestration."""
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from shikiru.workspace.github import GitHub, PullRequestStatus
 
 INTEGRATION_RETRY = timedelta(minutes=2)
-"""Delay between blocked integration pre-checks (05-data.md §1)."""
+"""Delay between blocked integration pre-checks."""
 
 POLL_FAULT_SCOPE = "pull request poll"
 GIT_FAILURE_DETAIL_LIMIT = 4000
@@ -353,7 +353,7 @@ def _overlaps(left: str, right: str) -> bool:
 
 
 class PullRequest:
-    """Push a rebased branch, open a pull request for it and poll it until it lands (03 §6)."""
+    """Push a rebased branch, open a pull request for it and poll it until it lands."""
 
     def __init__(
         self,
@@ -509,7 +509,7 @@ def _open_pull_request(
 
 
 class PullRequestCloser:
-    """Close a task's open pull request when the task is cancelled (03 §6)."""
+    """Close a task's open pull request when the task is cancelled."""
 
     def __init__(self, *, github: GitHub, events: EventLog, project_root: Path) -> None:
         """Close through `github` from `project_root` the PR that `events` record as open."""
@@ -580,7 +580,7 @@ class Integrator:
         """Rebase and integrate `task`, delegating conflict turns to TaskFlow.
 
         An integration the strategy already started (an open PR) is only settled, never
-        rebased or applied again (03 §6-7).
+        rebased or applied again.
         """
         repo = task.repo
         if repo is None:

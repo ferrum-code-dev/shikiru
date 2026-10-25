@@ -1,4 +1,4 @@
-"""Integration tests for `TaskFlow`: full review loops on the fake agent (03 §2-3)."""
+"""Integration tests for `TaskFlow`: full review loops on the fake agent."""
 
 from __future__ import annotations
 

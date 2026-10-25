@@ -1,4 +1,4 @@
-"""Renders turn prompts from packaged templates, overridable per project (03 §2, §4.3)."""
+"""Renders turn prompts from packaged templates, overridable per project."""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ ALREADY_DONE_SENTENCE = "If this work is already done in the workspace, verify i
 
 
 class PromptName(StrEnum):
-    """One packaged template name, also its filename stem (03 §2)."""
+    """One packaged template name, also its filename stem."""
 
     TRIAGE = auto()
     PLAN = auto()

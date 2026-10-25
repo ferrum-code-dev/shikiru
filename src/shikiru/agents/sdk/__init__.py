@@ -1,4 +1,4 @@
-"""Reusable process and stream tools for agent plugins (04 §2)."""
+"""Reusable process and stream tools for agent plugins."""
 
 from shikiru.agents.sdk.turn import (
     StreamingTurn,

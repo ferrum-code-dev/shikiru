@@ -1,4 +1,4 @@
-"""Agent run model: one row per task role's session lineage (docs/design/05-data.md §2)."""
+"""Agent run model: one row per task role's session lineage."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ NO_USAGE = Usage(
 
 
 class RunStatus(StrEnum):
-    """A run's lifecycle (05 §2)."""
+    """A run's lifecycle."""
 
     LIVE = auto()
     TAKEN_OVER = auto()
@@ -35,7 +35,7 @@ class RunStatus(StrEnum):
 
 
 class Run(DomainModel):
-    """One agent session for a task role (03 §4.1-4.2; mirrors the `runs` table, 05 §2)."""
+    """One agent session for a task role (mirrors the `runs` table)."""
 
     id: int
     task_id: str
@@ -72,14 +72,14 @@ MISSING_TITLE_VALUE = "\N{EN DASH}"
 
 
 def context_title(usage: Usage) -> str:
-    """Format `usage`'s context share for a title (`42%`), or a dash if unreported (06 §5.3)."""
+    """Format `usage`'s context share for a title (`42%`), or a dash if unreported."""
     if usage.context_used_pct is None:
         return MISSING_TITLE_VALUE
     return f"{displayed_pct(usage.context_used_pct)}%"
 
 
 def cost_title(usage: Usage) -> str:
-    """Format `usage`'s cost for a title (`$1.84`), or a dash if unreported (06 §5.3)."""
+    """Format `usage`'s cost for a title (`$1.84`), or a dash if unreported."""
     if usage.cost_usd is None:
         return MISSING_TITLE_VALUE
     return f"${usage.cost_usd:.2f}"

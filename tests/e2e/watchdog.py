@@ -1,4 +1,4 @@
-"""Ends an E2E attempt that makes no progress or outlives its budget (07 §5)."""
+"""Ends an E2E attempt that makes no progress or outlives its budget."""
 
 from __future__ import annotations
 

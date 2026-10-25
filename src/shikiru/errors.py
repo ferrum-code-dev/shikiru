@@ -1,4 +1,4 @@
-"""The Shikiru error hierarchy and its exit codes (docs/design/06-operator.md §2)."""
+"""The Shikiru error hierarchy and its exit codes."""
 
 from __future__ import annotations
 

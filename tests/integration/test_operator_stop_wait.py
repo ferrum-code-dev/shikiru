@@ -1,4 +1,4 @@
-"""`shikiru stop` acknowledges only once the engine has released its lock (06 §5.8)."""
+"""`shikiru stop` acknowledges only once the engine has released its lock."""
 
 from __future__ import annotations
 

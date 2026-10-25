@@ -1,4 +1,4 @@
-"""Builds one prompt directory and runs its resumable headless turns (03 §4.3)."""
+"""Builds one prompt directory and runs its resumable headless turns."""
 
 from __future__ import annotations
 
@@ -101,7 +101,7 @@ def read_turn_report(turn_dir: Path) -> Report | None:
 def turn_environment(
     task: Task, role: Role, run_dir_path: Path, project_name: str
 ) -> dict[str, str]:
-    """Return the environment every agent process of `task`'s `role` runs with (03 §4.1)."""
+    """Return the environment used by every agent process for `task`'s `role`."""
     if task.slot is None:
         message = f"{task.id} has no assigned slot; a turn needs a dispatched task"
         raise InvariantError(message)
@@ -157,7 +157,7 @@ class TurnRunner:
         """Run one workflow turn and any resumed nudge turns to a normalized result.
 
         Operator messages delivered into the turn return to the queue unless it completes.
-        Raises `TurnHeld`, before any agent process starts, when the task is held (03 §6).
+        Raises `TurnHeld`, before any agent process starts, when the task is held.
         """
         turn_dir = self._prepare_turn_dir(
             run_dir(self._project_root, task.id), task.id, role, request
@@ -243,7 +243,7 @@ class TurnRunner:
     def completed_turn(
         self, task_id: str, role: Role, request: TurnRequest
     ) -> tuple[Completed, Path] | None:
-        """Return the report of `request`'s latest turn when it holds a valid one (03 §7).
+        """Return the report of `request`'s latest turn when it holds a valid one.
 
         A restarted engine re-runs the step whose turn it lost. When that turn is the task's
         latest, still `role`'s current turn, and already submitted a valid report, the report is

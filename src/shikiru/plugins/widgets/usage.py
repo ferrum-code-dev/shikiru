@@ -1,4 +1,4 @@
-"""The `usage` widget: token totals, reported costs and quota windows (06 §5.4)."""
+"""The `usage` widget: token totals, reported costs and quota windows."""
 
 from __future__ import annotations
 
@@ -143,7 +143,7 @@ class UsagePanel(GatedStatic):
 
 
 class UsageWidget:
-    """The `usage` dashboard widget plugin (06 §5.4)."""
+    """The `usage` dashboard widget plugin."""
 
     name = "usage"
     placement = WidgetPlacement.PROJECT_USAGE

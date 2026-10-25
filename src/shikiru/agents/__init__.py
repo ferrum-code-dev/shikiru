@@ -1,3 +1,3 @@
-"""Agent plugin contract and supporting packages (02 §2)."""
+"""Agent plugin contract and supporting packages."""
 
 from __future__ import annotations

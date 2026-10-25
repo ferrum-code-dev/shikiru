@@ -1,4 +1,4 @@
-"""`shikiru report`: validates and atomically stores an agent turn's report (03 §4.3)."""
+"""`shikiru report`: validates and atomically stores an agent turn's report."""
 
 from __future__ import annotations
 
@@ -29,11 +29,10 @@ if TYPE_CHECKING:
 
 
 class ReportError(ShikiruError):
-    """A `shikiru report` failure, carrying the exit code it maps to (03 §4.3).
+    """A failure while handling `shikiru report`, with the process exit code to return.
 
-    `exit_code` is set per instance rather than per subclass, since 03 §4.3 gives `shikiru
-    report` its own two exit codes (`EXIT_USAGE_ERROR` invalid, `EXIT_NOT_INITIALISED` no
-    current turn) that both flow through this one error type instead of one subclass each.
+    `exit_code` is set per instance rather than per subclass. Invalid input and a missing current
+    turn use different exit codes through this same error type.
     """
 
     def __init__(self, exit_code: int, message: str) -> None:
@@ -128,7 +127,7 @@ _FILE_OPTION = typer.Option(..., "--file", exists=True, dir_okay=False, help="Re
 
 
 def report_command(file: Path = _FILE_OPTION) -> None:
-    """Validate and store the current turn's report (03 §4.3)."""
+    """Validate and store the current turn's report."""
     try:
         report_path = submit_report(file, os.environ)
     except ReportError as error:

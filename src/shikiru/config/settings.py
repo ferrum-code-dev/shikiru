@@ -1,4 +1,4 @@
-"""Pydantic settings models for every core configuration key (docs/design/05-data.md §1)."""
+"""Pydantic settings models for every core configuration key."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ class ProjectConfig(ConfigModel):
 
 
 class RepoConfig(ConfigModel):
-    """`[repo]`: the project's single git repository, rooted at the project root (D20)."""
+    """`[repo]`: the project's single git repository, rooted at the project root."""
 
     base: str | None = None
     caches: list[str] = Field(default_factory=list)
@@ -168,7 +168,7 @@ LayoutNode = LayoutSplit | PaneLeaf
 
 
 class TitlesConfig(ConfigModel):
-    """`[dashboard.titles]` (field templates and context thresholds: 06 §5.3)."""
+    """`[dashboard.titles]` (field templates and context thresholds)."""
 
     window: str
     leader: str
@@ -189,7 +189,7 @@ class TitlesConfig(ConfigModel):
 
 
 class GaugesConfig(ConfigModel):
-    """`[dashboard.gauges]`: subscription-limit gauge thresholds (06 §5.3, §6.1)."""
+    """`[dashboard.gauges]`: subscription-limit gauge thresholds."""
 
     quota_warn_pct: int = Field(gt=0, le=MAX_USAGE_PCT)
     quota_alert_pct: int = Field(gt=0, le=MAX_USAGE_PCT)
@@ -279,14 +279,14 @@ class DoctorConfig(ConfigModel):
 
 
 class LoggingConfig(ConfigModel):
-    """`[logging]`: engine log rotation (05 §1)."""
+    """`[logging]`: engine log rotation."""
 
     engine_log_max_bytes: int = Field(gt=0)
     engine_log_backups: int = Field(ge=0)
 
 
 class RetentionConfig(ConfigModel):
-    """`[retention]`: how long finished history is kept (05 §2)."""
+    """`[retention]`: how long finished history is kept."""
 
     interval_seconds: float = Field(gt=0)
     finished_task_days: float = Field(gt=0)

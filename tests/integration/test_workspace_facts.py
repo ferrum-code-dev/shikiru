@@ -1,4 +1,4 @@
-"""Integration tests for `GitFacts` against real git repos and diffs (03 §2)."""
+"""Integration tests for `GitFacts` against real git repos and diffs."""
 
 from __future__ import annotations
 

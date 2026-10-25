@@ -41,11 +41,11 @@ class TaskSupervisor:
         self._start(task_id, resumed=False)
 
     async def resume_task(self, task_id: str) -> None:
-        """Schedule the flow of a task whose step an engine restart interrupted (03 §7)."""
+        """Schedule the flow of a task whose step an engine restart interrupted."""
         self._start(task_id, resumed=True)
 
     async def ensure_flows(self) -> None:
-        """Start a resumed flow for each unheld running or integrating task without one (03 §7)."""
+        """Start a resumed flow for each unheld running or integrating task without one."""
         for task in self._tasks.list_active():
             if task.status in _IN_FLIGHT and not task.held:
                 self._start(task.id, resumed=True)

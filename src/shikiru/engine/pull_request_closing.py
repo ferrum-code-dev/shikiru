@@ -1,4 +1,4 @@
-"""Off-loop, retried closing of the pull requests of cancelled tasks (03 §6)."""
+"""Off-loop, retried closing of the pull requests of cancelled tasks."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Recovery decisions for every non-completed turn result (docs/design/03-workflow.md §7)."""
+"""Recovery decisions for every non-completed turn result."""
 
 from __future__ import annotations
 
@@ -56,7 +56,7 @@ TurnResult = Completed | Failed | Stalled | ProtocolError
 
 @dataclass(frozen=True)
 class TurnCounters:
-    """In-memory counters for the current turn only; a restart resets them (03 §1.1)."""
+    """In-memory counters for the current turn only; a restart resets them."""
 
     stall_recoveries: int = 0
     unavailable_retries: int = 0
@@ -116,7 +116,7 @@ Action = WaitForQuota | Backoff | NextRung | ResumeTurn | RetryTurn | Escalate
 
 
 def quota_block_until(resets_at: datetime | None, now: datetime) -> datetime:
-    """Return the agent-block deadline for a quota failure (03 §7)."""
+    """Return the agent-block deadline for a quota failure."""
     return (resets_at + QUOTA_MARGIN) if resets_at is not None else (now + QUOTA_PROBE)
 
 
@@ -159,7 +159,7 @@ def _decide_failure(result: Failed, counters: TurnCounters, policy: RecoveryPoli
 
 
 def decide(result: TurnResult, counters: TurnCounters, policy: RecoveryPolicy) -> Action:
-    """Map a non-`Completed` turn result to the action recovery should take (03 §7)."""
+    """Map a non-`Completed` turn result to the action recovery should take."""
     if isinstance(result, Failed):
         return _decide_failure(result, counters, policy)
     if isinstance(result, Stalled):

@@ -1,4 +1,4 @@
-"""Integration tests for `QuotaStore.agent_blocks` (docs/design/05-data.md §2; 03 §7, §9)."""
+"""Integration tests for `QuotaStore.agent_blocks`."""
 
 from __future__ import annotations
 

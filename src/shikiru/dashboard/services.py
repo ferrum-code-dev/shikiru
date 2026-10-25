@@ -1,4 +1,4 @@
-"""Real `WidgetServices` implementations, wired by `bootstrap` (docs/design/06-operator.md §5.4).
+"""Real `WidgetServices` implementations, wired by `bootstrap`.
 
 `GitRepoStatusService` is the `header` widget's only source of git data and caches it for its
 configured interval so a dashboard refresh never spawns a git process on every tick.
@@ -117,7 +117,7 @@ class _PaneOwnership:
 
 
 class GitRepoStatusService:
-    """Report `header`'s repo row, refreshing at most once per configured interval (06 §5.4)."""
+    """Report `header`'s repo row, refreshing at most once per configured interval."""
 
     def __init__(
         self,
@@ -202,7 +202,7 @@ class GitRepoStatusService:
 
 
 class DashboardServices:
-    """The `WidgetServices` bootstrap wires into every `dash` process (06 §5.4)."""
+    """The `WidgetServices` bootstrap wires into every `dash` process."""
 
     def __init__(
         self,

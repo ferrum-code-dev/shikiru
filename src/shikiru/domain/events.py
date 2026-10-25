@@ -1,4 +1,4 @@
-"""`EventKind`, the closed set of event kinds written to `events` (docs/design/05-data.md §2)."""
+"""`EventKind`, the closed set of event kinds written to `events`."""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ class EventKind(StrEnum):
 
 
 class Event(DomainModel):
-    """One recorded event (mirrors the `events` table, 05 §2)."""
+    """One recorded event (mirrors the `events` table)."""
 
     id: int
     ts: datetime

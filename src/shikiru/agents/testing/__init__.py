@@ -1,4 +1,4 @@
-"""The agent plugin contract test kit (04 §3), imported only by tests (02 §2)."""
+"""The agent plugin contract test kit, imported only by tests."""
 
 from __future__ import annotations
 

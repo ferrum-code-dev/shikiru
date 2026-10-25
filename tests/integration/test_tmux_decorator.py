@@ -1,4 +1,4 @@
-"""Integration tests for `PaneDecorator` on the private `tmux_server` (06 §5.3, §6.1)."""
+"""Integration tests for `PaneDecorator` on the private `tmux_server`."""
 
 from __future__ import annotations
 

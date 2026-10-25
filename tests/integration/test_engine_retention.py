@@ -1,4 +1,4 @@
-"""Retention keeps finished history bounded and never prunes what is still needed (05 §2)."""
+"""Retention keeps finished history bounded and never prunes what is still needed."""
 
 from __future__ import annotations
 

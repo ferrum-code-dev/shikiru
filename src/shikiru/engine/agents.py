@@ -1,8 +1,8 @@
-"""`AgentPool`: builds and caches one headless `Agent` per name (04 §1-2).
+"""`AgentPool`: builds and caches one headless `Agent` per name.
 
-Builds through an injected `create` callable rather than an `AgentRegistry` directly, so the
-engine imports only `agents.contracts` (`AGENTS.md`'s boundary rule): callers pass
-`AgentRegistry.create` bound, but the engine itself never imports `agents.registry`.
+Builds through an injected `create` callable rather than an `AgentRegistry` directly, keeping
+the engine on the shared `agents.contracts` boundary: callers pass `AgentRegistry.create` bound,
+but the engine itself never imports `agents.registry`.
 """
 
 from __future__ import annotations

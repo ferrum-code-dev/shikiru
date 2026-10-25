@@ -1,4 +1,4 @@
-"""tmux and external command notifications (06 §5.7)."""
+"""tmux and external command notifications."""
 
 from __future__ import annotations
 

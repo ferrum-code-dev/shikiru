@@ -1,4 +1,4 @@
-"""Read-only operator views over the state reader (06 §1)."""
+"""Read-only operator views over the state reader."""
 
 from __future__ import annotations
 

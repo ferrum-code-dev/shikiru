@@ -1,4 +1,4 @@
-"""Prunes finished history so a long-running engine stays bounded (05 §2, 03 §7)."""
+"""Prunes finished history so a long-running engine stays bounded."""
 
 from __future__ import annotations
 

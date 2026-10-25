@@ -1,4 +1,4 @@
-"""Pure recorded workflow history projection (03 §§2-3/8-9)."""
+"""Pure recorded workflow history projection."""
 
 from __future__ import annotations
 

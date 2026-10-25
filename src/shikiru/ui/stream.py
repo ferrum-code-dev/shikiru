@@ -1,4 +1,4 @@
-"""Renders a role's `view.jsonl` rows as terminal lines (docs/design/06-operator.md §5.1)."""
+"""Renders a role's `view.jsonl` rows as terminal lines."""
 
 from __future__ import annotations
 

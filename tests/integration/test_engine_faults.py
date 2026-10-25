@@ -1,4 +1,4 @@
-"""Tick faults and tmux loss never end the engine (02 §1, 06 §5.7)."""
+"""Tick faults and tmux loss never end the engine."""
 
 from __future__ import annotations
 

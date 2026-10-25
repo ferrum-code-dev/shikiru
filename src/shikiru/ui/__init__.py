@@ -1,4 +1,4 @@
-"""Shared visual language for the CLI and the dashboard (docs/design/06-operator.md §6)."""
+"""Shared visual language for the CLI and the dashboard."""
 
 from __future__ import annotations
 

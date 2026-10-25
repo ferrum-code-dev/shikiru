@@ -1,4 +1,4 @@
-"""Calls configured Helper headless agents in order and validates every answer (04 §6)."""
+"""Calls configured Helper headless agents in order and validates every answer."""
 
 from __future__ import annotations
 
@@ -93,7 +93,7 @@ class Helper:
         cwd: Path,
         timeout: timedelta,
     ) -> Report | Unrecoverable:
-        """Reconstruct a missing report from the turn's final message and facts (04 §6)."""
+        """Reconstruct a missing report from the turn's final message and facts."""
         schema = {"oneOf": [schema_for(kind), Unrecoverable.model_json_schema()]}
         prompt = _REBUILD_PROMPT.format(
             kind=kind.value,
@@ -109,7 +109,7 @@ class Helper:
         cwd: Path,
         timeout: timedelta,
     ) -> FailureClassification | Unrecoverable:
-        """Classify only the plugin's unrecognised failure text (04 §6)."""
+        """Classify only the plugin's unrecognised failure text."""
         schema = {
             "oneOf": [
                 FailureClassification.model_json_schema(),

@@ -1,4 +1,4 @@
-"""The no-literals rule of docs/design/07-engineering.md §2.5, checked mechanically."""
+"""The project literal rules, checked mechanically."""
 
 from __future__ import annotations
 

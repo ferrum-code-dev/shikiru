@@ -1,4 +1,4 @@
-"""The `disk` widget: free space of the project filesystem and the `.shikiru` size (06 §5.4)."""
+"""The `disk` widget: free space of the project filesystem and the `.shikiru` size."""
 
 from __future__ import annotations
 
@@ -105,7 +105,7 @@ class DiskPanel(GatedStatic):
 
 
 class DiskWidget:
-    """The `disk` dashboard widget plugin (06 §5.4)."""
+    """The `disk` dashboard widget plugin."""
 
     name = "disk"
     placement = WidgetPlacement.DIAGNOSTICS

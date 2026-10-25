@@ -1,4 +1,4 @@
-"""Plan children and supersede replacements get the parent's work through the engine (03 §3)."""
+"""Plan children and supersede replacements get the parent's work through the engine."""
 
 from __future__ import annotations
 

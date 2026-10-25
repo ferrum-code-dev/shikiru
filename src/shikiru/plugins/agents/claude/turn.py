@@ -491,7 +491,7 @@ class ClaudeTurnParser:
 
 
 class ClaudeTurnSequence(TurnProcessSequence):
-    """Build one turn's prompt, `/compact` and continue processes (04 §4, obligation 8)."""
+    """Build one turn's prompt, compaction and continuation processes."""
 
     def __init__(
         self,

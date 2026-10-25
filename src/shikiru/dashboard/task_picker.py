@@ -1,4 +1,4 @@
-"""The Task picker popup: choose one project task by ID or title (06 §5.5)."""
+"""The Task picker popup: choose one project task by ID or title."""
 
 from __future__ import annotations
 

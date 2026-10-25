@@ -1,4 +1,4 @@
-"""Prompt-context preparation for a task's next turn (03 §2)."""
+"""Prompt-context preparation for a task's next turn."""
 
 from __future__ import annotations
 

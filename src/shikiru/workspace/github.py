@@ -1,4 +1,4 @@
-"""The only place gh argv is built: pull requests for `integration = "pr"` (03 §6)."""
+"""The only place gh argv is built: pull requests for `integration = "pr"`."""
 
 from __future__ import annotations
 

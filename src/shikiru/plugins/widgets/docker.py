@@ -1,4 +1,4 @@
-"""The `docker` widget: container counts, problems and the top five by CPU (06 §5.4)."""
+"""The `docker` widget: container counts, problems and the top five by CPU."""
 
 from __future__ import annotations
 
@@ -208,7 +208,7 @@ class DockerPanel(GatedStatic):
 
 
 class DockerWidget:
-    """The `docker` dashboard widget plugin (06 §5.4)."""
+    """The `docker` dashboard widget plugin."""
 
     name = "docker"
     placement = WidgetPlacement.DIAGNOSTICS

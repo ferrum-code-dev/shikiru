@@ -1,4 +1,4 @@
-"""The `resources` widget: host and Shikiru process-tree usage (06 §5.4)."""
+"""The `resources` widget: host and Shikiru process-tree usage."""
 
 from __future__ import annotations
 
@@ -88,7 +88,7 @@ class ResourcesPanel(GatedStatic):
 
 
 class ResourcesWidget:
-    """The `resources` dashboard widget plugin (06 §5.4)."""
+    """The `resources` dashboard widget plugin."""
 
     name = "resources"
     placement = WidgetPlacement.RESOURCES

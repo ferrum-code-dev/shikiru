@@ -1,4 +1,4 @@
-"""Where task roots start from: the local or the verified fetched remote base (03 §6)."""
+"""Where task roots start from: the local or the verified fetched remote base."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ class LocalBaseRefs:
 
 
 class FetchedBaseRefs:
-    """`integration = "pr"`: work lands on the remote base, which the engine fetches (03 §6).
+    """`integration = "pr"`: work lands on the remote base, which the engine fetches.
 
     Every root starts from the freshly fetched remote base, so local commits that were never
     pushed are not in it.

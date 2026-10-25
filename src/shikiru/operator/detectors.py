@@ -1,4 +1,4 @@
-"""Project detection and config rendering shared by non-interactive init and the wizard (06 §3)."""
+"""Project detection and config rendering shared by non-interactive init and the wizard."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ EXCLUDED_DIRECTORIES = frozenset({SHIKIRU_DIR_NAME, ".git"})
 
 
 def not_repository_root(root: Path) -> str:
-    """Explain why `root` cannot be a Shikiru project: it is not a git repository root (D20)."""
+    """Explain why `root` cannot be a Shikiru project: it is not a git repository root."""
     return (
         f"{root} is not a git repository root; Shikiru supports one repository per project, "
         "so run it from the repository's top-level directory"

@@ -1,4 +1,4 @@
-"""Stable view models and plugin protocols for dashboard widgets (06 §5.4)."""
+"""Stable view models and plugin protocols for dashboard widgets."""
 
 from __future__ import annotations
 
@@ -173,7 +173,7 @@ ActivateAttentionDecision = Callable[[], Awaitable[bool]]
 
 
 class TaskBrowserFilter(StrEnum):
-    """A task browser category (Workspace §5.1) or one exact task status."""
+    """A task browser category or one exact task status."""
 
     ACTIVE = "active"
     WAITING = "waiting"
@@ -237,7 +237,7 @@ class TaskHistoryGap(StrEnum):
 
 @dataclass(frozen=True)
 class RepoStatus:
-    """The project checkout's state, as shown by the `header` widget (06 §5.4)."""
+    """The project checkout's state, as shown by the `header` widget."""
 
     branch: str | None
     ahead: int | None
@@ -938,7 +938,7 @@ class DashboardViews(Protocol):
 
 
 class DashboardWidget(Protocol):
-    """A system-pane panel plugin, registered under `WIDGET_ENTRY_POINT_GROUP` (06 §5.4)."""
+    """A system-pane panel plugin, registered under `WIDGET_ENTRY_POINT_GROUP`."""
 
     name: str
 

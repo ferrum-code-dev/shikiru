@@ -1,4 +1,4 @@
-"""A slow or failing notification hook never holds up the engine loop (06 §5.7)."""
+"""A slow or failing notification hook never holds up the engine loop."""
 
 from __future__ import annotations
 

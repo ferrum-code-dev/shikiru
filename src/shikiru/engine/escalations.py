@@ -1,4 +1,4 @@
-"""`EscalationRaiser`: builds the packet and records the escalation (docs/design/03-workflow.md §8).
+"""`EscalationRaiser`: builds the packet and records the escalation.
 
 The packet keeps an agent's product alternatives separate from the engine's allowed resolution
 actions. Only the latter are accepted by the resolution command contract.
@@ -71,7 +71,7 @@ _CONSULT_ANSWER_KEY = "answer"
 
 @dataclass(frozen=True)
 class PacketContext:
-    """Everything `render_packet` needs to assemble one escalation packet (03 §8)."""
+    """Everything `render_packet` needs to assemble one escalation packet."""
 
     task_id: str
     step: Step | None
@@ -117,7 +117,7 @@ def _agent_request_from_reports(reports: Sequence[dict[str, str]]) -> Escalation
 
 
 def render_packet(context: PacketContext) -> str:
-    """Render `context` as the packet markdown (03 §8).
+    """Render `context` as the packet markdown.
 
     Headline, timeline, what was tried, evidence, the Leader's question and typed agent
     alternatives, then the engine's resolvable options. Each option set has one recommendation.
@@ -192,8 +192,8 @@ class EscalationRaiser:
         `apply_state` persists the task's escalated state and returns the task as stored. The
         packet file is written first and removed again if the transaction fails, so an escalated
         task never lacks its escalation. A packet that cannot be written does not fail the
-        escalation: the row commits and `restore_packet` rewrites the file once the cause is gone
-        (03 §8). Titles refresh after the commit.
+        escalation: the row commits and `restore_packet` rewrites the file once the cause is gone.
+        Titles refresh after the commit.
         """
         options = options_for(reason)
         context = PacketContext(
@@ -239,7 +239,7 @@ class EscalationRaiser:
         return escalation
 
     async def ensure_actionable(self, task: Task) -> None:
-        """Give an escalated `task` an open escalation with a packet on disk (03 §7).
+        """Give an escalated `task` an open escalation with a packet on disk.
 
         A missing packet is rewritten from durable state at its recorded path; a task without
         any open escalation gets a new `engine_error` one. Neither duplicates an open escalation.

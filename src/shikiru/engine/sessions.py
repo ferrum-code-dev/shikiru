@@ -1,4 +1,4 @@
-"""Session selection for resumed process-per-turn agent sessions (03 §4.1)."""
+"""Session selection for resumed process-per-turn agent sessions."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ class SessionManager:
         self._settings = settings
 
     def session_for(self, task: Task, role: Role) -> SessionSelection:
-        """Choose a session, resuming it across turns and same-agent rung changes (03 §4.1)."""
+        """Choose a session, resuming it across turns and same-agent rung changes."""
         rung = pick_rung(task, role, self._settings)
         current = self._runs.get_live(task.id, role)
         if current is not None and current.agent == rung.agent:

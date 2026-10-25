@@ -1,4 +1,4 @@
-"""Engine restart recovery (03 §7): an engine killed at a step boundary resumes on restart."""
+"""Engine restart recovery: an engine killed at a step boundary resumes on restart."""
 
 from __future__ import annotations
 

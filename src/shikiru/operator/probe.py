@@ -1,4 +1,4 @@
-"""`doctor --probe` turns (04 §3): live contract check 1 and the smoke turn for other rungs."""
+"""`doctor --probe` turns: live contract check 1 and the smoke turn for other rungs."""
 
 from __future__ import annotations
 

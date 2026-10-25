@@ -1,4 +1,4 @@
-"""The durable notification cursor (docs/design/06-operator.md §5.7)."""
+"""The durable notification cursor."""
 
 from __future__ import annotations
 

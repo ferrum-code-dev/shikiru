@@ -1,4 +1,4 @@
-"""Git facts of a task's worktree, shared by prompt, evidence and acceptance code (03 §2)."""
+"""Git facts of a task's worktree, shared by prompt, evidence and acceptance code."""
 
 from __future__ import annotations
 

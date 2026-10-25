@@ -1,4 +1,4 @@
-"""Pane and window decorations and titles (06 §5.3, §6.1)."""
+"""Pane and window decorations and titles."""
 
 from __future__ import annotations
 

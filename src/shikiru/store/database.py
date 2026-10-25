@@ -1,4 +1,4 @@
-"""Connections, migrations and JSON/timestamp column helpers (docs/design/05-data.md §2)."""
+"""Connections, migrations and JSON/timestamp column helpers."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 BUSY_TIMEOUT_MS = 5000
 OperationalDatabaseError = sqlite3.OperationalError
-"""A database fault of the environment: locked, full or unreadable (02 §1)."""
+"""A database fault of the environment: locked, full or unreadable."""
 _MIGRATIONS_PACKAGE = "shikiru.store.migrations"
 _MIGRATION_SUFFIX = ".sql"
 _MIGRATION_NUMBER_SEPARATOR = "_"
@@ -44,7 +44,7 @@ class Database:
         """Open a read-write connection and migrate the schema up to date.
 
         The engine uses this for every state table; clients (CLI, MCP) use it only to append
-        `commands` rows and, for `Submit`, to allocate the task id from `sequences` (01 §3).
+        `commands` rows and, for `Submit`, to allocate the task id from `sequences`.
         """
         make_private_dir(self._path.parent)
         create_private_file(self._path)
@@ -139,7 +139,7 @@ def load_json[T](adapter: TypeAdapter[T], text: str) -> T:
 
 
 def format_timestamp(value: datetime) -> str:
-    """Format `value` as the fixed-width UTC ISO-8601 text every timestamp column stores (05 §2).
+    """Format `value` as the fixed-width UTC ISO-8601 text every timestamp column stores.
 
     `timespec="microseconds"` always renders the fractional part, so every stored timestamp has
     the same width and plain string comparison (as `agent_blocks.until > ?` relies on) orders

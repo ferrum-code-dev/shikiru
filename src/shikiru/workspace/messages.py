@@ -1,4 +1,4 @@
-"""Queues operator messages per role and delivers them into the next turn (03 §4.3, §9)."""
+"""Queues operator messages per role and delivers them into the next turn."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Turn directories order and resolve by their number, past two digits (03 §4.3)."""
+"""Turn directories order and resolve by their number, past two digits."""
 
 from __future__ import annotations
 

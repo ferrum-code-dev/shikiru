@@ -1,4 +1,4 @@
-"""Read-only facade over the state DB for operator queries and the dashboard (06 §1, §5)."""
+"""Read-only facade over the state DB for operator queries and the dashboard."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""The headless agent plugin contract (docs/design/04-agents.md §1)."""
+"""The headless agent plugin contract."""
 
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def shikiru_command(*arguments: str) -> str:
 
 
 def role_dir(run_dir: Path, role: str) -> Path:
-    """Return `role`'s directory under `run_dir`, where its per-role files live (02 §5)."""
+    """Return `role`'s directory under `run_dir`, where its per-role files live."""
     return run_dir / role
 
 
@@ -97,7 +97,7 @@ class FailureKind(StrEnum):
 
 @dataclass(frozen=True)
 class Rung:
-    """One `{agent, model, effort}` entry of a role's ladder (04 §1)."""
+    """One `{agent, model, effort}` entry of a role's ladder."""
 
     __pydantic_config__: ClassVar[ConfigDict] = ConfigDict(extra="forbid")
 
@@ -121,7 +121,7 @@ class Usage:
 
 @dataclass(frozen=True)
 class BillingDeclaration:
-    """A plugin's normalized billing mode and the source that established it (04 §1)."""
+    """A plugin's normalized billing mode and the source that established it."""
 
     mode: BillingMode
     source: BillingSource
@@ -135,7 +135,7 @@ UNKNOWN_BILLING_DECLARATION = BillingDeclaration(
 
 @dataclass(frozen=True)
 class QuotaWindow:
-    """One quota window an agent plugin reports (04 §1)."""
+    """One quota window an agent plugin reports."""
 
     name: str
     used_pct: float
@@ -154,7 +154,7 @@ class CheckResult:
 
 @dataclass(frozen=True)
 class ModelChoice:
-    """One model and its authoritative explicit effort choices (04 §1)."""
+    """One model and its authoritative explicit effort choices."""
 
     model: str
     efforts: tuple[str, ...] | None
@@ -163,7 +163,7 @@ class ModelChoice:
 
 @dataclass(frozen=True)
 class ModelCatalog:
-    """Authoritative agent model choices, or the reason discovery is unavailable (04 §1)."""
+    """Authoritative agent model choices, or the reason discovery is unavailable."""
 
     models: tuple[ModelChoice, ...] = ()
     error: str | None = None
@@ -269,7 +269,7 @@ type AgentSignal = (
 
 @dataclass(frozen=True)
 class TurnSpec:
-    """Everything an agent needs to run one headless turn (04 §1).
+    """Everything an agent needs to run one headless turn.
 
     `on_process` receives the id of every process the turn spawns, a context retry included,
     before that process starts running (`SubprocessRunner.spawn(on_started=...)`).

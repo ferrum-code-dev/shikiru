@@ -1,4 +1,4 @@
-"""Small coloured percentage gauges (docs/design/06-operator.md §6.1)."""
+"""Small coloured percentage gauges."""
 
 from __future__ import annotations
 

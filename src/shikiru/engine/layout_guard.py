@@ -1,4 +1,4 @@
-"""Task window creation and periodic pane restoration (06 §5.2)."""
+"""Task window creation and periodic pane restoration."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ class LayoutGuard:
     ) -> None:
         """Create windows through `tmux`, storing pane ids through `tasks`.
 
-        A taken-over role's pane exiting is queued as a `HandBack` on `commands` (03 §9). A task
+        A taken-over role's pane exiting is queued as a `HandBack` on `commands`. A task
         whose restoration fails is recorded through `faults` without stopping the others. Role pane
         titles are re-applied through `refresh_titles` whenever role panes are created or rebuilt.
         """
@@ -136,7 +136,7 @@ class LayoutGuard:
     async def restore(self, tasks: list[Task]) -> None:
         """Restore the windows and dead panes of `tasks` that are still active when reached.
 
-        A task that cannot be restored is recorded as an `engine_fault` and skipped (02 §1).
+        A task that cannot be restored is recorded as an `engine_fault` and skipped.
         """
         snapshot: list[_PaneRow] | None = None
         for task in tasks:

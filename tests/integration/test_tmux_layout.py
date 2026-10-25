@@ -1,4 +1,4 @@
-"""Integration tests for `LayoutBuilder` on the private `tmux_server` (06 §5.2)."""
+"""Integration tests for `LayoutBuilder` on the private `tmux_server`."""
 
 from __future__ import annotations
 

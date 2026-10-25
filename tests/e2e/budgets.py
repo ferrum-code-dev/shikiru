@@ -1,4 +1,4 @@
-"""How long each E2E scenario attempt and the whole invocation may take (07 §5)."""
+"""How long each E2E scenario attempt and the whole invocation may take."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Project-local paths defined by the runtime layout (02 §5)."""
+"""Project-local paths defined by the runtime layout."""
 
 from __future__ import annotations
 

@@ -38,8 +38,7 @@ class NewTaskSpec(_StepModel):
 class AcceptStep(_StepModel):
     """Submit a successful report for whatever `report.kind` the current turn dir names.
 
-    `new_tasks` only takes effect for a `plan` report (03 §2's "fill `new_tasks` only when the
-    request asks to execute the plan"); it is ignored for every other report kind.
+    `new_tasks` only takes effect for a `plan` report and is ignored for every other report kind.
     """
 
     kind: Literal["accept"] = "accept"

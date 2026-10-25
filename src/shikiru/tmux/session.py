@@ -1,4 +1,4 @@
-"""The Shikiru tmux session: name, collision check, options, home and task windows (06 §5.1)."""
+"""The Shikiru tmux session: name, collision check, options, home and task windows."""
 
 from __future__ import annotations
 
@@ -146,7 +146,7 @@ async def bind_palette_key(tmux: Tmux, palette_command: Sequence[str]) -> None:
 
     The Home dashboard receives a dedicated F12 terminal event. Other Shikiru panes retain the
     standalone palette popup and originating pane context. Elsewhere the key keeps tmux's own
-    default, `next-layout` (06 §5.2): there is no global override, only this one conditional
+    default, `next-layout`: there is no global override, only this one conditional
     binding.
     """
     popup_command = f"{_TMUX_COMMAND} display-popup -E " + " ".join(
@@ -170,7 +170,7 @@ async def bind_palette_key(tmux: Tmux, palette_command: Sequence[str]) -> None:
 
 
 def session_name(project_name: str) -> str:
-    """Build the session name for `project_name` (06 §5.1): `.` and `:` become `_`."""
+    """Build the session name for `project_name`: `.` and `:` become `_`."""
     sanitized = project_name
     for char in _SANITIZED_CHARS:
         sanitized = sanitized.replace(char, _SANITIZED_REPLACEMENT)

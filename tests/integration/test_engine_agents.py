@@ -1,4 +1,4 @@
-"""`AgentPool`: rejects an unconfigured agent (04 §1-2)."""
+"""`AgentPool`: rejects an unconfigured agent."""
 
 from __future__ import annotations
 

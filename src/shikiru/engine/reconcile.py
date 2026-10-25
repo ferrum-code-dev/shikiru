@@ -1,4 +1,4 @@
-"""Engine restart recovery (03 §7)."""
+"""Engine restart recovery."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ class Reconciler:
         self._orphans_ended = False
 
     async def reconcile(self) -> None:
-        """Bring a restarted engine back in line with the persisted state (03 §7).
+        """Bring a restarted engine back in line with the persisted state.
 
         Pending commands need nothing here: the engine loop processes them once this has
         completed. A fault in one step or one task is recorded and never stops the others.
@@ -84,7 +84,7 @@ class Reconciler:
                     await self._resume_task(task.id)
 
     async def restore_escalations(self) -> None:
-        """Give every escalated task an open escalation with its packet on disk (03 §7, §8)."""
+        """Give every escalated task an open escalation with its packet on disk."""
         for task in self._tasks.list_active():
             if task.status is Status.ESCALATED:
                 async with self._faults.isolate("escalation restore", task_id=task.id):

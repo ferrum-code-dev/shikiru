@@ -1,4 +1,4 @@
-"""The one glyph set shared by the CLI and the dashboard (docs/design/06-operator.md §6.1).
+"""The one glyph set shared by the CLI and the dashboard.
 
 Ambiguous-width characters (`◆ ▲ ≡ · ○ ◑ ●`) are drawn one cell wide, as Textual assumes;
 terminals set to CJK ambiguous-wide are unsupported. A character with an emoji variant
@@ -43,7 +43,7 @@ def is_single_cell(glyph: str) -> bool:
 
 
 PANEL_KANJI = ("起", "承", "転", "結")
-"""Decorative kanji for the strip's four panel positions (06 §6.2): ki-shō-ten-ketsu. Kanji
+"""Decorative kanji for the strip's four panel positions: ki-shō-ten-ketsu. Kanji
 are decorative marks, not state glyphs, so they are wide and excluded from `ALL_GLYPHS`."""
 
 STAGE_TRIAGE = "⌕"

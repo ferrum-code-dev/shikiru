@@ -1,4 +1,4 @@
-"""Unit tests for the pure session-name rule (docs/design/06-operator.md §5.1)."""
+"""Unit tests for the pure session-name rule."""
 
 from __future__ import annotations
 

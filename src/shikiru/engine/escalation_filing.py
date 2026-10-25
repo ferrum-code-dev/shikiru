@@ -1,4 +1,4 @@
-"""Files a task flow's escalation with its gathered evidence (03 §8)."""
+"""Files a task flow's escalation with its gathered evidence."""
 
 from __future__ import annotations
 

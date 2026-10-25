@@ -1,4 +1,4 @@
-"""Read Shikiru tmux sessions and prepare exact attach targets (06 §5.6)."""
+"""Read Shikiru tmux sessions and prepare exact attach targets."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Open engine fault streaks derived from `engine_fault` and `engine_recovered` events (05 §2)."""
+"""Open engine fault streaks derived from `engine_fault` and `engine_recovered` events."""
 
 from __future__ import annotations
 

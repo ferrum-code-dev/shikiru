@@ -1,4 +1,4 @@
-"""Disk space and directory usage for the dashboard's Disk section (docs/design/05 §5)."""
+"""Disk space and directory usage for the dashboard's Disk section."""
 
 from __future__ import annotations
 

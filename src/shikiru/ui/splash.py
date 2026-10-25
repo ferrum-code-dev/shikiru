@@ -1,4 +1,4 @@
-"""Escalation splash panels (docs/design/06-operator.md §6.4)."""
+"""Escalation splash panels."""
 
 from __future__ import annotations
 

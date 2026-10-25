@@ -1,4 +1,4 @@
-"""The resume-recall protocol `AgentContractSuite`'s live check 4 relies on (04 §3).
+"""The resume-recall protocol exercised by `AgentContractSuite`'s live check 4.
 
 A plugin whose agent has no memory of its own (only the fake agent needs this) must answer
 `RESUME_RECALL_PROMPT` with a message that contains whatever nonce it was given via

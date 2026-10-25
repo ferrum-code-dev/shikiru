@@ -1,4 +1,4 @@
-"""Integration tests for `EventLog.since` filtering (docs/design/05-data.md §2)."""
+"""Integration tests for `EventLog.since` filtering."""
 
 from __future__ import annotations
 

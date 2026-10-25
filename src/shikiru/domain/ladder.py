@@ -1,4 +1,4 @@
-"""Rung selection, move-up rules and counter resets (docs/design/03-workflow.md §1.1, §3, §7)."""
+"""Rung selection, move-up rules and counter resets."""
 
 from __future__ import annotations
 
@@ -32,17 +32,17 @@ def pick_rung(task: Task, role: Role, settings: Settings) -> Rung:
 
 
 def reset_for_rung_change(counters: Counters) -> Counters:
-    """`rejections_on_rung` resets whenever the Implementer's rung changes (03 §1.1)."""
+    """`rejections_on_rung` resets whenever the Implementer's rung changes."""
     return counters.model_copy(update={REJECTIONS_FIELD: 0})
 
 
 def reset_for_new_iteration(counters: Counters) -> Counters:
-    """`consults` resets at the start of every implement/verify iteration (03 §1.1)."""
+    """`consults` resets at the start of every implement/verify iteration."""
     return counters.model_copy(update={"consults": 0})
 
 
 def reset_for_integration_attempt(counters: Counters) -> Counters:
-    """`conflict_rounds` resets at the start of every integration attempt (03 §1.1)."""
+    """`conflict_rounds` resets at the start of every integration attempt."""
     return counters.model_copy(update={"conflict_rounds": 0})
 
 
@@ -69,7 +69,7 @@ def move_up(
     For the Implementer, `rejections_on_rung` also resets, since it counts rework at one rung.
 
     Returns `None` once no further rung satisfies `different_agent` above the current one; the
-    caller then keeps the task on its current rung (03 §3, §7).
+    caller then keeps the task on its current rung.
     """
     ladder = _ladder_for(role, task, settings)
     current_rung = pick_rung(task, role, settings)

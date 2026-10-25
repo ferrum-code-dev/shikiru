@@ -1,4 +1,4 @@
-"""Handlers for escalation resolution options (03 §8)."""
+"""Handlers for escalation resolution options."""
 
 from __future__ import annotations
 

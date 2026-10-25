@@ -1,4 +1,4 @@
-"""Task holds stop every execution path, integration included (03 §6, §9)."""
+"""Task holds stop every execution path, integration included."""
 
 from __future__ import annotations
 

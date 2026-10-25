@@ -1,4 +1,4 @@
-"""Step transitions for the task workflow (docs/design/03-workflow.md §2-3, §6)."""
+"""Step transitions for the task workflow."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ ACTING_ROLE: dict[Step, Role] = {
     Step.VERIFY: Role.LEADER,
     Step.INTEGRATE: Role.IMPLEMENTER,
 }
-"""Which role acts at each step (03 §2): the Implementer only acts in `integrate` on conflicts."""
+"""Which role acts at each step: the Implementer only acts in `integrate` on conflicts."""
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ class Transition:
     """The task's new step/status/iteration/counters/rungs, plus side effects as data.
 
     `base` is the task snapshot the decision was computed from; `rebased_onto` reconciles the
-    decision with the row as it is when the decision is written (03 §3).
+    decision with the row as it is when the decision is written.
     """
 
     base: Task
@@ -139,11 +139,11 @@ class Transition:
 
 
 def first_step(task: Task) -> Transition:
-    """Compute the transition for a task's very first turn (03 §1.1, §2; submit flags, 05 §1).
+    """Compute the transition for a task's very first turn (submit flags).
 
     A task with no `mode` starts at `triage`. `submit --mode implement|plan` skips triage
     straight into that step; `implement` also starts numbering from iteration 1, matching the
-    turn dirs (`NN-<step>-i<iteration>`) and 03 §2's "implement (i = 1)".
+    turn dirs (`NN-<step>-i<iteration>`) and the `implement` iteration-1 convention.
     """
     if task.mode is None:
         return Transition.stay(task, step=Step.TRIAGE)
@@ -271,7 +271,7 @@ def _from_integrate(task: Task, outcome: Verdict) -> Transition:
                 task, EscalationReason.DECISION_REQUIRED, step=Step.INTEGRATE
             )
         case "supersede":
-            message = "a post-rebase conflicts verify cannot supersede the task (03 §6)"
+            message = "a post-rebase conflicts verify cannot supersede the task"
             raise ValueError(message)
 
 

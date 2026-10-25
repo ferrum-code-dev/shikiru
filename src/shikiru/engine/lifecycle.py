@@ -1,4 +1,4 @@
-"""Shared terminal task cleanup (03 §1.2, §6)."""
+"""Shared terminal task cleanup."""
 
 from __future__ import annotations
 
@@ -36,8 +36,8 @@ class TaskFinisher:
         """Release task resources after it reaches a terminal lifecycle state.
 
         A cancelled task's open pull request is queued for closing off the calling loop, never
-        awaited here (03 §6). The worktree goes last, so a task root left behind marks unfinished
-        cleanup (03 §7).
+        awaited here. The worktree goes last, so a task root left behind marks unfinished
+        cleanup.
         Returns the task root when uncommitted work kept it in place.
         """
         if task.id in self._finished_tasks:

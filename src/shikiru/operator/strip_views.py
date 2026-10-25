@@ -1,4 +1,4 @@
-"""Build task-strip view data from domain state for operator interfaces (06 §6.2)."""
+"""Build task-strip view data from domain state for operator interfaces."""
 
 from __future__ import annotations
 

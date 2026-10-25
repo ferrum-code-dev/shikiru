@@ -1,4 +1,4 @@
-"""A real engine process shuts down gracefully on SIGTERM and SIGINT (03 §7, 06 §5.8)."""
+"""A real engine process shuts down gracefully on SIGTERM and SIGINT."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""The `header` widget: project, engine state, slots and repo (docs/design/06-operator.md §5.4)."""
+"""The `header` widget: project, engine state, slots and repo."""
 
 from __future__ import annotations
 
@@ -272,7 +272,7 @@ class HeaderPanel(GatedStatic):
 
 
 class HeaderWidget:
-    """The `header` dashboard widget plugin (06 §5.4)."""
+    """The `header` dashboard widget plugin."""
 
     name = "header"
     placement = WidgetPlacement.IDENTITY

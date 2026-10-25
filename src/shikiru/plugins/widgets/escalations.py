@@ -1,4 +1,4 @@
-"""The `escalations` widget: open packets as splash panels (06 §5.4, §6.4)."""
+"""The `escalations` widget: open packets as splash panels."""
 
 from __future__ import annotations
 
@@ -392,7 +392,7 @@ def _attention_status_state(
 
 
 class EscalationsWidget:
-    """The `escalations` dashboard widget plugin (06 §5.4, §6.4)."""
+    """The `escalations` dashboard widget plugin."""
 
     name = "escalations"
     placement = WidgetPlacement.ATTENTION

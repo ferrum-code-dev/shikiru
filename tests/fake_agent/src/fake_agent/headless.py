@@ -1,4 +1,4 @@
-"""`HeadlessAgent` for the fake agent: served from `agents.fake.options.asks` (04 §1, §3)."""
+"""`HeadlessAgent` for the fake agent: served from `agents.fake.options.asks`."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Claude `PostToolUse` hook: stop the turn before a request would cross the limit (04 §4).
+"""Claude `PostToolUse` hook: stop the turn before a request would cross the limit.
 
 Run as `<python> -P -m shikiru.plugins.agents.claude.hook <state> <marker> <limit_tokens>`.
 """

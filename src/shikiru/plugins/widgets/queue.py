@@ -1,4 +1,4 @@
-"""The `queue` widget: searchable task browser (docs/design/06-operator.md §5.4)."""
+"""The `queue` widget: searchable task browser."""
 
 from __future__ import annotations
 
@@ -1126,7 +1126,7 @@ class QueuePanel(Vertical):
 
 
 class QueueWidget:
-    """The `queue` dashboard widget plugin (06 §5.4)."""
+    """The `queue` dashboard widget plugin."""
 
     name = "queue"
     placement = WidgetPlacement.TASK_LIST

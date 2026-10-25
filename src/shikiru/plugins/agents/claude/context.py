@@ -1,4 +1,4 @@
-"""Claude's context window and the next-request estimate its compaction decides on (04 §4)."""
+"""Claude's context window and next-request token estimate used for compaction decisions."""
 
 from __future__ import annotations
 

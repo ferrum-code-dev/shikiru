@@ -1,4 +1,4 @@
-"""Gathers the evidence of a task escalation: reports, workspace facts and the turn tail (03 §8)."""
+"""Gathers the evidence of a task escalation: reports, workspace facts and the turn tail."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 ESCALATION_PANE_TAIL_LINES = 60
-"""Lines of pane scrollback captured as escalation evidence (03 §8)."""
+"""Lines of pane scrollback captured as escalation evidence."""
 
 FACTS_UNAVAILABLE = "(facts unavailable: {error})"
 HISTORY_UNAVAILABLE = "(report history unavailable, so no reports are shown: {error})"

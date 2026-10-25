@@ -1,4 +1,4 @@
-"""The `faults` widget: recorded open engine fault streaks (06 §5.4)."""
+"""The `faults` widget: recorded open engine fault streaks."""
 
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ class FaultsPanel(GatedStatic):
 
 
 class FaultsWidget:
-    """The `faults` dashboard widget plugin (06 §5.4)."""
+    """The `faults` dashboard widget plugin."""
 
     name = "faults"
     placement = WidgetPlacement.DIAGNOSTICS

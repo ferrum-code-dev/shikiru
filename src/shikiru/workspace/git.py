@@ -1,4 +1,4 @@
-"""The only place git argv is built: worktrees, branches and facts (03 §5-6)."""
+"""The only place git argv is built: worktrees, branches and facts."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""The `turn.pid` record of each running turn, and ending the ones a dead engine left (03 §7)."""
+"""The `turn.pid` record of each running turn, and ending the ones a dead engine left."""
 
 from __future__ import annotations
 

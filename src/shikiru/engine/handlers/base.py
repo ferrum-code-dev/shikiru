@@ -107,7 +107,7 @@ async def refresh_titles(context: HandlerContext, task_id: str) -> None:
 async def finish_task_quietly(context: HandlerContext, task: Task) -> Path | None:
     """Run terminal cleanup after a committed terminal state; a failure never rejects the command.
 
-    Reconcile repeats the cleanup of every terminal task whose root remains (03 §7).
+    Reconcile repeats the cleanup of every terminal task whose root remains.
     """
     try:
         return await context.finish_task(task)
@@ -131,7 +131,7 @@ async def interrupt_task(
 
 
 def kept_worktree_result(kept: Path | None) -> dict[str, object]:
-    """Tell the operator where uncommitted work kept a cancelled task's worktree (03 §8)."""
+    """Tell the operator where uncommitted work kept a cancelled task's worktree."""
     return {} if kept is None else {KEPT_WORKTREE_KEY: str(kept)}
 
 

@@ -1,4 +1,4 @@
-"""Integration tests for `Database` migrations (docs/design/05-data.md §2)."""
+"""Integration tests for `Database` migrations."""
 
 from __future__ import annotations
 

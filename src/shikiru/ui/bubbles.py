@@ -1,4 +1,4 @@
-"""Speech bubbles for the dialogue widget (docs/design/06-operator.md §6.3)."""
+"""Speech bubbles for the dialogue widget."""
 
 from __future__ import annotations
 

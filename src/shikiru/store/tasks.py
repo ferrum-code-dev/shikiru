@@ -1,4 +1,4 @@
-"""Task rows: insert, transitions, holds and dependent repointing (docs/design/05-data.md §2)."""
+"""Task rows: insert, transitions, holds and dependent repointing."""
 
 from __future__ import annotations
 
@@ -602,7 +602,7 @@ def _task_browser_order(
 
 
 class TaskStore:
-    """Inserts task rows, applies transitions and updates their scheduling fields (03 §1-2)."""
+    """Inserts task rows, applies transitions and updates their scheduling fields."""
 
     def __init__(self, connection: sqlite3.Connection, clock: Clock) -> None:
         """Use `connection` (the engine's writer) and `clock` for every write below."""
@@ -610,7 +610,7 @@ class TaskStore:
         self._clock = clock
 
     def insert_from_submit(self, submit: Submit) -> Task:
-        """Insert the task a `Submit` command already allocated an id for (principle 3)."""
+        """Insert a task using the ID allocated by a `Submit` command."""
         task_id = submit.task_id
         if task_id is None:
             message = "submit command has no allocated task id"
@@ -793,7 +793,7 @@ class TaskStore:
 
         The decision is reconciled with the stored row in the same write
         (`Transition.rebased_onto`): only what it changed relative to its `base` is applied, and a
-        rung the operator set since wins over the turn's rung move and rejection count (03 §3).
+        rung the operator set since wins over the turn's rung move and rejection count.
         Overrides merge the same way: the transition sets its own roles and clears a role only
         while it still holds the rung the transition saw. Complexity and title are written only
         when the transition sets them.
@@ -853,7 +853,7 @@ class TaskStore:
         return {**kept, **transition.set_overrides}
 
     def set_holds(self, task_id: str, holds: frozenset[Hold]) -> None:
-        """Persist `task_id`'s task-scoped holds (03 §1.2, §9)."""
+        """Persist `task_id`'s task-scoped holds."""
         self._connection.execute(
             "UPDATE tasks SET holds = ? WHERE id = ?",
             (dump_json(_HOLDS_ADAPTER, holds), task_id),
@@ -864,7 +864,7 @@ class TaskStore:
         self._connection.execute("UPDATE tasks SET priority = ? WHERE id = ?", (priority, task_id))
 
     def set_wait_reason(self, task_id: str, reason: WaitReason | None) -> None:
-        """Persist why the scheduler isn't dispatching `task_id` yet (03 §10)."""
+        """Persist why the scheduler isn't dispatching `task_id` yet."""
         self._connection.execute(
             "UPDATE tasks SET wait_reason = ? WHERE id = ?",
             (reason.value if reason is not None else None, task_id),
@@ -882,7 +882,7 @@ class TaskStore:
         """Enter a terminal `transition`, free the slot and append its terminal `event` at once.
 
         Status and event land in one transaction, so a restart never sees a terminal task
-        without its terminal event, nor the event twice (03 §7).
+        without its terminal event, nor the event twice.
         """
         with transaction(self._connection):
             self.apply_transition(task_id, transition)
@@ -902,21 +902,21 @@ class TaskStore:
         )
 
     def set_panes(self, task_id: str, panes: dict[Role, str]) -> None:
-        """Record `task_id`'s `{role: pane_id}` map, the only place pane ids live (03 §1.1)."""
+        """Record `task_id`'s `{role: pane_id}` map, the only place pane ids live."""
         self._connection.execute(
             "UPDATE tasks SET panes = ? WHERE id = ?",
             (dump_json(_PANES_ADAPTER, panes), task_id),
         )
 
     def set_repo(self, task_id: str, repo: RepoState) -> None:
-        """Record `task_id`'s checkout state (03 §5)."""
+        """Record `task_id`'s checkout state."""
         self._connection.execute(
             "UPDATE tasks SET repo = ? WHERE id = ?",
             (dump_json(_REPO_ADAPTER, repo), task_id),
         )
 
     def set_requeued(self, task_id: str) -> None:
-        """Mark `task_id` requeued now, giving it dispatch precedence (03 §1.1)."""
+        """Mark `task_id` requeued now, giving it dispatch precedence."""
         self._connection.execute(
             "UPDATE tasks SET requeued_at = ? WHERE id = ?",
             (format_timestamp(self._clock.now()), task_id),
@@ -927,7 +927,7 @@ class TaskStore:
         self._connection.execute("UPDATE tasks SET summary = ? WHERE id = ?", (summary, task_id))
 
     def set_depends_on(self, task_id: str, depends_on: Sequence[str]) -> None:
-        """Replace `task_id`'s dependency set (03 §2's `NewTask` `#k` sibling references)."""
+        """Replace `task_id`'s dependency set, including sibling references from a plan."""
         with transaction(self._connection):
             self._connection.execute("DELETE FROM task_deps WHERE task_id = ?", (task_id,))
             self._connection.executemany(

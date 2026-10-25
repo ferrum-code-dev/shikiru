@@ -1,4 +1,4 @@
-"""The only tmux gateway: argv lists through `SubprocessRunner`, exact `=` targets (06 §5.1)."""
+"""The only tmux gateway: argv lists through `SubprocessRunner`, exact `=` targets."""
 
 from __future__ import annotations
 

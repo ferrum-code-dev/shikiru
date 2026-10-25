@@ -1,4 +1,4 @@
-"""Escalation options and their recommended default (docs/design/03-workflow.md §8)."""
+"""Escalation options and their recommended default."""
 
 from __future__ import annotations
 
@@ -116,12 +116,12 @@ _OPTIONS_BY_REASON: dict[EscalationReason, tuple[EscalationOption, ...]] = {
 
 
 def options_for(reason: EscalationReason) -> tuple[EscalationOption, ...]:
-    """Return the resolution options for `reason`, with exactly one recommended default (03 §8)."""
+    """Return the resolution options for `reason`, with exactly one recommended default."""
     return _OPTIONS_BY_REASON[reason]
 
 
 def reset_for_resolution(counters: Counters, reason: EscalationReason) -> Counters:
-    """Reset the persisted counter represented by `reason` when it is resolved (03 §8)."""
+    """Reset the persisted counter represented by `reason` when it is resolved."""
     if reason in (EscalationReason.DECISION_REQUIRED, EscalationReason.ITERATIONS_EXHAUSTED):
         return counters.model_copy(update={"consults": 0})
     if reason in (
@@ -172,14 +172,14 @@ def transition_for_resolution(
 
 
 class EscalationStatus(StrEnum):
-    """An escalation's lifecycle (05 §2)."""
+    """An escalation's lifecycle."""
 
     OPEN = auto()
     RESOLVED = auto()
 
 
 class Escalation(DomainModel):
-    """One raised escalation (03 §8; mirrors the `escalations` table, 05 §2)."""
+    """One raised escalation (mirrors the `escalations` table)."""
 
     id: str
     task_id: str

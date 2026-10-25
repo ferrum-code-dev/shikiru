@@ -1,4 +1,4 @@
-"""Integration tests for `EscalationStore` (docs/design/05-data.md §2; 03 §8)."""
+"""Integration tests for `EscalationStore`."""
 
 from __future__ import annotations
 

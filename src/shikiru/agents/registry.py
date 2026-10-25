@@ -1,4 +1,4 @@
-"""Resolves agent names to plugins, by entry point or direct registration (02 §2, §4)."""
+"""Resolves agent names to plugins, by entry point or direct registration."""
 
 from __future__ import annotations
 

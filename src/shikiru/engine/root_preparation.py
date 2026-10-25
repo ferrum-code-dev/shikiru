@@ -1,4 +1,4 @@
-"""Off-tick task root preparation under a per-tick budget (03 §10)."""
+"""Off-tick task root preparation under a per-tick budget."""
 
 from __future__ import annotations
 

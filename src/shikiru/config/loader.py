@@ -1,4 +1,4 @@
-"""Merge packaged defaults, the project file and `--set` overrides into `Settings` (05 §1)."""
+"""Merge packaged defaults, the project file and `--set` overrides into `Settings`."""
 
 from __future__ import annotations
 

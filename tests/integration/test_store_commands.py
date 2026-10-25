@@ -1,4 +1,4 @@
-"""Integration tests for the `CommandQueue` lifecycle (docs/design/05-data.md §2)."""
+"""Integration tests for the `CommandQueue` lifecycle."""
 
 from __future__ import annotations
 

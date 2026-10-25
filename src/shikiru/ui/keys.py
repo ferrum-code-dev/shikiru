@@ -1,4 +1,4 @@
-"""Key names painted in the shared cyan inside hint text (docs/tui-feedback-twelfth-review.md)."""
+"""Key names painted in the shared cyan inside hint text."""
 
 from __future__ import annotations
 

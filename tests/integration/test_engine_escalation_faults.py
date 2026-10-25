@@ -1,4 +1,4 @@
-"""A packet that cannot be written never kills or wedges the engine (03 §7, §8; invariant 5)."""
+"""A packet that cannot be written never kills or wedges the engine (workflow invariant)."""
 
 from __future__ import annotations
 

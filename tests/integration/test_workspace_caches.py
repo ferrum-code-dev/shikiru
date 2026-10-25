@@ -1,4 +1,4 @@
-"""Integration tests for `CacheCloner` copy-on-write cloning (03 §5)."""
+"""Integration tests for `CacheCloner` copy-on-write cloning."""
 
 from __future__ import annotations
 

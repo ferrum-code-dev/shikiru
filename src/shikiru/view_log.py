@@ -1,4 +1,4 @@
-"""The role view log: its path, row keys and the pane command tailing it (05 §5, 06 §5.1)."""
+"""The role view log: its path, row keys and the pane command tailing it."""
 
 from __future__ import annotations
 
@@ -50,12 +50,12 @@ def ordered_turn_dirs(turns_root: Path) -> list[Path]:
 
 
 def view_argv(project_root: Path, task_id: str, role: str) -> tuple[str, ...]:
-    """Return the argv of `role`'s read-only view pane for `task_id` (06 §5.1)."""
+    """Return the argv of `role`'s read-only view pane for `task_id`."""
     return shikiru_argv(CLI_PROJECT_FLAG, str(project_root), CLI_VIEW_COMMAND, task_id, role)
 
 
 def view_log_path(run_dir: Path, role: str) -> Path:
-    """Return `role`'s live view log, one JSON row per agent signal (05 §5)."""
+    """Return `role`'s live view log, one JSON row per agent signal."""
     return role_dir(run_dir, role) / VIEW_LOG_NAME
 
 

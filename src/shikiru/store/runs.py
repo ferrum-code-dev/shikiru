@@ -1,4 +1,4 @@
-"""Agent session runs: one per task role's session lineage (docs/design/05-data.md §2)."""
+"""Agent session runs: one per task role's session lineage."""
 
 from __future__ import annotations
 
@@ -94,7 +94,7 @@ def fetch_all_runs(connection: sqlite3.Connection) -> list[Run]:
 
 
 class RunStore:
-    """Starts, updates and reads agent session runs (03 §4.1-4.2)."""
+    """Starts, updates and reads agent session runs."""
 
     def __init__(self, connection: sqlite3.Connection, clock: Clock) -> None:
         """Use `connection` (the engine's writer) and `clock` for every write below."""
@@ -176,7 +176,7 @@ class RunStore:
     def set_session(self, run_id: int, session_id: str | None, resume_command: str | None) -> None:
         """Record `run_id`'s launched session id and resume command.
 
-        `session_id` is `None` when `SessionStarted` says the session can't be resumed (04 §1),
+        `session_id` is `None` when `SessionStarted` says the session can't be resumed,
         and `resume_command` is `None` when the agent's `resume_command()` returns none.
         """
         self._connection.execute(

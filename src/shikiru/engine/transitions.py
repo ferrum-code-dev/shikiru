@@ -1,4 +1,4 @@
-"""Persists domain transitions of a task and projects them into events (03 §2)."""
+"""Persists domain transitions of a task and projects them into events."""
 
 from __future__ import annotations
 

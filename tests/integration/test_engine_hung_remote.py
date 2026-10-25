@@ -1,4 +1,4 @@
-"""A hung remote never stops the engine from processing commands (03 §10)."""
+"""A hung remote never stops the engine from processing commands."""
 
 from __future__ import annotations
 

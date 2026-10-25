@@ -1,4 +1,4 @@
-"""The `dialogue` widget: recent speech bubbles (06 §5.4, §6.3)."""
+"""The `dialogue` widget: recent speech bubbles."""
 
 from __future__ import annotations
 
@@ -134,7 +134,7 @@ class DialoguePanel(Static):
 
 
 class DialogueWidget:
-    """The `dialogue` dashboard widget plugin (06 §5.4, §6.3)."""
+    """The `dialogue` dashboard widget plugin."""
 
     name = "dialogue"
     placement = WidgetPlacement.ACTIVITY

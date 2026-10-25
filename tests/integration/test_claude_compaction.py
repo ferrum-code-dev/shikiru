@@ -1,4 +1,4 @@
-"""Claude's in-turn compaction: the `PostToolUse` hook and the process sequence (04 §4)."""
+"""Claude's in-turn compaction: the `PostToolUse` hook and the process sequence."""
 
 from __future__ import annotations
 

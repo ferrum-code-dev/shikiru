@@ -1,4 +1,4 @@
-"""Copy-on-write cache cloning into a task worktree (03 §5)."""
+"""Copy-on-write cache cloning into a task worktree."""
 
 from __future__ import annotations
 

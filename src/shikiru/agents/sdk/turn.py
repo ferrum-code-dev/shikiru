@@ -1,4 +1,4 @@
-"""Process-per-turn plugin building blocks (04 §2)."""
+"""Process-per-turn plugin building blocks."""
 
 from __future__ import annotations
 

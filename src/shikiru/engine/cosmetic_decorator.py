@@ -1,4 +1,4 @@
-"""Decorations that never fail the engine path that sets them (06 §5.3)."""
+"""Decorations that never fail the engine path that sets them."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""The grouped Actions list: choose what to do with a task or the project (06 §5.5)."""
+"""The grouped Actions list: choose what to do with a task or the project."""
 
 from __future__ import annotations
 

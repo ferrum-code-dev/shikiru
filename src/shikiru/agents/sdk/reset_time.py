@@ -1,4 +1,4 @@
-"""`ResetTimeParser`: turns an agent's reset-time strings into aware `datetime`s (04 §2)."""
+"""`ResetTimeParser`: turns an agent's reset-time strings into aware `datetime`s."""
 
 from __future__ import annotations
 

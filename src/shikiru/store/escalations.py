@@ -1,4 +1,4 @@
-"""Escalation rows: open, list and resolve (docs/design/05-data.md §2; 03 §8)."""
+"""Escalation rows: open, list and resolve."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def fetch_open_escalations(connection: sqlite3.Connection) -> list[Escalation]:
 
 
 class EscalationStore:
-    """Opens and resolves escalations, `E-n` ids allocated from `sequences` (03 §8)."""
+    """Opens and resolves escalations, `E-n` ids allocated from `sequences`."""
 
     def __init__(self, connection: sqlite3.Connection, clock: Clock) -> None:
         """Use `connection` (the engine's writer) and `clock` for every write below."""

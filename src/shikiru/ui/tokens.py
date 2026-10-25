@@ -1,4 +1,4 @@
-"""Colour tokens for the shared visual language (docs/design/06-operator.md §6.1)."""
+"""Colour tokens for the shared visual language."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ IDLE_COLOR = palette.SECONDARY_TEXT_COLOR
 STYLE_DIM = "dim"
 STYLE_BOLD = "bold"
 STYLE_REVERSE = "reverse"
-"""Attributes paired with every panel colour (06 §6.1): under `NO_COLOR`, Rich keeps the
+"""Attributes paired with every panel colour: under `NO_COLOR`, Rich keeps the
 attribute and drops the colour, giving the required monochrome bold/dim/reverse."""
 
 USAGE_LEVEL_COLORS: dict[UsageLevel, str] = {

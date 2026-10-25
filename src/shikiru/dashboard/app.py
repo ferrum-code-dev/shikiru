@@ -1,4 +1,4 @@
-"""The `dash --home | --task T-n` Textual workspace shell (06 §5.4)."""
+"""The `dash --home | --task T-n` Textual workspace shell."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Consumes one headless turn stream and records its facts and live view (03 §4.2)."""
+"""Consumes one headless turn stream and records its facts and live view."""
 
 from __future__ import annotations
 

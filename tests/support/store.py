@@ -65,7 +65,7 @@ def seed_task(
     leader: Rung | None = None,
     implementer: Rung | None = None,
 ) -> Task:
-    """Submit and insert a task in one step, the way `submit "<request>"` would (03 §1.1)."""
+    """Submit and insert a task in one step, the way `submit "<request>"` would."""
     queued = CommandQueue(connection, clock).append(
         Submit(
             title=title,

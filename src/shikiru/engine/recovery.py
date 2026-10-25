@@ -1,4 +1,4 @@
-"""Recovery of a turn that ended without a report: retries, quota waits and rung moves (03 §7)."""
+"""Recovery of a turn that ended without a report: retries, quota waits and rung moves."""
 
 from __future__ import annotations
 

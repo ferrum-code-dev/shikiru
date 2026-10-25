@@ -1,4 +1,4 @@
-"""Concurrent creators of the same private directories never fail (01 §6)."""
+"""Concurrent creators of the same private directories never fail."""
 
 from __future__ import annotations
 

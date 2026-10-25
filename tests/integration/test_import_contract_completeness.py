@@ -1,4 +1,4 @@
-"""The import-linter denylists must name every package, so adding one forces a decision (02 §2)."""
+"""The import-linter denylists must name every package, so adding one forces a decision."""
 
 from __future__ import annotations
 

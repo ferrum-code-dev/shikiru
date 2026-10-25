@@ -1,4 +1,4 @@
-"""Operator command queue: append, dispatch and acknowledge (docs/design/05-data.md §2)."""
+"""Operator command queue: append, dispatch and acknowledge."""
 
 from __future__ import annotations
 
@@ -171,13 +171,13 @@ class CommandQueue:
         """Use `connection` and `clock` for every write below.
 
         Unlike the other stores, this connection isn't only the engine's: clients (CLI, MCP)
-        append commands and, for `Submit`, allocate the task id here too (principle 3, 01 §3).
+        append commands and, for `Submit`, allocate the task id here too.
         """
         self._connection = connection
         self._clock = clock
 
     def append(self, command: Command) -> QueuedCommand:
-        """Append `command`; a `Submit` is given its `T-n` id here, atomically (principle 3)."""
+        """Append `command`; a `Submit` is given its `T-n` id here, atomically."""
         ts = format_timestamp(self._clock.now())
         with transaction(self._connection):
             if isinstance(command, Submit):

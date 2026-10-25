@@ -107,7 +107,7 @@ class CodexAgent:
 
     @property
     def billing_declaration(self) -> BillingDeclaration:
-        """Return the explicit plugin option or the unknown declaration (04 §1)."""
+        """Return the explicit plugin option or the unknown declaration."""
         return self._billing_declaration
 
     async def model_catalog(self) -> ModelCatalog:

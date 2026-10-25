@@ -1,4 +1,4 @@
-"""A cancelled mutating git call removes its lock and leaves no hook running (03 §6, §7)."""
+"""A cancelled mutating git call removes its lock and leaves no hook running."""
 
 from __future__ import annotations
 

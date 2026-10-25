@@ -1,4 +1,4 @@
-"""Docker container sampling for the dashboard (docs/design/06-operator.md §5.4)."""
+"""Docker container sampling for the dashboard."""
 
 from __future__ import annotations
 

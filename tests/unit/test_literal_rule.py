@@ -1,4 +1,4 @@
-"""Unit tests for the no-literals rule checker (docs/design/07-engineering.md §2.5)."""
+"""Unit tests for the no-literals rule checker."""
 
 from __future__ import annotations
 

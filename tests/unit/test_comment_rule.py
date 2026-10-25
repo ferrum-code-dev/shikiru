@@ -1,4 +1,4 @@
-"""Unit tests for the no-comments rule checker (docs/design/07-engineering.md §2.8)."""
+"""Unit tests for the no-comments rule checker."""
 
 from __future__ import annotations
 

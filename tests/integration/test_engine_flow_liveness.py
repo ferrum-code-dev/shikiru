@@ -1,4 +1,4 @@
-"""Every running task keeps exactly one live flow, whatever ended its previous one (03 §7, §10)."""
+"""Every running task keeps exactly one live flow, whatever ended its previous one."""
 
 from __future__ import annotations
 

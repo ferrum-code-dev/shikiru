@@ -1,4 +1,4 @@
-"""Pure Docker container parsing, scoping and ranking (05 §5, 06 §5.4)."""
+"""Pure Docker container parsing, scoping and ranking."""
 
 from __future__ import annotations
 

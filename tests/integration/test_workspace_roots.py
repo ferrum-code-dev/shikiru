@@ -1,4 +1,4 @@
-"""Integration tests for `TaskRootBuilder` against real git repos (03 §5)."""
+"""Integration tests for `TaskRootBuilder` against real git repos."""
 
 from __future__ import annotations
 

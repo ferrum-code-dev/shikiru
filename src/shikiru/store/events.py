@@ -1,4 +1,4 @@
-"""Event log: append typed events, read them back since an id (docs/design/05-data.md §2)."""
+"""Event log: append typed events, read them back since an id."""
 
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ def fetch_timeline_events(
 
 
 class EventLog:
-    """Appends typed events and reads them back since an id (05 §2; `domain.events`)."""
+    """Appends typed events and reads them back since an id (`domain.events`)."""
 
     def __init__(self, connection: sqlite3.Connection, clock: Clock) -> None:
         """Use `connection` (the engine's writer) and `clock` for every append below."""

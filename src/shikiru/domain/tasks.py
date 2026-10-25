@@ -1,4 +1,4 @@
-"""Core task model and its enums (docs/design/03-workflow.md §1; docs/design/05-data.md §2)."""
+"""Core task model and its enums."""
 
 from __future__ import annotations
 
@@ -14,14 +14,14 @@ TASK_TITLE_MAX_LENGTH = 60
 
 
 class TaskOrigin(StrEnum):
-    """Where a task came from (03 §1.1)."""
+    """Where a task came from."""
 
     OPERATOR = auto()
     LEADER = auto()
 
 
 class Status(StrEnum):
-    """A task's lifecycle status (03 §1.2)."""
+    """A task's lifecycle status."""
 
     QUEUED = auto()
     RUNNING = auto()
@@ -32,17 +32,17 @@ class Status(StrEnum):
 
 
 ACTIVE_STATUSES = (Status.RUNNING, Status.INTEGRATING, Status.ESCALATED)
-"""The statuses that remain active in a task window (03 §1.2)."""
+"""The statuses that remain active in a task window."""
 
 
 class StatusReason(StrEnum):
-    """Why a terminal `status` was reached outside the ordinary happy path (03 §2, §6)."""
+    """Why a terminal `status` was reached outside the ordinary happy path."""
 
     SUPERSEDED = auto()
 
 
 class Step(StrEnum):
-    """The current step of a running task (03 §2)."""
+    """The current step of a running task."""
 
     TRIAGE = auto()
     PLAN = auto()
@@ -53,21 +53,21 @@ class Step(StrEnum):
 
 
 class Mode(StrEnum):
-    """What triage decided the request needs (03 §1.1, §2)."""
+    """What triage decided the request needs."""
 
     IMPLEMENT = auto()
     PLAN = auto()
 
 
 class Hold(StrEnum):
-    """A task-scoped hold (03 §1.2, §9)."""
+    """A task-scoped hold."""
 
     PAUSED = auto()
     INTERVENTION = auto()
 
 
 class Role(StrEnum):
-    """The three agent roles (04 §1; 05 §1)."""
+    """The three agent roles."""
 
     LEADER = auto()
     IMPLEMENTER = auto()
@@ -75,7 +75,7 @@ class Role(StrEnum):
 
 
 class EscalationReason(StrEnum):
-    """Why a task was escalated (03 §8)."""
+    """Why a task was escalated."""
 
     DECISION_REQUIRED = auto()
     ITERATIONS_EXHAUSTED = auto()
@@ -106,7 +106,7 @@ class DomainModel(BaseModel):
 
 
 class Counters(DomainModel):
-    """Persisted per-task counters and their reset rules (03 §1.1)."""
+    """Persisted per-task counters and their reset rules."""
 
     rejections_on_rung: int = 0
     consults: int = 0
@@ -114,7 +114,7 @@ class Counters(DomainModel):
 
 
 class RepoState(DomainModel):
-    """The task's checkout state (03 §1.1, §5; mirrors `tasks.repo`, 05 §2)."""
+    """The task's checkout state (mirrors `tasks.repo`)."""
 
     base: str
     base_ref: str
@@ -126,7 +126,7 @@ DEFAULT_COMPLEXITY: ComplexityName = "normal"
 
 
 class Task(DomainModel):
-    """The task fields the domain rules need (03 §1.1; mirrors the `tasks` table, 05 §2)."""
+    """The task fields the domain rules need (mirrors the `tasks` table)."""
 
     id: str
     seq: int
@@ -159,5 +159,5 @@ class Task(DomainModel):
 
     @property
     def held(self) -> bool:
-        """Whether a task-scoped hold forbids starting the task's next external effect (03 §6)."""
+        """Whether a task-scoped hold forbids starting the task's next external effect."""
         return bool(self.holds)

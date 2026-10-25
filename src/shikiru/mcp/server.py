@@ -1,4 +1,4 @@
-"""The stdio FastMCP adapter over the operator services (06 §4)."""
+"""The stdio FastMCP adapter over the operator services."""
 
 from __future__ import annotations
 

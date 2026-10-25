@@ -1,4 +1,4 @@
-"""Builds a task window's panes from `dashboard.layout` (06 §5.2)."""
+"""Builds a task window's panes from `dashboard.layout`."""
 
 from __future__ import annotations
 

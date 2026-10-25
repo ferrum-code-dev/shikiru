@@ -1,4 +1,4 @@
-"""The task strip renderable (docs/design/06-operator.md §6.2)."""
+"""The task strip renderable."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ STRIP_WIDE_MIN_COLUMNS = 60
 
 
 class PanelState(StrEnum):
-    """One panel's progress (06 §6.2)."""
+    """One panel's progress."""
 
     PENDING = auto()
     ACTIVE = auto()
@@ -54,7 +54,7 @@ class PanelState(StrEnum):
 
 
 class StampKind(StrEnum):
-    """A hold drawn over the active panel (06 §6.2)."""
+    """A hold drawn over the active panel."""
 
     PAUSED = auto()
     OPERATOR = auto()
@@ -116,13 +116,13 @@ _MODE_PANEL_LABELS: dict[Mode, tuple[tuple[str, str], ...]] = {
 
 
 def panel_specs_for_mode(mode: Mode) -> tuple[tuple[str, str], ...]:
-    """Return this mode's `(label, stage glyph)` panels (06 §6.2)."""
+    """Return this mode's `(label, stage glyph)` panels."""
     return _MODE_PANEL_LABELS[mode]
 
 
 @dataclass(frozen=True)
 class PanelView:
-    """One panel of a task strip (06 §6.2).
+    """One panel of a task strip.
 
     `role` is the acting role, shown as the panel colour while `state` is `ACTIVE`; other
     states carry a fixed colour regardless of role.
@@ -139,7 +139,7 @@ class PanelView:
 
 @dataclass(frozen=True)
 class StripStamp:
-    """A hold drawn over the strip's active panel (06 §6.2)."""
+    """A hold drawn over the strip's active panel."""
 
     kind: StampKind
     detail: str = ""
@@ -254,7 +254,7 @@ def _bottom_border(widths: list[int]) -> str:
 
 
 class TaskStrip:
-    """Renders one task's strip at a given terminal width (06 §6.2)."""
+    """Renders one task's strip at a given terminal width."""
 
     def __init__(self, data: TaskStripData) -> None:
         """Hold `data`; nothing here mutates it."""

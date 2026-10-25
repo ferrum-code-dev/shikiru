@@ -175,7 +175,7 @@ _SIGNAL_BUILDERS: dict[str, Callable[[Mapping[str, Any]], AgentSignal]] = {
 
 
 class FakeTurnSequence(TurnProcessSequence):
-    """Build one fake turn's prompt, compaction and continue processes (obligation 8)."""
+    """Build a fake turn's prompt, compaction and continuation processes."""
 
     def __init__(
         self, spec: TurnSpec, *, compact_at_pct: float, new_session_id: str | None

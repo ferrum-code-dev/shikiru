@@ -1,4 +1,4 @@
-"""Runs a step's turns and their recoveries until one completes or the task stops (03 §7)."""
+"""Runs a step's turns and their recoveries until one completes or the task stops."""
 
 from __future__ import annotations
 

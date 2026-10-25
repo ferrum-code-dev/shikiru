@@ -1,4 +1,4 @@
-"""Operator command models, discriminated by `kind` for storage (docs/design/05-data.md §2)."""
+"""Operator command models, discriminated by `kind` for storage."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ COMMAND_REJECTED_FALLBACK = "engine rejected the command"
 
 
 class CommandStatus(StrEnum):
-    """The `commands.status` lifecycle (05 §2)."""
+    """The `commands.status` lifecycle."""
 
     PENDING = auto()
     DONE = auto()
@@ -27,7 +27,7 @@ class CommandStatus(StrEnum):
 
 
 class CommandKind(StrEnum):
-    """The `commands.kind` discriminator (05 §2)."""
+    """The `commands.kind` discriminator."""
 
     SUBMIT = auto()
     PRIORITIZE = auto()

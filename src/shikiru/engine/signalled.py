@@ -1,4 +1,4 @@
-"""Runs the engine so that SIGTERM and SIGINT stop it gracefully, within a bound (03 §7)."""
+"""Runs the engine so that SIGTERM and SIGINT stop it gracefully, within a bound."""
 
 from __future__ import annotations
 

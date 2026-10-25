@@ -1,4 +1,4 @@
-"""Ready-set computation and dispatch gating (docs/design/03-workflow.md §10)."""
+"""Ready-set computation and dispatch gating."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 class WaitReason(StrEnum):
-    """Why a task is waiting instead of running (03 §6, §9, §10)."""
+    """Why a task is waiting instead of running."""
 
     PAUSED = auto()
     DEPENDENCY = auto()
@@ -62,7 +62,7 @@ class ReadySchedule:
 
 
 def find_dependency_cycle(dependencies: Mapping[str, Iterable[str]]) -> tuple[str, ...]:
-    """Return the task ids on one dependency cycle (a self-edge included), or none (03 §10)."""
+    """Return the task ids on one dependency cycle (a self-edge included), or none."""
     try:
         TopologicalSorter(dependencies).prepare()
     except CycleError as error:
@@ -76,7 +76,7 @@ def dispatch_sort_key(task: Task) -> tuple[bool, int, int]:
 
 
 def occupied_slot_ids(tasks: Sequence[Task]) -> frozenset[int]:
-    """Return distinct slots held by running or integrating tasks (03 §1.2, §10)."""
+    """Return distinct slots held by running or integrating tasks."""
     return frozenset(
         task.slot
         for task in tasks
@@ -108,7 +108,7 @@ def _group_queued_tasks(
 
 
 def pick_ready(tasks: Sequence[Task], gates: SchedulingGates) -> ReadySchedule:
-    """Return the ready set in dispatch order, gated by slots, resources and quota (03 §10).
+    """Return the ready set in dispatch order, gated by slots, resources and quota.
 
     `tasks` is every task the caller tracks, so dependency statuses can be looked up by id; an
     id that isn't in `tasks` is a caller bug and raises `KeyError`, as does a ready task missing
@@ -118,7 +118,7 @@ def pick_ready(tasks: Sequence[Task], gates: SchedulingGates) -> ReadySchedule:
     Slot and resources are gates shared by the whole pass: the first one that fails stops
     dispatch there, and every task from that point on shares its `wait_reason`, since a
     lower-priority task never dispatches ahead of a blocked one. Quota is scoped to one task at a
-    time (03 §9: a quota block is the only cross-task effect, but it is still per-agent, not
+    time (a quota block is the only cross-task effect, but it is still per-agent, not
     per-pass): a quota-blocked task is skipped and dispatch continues with the next one.
     """
     by_id = {task.id: task for task in tasks}

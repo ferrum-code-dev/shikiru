@@ -1,4 +1,4 @@
-"""Orphaned turn processes are ended once per engine life (03 §7)."""
+"""Orphaned turn processes are ended once per engine life."""
 
 from __future__ import annotations
 

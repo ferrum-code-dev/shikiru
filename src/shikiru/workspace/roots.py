@@ -1,4 +1,4 @@
-"""Task roots: one worktree of the project repository per task, and cleanup (03 §5)."""
+"""Task roots: one worktree of the project repository per task, and cleanup."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def branch_name(task_id: str, title: str) -> str:
 
 
 class TaskRootBuilder:
-    """Builds and tears down `.shikiru/worktrees/T-n/` for a task (03 §5)."""
+    """Builds and tears down `.shikiru/worktrees/T-n/` for a task."""
 
     def __init__(
         self,
@@ -73,7 +73,7 @@ class TaskRootBuilder:
         """Build (or reuse) `task_id`'s task root: one worktree of the project repository.
 
         A new root of a replacement task gets, as its first commit, the tracker changes of
-        `seed_branch` (the superseded task's branch) and nothing else of it (03 §2).
+        `seed_branch` (the superseded task's branch) and nothing else of it.
 
         Idempotent: calling this again with the same arguments creates nothing twice, whether
         the branch, the worktree or both already exist.
@@ -141,7 +141,7 @@ class TaskRootBuilder:
     async def cleanup(
         self, task_id: str, repo: RepoState | None, *, integrated: bool = False
     ) -> Path | None:
-        """Remove the task's worktree, its merged branch, and last its task root (03 §5, §7).
+        """Remove the task's worktree, its merged branch, and last its task root.
 
         The branch is merged when it is an ancestor of the local base or when the caller says
         the task is `integrated` (a pull request merged on the remote leaves the local base

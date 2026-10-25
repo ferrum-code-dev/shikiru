@@ -1,4 +1,4 @@
-"""Integration tests for `RunStore` (docs/design/05-data.md §2; 03 §4.1-4.2)."""
+"""Integration tests for `RunStore`."""
 
 from __future__ import annotations
 

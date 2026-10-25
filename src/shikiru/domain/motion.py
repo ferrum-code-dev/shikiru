@@ -1,4 +1,4 @@
-"""Pure dashboard timing rules for live task and quota views (06 §6.5)."""
+"""Pure dashboard timing rules for live task and quota views."""
 
 from __future__ import annotations
 

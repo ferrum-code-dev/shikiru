@@ -1,4 +1,4 @@
-"""Integration tests for `TaskStore` and task id allocation (docs/design/05-data.md §2; 03 §1-2)."""
+"""Integration tests for `TaskStore` and task id allocation."""
 
 from __future__ import annotations
 

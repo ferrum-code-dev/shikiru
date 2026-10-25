@@ -1,4 +1,4 @@
-"""Operator take over and hand back of one task role's session (03 §9)."""
+"""Operator take over and hand back of one task role's session."""
 
 from __future__ import annotations
 

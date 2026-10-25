@@ -1,4 +1,4 @@
-"""Escalation evidence read from a task's files (03 §8)."""
+"""Escalation evidence read from a task's files."""
 
 from __future__ import annotations
 

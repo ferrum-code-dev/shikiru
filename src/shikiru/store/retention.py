@@ -1,4 +1,4 @@
-"""Row retention: the finished history that can be pruned from the state DB (05 §2)."""
+"""Row retention: the finished history that can be pruned from the state DB."""
 
 from __future__ import annotations
 

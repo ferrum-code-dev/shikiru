@@ -1,4 +1,4 @@
-"""The capped digest of what a task did before it escalated (03 §8)."""
+"""The capped digest of what a task did before it escalated."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Acceptance of a completed turn's report: a dirty worktree cannot end a task's work (03 §2-3)."""
+"""Acceptance of a completed turn's report: a dirty worktree cannot end a task's work."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""In-memory contextual form drafts kept while a palette caller is visible (06 §5.5)."""
+"""In-memory contextual form drafts kept while a palette caller is visible."""
 
 from __future__ import annotations
 

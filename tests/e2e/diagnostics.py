@@ -1,4 +1,4 @@
-"""What an E2E attempt looked like when it failed, and whether a rerun is fair (07 §5)."""
+"""What an E2E attempt looked like when it failed, and whether a rerun is fair."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ RERUN_SKIPPED_RULE = "an agent skipped a rule"
 SANDBOX_DENIAL_MARKERS = ("Operation not permitted", "was denied permission", "Permission denied")
 SANDBOX_DENIAL_NOTE = (
     "sandbox denial ({marker!r}) in an agent transcript: not agent flakiness and never rerun; "
-    "check the Codex sandbox writable roots (04 §5: run directory, worktree git directory, "
+    "check the Codex sandbox writable roots (run directory, worktree git directory, "
     "git common directory) and `shikiru doctor`"
 )
 

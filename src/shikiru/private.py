@@ -1,4 +1,4 @@
-"""Owner-only creation and tightening of everything Shikiru keeps under `.shikiru/` (01 §6)."""
+"""Owner-only creation and tightening of everything Shikiru keeps under `.shikiru/`."""
 
 from __future__ import annotations
 

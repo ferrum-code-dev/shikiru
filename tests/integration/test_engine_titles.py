@@ -1,4 +1,4 @@
-"""`TaskTitles`: pane/window titles and window state, read back from `tmux_server` (06 §5.3)."""
+"""`TaskTitles`: pane/window titles and window state, read back from `tmux_server`."""
 
 from __future__ import annotations
 

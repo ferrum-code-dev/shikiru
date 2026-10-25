@@ -1,4 +1,4 @@
-"""`TaskFlow`: runs a task's steps to `integrate` or an escalation (03-workflow.md §2-3).
+"""`TaskFlow`: runs a task's steps to `integrate` or an escalation.
 
 Every rule of the review loop lives in `domain.steps.next_step`; this module only sequences
 around it: starting a task at its first step, running step after step through the `StepRunner`,
@@ -51,9 +51,9 @@ class TaskFlow:
         """Run `task_id` from its current step (or its first) until `integrate` or an escalation.
 
         A `resumed` run re-runs the step an engine restart interrupted: its first turn consumes a
-        report that turn already submitted instead of starting another (03 §7).
+        report that turn already submitted instead of starting another.
         An unexpected error escalates the task as `engine_error` instead of propagating, so one
-        task's failure never stops the engine (03 §8).
+        task's failure never stops the engine.
         """
         if resumed:
             self._turn_loop.expect_resume(task_id)

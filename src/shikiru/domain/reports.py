@@ -1,4 +1,4 @@
-"""Report models an agent's turn produces, validated by `shikiru report` (05 §4)."""
+"""Report models an agent's turn produces, validated by `shikiru report`."""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def _require_sibling_references_in_range(new_tasks: list[NewTask], field: str) -
 
 
 class NewTask(DomainModel):
-    """A task to enqueue from a plan or verdict report (03 §2, §6; D4)."""
+    """A task to enqueue from a plan or verdict report."""
 
     title: str
     request: str
@@ -104,7 +104,7 @@ class Issue(DomainModel):
 
 
 class Option(DomainModel):
-    """One option offered to the Operator in an escalation (03 §8)."""
+    """One option offered to the Operator in an escalation."""
 
     label: str
     consequences: str
@@ -116,7 +116,7 @@ class Option(DomainModel):
 
 
 class EscalationRequest(DomainModel):
-    """The Leader's escalation packet content: a question and its options (03 §8)."""
+    """The Leader's escalation packet content: a question and its options."""
 
     question: str
     options: list[Option] = Field(description="Exactly one option must have recommended=true.")
@@ -131,7 +131,7 @@ class EscalationRequest(DomainModel):
 
 
 class TriageReport(DomainModel):
-    """The Leader's `triage` report (03 §2)."""
+    """The Leader's `triage` report."""
 
     title: str = Field(max_length=TASK_TITLE_MAX_LENGTH)
     mode: Mode
@@ -141,7 +141,7 @@ class TriageReport(DomainModel):
 
 
 class ImplementationReport(DomainModel):
-    """The Implementer's `implement`/`rework`/`conflicts` report (03 §2, §6)."""
+    """The Implementer's `implement`/`rework`/`conflicts` report."""
 
     status: Literal["completed", "needs_decision", "blocked"]
     summary: str
@@ -162,7 +162,7 @@ class ImplementationReport(DomainModel):
 
 
 class PlanReport(DomainModel):
-    """The Leader's `plan` report (03 §2)."""
+    """The Leader's `plan` report."""
 
     summary: str
     commits: list[Commit]
@@ -176,7 +176,7 @@ class PlanReport(DomainModel):
 
 
 class ConsultAnswer(DomainModel):
-    """The Leader's answer to a `consult` turn (03 §2)."""
+    """The Leader's answer to a `consult` turn."""
 
     decision: Literal["answer", "escalate"]
     answer: str = Field(
@@ -208,7 +208,7 @@ class ConsultAnswer(DomainModel):
 
 
 class Verdict(DomainModel):
-    """The Leader's `verify` report (03 §2, §3; post-rebase `conflicts` verify, 03 §6)."""
+    """The Leader's `verify` report (post-rebase `conflicts` verify)."""
 
     decision: Literal["accept", "changes_requested", "escalate", "supersede"]
     summary: str
@@ -259,7 +259,7 @@ class Verdict(DomainModel):
 
 
 class ReportKind(StrEnum):
-    """The `report.kind` discriminator naming a turn's report model (02 §5, 03 §4.3)."""
+    """The `report.kind` discriminator naming a turn's report model."""
 
     TRIAGE = auto()
     IMPLEMENTATION = auto()

@@ -1,4 +1,4 @@
-"""Quota snapshots and agent blocks (docs/design/05-data.md §2; 03 §7, §9)."""
+"""Quota snapshots and agent blocks."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class AgentBlock:
-    """An agent blocked from dispatch until `until` (03 §7, §9)."""
+    """An agent blocked from dispatch until `until`."""
 
     agent: str
     until: datetime
@@ -70,7 +70,7 @@ def fetch_agent_block(connection: sqlite3.Connection, agent: str) -> AgentBlock 
 
 
 class QuotaStore:
-    """Persists quota snapshots and agent blocks (03 §7, §9)."""
+    """Persists quota snapshots and agent blocks."""
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         """Use `connection` for every write below."""

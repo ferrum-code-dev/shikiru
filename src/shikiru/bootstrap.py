@@ -1,4 +1,4 @@
-"""The composition root. Assembles concrete components for each entry point (02 §4)."""
+"""The composition root. Assembles concrete components for each entry point."""
 
 from __future__ import annotations
 
@@ -209,7 +209,7 @@ def build_project_detectors(project_root: Path) -> ProjectDetectors:
 
 
 async def run_init_wizard(project_root: Path) -> InitWizardResult | None:
-    """Run the interactive project setup after the shared detector validates D20."""
+    """Run setup after the detector validates the repository prerequisites."""
     doctor_renderer = cast(
         "Callable[..., RenderableType]",
         import_module("shikiru.cli.render").__dict__["doctor_renderable"],

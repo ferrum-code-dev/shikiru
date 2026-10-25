@@ -1,4 +1,4 @@
-"""Task dispatch, gate evaluation and slot ownership (03 §10)."""
+"""Task dispatch, gate evaluation and slot ownership."""
 
 from __future__ import annotations
 

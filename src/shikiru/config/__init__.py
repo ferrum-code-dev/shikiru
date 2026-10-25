@@ -1,4 +1,4 @@
-"""Configuration: merge, validate and expose `Settings` (docs/design/05-data.md §1)."""
+"""Configuration: merge, validate and expose `Settings`."""
 
 from __future__ import annotations
 

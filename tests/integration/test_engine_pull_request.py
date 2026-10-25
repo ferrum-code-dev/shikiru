@@ -1,4 +1,4 @@
-"""`PullRequest` integration against a fake `gh` on PATH and a local bare remote (03 §6-8)."""
+"""`PullRequest` integration against a fake `gh` on PATH and a local bare remote."""
 
 from __future__ import annotations
 

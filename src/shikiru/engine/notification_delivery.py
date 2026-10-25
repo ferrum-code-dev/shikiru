@@ -1,4 +1,4 @@
-"""Off-loop, prioritised and bounded notification delivery for the engine daemon (06 §5.7)."""
+"""Off-loop, prioritised and bounded notification delivery for the engine daemon."""
 
 from __future__ import annotations
 

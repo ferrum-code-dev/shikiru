@@ -1,4 +1,4 @@
-"""`shikiru view`: a role pane's read-only live tail of its `view.jsonl` (06 §5.1)."""
+"""`shikiru view`: a role pane's read-only live tail of its `view.jsonl`."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def view_command(
     task_id: Annotated[str, typer.Argument()],
     role: Annotated[Role, typer.Argument()],
 ) -> None:
-    """Render `role`'s live view of `task_id` (06 §5.1)."""
+    """Render `role`'s live view of `task_id`."""
     root = project_root(state_from(context), require_config=False)
     path = view_log_path(run_dir(root, task_id), role.value)
     tail = ViewTail(path, StreamLine(role), Console(), SystemClock())

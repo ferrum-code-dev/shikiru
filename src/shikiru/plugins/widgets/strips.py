@@ -1,4 +1,4 @@
-"""The `strips` widget: active tasks as comic-strip panels (docs/design/06-operator.md §6.2)."""
+"""The `strips` widget: active tasks as comic-strip panels."""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ class StripsPanel(GatedStatic):
 
 
 class StripsWidget:
-    """The `strips` dashboard widget plugin (06 §5.4, §6.2)."""
+    """The `strips` dashboard widget plugin."""
 
     name = "strips"
     placement = WidgetPlacement.WORKFLOW

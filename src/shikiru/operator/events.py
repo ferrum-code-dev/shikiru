@@ -1,4 +1,4 @@
-"""Event reads and bounded long-polling for operators (06 §1, §4)."""
+"""Event reads and bounded long-polling for operators."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Runs a step's turn to its transition, the boundary every turn shares (03 §2-3)."""
+"""Runs a step's turn to its transition, the boundary every turn shares."""
 
 from __future__ import annotations
 

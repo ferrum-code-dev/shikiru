@@ -1,4 +1,4 @@
-"""Operator command acknowledgements over the typed command queue (06 §1)."""
+"""Operator command acknowledgements over the typed command queue."""
 
 from __future__ import annotations
 

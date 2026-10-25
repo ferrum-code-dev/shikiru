@@ -1,4 +1,4 @@
-"""The shared Textual operator palette for the popup and dashboard (06 §5.5)."""
+"""The shared Textual operator palette for the popup and dashboard."""
 
 from __future__ import annotations
 

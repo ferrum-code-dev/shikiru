@@ -1,4 +1,4 @@
-"""Handlers for the Operator's direct access to a task's agents (03 §9)."""
+"""Handlers for the Operator's direct access to a task's agents."""
 
 from __future__ import annotations
 

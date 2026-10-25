@@ -1,4 +1,4 @@
-"""Headless agent contract checks (04 §3), imported only by tests (02 §2)."""
+"""Headless agent contract checks, imported only by tests."""
 
 from __future__ import annotations
 
@@ -124,7 +124,7 @@ class InvocationCase:
 
 
 class CompactionCase(StrEnum):
-    """The obligation-8 rule one offline compaction scenario exercises (04 §3, check 3)."""
+    """The in-turn compaction rule one offline scenario exercises (check 3)."""
 
     THRESHOLD = auto()
     CONTEXT_FAILURE = auto()
@@ -156,7 +156,7 @@ class CompactionScenario:
 
 
 class AgentContractSuite:
-    """Pytest base class for the process-per-turn agent contract in 04 §3."""
+    """Pytest base class for the process-per-turn agent contract."""
 
     runs_live_checks_in_default_gate: ClassVar[bool] = False
 
@@ -472,7 +472,7 @@ def _process_outcome(parser: TurnParser, sample: RecordedStream) -> TurnProcessR
 
 
 def assert_agent_obligations(signals: Sequence[AgentSignal], session_id: str | None) -> None:
-    """Validate the stream-order, usage and tool-call obligations from 04 §1."""
+    """Validate the stream-order, usage and tool-call obligations."""
     _validate_session_start(signals, session_id)
     _validate_terminal(signals)
     _validate_tool_sequences(signals)

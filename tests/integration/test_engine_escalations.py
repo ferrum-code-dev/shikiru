@@ -1,4 +1,4 @@
-"""`EscalationRaiser`: packet content and the escalation row it opens (03-workflow.md §8)."""
+"""`EscalationRaiser`: packet content and the escalation row it opens."""
 
 from __future__ import annotations
 
