@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    env:
+      PYTEST_ADDOPTS: -n 2 --dist=loadfile
+      UV_NO_PROGRESS: "true"
+      NODE_OPTIONS: --max-old-space-size=1536
+      TERM: xterm-256color
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.12.5"
+          python-version: "3.14"
+          activate-environment: true
+          enable-cache: false
+
+      - name: Install required host tools
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            sudo apt-get update
+            sudo apt-get install --yes git tmux
+          else
+            brew install git tmux
+          fi
+
+      - name: Sync locked environment
+        run: uv sync --locked
+
+      - name: Check required host tool versions
+        run: |
+          uv run --locked python - <<'PY'
+          import asyncio
+
+          from shikiru.domain.versions import parse_version
+          from shikiru.operator.doctor import GIT_MINIMUM_VERSION, TMUX_MINIMUM_VERSION
+          from shikiru.process import SubprocessRunner
+
+          COMMAND_TIMEOUT = 5
+          REQUIREMENTS = (
+              ("git", "--version", GIT_MINIMUM_VERSION),
+              ("tmux", "-V", TMUX_MINIMUM_VERSION),
+          )
+
+          async def check_versions():
+              runner = SubprocessRunner()
+              for executable, flag, minimum in REQUIREMENTS:
+                  result = await runner.run(
+                      (executable, flag), timeout=COMMAND_TIMEOUT, check=True
+                  )
+                  version = parse_version(result.stdout)
+                  if version is None or version < minimum:
+                      raise SystemExit(f"{executable} must be at least {minimum}")
+                  print(f"{executable}: {result.stdout.strip()}")
+
+          asyncio.run(check_versions())
+          PY
+
+      - name: Run quality gate
+        run: uv run --locked poe check
+
+      - name: Build and exercise package distributions
+        run: bash scripts/release-readiness-smoke.sh

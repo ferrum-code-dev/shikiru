@@ -21,6 +21,10 @@ disconnects.
 versions above are enforced by Doctor. macOS is the platform exercised in this repository;
 GNU/Linux has not yet been verified here.
 
+The GitHub Actions workflow is configured to run the locked quality gate and isolated fake-agent
+package smoke on Ubuntu 24.04 and macOS 15 for pushes to `main` and pull requests. No hosted run has
+been observed from this checkout, so CI and Linux execution remain unverified until a run completes.
+
 ## Install
 
 Install from a Shikiru source checkout:

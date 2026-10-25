@@ -33,6 +33,8 @@ HOME_DIR="$RUN_ROOT/home"
 CACHE_DIR="$RUN_ROOT/cache"
 TOOL_DIR="$RUN_ROOT/uv/tools"
 TOOL_BIN_DIR="$RUN_ROOT/uv/bin"
+BASE_TOOL_DIR="$RUN_ROOT/uv/base-tools"
+BASE_TOOL_BIN_DIR="$RUN_ROOT/uv/base-bin"
 TMUX_TMPDIR="$RUN_ROOT/tmux"
 TMUX_SHIM_DIR="$RUN_ROOT/shims"
 SOCKET_NAME="shikiru-release-$RANDOM-$$"
@@ -53,7 +55,7 @@ sha256() {
 
 mkdir -p "$ARTIFACT_DIR" "$HOME_DIR" "$CACHE_DIR/xdg" "$CACHE_DIR/config" \
     "$CACHE_DIR/data" "$CACHE_DIR/state" "$CACHE_DIR/uv" "$TOOL_DIR" "$TOOL_BIN_DIR" \
-    "$TMUX_TMPDIR" "$TMUX_SHIM_DIR" "$RUN_ROOT/tmp"
+    "$BASE_TOOL_DIR" "$BASE_TOOL_BIN_DIR" "$TMUX_TMPDIR" "$TMUX_SHIM_DIR" "$RUN_ROOT/tmp"
 : > "$LOG"
 
 finish() {
@@ -83,11 +85,6 @@ finish() {
             "$GIT_BIN" -C "$ROOT" diff HEAD --binary
             sha256 "$ROOT/scripts/release-readiness-smoke.sh"
             sha256 "$ROOT/tests/support/release_wait.py"
-            for doc in "$ROOT"/docs/release-readiness-*.md "$ROOT/docs/e2e-results.md"; do
-                if [[ -f "$doc" ]]; then
-                    sha256 "$doc"
-                fi
-            done
         } | sha256 | awk '{print $1}'
     )"
     SMOKE_EXIT_STATUS="$exit_status" "$PYTHON_BIN" - "$ARTIFACT" "$DATE" "$STARTED_AT" "$ARTIFACT_NAME" "$SOURCE_COMMIT" "$SOURCE_FINGERPRINT" "$SMOKE_STAGE" "$HOME_DASHBOARD_CHECK" "$PICKER_CHECK" "$SMALL_CLIENT_SIZE" "$WORKSPACE_NAVIGATION_CHECK" <<'PY'
@@ -104,7 +101,7 @@ data = {
     "source_diff_fingerprint": sys.argv[6],
     "failed_stage": sys.argv[7] if os.environ["SMOKE_EXIT_STATUS"] != "0" else None,
     "status": "passed" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "failed",
-    "installation": "uv tool install . --with tests/fake_agent --with pytest --with pytest-asyncio",
+    "installation": ["uv tool install <built wheel>", "uv tool install <built wheel> --with <fake-agent wheel> --with pytest --with pytest-asyncio"],
     "fresh_disposable_home": True,
     "runtime_isolation": ["HOME", "XDG directories", "uv cache/tools/bin", "private tmux socket"],
     "installed_package_data_and_entrypoints": "verified" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
@@ -187,6 +184,10 @@ wait_for_text() {
     run_waiter pane "$TMUX_BIN" "$SOCKET_NAME" "$1" "$2" >> "$LOG" 2>&1
 }
 
+wait_for_exit() {
+    run_waiter exit "$TMUX_BIN" "$SOCKET_NAME" "$WIZARD_PANE" "$1" >> "$LOG" 2>&1
+}
+
 wait_for_advance() {
     run_waiter advance "$TMUX_BIN" "$SOCKET_NAME" "$1" "$2" >> "$LOG" 2>&1
 }
@@ -222,7 +223,7 @@ exec "$TMUX_BIN" -L "$SOCKET_NAME" -f /dev/null "\$@"
 EOF
 chmod 755 "$TMUX_SHIM_DIR/tmux"
 
-SMOKE_STAGE="source-checkout installation"
+SMOKE_STAGE="wheel and sdist build"
 cd "$ROOT"
 record env -i \
     "HOME=$HOME_DIR" \
@@ -234,12 +235,73 @@ record env -i \
     "UV_TOOL_DIR=$TOOL_DIR" \
     "UV_TOOL_BIN_DIR=$TOOL_BIN_DIR" \
     "PATH=$PATH" \
-    "$UV_BIN" tool install . --with "$ROOT/tests/fake_agent" --with pytest --with pytest-asyncio
+    "$UV_BIN" build --out-dir "$RUN_ROOT/dist"
+
+shopt -s nullglob
+WHEELS=("$RUN_ROOT/dist"/*.whl)
+SDISTS=("$RUN_ROOT/dist"/*.tar.gz)
+[[ ${#WHEELS[@]} -eq 1 && ${#SDISTS[@]} -eq 1 ]]
+SMOKE_STAGE="source distribution build"
+record env -i \
+    "HOME=$HOME_DIR" \
+    "XDG_CACHE_HOME=$CACHE_DIR/xdg" \
+    "XDG_CONFIG_HOME=$CACHE_DIR/config" \
+    "XDG_DATA_HOME=$CACHE_DIR/data" \
+    "XDG_STATE_HOME=$CACHE_DIR/state" \
+    "UV_CACHE_DIR=$CACHE_DIR/uv" \
+    "UV_TOOL_DIR=$TOOL_DIR" \
+    "UV_TOOL_BIN_DIR=$TOOL_BIN_DIR" \
+    "PATH=$PATH" \
+    "$UV_BIN" build "${SDISTS[0]}" --wheel --out-dir "$RUN_ROOT/from-sdist"
+FROM_SDIST_WHEELS=("$RUN_ROOT/from-sdist"/*.whl)
+[[ ${#FROM_SDIST_WHEELS[@]} -eq 1 ]]
+SMOKE_STAGE="runtime-only wheel installation"
+BASE_PATH="$BASE_TOOL_BIN_DIR:$TMUX_SHIM_DIR$TOOL_PATH:$(getconf PATH)"
+record env -i \
+    "HOME=$HOME_DIR" \
+    "XDG_CACHE_HOME=$CACHE_DIR/xdg" \
+    "XDG_CONFIG_HOME=$CACHE_DIR/config" \
+    "XDG_DATA_HOME=$CACHE_DIR/data" \
+    "XDG_STATE_HOME=$CACHE_DIR/state" \
+    "UV_CACHE_DIR=$CACHE_DIR/uv" \
+    "UV_TOOL_DIR=$BASE_TOOL_DIR" \
+    "UV_TOOL_BIN_DIR=$BASE_TOOL_BIN_DIR" \
+    "PATH=$BASE_PATH" \
+    "$UV_BIN" tool install "${WHEELS[0]}"
+[[ -x "$BASE_TOOL_BIN_DIR/shikiru" ]]
+record env -i "HOME=$HOME_DIR" "PATH=$BASE_PATH" "$BASE_TOOL_BIN_DIR/shikiru" --help
+
+record env -i \
+    "HOME=$HOME_DIR" \
+    "XDG_CACHE_HOME=$CACHE_DIR/xdg" \
+    "XDG_CONFIG_HOME=$CACHE_DIR/config" \
+    "XDG_DATA_HOME=$CACHE_DIR/data" \
+    "XDG_STATE_HOME=$CACHE_DIR/state" \
+    "UV_CACHE_DIR=$CACHE_DIR/uv" \
+    "UV_TOOL_DIR=$TOOL_DIR" \
+    "UV_TOOL_BIN_DIR=$TOOL_BIN_DIR" \
+    "PATH=$PATH" \
+    "$UV_BIN" build --package fake-agent --wheel --out-dir "$RUN_ROOT/fake-agent"
+FAKE_AGENT_WHEELS=("$RUN_ROOT/fake-agent"/*.whl)
+[[ ${#FAKE_AGENT_WHEELS[@]} -eq 1 ]]
+
+SMOKE_STAGE="built-wheel installation"
+record env -i \
+    "HOME=$HOME_DIR" \
+    "XDG_CACHE_HOME=$CACHE_DIR/xdg" \
+    "XDG_CONFIG_HOME=$CACHE_DIR/config" \
+    "XDG_DATA_HOME=$CACHE_DIR/data" \
+    "XDG_STATE_HOME=$CACHE_DIR/state" \
+    "UV_CACHE_DIR=$CACHE_DIR/uv" \
+    "UV_TOOL_DIR=$TOOL_DIR" \
+    "UV_TOOL_BIN_DIR=$TOOL_BIN_DIR" \
+    "PATH=$PATH" \
+    "$UV_BIN" tool install "${WHEELS[0]}" --with "${FAKE_AGENT_WHEELS[0]}" --with pytest --with pytest-asyncio
 
 TOOL_BIN="$TOOL_BIN_DIR/shikiru"
 PACKAGE_PYTHON="$(sed -n '1{s/^#!//;p;}' "$TOOL_BIN")"
 [[ -x "$TOOL_BIN" && -x "$PACKAGE_PYTHON" ]]
-record "$TOOL_BIN" --version
+record env -i "${RUNTIME_ENV[@]}" "$TOOL_BIN" --version
 record env -i "HOME=$HOME_DIR" "PATH=$PATH" "UV_TOOL_DIR=$TOOL_DIR" "$PACKAGE_PYTHON" - <<'PY'
 from importlib.metadata import entry_points
 from importlib.resources import files
@@ -251,62 +313,73 @@ import shikiru
 defaults = files("shikiru.config").joinpath("defaults.toml")
 assert defaults.is_file()
 assert "sample_seconds = 2" in defaults.read_text()
+assert files("shikiru.prompts").joinpath("templates", "implement.md.j2").is_file()
+assert files("shikiru.store.migrations").joinpath("009_billing_declarations.sql").is_file()
+assert files("shikiru.dashboard").joinpath("shikiru_init_ascii_art.txt").is_file()
 module_path = Path(shikiru.__file__).resolve()
 assert module_path.is_relative_to(Path(os.environ["UV_TOOL_DIR"]).resolve())
 assert not module_path.is_relative_to(Path.cwd())
 agents = {entry.name for entry in entry_points(group="shikiru.agents")}
 widgets = {entry.name for entry in entry_points(group="shikiru.widgets")}
+commands = {entry.name for entry in entry_points(group="console_scripts")}
 assert "fake" in agents
 assert {"header", "resources", "docker", "faults"} <= widgets
-print("installed defaults.toml, fake agent entry point and built-in widget entry points verified")
+assert "shikiru" in commands
+from tempfile import TemporaryDirectory
+
+from shikiru.store.database import Database
+
+with TemporaryDirectory() as temporary_directory:
+    assert Database(Path(temporary_directory) / "state.db").health() > 0
+print("installed entry points, defaults, prompt, migration and artwork resources verified")
 PY
 
 WIZARD_PROJECT="$RUN_ROOT/quickstart"
 SMALL_PROJECT="$RUN_ROOT/wizard-small"
 WORK_PROJECT="$WIZARD_PROJECT"
 SECONDARY_PROJECT="$RUN_ROOT/yes-smoke"
-SMOKE_STAGE="normal-size inline interactive wizard"
+SMOKE_STAGE="normal-size interactive wizard"
 prepare_project "$WIZARD_PROJECT"
 prepare_project "$SMALL_PROJECT"
 prepare_project "$SECONDARY_PROJECT"
 
 tmux_run new-session -d -s release-smoke -x 120 -y 38 -c "$RUN_ROOT" /bin/sh
-tmux_run new-window -d -t release-smoke -n wizard -c "$WIZARD_PROJECT" \
+WIZARD_WINDOW="$(tmux_run new-window -P -F '#{window_id}' -d -t release-smoke -n wizard -c "$WIZARD_PROJECT" \
     "$TOOL_BIN" --project "$WIZARD_PROJECT" init
-wait_for_text release-smoke:wizard 'Step 1 of 7 · Repository'
-tmux_run send-keys -t release-smoke:wizard Tab
-wait_for_advance release-smoke:wizard 'Step 2 of 7 · Agents and ladders'
-wait_for_text release-smoke:wizard 'Enter an explicit model supported by each selected plugin.'
-tmux_run send-keys -t release-smoke:wizard BTab
-tmux_run send-keys -t release-smoke:wizard BTab
-tmux_run send-keys -t release-smoke:wizard C-a
-tmux_run send-keys -t release-smoke:wizard C-k
-tmux_run send-keys -l -t release-smoke:wizard 'fake:smoke'
-wait_for_text release-smoke:wizard 'fake:smoke'
-tmux_run send-keys -t release-smoke:wizard BTab
-tmux_run send-keys -t release-smoke:wizard C-a
-tmux_run send-keys -t release-smoke:wizard C-k
-tmux_run send-keys -l -t release-smoke:wizard 'fake:strong'
-wait_for_text release-smoke:wizard 'fake:strong'
-tmux_run send-keys -t release-smoke:wizard BTab
-tmux_run send-keys -t release-smoke:wizard C-a
-tmux_run send-keys -t release-smoke:wizard C-k
-tmux_run send-keys -l -t release-smoke:wizard 'fake:smoke'
-wait_for_text release-smoke:wizard 'fake:smoke'
-tmux_run capture-pane -p -t release-smoke:wizard -S - > "$RUN_ROOT/wizard-agents.txt"
-tmux_run send-keys -t release-smoke:wizard Tab
-tmux_run send-keys -t release-smoke:wizard Tab
-tmux_run send-keys -t release-smoke:wizard Tab
-tmux_run send-keys -t release-smoke:wizard Tab
-wait_for_advance release-smoke:wizard 'Step 3 of 7 · Trackers'
-for step in 'Step 4 of 7 · Caches and CoW' 'Step 5 of 7 · Parallelism' \
-    'Step 6 of 7 · Integration mode' 'Step 7 of 7 · Finish'; do
-    wait_for_advance release-smoke:wizard "$step"
-done
-tmux_run send-keys -t release-smoke:wizard Enter
-wait_for_text release-smoke:wizard 'Doctor passed.'
-tmux_run send-keys -t release-smoke:wizard Escape
-wait_for_text release-smoke:wizard 'initialized '
+    )"
+WIZARD_PANE="$(tmux_run display-message -p -t "$WIZARD_WINDOW" '#{pane_id}')"
+tmux_run set-option -w -t "$WIZARD_WINDOW" remain-on-exit on
+click_wizard_button() {
+    run_waiter click "$TMUX_BIN" "$SOCKET_NAME" "$WIZARD_PANE" "$1" "$2" \
+        >> "$LOG" 2>&1
+}
+wait_for_text "$WIZARD_WINDOW" 'SHIKIRU · Repository'
+click_wizard_button 'Next' 'SHIKIRU · Agents and ladders'
+wait_for_text "$WIZARD_WINDOW" 'Role and complexity ladders'
+tmux_run send-keys -t "$WIZARD_WINDOW" Enter
+run_waiter ladder "$TMUX_BIN" "$SOCKET_NAME" "$WIZARD_PANE" 'Leader' 'fake:smoke' >> "$LOG" 2>&1
+tmux_run send-keys -t "$WIZARD_WINDOW" BTab
+tmux_run send-keys -t "$WIZARD_WINDOW" Down
+tmux_run send-keys -t "$WIZARD_WINDOW" Enter
+wait_for_text "$WIZARD_WINDOW" 'Edit Implementer · Base'
+run_waiter ladder "$TMUX_BIN" "$SOCKET_NAME" "$WIZARD_PANE" 'Implementer · Base' 'fake:strong' >> "$LOG" 2>&1
+tmux_run send-keys -t "$WIZARD_WINDOW" BTab
+tmux_run send-keys -t "$WIZARD_WINDOW" Down
+tmux_run send-keys -t "$WIZARD_WINDOW" Down
+tmux_run send-keys -t "$WIZARD_WINDOW" Down
+tmux_run send-keys -t "$WIZARD_WINDOW" Down
+tmux_run send-keys -t "$WIZARD_WINDOW" Enter
+wait_for_text "$WIZARD_WINDOW" 'Edit Helper'
+run_waiter ladder "$TMUX_BIN" "$SOCKET_NAME" "$WIZARD_PANE" 'Helper' 'fake:smoke' >> "$LOG" 2>&1
+tmux_run capture-pane -p -t "$WIZARD_WINDOW" -S - > "$RUN_ROOT/wizard-agents.txt"
+click_wizard_button 'Next' 'SHIKIRU · Trackers'
+click_wizard_button 'Next' 'SHIKIRU · Caches and CoW'
+click_wizard_button 'Next' 'SHIKIRU · Parallelism'
+click_wizard_button 'Next' 'SHIKIRU · Integration mode'
+click_wizard_button 'Next' 'SHIKIRU · Finish'
+wait_for_advance "$WIZARD_WINDOW" 'Doctor passed'
+click_wizard_button 'Exit' ''
+wait_for_exit ''
 
 WIZARD_CONFIG="$WIZARD_PROJECT/.shikiru/config.toml"
 [[ -f "$WIZARD_CONFIG" ]]
@@ -324,17 +397,21 @@ assert settings.roles.implementer.ladder[0].model == "strong"
 assert settings.roles.helper.ladder[0].model == "smoke"
 PY
 
-SMOKE_STAGE="small-size inline wizard render"
+SMOKE_STAGE="small-size wizard cancellation"
 tmux_run new-session -d -s release-small -x 68 -y 16 -c "$RUN_ROOT" /bin/sh
-tmux_run new-window -d -t release-small -n wizard -c "$SMALL_PROJECT" \
+SMALL_WIZARD_WINDOW="$(tmux_run new-window -P -F '#{window_id}' -d -t release-small -n wizard -c "$SMALL_PROJECT" \
     "$TOOL_BIN" --project "$SMALL_PROJECT" init
-wait_for_text release-small:wizard 'Step 1 of 7 · Repository'
-wait_for_text release-small:wizard 'Next'
-tmux_run send-keys -t release-small:wizard Escape
+    )"
+SMALL_WIZARD_PANE="$(tmux_run display-message -p -t "$SMALL_WIZARD_WINDOW" '#{pane_id}')"
+tmux_run set-option -w -t "$SMALL_WIZARD_WINDOW" remain-on-exit on
+wait_for_text "$SMALL_WIZARD_WINDOW" 'SHIKIRU · Repository'
+wait_for_text "$SMALL_WIZARD_WINDOW" 'Next'
+run_waiter click "$TMUX_BIN" "$SOCKET_NAME" "$SMALL_WIZARD_PANE" 'Cancel' '' >> "$LOG" 2>&1
+run_waiter exit "$TMUX_BIN" "$SOCKET_NAME" "$SMALL_WIZARD_PANE" '' >> "$LOG" 2>&1
+[[ ! -e "$SMALL_PROJECT/.shikiru/config.toml" ]]
 
 SMOKE_STAGE="init --yes and doctor"
 record app "$SECONDARY_PROJECT" init --yes
-grep -Fq 'review the generated default model placeholders' "$LOG"
 record "$PACKAGE_PYTHON" - "$SECONDARY_PROJECT/.shikiru/config.toml" <<'PY'
 import sys
 from pathlib import Path
@@ -363,9 +440,16 @@ record app "$WORK_PROJECT" \
     --set orchestration.resources.max_cpu_pct=100 \
     --set orchestration.resources.min_free_ram_gb=0 \
     --set dashboard.animations=false start
-SUBMIT_OUTPUT="$(app "$WORK_PROJECT" submit 'Implement task A1 from tasks/plan.md' 2>> "$LOG")"
+SUBMIT_OUTPUT="$(app "$WORK_PROJECT" --json submit 'Implement task A1 from tasks/plan.md' 2>> "$LOG")"
 printf '%s\n' "$SUBMIT_OUTPUT" | tee -a "$LOG"
-[[ "$SUBMIT_OUTPUT" == T-1 ]]
+SUBMIT_TASK_ID="$("$PACKAGE_PYTHON" - "$SUBMIT_OUTPUT" <<'PY'
+import json
+import sys
+
+print(json.loads(sys.argv[1])["task_id"])
+PY
+)"
+[[ "$SUBMIT_TASK_ID" == T-1 ]]
 
 STATUS_PATH="$RUN_ROOT/status.json"
 wait_for_task
@@ -417,7 +501,7 @@ WORKSPACE_NAVIGATION_CHECK="eight installed-interpreter Textual boundary tests u
 SMOKE_STAGE="session listing and attach"
 record app "$SECONDARY_PROJECT" start
 LS_PATH="$RUN_ROOT/sessions.json"
-app "$WORK_PROJECT" ls --json > "$LS_PATH" 2>> "$LOG"
+app "$WORK_PROJECT" --json ls > "$LS_PATH" 2>> "$LOG"
 cat "$LS_PATH" | tee -a "$LOG"
 "$PACKAGE_PYTHON" - "$LS_PATH" <<'PY'
 import json
@@ -428,29 +512,40 @@ rows = json.loads(Path(sys.argv[1]).read_text())
 assert len(rows) == 2
 PY
 
-tmux_run new-window -d -t release-smoke -n picker -c "$WORK_PROJECT" \
-    "$TOOL_BIN" --project "$WORK_PROJECT" attach
-wait_for_text release-smoke:picker 'Attach to a Shikiru session'
-wait_for_text release-smoke:picker 'Select a session and press Enter. Esc cancels.'
-wait_for_text release-smoke:picker 'quickstart'
-wait_for_text release-smoke:picker 'yes-smoke'
-tmux_run send-keys -t release-smoke:picker Escape
-wait_for_text release-smoke:picker 'session selection was cancelled'
+PICKER_WINDOW="$(tmux_run new-window -P -F '#{window_id}' -d -t release-smoke -n picker -c "$RUN_ROOT" \
+    "$TOOL_BIN" attach
+    )"
+PICKER_PANE="$(tmux_run display-message -p -t "$PICKER_WINDOW" '#{pane_id}')"
+tmux_run set-option -w -t "$PICKER_WINDOW" remain-on-exit on
+wait_for_text "$PICKER_WINDOW" 'Select a session number'
+wait_for_text "$PICKER_WINDOW" 'quickstart'
+wait_for_text "$PICKER_WINDOW" 'yes-smoke'
+tmux_run send-keys -t "$PICKER_WINDOW" q Enter
+run_waiter exit "$TMUX_BIN" "$SOCKET_NAME" "$PICKER_PANE" 'session selection was cancelled' 2 >> "$LOG" 2>&1
 
-SMOKE_STAGE="small-size inline session picker selection"
-tmux_run new-window -d -t release-small -n picker -c "$WORK_PROJECT" \
-    env -u TMUX "$TOOL_BIN" --project "$WORK_PROJECT" attach
-wait_for_text release-small:picker 'Attach to a Shikiru session'
-wait_for_text release-small:picker 'quickstart'
-tmux_run send-keys -t release-small:picker Down
-wait_for_text release-small:picker 'yes-smoke'
-tmux_run send-keys -t release-small:picker Enter
+SMOKE_STAGE="small-size numbered session selection"
+SMALL_PICKER_WINDOW="$(tmux_run new-window -P -F '#{window_id}' -d -t release-small -n picker -c "$RUN_ROOT" \
+    env -u TMUX "$TOOL_BIN" attach
+    )"
+wait_for_text "$SMALL_PICKER_WINDOW" 'Select a session number'
+wait_for_text "$SMALL_PICKER_WINDOW" 'yes-smoke'
+SESSION_NUMBER="$("$PACKAGE_PYTHON" - "$LS_PATH" <<'PYTHON'
+import json
+import sys
+from pathlib import Path
+
+rows = json.loads(Path(sys.argv[1]).read_text())
+print(next(index for index, row in enumerate(rows, start=1) if row["session"] == "[shikiru] yes-smoke"))
+PYTHON
+)"
+tmux_run send-keys -l -t "$SMALL_PICKER_WINDOW" "$SESSION_NUMBER"
+tmux_run send-keys -t "$SMALL_PICKER_WINDOW" Enter
 SMALL_CLIENT="$(wait_for_client '=[shikiru] yes-smoke')"
 SMALL_CLIENT_SIZE="$(tmux_run display-message -p -t "$SMALL_CLIENT" '#{client_width}x#{client_height}')"
 [[ "$SMALL_CLIENT_SIZE" == 68x16 ]]
 printf 'small picker attached %s at %s\n' "$SMALL_CLIENT" "$SMALL_CLIENT_SIZE" | tee -a "$LOG"
 tmux_run detach-client -t "$SMALL_CLIENT"
-PICKER_CHECK="normal 120x38 displayed both rows and Escape cancelled; small 68x16 scrolled to and attached the second row"
+PICKER_CHECK="normal 120x38 displayed both rows and q cancelled; small 68x16 selected the numbered project and attached"
 
 ATTACH_LOG="$RUN_ROOT/attach.log"
 ATTACH_COMMAND=("$TOOL_BIN" --project "$WORK_PROJECT" attach quickstart)
@@ -471,6 +566,6 @@ cat "$ATTACH_LOG" | tee -a "$LOG"
 SMOKE_STAGE="stop and cleanup"
 record app "$SECONDARY_PROJECT" stop --kill-session
 record app "$WORK_PROJECT" stop --kill-session
-app "$WORK_PROJECT" ls --json > "$LS_PATH" 2>> "$LOG"
+app "$WORK_PROJECT" --json ls > "$LS_PATH" 2>> "$LOG"
 [[ "$("$PACKAGE_PYTHON" -c 'import json,sys; print(len(json.load(open(sys.argv[1]))) )' "$LS_PATH")" == 0 ]]
 [[ -z "$(tmux_run list-sessions -F '#{session_name}' | grep -F '[shikiru]' || true)" ]]
