@@ -902,6 +902,7 @@ class DashboardApp(CoveredScreens):
         width: 100%; height: auto; max-height: 3; padding: 0 1; margin-bottom: 1;
         background: $surface;
     }
+    #escalations #escalation-panels { scrollbar-size-vertical: $scrollbar-width; }
     #usage:focus, #resources:focus, #escalations:focus, #escalations.armed {
         background: $selected-surface;
     }
