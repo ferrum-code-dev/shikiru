@@ -1284,8 +1284,12 @@ os.execv("/bin/sh", ["/bin/sh", "-c", arguments[-1]])
 
             await wait_until(attached_or_finished, timeout=UI_WAIT_SECONDS)
             assert remote_client.returncode is None, remote_client.output.decode(errors="replace")
-            remote_state = await _client_state(tmux_server, session, remote_client.pid)
-            assert remote_state[0] == session
+            remote_clients = await tmux_server.run(
+                "list-clients", "-t", exact_target(session), "-F", CLIENT_STATE_FORMAT
+            )
+            remote_states = [tuple(row.split("\t")) for row in remote_clients.stdout.splitlines()]
+            assert len(remote_states) == 1
+            assert remote_states[0][1] == session
         finally:
             await remote_client.stop()
             await wait_until(

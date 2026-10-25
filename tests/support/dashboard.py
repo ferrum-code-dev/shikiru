@@ -19,14 +19,14 @@ from shikiru.dashboard.contract import (
     WidgetContext,
 )
 from shikiru.dashboard.detail import TASK_DETAIL_BRIEFING, TaskDetailPanel
-from shikiru.dashboard.detail_fold import DetailFold, FoldHeader
+from shikiru.dashboard.detail_fold import DetailFold, DetailFolds, FoldHeader
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.operator.queries import OperatorQueries
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.theme import install_theme
 from tests.support.render import plain_text
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, WaitTimeoutError, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -155,18 +155,50 @@ def _focused_fold(pilot: Pilot[None]) -> DetailFold | None:
     return parent if isinstance(parent, DetailFold) else None
 
 
+def _focus_state(pilot: Pilot[None], folds: DetailFolds) -> str:
+    focused = pilot.app.focused
+    fold = (
+        next((item for item in focused.ancestors_with_self if isinstance(item, DetailFold)), None)
+        if focused is not None
+        else None
+    )
+    widget_type = type(focused).__name__ if focused is not None else None
+    widget_id = getattr(focused, "id", None)
+    focused_view = fold.view_id if fold is not None else None
+    return (
+        f"widget={widget_type!r} id={widget_id!r} fold={focused_view!r} "
+        f"current_fold={folds.current_fold.view_id!r}"
+    )
+
+
 async def pick_details_entry(pilot: Pilot[None], entry_id: str) -> None:
     await wait_until(lambda: _focused_fold(pilot) is not None, timeout=UI_WAIT_SECONDS)
     fold = cast("DetailFold", _focused_fold(pilot))
+    folds = fold.folds
     ids = [item.view_id for item in fold.folds.all_folds]
     step = 1 if ids.index(entry_id) > ids.index(fold.view_id) else -1
     current, target = ids.index(fold.view_id), ids.index(entry_id)
     for expected in (ids[index] for index in range(current + step, target + step, step)):
-        await pilot.press("down" if step > 0 else "up")
-        await wait_until(
-            lambda expected=expected: getattr(_focused_fold(pilot), "view_id", None) == expected,
-            timeout=UI_WAIT_SECONDS,
-        )
+        source = _focused_fold(pilot)
+        before_key = _focus_state(pilot, folds)
+        key = "down" if step > 0 else "up"
+        await pilot.press(key)
+        after_key = _focus_state(pilot, folds)
+        try:
+            await wait_until(
+                lambda expected=expected: (
+                    getattr(_focused_fold(pilot), "view_id", None) == expected
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
+        except WaitTimeoutError as error:
+            current_state = _focus_state(pilot, folds)
+            source_view = source.view_id if source is not None else None
+            message = (
+                f"detail fold focus did not reach {expected!r} from {source_view!r} after {key!r}; "
+                f"before_key=({before_key}); after_key=({after_key}); current=({current_state})"
+            )
+            raise AssertionError(message) from error
     target = cast("DetailFold", _focused_fold(pilot))
     if target.is_open:
         await pilot.press("enter")

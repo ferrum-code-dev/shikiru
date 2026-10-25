@@ -1183,7 +1183,13 @@ async def test_taskflow_conflict_round_limit_escalates_after_two_changes_request
 
 
 _STUCK_ONCE_HOOK = """#!/bin/sh
-[ "$1" = prepared ] || exit 0
+[ "$1" = committed ] || exit 0
+branch_ref='{branch_ref}'
+matched=0
+while read old new ref; do
+    if [ "$ref" = "$branch_ref" ]; then matched=1; fi
+done
+[ "$matched" = 1 ] || exit 0
 [ ! -e '{seen}' ] || exit 0
 touch '{seen}'
 sleep 300
@@ -1204,7 +1210,9 @@ async def test_a_rebase_that_timed_out_is_undone_and_not_mistaken_for_a_conflict
     await commit_all(_RUNNER, project_root, "base moves on")
     task_sha = await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(task_root, "HEAD")
     hook = project_root / ".git" / "hooks" / "reference-transaction"
-    hook.write_text(_STUCK_ONCE_HOOK.format(seen=tmp_path / "seen"))
+    hook.write_text(
+        _STUCK_ONCE_HOOK.format(seen=tmp_path / "seen", branch_ref=f"refs/heads/{state.branch}")
+    )
     hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
     git = Git(_RUNNER, command_timeout=_SHORT_GIT_TIMEOUT_SECONDS)
     events = EventLog(connection, SystemClock())
@@ -1298,7 +1306,7 @@ class _RebaseScenario:
 
 async def _rebase_scenario(connection: Connection, tmp_path: Path) -> _RebaseScenario:
     project_root = await _repo(tmp_path / "project")
-    task, _ = await _task_with_worktree(connection, project_root)
+    task, state = await _task_with_worktree(connection, project_root)
     task_root = project_root / ".shikiru" / "worktrees" / task.id
     (task_root / "task.txt").write_text("task\n")
     await commit_all(_RUNNER, task_root, "task change")
@@ -1308,7 +1316,7 @@ async def _rebase_scenario(connection: Connection, tmp_path: Path) -> _RebaseSce
     task_sha = await git.rev_parse(task_root, "HEAD")
     hook = project_root / ".git" / "hooks" / "reference-transaction"
     seen = tmp_path / "seen"
-    hook.write_text(_STUCK_ONCE_HOOK.format(seen=seen))
+    hook.write_text(_STUCK_ONCE_HOOK.format(seen=seen, branch_ref=f"refs/heads/{state.branch}"))
     hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
     return _RebaseScenario(connection, project_root, task, task_root, seen, task_sha, git, [])
 
@@ -1337,7 +1345,16 @@ async def test_a_rebase_left_by_a_killed_engine_is_reset_and_redone(
     await wait_until(scenario.seen.exists, _SCENARIO_WAIT_SECONDS)
     os.killpg(killed.pid, signal.SIGKILL)
     await killed.wait()
+    await wait_until(lambda: not _RUNNER.group_is_running(killed.pid), _SCENARIO_WAIT_SECONDS)
     assert await scenario.git.is_rebase_in_progress(scenario.task_root)
+    assert await scenario.git.unmerged_paths(scenario.task_root) == []
+    lock_path = await _RUNNER.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-path", "ORIG_HEAD.lock"],
+        timeout=GIT_COMMAND_TIMEOUT,
+        cwd=scenario.task_root,
+        check=True,
+    )
+    assert not await asyncio.to_thread(Path(lock_path.stdout.strip()).exists)
 
     await scenario.assert_rebased_without_a_conflict_turn()
 

@@ -14,7 +14,14 @@ GIT_COMMAND = "git"
 GIT_COMMAND_TIMEOUT = 30.0
 CACHE_COPY_TIMEOUT = 60.0
 _GIT_COMMAND_TIMEOUT_SECONDS = 10.0
-COMMIT_IDENTITY_ARGS = ("-c", "user.name=Shikiru Test", "-c", "user.email=test@shikiru.example")
+TEST_GIT_USER_NAME = "Shikiru Test"
+TEST_GIT_USER_EMAIL = "test@shikiru.example"
+COMMIT_IDENTITY_ARGS = (
+    "-c",
+    f"user.name={TEST_GIT_USER_NAME}",
+    "-c",
+    f"user.email={TEST_GIT_USER_EMAIL}",
+)
 
 _NEUTRAL_GIT_CONFIG_ENV = {
     **os.environ,
@@ -36,14 +43,14 @@ async def run_git(runner: SubprocessRunner, cwd: Path | None, *args: str) -> str
 
 
 async def init_repo(runner: SubprocessRunner, path: Path, *, initial_branch: str = "main") -> None:
-    """Create a git repo at `path` with a local (never global or system) default branch name.
+    """Create a repo with a local default branch and deterministic test committer identity.
 
-    Every git command here runs with `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM` pointed at
-    `os.devnull`, so an operator setting such as `commit.gpgsign` or `core.hooksPath` in their
-    own git config can never leak into these tests.
+    Git commands here mask global and system config, so host settings cannot leak into fixtures.
     """
     path.mkdir(parents=True, exist_ok=True)
     await run_git(runner, None, "-c", f"init.defaultBranch={initial_branch}", "init", str(path))
+    await run_git(runner, path, "config", "user.name", TEST_GIT_USER_NAME)
+    await run_git(runner, path, "config", "user.email", TEST_GIT_USER_EMAIL)
 
 
 async def commit_all(

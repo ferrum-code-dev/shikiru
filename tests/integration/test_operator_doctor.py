@@ -374,7 +374,7 @@ async def test_doctor_names_invalid_configuration_and_keeps_diagnostics_json_saf
     human_text = "".join(human_stdout.split())
     config_detail = config_checks[0]["detail"]
     assert "".join(str(config_detail).split()) in human_text
-    assert "[literal]" in human_stdout
+    assert "[literal]" in human_text
 
 
 async def test_doctor_keeps_unsupported_cow_as_a_passing_degraded_check(

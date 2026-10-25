@@ -49,8 +49,9 @@ uv tool install .
 shikiru --help
 ```
 
-macOS is the platform exercised locally. CI is configured for Ubuntu 24.04 and macOS 15, but no
-hosted run has been observed from this checkout; hosted CI and Linux remain unverified until run.
+macOS is the platform exercised locally. CI is configured for Ubuntu 24.04 and macOS 15; see
+[workflow runs](https://github.com/ferrum-code-dev/shikiru/actions/workflows/ci.yml) for
+platform-specific results.
 
 ## Initialize and run
 

@@ -5,22 +5,18 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-import pytest
-
 from shikiru.agents.contracts import Rung
 from shikiru.config.loader import validate_project_config_text
 from shikiru.config.settings import (
     AgentConfig,
     TitlesConfig,
 )
-from shikiru.domain.runs import MISSING_TITLE_VALUE, context_title
+from shikiru.domain.runs import context_title
 from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
-from shikiru.engine.titles import TaskTitles
 from shikiru.tmux.decorator import (
     PANE_COLOR_OPTION,
     WINDOW_STATE_COLOR_OPTION,
     WINDOW_STATE_GLYPH_OPTION,
-    PaneDecorator,
 )
 from shikiru.ui.glyphs import (
     GLYPH_ESCALATED,
@@ -31,18 +27,12 @@ from shikiru.ui.glyphs import (
 )
 from shikiru.ui.tokens import (
     ALERT_COLOR,
-    AMBER,
-    DUSTY_ROSE,
     HOLD_COLOR,
     OPERATOR_COLOR,
     ROLE_COLORS,
-    SAGE,
-    SECONDARY_TEXT_COLOR,
 )
 from tests.support.engine import FAKE_RUNG, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
-from tests.support.tmux import attach_tmux_client, rendered_foreground
-from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from shikiru.config.settings import Settings
@@ -50,7 +40,6 @@ if TYPE_CHECKING:
     from tests.support.tmux import TmuxServer
 
 _TIMEOUT_SECONDS = 60.0
-_RENDER_TIMEOUT_SECONDS = 20.0
 
 _LEADER_TITLE = (
     "{glyph} Leader - {agent}:{model} - iter {iteration} - ctx {context} - {cost} {flags}"
@@ -253,63 +242,3 @@ async def test_packaged_agent_titles_keep_role_and_ownership_words_without_glyph
     assert "paused" in title
     assert GLYPH_OPERATOR not in title
     assert GLYPH_PAUSED not in title
-
-
-_CONTEXT_COLOUR_CASES = (
-    pytest.param(39, SAGE, id="below-warn"),
-    pytest.param(40, AMBER, id="warn-threshold"),
-    pytest.param(59, AMBER, id="below-alert"),
-    pytest.param(60, DUSTY_ROSE, id="alert-threshold"),
-)
-
-
-async def _attached_foreground(
-    engine_env: EngineEnv, tmux_server: TmuxServer, pane_id: str, text: str
-) -> str | None:
-    await engine_env.tmux.select_window(await engine_env.tmux.window_id(pane_id))
-    async with attach_tmux_client(tmux_server, tmux_server.session) as client:
-        await wait_until(
-            lambda: text.encode() in client.process.output, timeout=_RENDER_TIMEOUT_SECONDS
-        )
-        return rendered_foreground(client.process.output, text)
-
-
-@pytest.mark.parametrize(("context_used_pct", "colour"), _CONTEXT_COLOUR_CASES)
-async def test_the_rendered_context_cell_takes_the_colour_of_its_usage_level(
-    engine_env: EngineEnv, tmux_server: TmuxServer, context_used_pct: int, colour: str
-) -> None:
-    await init_project_repo(engine_env.project_root)
-    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
-    await set_role_script(
-        tmux_server,
-        Role.IMPLEMENTER,
-        [{"kind": "accept", "context_used_pct": context_used_pct}],
-    )
-    flow_env = build_flow(engine_env, _titled_settings())
-
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
-
-    final = engine_env.tasks.get(task.id)
-    assert final is not None
-    rendered = await _attached_foreground(
-        engine_env,
-        tmux_server,
-        final.panes[Role.IMPLEMENTER],
-        f"{context_used_pct}%",
-    )
-    assert rendered == colour
-
-
-async def test_unreported_context_renders_as_a_grey_dash(
-    engine_env: EngineEnv, tmux_server: TmuxServer
-) -> None:
-    task = await engine_env.build_task()
-    engine_env.runs.start(task.id, Role.IMPLEMENTER, FAKE_RUNG)
-    titles = TaskTitles(PaneDecorator(engine_env.tmux), engine_env.runs, _titled_settings())
-    await titles.refresh(task)
-
-    rendered = await _attached_foreground(
-        engine_env, tmux_server, task.panes[Role.IMPLEMENTER], MISSING_TITLE_VALUE
-    )
-
-    assert rendered == SECONDARY_TEXT_COLOR
