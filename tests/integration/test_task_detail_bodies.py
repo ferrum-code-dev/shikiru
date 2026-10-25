@@ -10,6 +10,7 @@ from textual.widgets import Static
 
 from shikiru.clock import SystemClock
 from shikiru.dashboard.detail import (
+    TASK_DETAIL_BRIEFING,
     TASK_DETAIL_HINT,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_RELATED_LIST,
@@ -30,6 +31,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Mode, Status
 from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
+from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.tokens import ALERT_COLOR
 from tests.support.cells import CYAN_BOLD, Cell, foregrounds
 from tests.support.cells import rendered_lines as painted_lines
@@ -38,7 +40,7 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import WidgetHostApp, widget_context
 from tests.support.render import plain_text, rendered_lines
 from tests.support.store import seed_task
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, WaitTimeoutError, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -54,7 +56,10 @@ PANEL_WIDTH = 100
 
 async def _loaded(panel: TaskDetailPanel, task_id: str) -> None:
     await wait_until(
-        lambda: task_id in plain_text(panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content),
+        lambda: (
+            task_id in plain_text(panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
+            and bool(panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).content)
+        ),
         timeout=UI_WAIT_SECONDS,
     )
 
@@ -244,10 +249,33 @@ async def test_workspace_and_settings_tables_repeat_no_title(
 
 
 async def _shows_hint(panel: TaskDetailPanel, expected: str) -> None:
-    await wait_until(
-        lambda: plain_text(panel.query_one(f"#{TASK_DETAIL_HINT}", Static).content) == expected,
-        timeout=UI_WAIT_SECONDS,
-    )
+    hint = panel.query_one(f"#{TASK_DETAIL_HINT}", Static)
+    try:
+        await wait_until(
+            lambda: plain_text(hint.content) == expected,
+            timeout=UI_WAIT_SECONDS,
+        )
+    except WaitTimeoutError as error:
+        focused = panel.screen.focused
+        focused_fold = (
+            next(
+                (
+                    ancestor
+                    for ancestor in focused.ancestors_with_self
+                    if isinstance(ancestor, DetailFold)
+                ),
+                None,
+            )
+            if focused is not None
+            else None
+        )
+        message = (
+            f"task detail hint did not settle for task {panel.task_id!r}: "
+            f"expected={expected!r}, actual={plain_text(hint.content)!r}, "
+            f"focused={focused!r}, "
+            f"fold={focused_fold.view_id if focused_fold is not None else None}"
+        )
+        raise AssertionError(message) from error
 
 
 ARROWS = "\N{UPWARDS ARROW}\N{DOWNWARDS ARROW}"

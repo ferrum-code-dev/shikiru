@@ -163,6 +163,7 @@ async def test_header_keys_move_between_folds_and_open_or_close_them(
                     lambda panel=panel: (
                         task_id
                         in plain_text(panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static).content)
+                        and bool(panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).content)
                     ),
                     timeout=UI_WAIT_SECONDS,
                 )
