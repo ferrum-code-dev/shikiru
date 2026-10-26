@@ -118,6 +118,7 @@ _HOME_PANE_FORMAT = "#{pane_id}\t#{pane_pid}\t#{pane_dead}"
 _PANE_ALIVE = "0"
 _ENGINE_RUNNING = "Engine running"
 _ENGINE_STOPPED = "Engine stopped"
+_ENGINE_ALREADY_STOPPED = "engine is already stopped"
 _START_ENGINE = "Start engine"
 _STOP_ENGINE = "Stop engine"
 _INITIAL_START_ENGINE = "Enter start engine"
@@ -575,12 +576,25 @@ async def _refuse_stale_stop(
     stopped = await lifecycle.stop(root, (), kill_session=False)
     assert stopped.status is AckStatus.DONE
     history_size = services.queries.command_history().total_count
+    action_state = popup.query_one("#palette-action-state", Static)
+    result = popup.query_one("#palette-result", Static)
     await pilot.press("enter")
     await wait_until(
-        lambda: bool(str(popup.query_one("#palette-result", Static).content)),
+        lambda: (
+            bool(str(result.content))
+            or (button.disabled and action_state.display and bool(str(action_state.content)))
+        ),
         timeout=UI_WAIT_SECONDS,
     )
+    result_text = str(result.content)
+    if result_text:
+        assert _ENGINE_ALREADY_STOPPED in result_text
+    else:
+        assert button.disabled
+        assert action_state.display
+        assert str(action_state.content)
     assert services.queries.command_history().total_count == history_size
+    assert not engine_is_running(engine_lock_path(root))
     assert await tmux.target_exists(target)
     assert client.process.returncode is None
     await pilot.press("escape")
