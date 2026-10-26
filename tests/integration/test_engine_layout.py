@@ -115,7 +115,7 @@ async def _task_window(
         runs=runs,
         commands=CommandQueue(connection, clock),
         faults=build_fault_reporter(events, clock, settings),
-        refresh_titles=TaskTitles(decorator, runs, settings).refresh,
+        refresh_titles=TaskTitles(decorator, runs, tasks, settings).refresh,
     )
     queued = CommandQueue(connection, clock).append(
         Submit(title="restore panes", request="restore panes")

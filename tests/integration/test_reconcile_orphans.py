@@ -99,7 +99,7 @@ async def _reconciler(
         runs=runs,
         commands=CommandQueue(connection, clock),
         faults=faults,
-        refresh_titles=TaskTitles(decorator, runs, settings).refresh,
+        refresh_titles=TaskTitles(decorator, runs, tasks, settings).refresh,
     )
     return Reconciler(
         tasks=tasks,

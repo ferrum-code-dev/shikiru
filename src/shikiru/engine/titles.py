@@ -8,6 +8,7 @@ mirrors a *session's* live activity on its own pane.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLED, Rung, Usage
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
     from shikiru.store.runs import RunStore
+    from shikiru.store.tasks import TaskStore
     from shikiru.tmux.decorator import PaneDecorator
 
 _STEP_GLYPHS: dict[Step, str] = {
@@ -121,20 +123,30 @@ class TaskTitles:
     otherwise it shows the pause hold or the role's own colour and glyph.
     """
 
-    def __init__(self, decorator: PaneDecorator, runs: RunStore, settings: Settings) -> None:
-        """Decorate through `decorator`, reading live usage from `runs`, titles from `settings`."""
+    def __init__(
+        self,
+        decorator: PaneDecorator,
+        runs: RunStore,
+        tasks: TaskStore,
+        settings: Settings,
+    ) -> None:
+        """Decorate via `decorator` using current task rows and live run usage."""
         self._decorator = decorator
         self._runs = runs
+        self._tasks = tasks
         self._settings = settings
+        self._refresh_lock = asyncio.Lock()
 
     async def refresh(self, task: Task) -> None:
-        """Set `task`'s window title/state and its leader/implementer pane titles, if assigned."""
-        if task.window_id is not None:
-            await self._refresh_window(task, task.window_id)
-        for role in _TITLED_ROLES:
-            pane_id = task.panes.get(role)
-            if pane_id is not None:
-                await self._refresh_pane(task, role, pane_id)
+        """Set titles from the latest task row, serializing title publications."""
+        async with self._refresh_lock:
+            current = self._tasks.require(task.id)
+            if current.window_id is not None:
+                await self._refresh_window(current, current.window_id)
+            for role in _TITLED_ROLES:
+                pane_id = current.panes.get(role)
+                if pane_id is not None:
+                    await self._refresh_pane(current, role, pane_id)
 
     async def _refresh_window(self, task: Task, window_target: str) -> None:
         color, glyph = _window_state(task)

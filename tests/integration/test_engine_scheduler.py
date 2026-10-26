@@ -241,14 +241,14 @@ async def scheduler_env(
         runs=runs,
         commands=CommandQueue(connection, clock),
         faults=build_fault_reporter(events, clock, settings),
-        refresh_titles=TaskTitles(decorator, runs, settings).refresh,
+        refresh_titles=TaskTitles(decorator, runs, tasks, settings).refresh,
     )
     roots = task_root_builder(
         SubprocessRunner(), tmp_path, settings.repo, trackers=settings.project.trackers
     )
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
 
-    titles = TaskTitles(build_decorator(tmux), RunStore(connection, clock), settings)
+    titles = TaskTitles(build_decorator(tmux), RunStore(connection, clock), tasks, settings)
     raiser = EscalationRaiser(
         EscalationStore(connection, clock),
         events,

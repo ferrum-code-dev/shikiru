@@ -701,7 +701,7 @@ def build_engine(
     command_queue = CommandQueue(connection, resolved_clock)
 
     decorator = CosmeticDecorator(resolved_tmux)
-    titles = TaskTitles(decorator, runs, resolved_settings)
+    titles = TaskTitles(decorator, runs, tasks, resolved_settings)
 
     sessions = SessionManager(
         runs=runs,

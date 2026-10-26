@@ -124,6 +124,7 @@ def build_raiser(
 ) -> EscalationRaiser:
     """An `EscalationRaiser` over `connection`, refreshing titles through `tmux` when given."""
     runs = RunStore(connection, clock)
+    tasks = TaskStore(connection, clock)
     decorator = PaneDecorator(tmux if tmux is not None else Tmux(SubprocessRunner()))
     return EscalationRaiser(
         EscalationStore(connection, clock),
@@ -131,7 +132,7 @@ def build_raiser(
         runs,
         project_root,
         atomically=lambda: transaction(connection),
-        titles=TaskTitles(decorator, runs, fake_engine_settings()),
+        titles=TaskTitles(decorator, runs, tasks, fake_engine_settings()),
         evidence=build_evidence(project_root),
         settings=fake_engine_settings(),
     )
@@ -144,10 +145,11 @@ def build_writer(
     runs = RunStore(connection, clock)
     decorator = PaneDecorator(tmux if tmux is not None else Tmux(SubprocessRunner()))
     settings = fake_engine_settings()
+    tasks = TaskStore(connection, clock)
     return TransitionWriter(
-        tasks=TaskStore(connection, clock),
+        tasks=tasks,
         events=EventLog(connection, clock),
-        titles=TaskTitles(decorator, runs, settings),
+        titles=TaskTitles(decorator, runs, tasks, settings),
         settings=settings,
     )
 
@@ -215,7 +217,8 @@ def build_turn_system(
     events = EventLog(connection, clock)
     quotas = QuotaStore(connection)
     decorator = build_decorator(tmux)
-    titles = TaskTitles(decorator, runs, settings)
+    tasks = TaskStore(connection, clock)
+    titles = TaskTitles(decorator, runs, tasks, settings)
     runner = SubprocessRunner()
     agents = AgentPool(
         (registry if registry is not None else build_registry()).create,
@@ -257,7 +260,7 @@ def build_turn_system(
         messages=OperatorMessages(project_root),
         events=events,
         runs=runs,
-        tasks=TaskStore(connection, clock),
+        tasks=tasks,
         project_root=project_root,
         settings=settings,
     )
