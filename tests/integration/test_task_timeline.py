@@ -99,6 +99,10 @@ TIMELINE_CATEGORY_TRANSITION = "transition"
 FAILED_COMMAND_EXIT_CODE = 2
 
 
+class _ManualFocusHost(WidgetHostApp):
+    AUTO_FOCUS = None
+
+
 async def _open_timeline_view(
     panel: TaskDetailPanel, pilot: Pilot[None], view: str = TASK_VIEW_EVIDENCE
 ) -> None:
@@ -706,7 +710,7 @@ async def test_following_tracks_the_latest_entry_and_pauses_when_the_reader_move
     reader = StateReader(database, clock)
     context = widget_context(reader, project_root, clock)
     panel = TaskDetailPanel(context, task.id, fixed=False)
-    app = WidgetHostApp(panel)
+    app = _ManualFocusHost(panel)
     settings = load_settings(project_root)
 
     try:
@@ -761,7 +765,7 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
         on_change=_ignore_dashboard_changes,
     )
     panel = TaskDetailPanel(context, task.id, fixed=False)
-    app = WidgetHostApp(panel)
+    app = _ManualFocusHost(panel)
     settings = load_settings(project_root)
     timeline_gate: tuple[asyncio.Event, asyncio.Event] | None = None
     filtered_gate: tuple[asyncio.Event, asyncio.Event] | None = None
