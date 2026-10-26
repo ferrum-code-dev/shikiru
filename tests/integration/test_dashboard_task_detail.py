@@ -56,7 +56,7 @@ from shikiru.dashboard.detail import (
     TASK_VIEW_WORKSPACE,
     TaskDetailPanel,
 )
-from shikiru.dashboard.detail_fold import DetailFolds, FoldHeader
+from shikiru.dashboard.detail_fold import DetailFold, DetailFolds, FoldHeader
 from shikiru.dashboard.details_list_view import DetailsSection
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.row_list import RowList
@@ -126,7 +126,7 @@ from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.render import plain_text, rendered_lines
 from tests.support.store import seed_task
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, WaitTimeoutError, wait_until
 from tests.support.workspace import task_root_builder
 
 pytestmark = pytest.mark.asyncio
@@ -2492,23 +2492,62 @@ async def _open_fold(
     app: DashboardApp, pilot: Pilot[None], panel: TaskDetailPanel, case: _SectionCase
 ) -> None:
     fold = panel.query_one(DetailFolds).all_folds[list(DetailsSection).index(case.section)]
+    click_offset: tuple[int, int] | None = None
+    click_succeeded: bool | None = None
     if case.by_click:
         header = fold.header
         header.scroll_visible(animate=False, immediate=True)
+
+        def header_center_is_clickable() -> bool:
+            click_x = header.region.x + header.size.width // 2
+            click_y = header.region.y + header.size.height // 2
+            return (
+                header.visible
+                and header.is_on_screen
+                and app.screen.region.contains(click_x, click_y)
+                and app.get_widget_at(click_x, click_y)[0] is header
+            )
+
         await wait_until(
-            lambda: (
-                header.region in app.screen.region
-                and app.get_widget_at(header.region.x, header.region.y)[0] is header
-            ),
+            header_center_is_clickable,
             timeout=UI_WAIT_SECONDS,
         )
-        await pilot.click(header)
+        click_offset = (header.size.width // 2, header.size.height // 2)
+        click_succeeded = await pilot.click(header, offset=click_offset)
+        assert click_succeeded, (
+            f"click missed fold section={case.section.value!r} view={case.view!r} "
+            f"offset={click_offset!r} region={header.region!r}"
+        )
     else:
         await choose_details_entry(pilot, case.view)
-    await wait_until(
-        lambda: case.view in panel.open_views and app.focused is fold.focus_target,
-        timeout=UI_WAIT_SECONDS,
-    )
+    try:
+        await wait_until(
+            lambda: case.view in panel.open_views and app.focused is fold.focus_target,
+            timeout=UI_WAIT_SECONDS,
+        )
+    except WaitTimeoutError as error:
+        focused = app.focused
+        focused_fold = (
+            next(
+                (item for item in focused.ancestors_with_self if isinstance(item, DetailFold)),
+                None,
+            )
+            if focused is not None
+            else None
+        )
+        focus_state = (type(focused).__name__, focused.id) if focused is not None else None
+        target = fold.focus_target
+        target_state = (type(target).__name__, target.id)
+        current_fold = panel.query_one(DetailFolds).current_fold
+        message = (
+            f"fold did not open and focus its target: section={case.section.value!r} "
+            f"view={case.view!r} by_click={case.by_click} "
+            f"open={case.view in panel.open_views} focus={focus_state!r} "
+            f"focus_fold={focused_fold.view_id if focused_fold is not None else None!r} "
+            f"target={target_state!r} current_fold={current_fold.view_id!r} "
+            f"click_succeeded={click_succeeded!r} click_offset={click_offset!r}"
+        )
+        raise AssertionError(message) from error
 
 
 async def test_escape_steps_from_home_inspector_fold_list_to_header_to_cleared_selection(
