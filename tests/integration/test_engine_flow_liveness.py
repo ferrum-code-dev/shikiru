@@ -12,6 +12,7 @@ from shikiru.domain.commands import AnswerResolution, Prioritize, Resolve, Submi
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import CONSULT_LIMIT, Transition
 from shikiru.domain.tasks import EscalationReason, Mode, RepoState, Role, Status, Step
+from shikiru.engine.flow import TaskFlow
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database
 from shikiru.store.escalations import fetch_open_escalations
@@ -42,43 +43,28 @@ _POLL_ADVANCE_SECONDS = 0.25
 _TIMEOUT_SECONDS = 30
 
 
-class _GatedTmux(Tmux):
-    """A tmux client whose first decoration call while `armed` holds until released."""
+class _FinishingFlow(TaskFlow):
+    """Hold the supervisor's old flow after its real work and title refresh finish."""
 
-    def __init__(self, tmux_server: TmuxServer) -> None:
-        super().__init__(tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env)
-        self.armed: Callable[[], bool] = lambda: False
+    def __init__(self, flow: TaskFlow) -> None:
+        self._flow = flow
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
+        self.armed = False
         self._spent = False
 
-    async def _gate(self) -> None:
-        if not self._spent and self.armed():
+    async def run(self, task_id: str, *, resumed: bool = False) -> None:
+        await self._flow.run(task_id, resumed=resumed)
+        if self.armed and not self._spent:
             self._spent = True
             self.entered.set()
             await self.release.wait()
-
-    async def set_window_option(self, target: str, name: str, value: str) -> None:
-        await self._gate()
-        await super().set_window_option(target, name, value)
-
-    async def set_pane_option(self, target: str, name: str, value: str) -> None:
-        await self._gate()
-        await super().set_pane_option(target, name, value)
-
-    async def set_pane_title(self, target: str, title: str) -> None:
-        await self._gate()
-        await super().set_pane_title(target, title)
-
-    async def rename_window(self, target: str, name: str) -> None:
-        await self._gate()
-        await super().rename_window(target, name)
 
 
 @dataclass
 class _Project:
     clock: FakeClock
-    tmux: _GatedTmux
+    flow: _FinishingFlow
     tasks: TaskStore
     runs: RunStore
     events: EventLog
@@ -114,7 +100,7 @@ class _Project:
 async def _engine(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGenerator[_Project]:
     await init_project_repo(tmp_path)
     clock = FakeClock(TASK_CREATED_AT)
-    tmux = _GatedTmux(tmux_server)
+    tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(
         tmp_path,
@@ -123,10 +109,13 @@ async def _engine(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGenerator[_Pr
         tmux=tmux,
         registry=build_registry(),
     )
+    task_supervisor = engine._task_supervisor  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    finishing_flow = _FinishingFlow(task_supervisor._flow)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    task_supervisor._flow = finishing_flow  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     project = _Project(
         clock,
-        tmux,
+        finishing_flow,
         TaskStore(connection, clock),
         RunStore(connection, clock),
         EventLog(connection, clock),
@@ -137,7 +126,7 @@ async def _engine(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGenerator[_Pr
     try:
         yield project
     finally:
-        tmux.release.set()
+        finishing_flow.release.set()
         if not engine_task.done():
             engine_task.cancel()
         with suppress(asyncio.CancelledError, Exception):
@@ -151,13 +140,11 @@ async def test_an_answer_resolved_while_the_old_flow_is_finishing_leaves_one_liv
     steps: list[dict[str, object]] = [{"kind": "needs_decision"}] * (CONSULT_LIMIT + 1)
     await set_role_script(tmux_server, Role.IMPLEMENTER, [*steps, {"kind": "stall"}])
     async with _engine(tmp_path, tmux_server) as project:
-        project.tmux.armed = lambda: any(
-            task.status is Status.ESCALATED for task in project.tasks.list_active()
-        )
+        project.flow.armed = True
         outcome = await project.send(Submit(title="decide", request="decide", mode=Mode.IMPLEMENT))
         assert outcome.result is not None
         task_id = str(outcome.result["task_id"])
-        await wait_until(project.tmux.entered.wait, timeout=_TIMEOUT_SECONDS)
+        await wait_until(project.flow.entered.wait, timeout=_TIMEOUT_SECONDS)
         [escalation] = fetch_open_escalations(project.connection)
         assert escalation.reason is EscalationReason.DECISION_REQUIRED
 
@@ -166,7 +153,7 @@ async def test_an_answer_resolved_while_the_old_flow_is_finishing_leaves_one_liv
         )
         await project.send(Prioritize(task_id=task_id, priority=1))
         assert project.task(task_id).status is Status.RUNNING
-        project.tmux.release.set()
+        project.flow.release.set()
 
         await project.until(lambda: project.turns(task_id, Step.IMPLEMENT) == CONSULT_LIMIT + 2)
         await project.ticks(task_id)
