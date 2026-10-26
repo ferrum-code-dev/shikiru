@@ -18,7 +18,13 @@ from shikiru.dashboard.contract import (
     ResourceView,
     WidgetContext,
 )
-from shikiru.dashboard.detail import TASK_DETAIL_BRIEFING, TaskDetailPanel
+from shikiru.dashboard.detail import (
+    TASK_DETAIL_BRIEFING,
+    TASK_DETAIL_FOLDS,
+    TASK_DETAIL_VERBS,
+    TASK_DETAIL_VIEWS_KEY,
+    TaskDetailPanel,
+)
 from shikiru.dashboard.detail_fold import DetailFold, DetailFolds, FoldHeader
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.views import StateDashboardViews
@@ -103,6 +109,12 @@ class WidgetHostApp(App[None]):
         yield self._widget
 
 
+class ManualFocusHost(WidgetHostApp):
+    """Disable startup autofocus when a test controls a widget's focus explicitly."""
+
+    AUTO_FOCUS = None
+
+
 async def ignore_palette_action(action: str) -> None:
     del action
 
@@ -127,7 +139,8 @@ async def open_usage_details(pilot: Pilot[None]) -> None:
 
 
 async def choose_details_entry(pilot: Pilot[None], entry_id: str) -> None:
-    await pilot.press("v")
+    await focus_inspector_details(pilot)
+    await pilot.press(TASK_DETAIL_VIEWS_KEY)
     await pick_details_entry(pilot, entry_id)
 
 
@@ -137,16 +150,31 @@ async def focus_inspector_details(pilot: Pilot[None]) -> None:
         lambda: bool(panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).content),
         timeout=UI_WAIT_SECONDS,
     )
-    panel.focus_summary()
-    await wait_until(
-        lambda: pilot.app.focused is not None and panel in pilot.app.focused.ancestors,
-        timeout=UI_WAIT_SECONDS,
-    )
+    target = _summary_focus_target(panel)
+    if pilot.app.focused is not target:
+        panel.focus_summary()
+    try:
+        await wait_until(lambda: pilot.app.focused is target, timeout=UI_WAIT_SECONDS)
+    except WaitTimeoutError as error:
+        folds = panel.query_one(f"#{TASK_DETAIL_FOLDS}", DetailFolds)
+        target_state = f"{type(target).__name__}#{target.id!r}"
+        message = (
+            f"task detail summary focus did not reach {target_state}; "
+            f"current=({_focus_state(pilot, folds)})"
+        )
+        raise AssertionError(message) from error
 
 
 async def choose_inspector_details_entry(pilot: Pilot[None], entry_id: str) -> None:
-    await focus_inspector_details(pilot)
     await choose_details_entry(pilot, entry_id)
+
+
+def _summary_focus_target(panel: TaskDetailPanel) -> Widget:
+    verbs = panel.query_one(f"#{TASK_DETAIL_VERBS}")
+    first_verb = next(iter(verbs.displayed_children), None)
+    if first_verb is not None:
+        return first_verb
+    return panel.query_one(f"#{TASK_DETAIL_FOLDS}", DetailFolds).current_fold.header
 
 
 def _focused_fold(pilot: Pilot[None]) -> DetailFold | None:

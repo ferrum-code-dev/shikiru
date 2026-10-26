@@ -51,6 +51,7 @@ from tests.support.cells import rendered_lines as painted_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
+    ManualFocusHost,
     StubServices,
     WidgetHostApp,
     fold_headline,
@@ -97,10 +98,6 @@ TIMELINE_CATEGORY_TOOL = "tool"
 TIMELINE_CATEGORY_EVIDENCE = "evidence"
 TIMELINE_CATEGORY_TRANSITION = "transition"
 FAILED_COMMAND_EXIT_CODE = 2
-
-
-class _ManualFocusHost(WidgetHostApp):
-    AUTO_FOCUS = None
 
 
 async def _open_timeline_view(
@@ -710,7 +707,7 @@ async def test_following_tracks_the_latest_entry_and_pauses_when_the_reader_move
     reader = StateReader(database, clock)
     context = widget_context(reader, project_root, clock)
     panel = TaskDetailPanel(context, task.id, fixed=False)
-    app = _ManualFocusHost(panel)
+    app = ManualFocusHost(panel)
     settings = load_settings(project_root)
 
     try:
@@ -765,7 +762,7 @@ async def test_in_flight_timeline_page_does_not_replace_changed_filter(
         on_change=_ignore_dashboard_changes,
     )
     panel = TaskDetailPanel(context, task.id, fixed=False)
-    app = _ManualFocusHost(panel)
+    app = ManualFocusHost(panel)
     settings = load_settings(project_root)
     timeline_gate: tuple[asyncio.Event, asyncio.Event] | None = None
     filtered_gate: tuple[asyncio.Event, asyncio.Event] | None = None
@@ -933,7 +930,7 @@ async def test_rows_are_one_line_human_phrases_and_the_selected_row_wraps_to_fou
     panel = TaskDetailPanel(widget_context(reader, project_root, clock), task.id, fixed=True)
 
     try:
-        async with WidgetHostApp(panel).run_test(size=(100, 60)):
+        async with ManualFocusHost(panel).run_test(size=(100, 60)):
             panel.open_view(TASK_VIEW_EVIDENCE)
             panel.open_view(TASK_VIEW_AGENT)
             await wait_until(
@@ -970,7 +967,7 @@ async def test_activity_tables_show_status_columns_full_text_block_filter_and_ol
     panel = TaskDetailPanel(widget_context(reader, project_root, clock), task.id, fixed=True)
 
     try:
-        async with WidgetHostApp(panel).run_test(size=(100, 60)) as pilot:
+        async with ManualFocusHost(panel).run_test(size=(100, 60)) as pilot:
             for view_id in (TASK_VIEW_EVIDENCE, TASK_VIEW_AGENT):
                 header = next(
                     fold.header for fold in panel.query(DetailFold) if fold.view_id == view_id

@@ -34,7 +34,7 @@ from shikiru.store.runs import RunStore
 from shikiru.ui.gated_static import GatedStatic
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import WidgetHostApp, dashboard_app, list_rows, widget_context
+from tests.support.dashboard import ManualFocusHost, dashboard_app, list_rows, widget_context
 from tests.support.factories import LEADER_RUNG
 from tests.support.render import plain_text
 from tests.support.store import seed_task
@@ -158,7 +158,7 @@ async def test_header_keys_move_between_folds_and_open_or_close_them(
             panel = TaskDetailPanel(
                 widget_context(reader, project_root, clock), task_id, fixed=True
             )
-            async with WidgetHostApp(panel).run_test(size=(100, 40)) as pilot:
+            async with ManualFocusHost(panel).run_test(size=(100, 40)) as pilot:
                 await wait_until(
                     lambda panel=panel: (
                         task_id
@@ -199,7 +199,7 @@ async def test_open_folds_stay_live_and_folded_ones_cost_nothing(
         replace(context, views=cast("DashboardViews", views)), task_id, fixed=True
     )
     try:
-        async with WidgetHostApp(panel).run_test(size=(100, 60)):
+        async with ManualFocusHost(panel).run_test(size=(100, 60)):
             await wait_until(
                 lambda: panel.task_id == task_id and panel.is_mounted, timeout=UI_WAIT_SECONDS
             )
@@ -241,7 +241,7 @@ async def test_open_folds_survive_a_refresh_and_a_task_change_but_task_state_res
     reader = StateReader(database, SystemClock())
     panel = TaskDetailPanel(widget_context(reader, project_root, clock), first_id, fixed=True)
     try:
-        async with WidgetHostApp(panel).run_test(size=(100, 60)):
+        async with ManualFocusHost(panel).run_test(size=(100, 60)):
             await wait_until(lambda: panel.is_mounted, timeout=UI_WAIT_SECONDS)
             panel.open_view(EVENTS_FOLD)
             panel.open_view(TASK_VIEW_USAGE)
@@ -333,7 +333,7 @@ async def test_clicking_fold_header_enters_its_list_and_closes_back_to_the_heade
     reader = StateReader(database, SystemClock())
     panel = TaskDetailPanel(widget_context(reader, project_root, clock), task_id, fixed=True)
     try:
-        async with WidgetHostApp(panel).run_test(size=(100, 40)) as pilot:
+        async with ManualFocusHost(panel).run_test(size=(100, 40)) as pilot:
             await wait_until(lambda: panel.is_mounted, timeout=UI_WAIT_SECONDS)
             await wait_until(
                 lambda: bool(panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).content),

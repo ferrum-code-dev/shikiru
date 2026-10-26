@@ -37,7 +37,7 @@ from tests.support.cells import CYAN_BOLD, Cell, foregrounds
 from tests.support.cells import rendered_lines as painted_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import WidgetHostApp, widget_context
+from tests.support.dashboard import ManualFocusHost, widget_context
 from tests.support.render import plain_text, rendered_lines
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, WaitTimeoutError, wait_until
@@ -118,7 +118,7 @@ async def test_task_description_comes_first_with_criteria_as_a_list_and_no_proje
         initial_view=TASK_VIEW_REQUEST,
     )
     try:
-        async with WidgetHostApp(panel).run_test(size=(PANEL_WIDTH, 40)):
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
             await _loaded(panel, task.id)
             titles = [fold.title for fold in panel.query(DetailFold)]
             assert titles == [section.value for section in DetailsSection]
@@ -168,7 +168,7 @@ async def test_dependencies_align_colour_a_cancelled_blocker_and_open_on_enter(
     )
     panel = TaskDetailPanel(context, blocked.id, fixed=True, initial_view=TASK_VIEW_RELATIONSHIPS)
     try:
-        async with WidgetHostApp(panel).run_test(size=(PANEL_WIDTH, 40)) as pilot:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)) as pilot:
             await _loaded(panel, blocked.id)
             await wait_until(
                 lambda: (
@@ -222,7 +222,7 @@ async def test_workspace_and_settings_tables_repeat_no_title(
                 fixed=True,
                 initial_view=TASK_VIEW_WORKSPACE,
             )
-            async with WidgetHostApp(panel).run_test(size=(PANEL_WIDTH, 40)):
+            async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
                 await _loaded(panel, task.id)
                 await wait_until(
                     lambda panel=panel: _first_line_starts(panel, "task-detail-workspace", "Path"),
@@ -313,7 +313,7 @@ async def test_bottom_hint_follows_focus_and_t_opens_the_task_window_only_from_a
         for task in (live, done):
             opened.clear()
             panel = TaskDetailPanel(context, task.id, fixed=True, initial_view=TASK_VIEW_REQUEST)
-            async with WidgetHostApp(panel).run_test(size=(PANEL_WIDTH, 40)) as pilot:
+            async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)) as pilot:
                 await _loaded(panel, task.id)
                 panel.focus_folds()
                 await _shows_hint(panel, HEADER_HINT)
