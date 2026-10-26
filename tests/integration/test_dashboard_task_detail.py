@@ -2475,6 +2475,8 @@ async def test_each_fold_opens_by_key_or_click_without_creating_commands(
                 lambda: task.title in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
                 timeout=UI_WAIT_SECONDS,
             )
+            await focus_inspector_details(pilot)
+            await pilot.pause()
             base = app.screen
             panel = app.query_one("#task-detail-panel", TaskDetailPanel)
             for case in (
@@ -2497,6 +2499,7 @@ async def _open_fold(
     if case.by_click:
         header = fold.header
         header.scroll_visible(animate=False, immediate=True)
+        await pilot.pause()
 
         def header_center_is_clickable() -> bool:
             click_x = header.region.x + header.size.width // 2
