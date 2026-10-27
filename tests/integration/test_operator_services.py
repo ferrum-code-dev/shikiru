@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -10,8 +11,14 @@ from shikiru.agents.contracts import QuotaWindow, Usage
 from shikiru.bootstrap import build_operator
 from shikiru.cli.render import status_renderable
 from shikiru.config.loader import load_settings
-from shikiru.domain.commands import COMMAND_POLL_SECONDS, CommandStatus, Prioritize
+from shikiru.domain.commands import (
+    COMMAND_POLL_SECONDS,
+    CommandStatus,
+    Prioritize,
+    ResolutionKind,
+)
 from shikiru.domain.engine_uptime import ENGINE_PID_FIELD, ENGINE_PROCESS_STARTED_AT_FIELD
+from shikiru.domain.escalation import RESOLUTION_CONSEQUENCES
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import ConsultAnswer
 from shikiru.domain.steps import Transition, first_step
@@ -37,14 +44,13 @@ from shikiru.view_log import view_log_path
 from shikiru.workspace.reports import InvalidTurnReportError
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
+from tests.support.escalations import seed_escalation
 from tests.support.factories import LEADER_RUNG, LEADER_RUNG_2
 from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
 
@@ -513,6 +519,9 @@ async def test_missing_packet_and_session_are_operator_errors(
     assert view is not None
     assert view.packet is None
     assert view.packet_error is not None
+    assert view.question is None
+    assert view.agent_options == []
+    assert view.resolutions == []
     assert view.escalation.id == escalation.id
     assert view.escalation.task_id == task.id
     assert view.escalation.headline == "question"
@@ -524,6 +533,89 @@ async def test_missing_packet_and_session_are_operator_errors(
     assert queries.escalation_resolution_disabled_reason(escalation.id) is None
     with pytest.raises(OperatorQueryError):
         queries.peek_session(task.id)
+
+
+async def test_escalation_view_reads_agent_options_and_resolutions_from_packet(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="decide")
+    escalation, packet = seed_escalation(
+        connection,
+        clock,
+        task.id,
+        tmp_path,
+        EscalationReason.DECISION_REQUIRED,
+        needs_input=True,
+    )
+
+    view = _queries(tmp_path, reader).get_escalation(escalation.id)
+
+    assert view is not None
+    assert view.packet == packet
+    assert view.packet_error is None
+    assert view.question == "Which behavior should remain?"
+    assert [
+        (option.label, option.recommended, option.needs_input) for option in view.agent_options
+    ] == [("Keep existing behavior", True, False), ("Change behavior", False, True)]
+    assert [(item.kind, item.recommended) for item in view.resolutions] == [
+        (ResolutionKind.ANSWER, True),
+        (ResolutionKind.CANCEL, False),
+    ]
+    assert view.resolutions[0].consequences == RESOLUTION_CONSEQUENCES[ResolutionKind.ANSWER]
+
+
+async def test_escalation_without_agent_proposal_lists_only_resolutions(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="decide")
+    escalation, _ = seed_escalation(
+        connection,
+        clock,
+        task.id,
+        tmp_path,
+        EscalationReason.DECISION_REQUIRED,
+        with_agent_request=False,
+    )
+
+    view = _queries(tmp_path, reader).get_escalation(escalation.id)
+
+    assert view is not None
+    assert view.packet_error is None
+    assert view.question == "Which behavior should remain?"
+    assert view.agent_options == []
+    assert [(item.kind, item.recommended) for item in view.resolutions] == [
+        (ResolutionKind.ANSWER, True),
+        (ResolutionKind.CANCEL, False),
+    ]
+
+
+async def test_unparsable_packet_keeps_its_text_and_leaves_decision_fields_empty(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="decide")
+    escalation, _ = seed_escalation(
+        connection, clock, task.id, tmp_path, EscalationReason.DECISION_REQUIRED
+    )
+    packet = "This file is not an escalation packet.\n"
+    await asyncio.to_thread(Path(escalation.packet_path).write_text, packet)
+
+    view = _queries(tmp_path, reader).get_escalation(escalation.id)
+
+    assert view is not None
+    assert view.packet == packet
+    assert view.packet_error is None
+    assert view.question is None
+    assert view.agent_options == []
+    assert view.resolutions == []
 
 
 async def test_peek_reads_latest_run_and_view_log_tail(

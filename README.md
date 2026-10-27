@@ -209,7 +209,8 @@ an expensive ordinary copy. Trackers and caches are optional.
 waits, lost takeovers and engine faults. Urgent undelivered notifications survive restarts; a crash
 can cause a duplicate delivery, so hooks should tolerate repeats.
 
-**Automation and extensions:** CLI JSON supports scripts. MCP exposes status/task/escalation queries,
+**Automation and extensions:** CLI JSON supports scripts. MCP exposes status/task/escalation queries
+(an escalation carries its packet plus parsed `question`, `agent_options` and `resolutions`),
 session peeks, submission, prioritization, pause/resume/cancel/retry, rung changes, messages,
 takeover/handback, escalation resolution and event waiting. It uses the same operator services and
 command queue as the dashboard. Agent and widget plugins use Python entry points; the

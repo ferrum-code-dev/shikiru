@@ -24,6 +24,7 @@ from shikiru.domain.commands import (
     Command,
     CommandStatus,
     HandBack,
+    ResolutionKind,
     Resolve,
     Say,
     SetRung,
@@ -33,6 +34,7 @@ from shikiru.domain.commands import (
 )
 from shikiru.domain.engine_uptime import project_engine_uptime
 from shikiru.domain.escalation import EscalationStatus
+from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.faults import FaultStreak, open_fault_streaks
 from shikiru.domain.reports import (
@@ -40,6 +42,7 @@ from shikiru.domain.reports import (
     HELPER_REPORT_FILENAME,
     REPORT_FILENAME,
     REPORT_KIND_FILENAME,
+    Option,
     Report,
     ReportKind,
 )
@@ -91,6 +94,7 @@ from shikiru.workspace.reports import (
 
 if TYPE_CHECKING:
     from shikiru.clock import Clock
+    from shikiru.domain.escalation_evidence import EscalationPacket
     from shikiru.process import ProcessIdentity
     from shikiru.store.commands import StoredCommand
     from shikiru.store.reader import StateReader
@@ -313,12 +317,23 @@ class PacketFileCache:
     text: str
 
 
+class EscalationResolutionView(OperatorView):
+    """One resolution the engine accepts for an escalation, as its packet lists it."""
+
+    kind: ResolutionKind
+    consequences: str
+    recommended: bool
+
+
 class EscalationView(OperatorView):
-    """An escalation row and its packet text."""
+    """An escalation row, its packet text and the decision fields parsed from that packet."""
 
     escalation: Escalation
     packet: str | None
     packet_error: str | None = None
+    question: str | None = None
+    agent_options: list[Option] = Field(default_factory=list)
+    resolutions: list[EscalationResolutionView] = Field(default_factory=list)
 
 
 class PeekPane(OperatorView):
@@ -1000,13 +1015,22 @@ class OperatorQueries:
 
     def _escalation_view(self, escalation: Escalation) -> EscalationView:
         try:
-            return EscalationView(escalation=escalation, packet=self._packet_text(escalation))
+            packet = self._packet_text(escalation)
         except OperatorQueryError as error:
             return EscalationView(
                 escalation=escalation,
                 packet=None,
                 packet_error=str(error),
             )
+        parsed = parse_escalation_packet(packet)
+        request = parsed.agent_request
+        return EscalationView(
+            escalation=escalation,
+            packet=packet,
+            question=_escalation_question(parsed),
+            agent_options=request.options if request is not None else [],
+            resolutions=_escalation_resolutions(parsed, escalation),
+        )
 
     def peek_session(self, task_id: str, role: Role | None = None) -> PeekView | None:
         """Return the last message, usage and recent view lines of one or every task role."""
@@ -1532,3 +1556,25 @@ def _priced_total(runs: Sequence[Run]) -> float | None:
     if not runs:
         return None
     return sum((run.usage.cost_usd for run in runs if run.usage.cost_usd is not None), 0.0)
+
+
+def _escalation_question(parsed: EscalationPacket) -> str | None:
+    """Prefer the agent's question, as the dashboard does; restored packets hold the headline."""
+    request = parsed.agent_request
+    if request is not None and request.question:
+        return request.question
+    return parsed.question
+
+
+def _escalation_resolutions(
+    parsed: EscalationPacket, escalation: Escalation
+) -> list[EscalationResolutionView]:
+    recommended = {option.label for option in escalation.options if option.recommended}
+    return [
+        EscalationResolutionView(
+            kind=resolution.kind,
+            consequences=resolution.consequences,
+            recommended=resolution.kind in recommended,
+        )
+        for resolution in parsed.resolutions
+    ]

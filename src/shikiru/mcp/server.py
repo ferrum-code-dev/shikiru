@@ -87,12 +87,12 @@ def _register_query_tools(server: FastMCP, services: OperatorServices) -> None:
 
     @server.tool()
     def list_escalations() -> list[EscalationView]:
-        """List all currently open escalations with their packets."""
+        """List all currently open escalations with their packets and structured decisions."""
         return services.queries.list_escalations()
 
     @server.tool()
     def get_escalation(escalation_id: str) -> EscalationView | None:
-        """Read one open escalation and its packet, or return null if absent."""
+        """Read one open escalation with its packet and structured decisions, or null if absent."""
         return services.queries.get_escalation(escalation_id)
 
     @server.tool()

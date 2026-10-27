@@ -90,6 +90,7 @@ def seed_escalation(
     *,
     write_packet: bool = True,
     needs_input: bool = False,
+    with_agent_request: bool = True,
     attempted: str = "One implementation and review round.",
 ) -> tuple[Escalation, str]:
     task = TaskStore(connection, clock).require(task_id)
@@ -97,20 +98,25 @@ def seed_escalation(
         task_id,
         Transition.escalate(task, reason, step=Step.CONSULT),
     )
-    agent_request = EscalationRequest(
-        question="Which behavior should remain?",
-        options=[
-            AgentOption(
-                label="Keep existing behavior",
-                consequences="Preserve the current call pattern.",
-                recommended=True,
-            ),
-            AgentOption(
-                label="Change behavior",
-                consequences="Update callers and documentation.",
-                needs_input=needs_input,
-            ),
-        ],
+    question = "Which behavior should remain?"
+    agent_request = (
+        EscalationRequest(
+            question=question,
+            options=[
+                AgentOption(
+                    label="Keep existing behavior",
+                    consequences="Preserve the current call pattern.",
+                    recommended=True,
+                ),
+                AgentOption(
+                    label="Change behavior",
+                    consequences="Update callers and documentation.",
+                    needs_input=needs_input,
+                ),
+            ],
+        )
+        if with_agent_request
+        else None
     )
     packet = render_packet(
         PacketContext(
@@ -123,7 +129,7 @@ def seed_escalation(
             facts="Recorded git facts.",
             view_tail="Recent stream tail.",
             sessions="Leader session evidence.",
-            question=agent_request.question,
+            question=question,
             options=options_for(reason),
             agent_request=agent_request,
         )
