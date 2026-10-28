@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from shikiru.domain.ladder import (
     REJECTIONS_FIELD,
     move_up,
+    pick_rung,
     reset_for_integration_attempt,
     reset_for_new_iteration,
 )
@@ -22,6 +23,7 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.tasks import (
+    DEFAULT_COMPLEXITY,
     Counters,
     EscalationReason,
     Mode,
@@ -162,14 +164,31 @@ def _triaged_complexity(task: Task, outcome: TriageReport) -> ComplexityName | N
     return outcome.complexity if task.complexity is None else None
 
 
-def _from_triage(task: Task, outcome: TriageReport) -> Transition:
+def _from_triage(task: Task, outcome: TriageReport, settings: Settings) -> Transition:
     if outcome.mode is Mode.IMPLEMENT:
         base = dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
     else:
         base = Transition.stay(task, step=Step.PLAN)
+    complexity = _triaged_complexity(task, outcome)
+    implementer = settings.roles.implementer
+    if complexity is not None and implementer.ladder_for(complexity) != implementer.ladder_for(
+        task.complexity or DEFAULT_COMPLEXITY
+    ):
+        index = 0
+        if task.rung_index.get(Role.IMPLEMENTER, 0) > 0:
+            agent = pick_rung(task, Role.IMPLEMENTER, settings).agent
+            index = next(
+                (
+                    index
+                    for index, rung in enumerate(implementer.ladder_for(complexity))
+                    if rung.agent == agent
+                ),
+                0,
+            )
+        base = dataclasses.replace(base, rung_index={**base.rung_index, Role.IMPLEMENTER: index})
     return dataclasses.replace(
         base,
-        complexity=_triaged_complexity(task, outcome),
+        complexity=complexity,
         mode=outcome.mode,
         title=outcome.title,
     )
@@ -285,7 +304,7 @@ def next_step(task: Task, outcome: Outcome, settings: Settings) -> Transition:
     """Apply `outcome` to `task`'s current step and return the resulting transition."""
     match task.step, outcome:
         case Step.TRIAGE, TriageReport():
-            return _from_triage(task, outcome)
+            return _from_triage(task, outcome, settings)
         case Step.PLAN, PlanReport():
             return _from_plan(task)
         case Step.IMPLEMENT, ImplementationReport():

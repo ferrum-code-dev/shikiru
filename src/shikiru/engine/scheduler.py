@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING
 
 from shikiru.domain.events import EventKind
 from shikiru.domain.faults import next_backoff
-from shikiru.domain.ladder import pick_rung
+from shikiru.domain.ladder import move_up, pick_rung
 from shikiru.domain.scheduling import (
     Dispatch,
     ReadySchedule,
     SchedulingGates,
     TaskAgents,
+    WaitReason,
     occupied_slot_ids,
     pick_ready,
 )
@@ -91,6 +92,9 @@ class Scheduler:
         all_tasks = self._tasks.list_all()
         gates = self._gates(all_tasks)
         schedule = pick_ready(all_tasks, gates)
+        if self._advance_quota_blocked(all_tasks, schedule):
+            all_tasks = self._tasks.list_all()
+            schedule = pick_ready(all_tasks, self._gates(all_tasks))
         self._roots.begin_tick({task.id for task in all_tasks if task.status is Status.QUEUED})
         self._persist_wait_reasons(all_tasks, schedule)
         for task_id in schedule.dependency_cancelled:
@@ -114,6 +118,52 @@ class Scheduler:
     async def shutdown(self) -> None:
         """Stop the task root builds still in flight."""
         await self._roots.shutdown()
+
+    def _advance_quota_blocked(self, tasks: list[Task], schedule: ReadySchedule) -> bool:
+        now = self._clock.now()
+        blocks = {block.agent: block.until for block in self._quotas.active_blocks(now)}
+        blocked_agents = frozenset(blocks)
+        wait_limit = now + timedelta(seconds=self._settings.orchestration.timeouts.max_quota_wait)
+        changed = False
+        for queued in tasks:
+            if schedule.wait_reasons.get(queued.id) is not WaitReason.QUOTA:
+                continue
+            task = queued
+            for role in (Role.LEADER, Role.IMPLEMENTER):
+                old_rung = pick_rung(task, role, self._settings)
+                until = blocks.get(old_rung.agent)
+                if until is None or until <= wait_limit:
+                    continue
+                move = move_up(
+                    task, role, self._settings, different_agent=True, blocked_agents=blocked_agents
+                )
+                if move is None:
+                    continue
+                transition = dataclasses.replace(
+                    Transition.stay(task, step=task.step, status=task.status),
+                    counters=move.counters,
+                    rung_index=move.rung_index,
+                    cleared_overrides=move.cleared_overrides,
+                )
+                self._tasks.apply_transition(task.id, transition)
+                task = self._tasks.require(task.id)
+                new_rung = pick_rung(task, role, self._settings)
+                self._events.append(
+                    EventKind.RUNG_CHANGED,
+                    task_id=task.id,
+                    message=(
+                        f"{task.id} {role.value} moved from {old_rung.model} to {new_rung.model}"
+                    ),
+                    data={
+                        "role": role.value,
+                        "from": old_rung.model,
+                        "to": new_rung.model,
+                        "different_agent": True,
+                        "reason": WaitReason.QUOTA.value,
+                    },
+                )
+                changed = True
+        return changed
 
     def _gates(self, tasks: list[Task]) -> SchedulingGates:
         slots = frozenset(range(self._settings.orchestration.max_parallel)) - occupied_slot_ids(

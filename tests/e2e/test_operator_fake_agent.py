@@ -198,11 +198,13 @@ async def test_fake_agent_operator_flow_completes_and_integrates(
             environment,
             *overrides,
             *FAKE_OVERRIDES,
+            "--json",
             "submit",
             "Implement task A1 from tasks/plan.md",
         )
         assert code == 0, stderr
-        assert stdout.strip() == TASK_ID
+        submission = cast("dict[str, object]", json.loads(stdout))
+        assert submission["task_id"] == TASK_ID
 
         async def task_done() -> bool:
             status = await _status(project.root, environment)

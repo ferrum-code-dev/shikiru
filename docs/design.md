@@ -75,6 +75,9 @@ the workflow contract; it does not establish the correctness of the implementati
 The scheduler respects dependency completion, task priority, available parallel slots, task holds,
 CPU/free-RAM dispatch gates and provider quota blocks. A cancelled prerequisite cancels dependent
 queued work. Limits on dispatch do not cap resources already-running agent processes can consume.
+When a queued task's selected agent has a quota block beyond `max_quota_wait` (in seconds),
+the scheduler advances that role to the next unblocked agent in its ladder. Shorter blocks wait
+for reset; without an available later agent, the task stays queued until the block expires.
 
 Leader and Implementer resolve their own ordered ladders; Implementer can select a low/normal/high
 complexity override, otherwise its base ladder applies. A task-specific rung override selects its

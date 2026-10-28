@@ -56,7 +56,12 @@ class RungMove:
 
 
 def move_up(
-    task: Task, role: Role, settings: Settings, *, different_agent: bool = False
+    task: Task,
+    role: Role,
+    settings: Settings,
+    *,
+    different_agent: bool = False,
+    blocked_agents: frozenset[str] = frozenset(),
 ) -> RungMove | None:
     """Advance `role` one rung up its ladder from the rung currently resolved by `pick_rung`.
 
@@ -67,6 +72,7 @@ def move_up(
     blocked agent. The store clears it only while it still equals that observed rung, so a pin the
     operator set since survives.
     For the Implementer, `rejections_on_rung` also resets, since it counts rework at one rung.
+    Agents in `blocked_agents` are skipped when selecting the destination rung.
 
     Returns `None` once no further rung satisfies `different_agent` above the current one; the
     caller then keeps the task on its current rung.
@@ -76,6 +82,8 @@ def move_up(
     current_index = task.rung_index.get(role, 0)
     for index in range(current_index + 1, len(ladder)):
         candidate = ladder[index]
+        if candidate.agent in blocked_agents:
+            continue
         if different_agent and candidate.agent == current_rung.agent:
             continue
         rung_index = dict(task.rung_index)

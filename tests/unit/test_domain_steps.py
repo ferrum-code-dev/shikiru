@@ -5,6 +5,8 @@ from typing import Literal
 import pytest
 
 from shikiru.agents.contracts import Rung
+from shikiru.config.settings import ComplexityLadder
+from shikiru.domain.ladder import pick_rung
 from shikiru.domain.steps import (
     CONFLICT_ROUNDS,
     CONSULT_LIMIT,
@@ -109,6 +111,80 @@ def test_triage_replaces_only_an_unset_complexity(
     transition = _next(task, make_triage_report(complexity="high"))
 
     assert transition.complexity == expected
+
+
+@pytest.mark.parametrize(
+    ("submitted_complexity", "triaged_complexity", "expected_index"),
+    [(None, "high", 0), (None, "normal", 1), ("normal", "high", 1)],
+    ids=["new-ladder", "same-ladder", "explicit-complexity"],
+)
+def test_triage_rebases_a_queued_implementer_fallback_when_the_ladder_changes(
+    submitted_complexity: str | None, triaged_complexity: str, expected_index: int
+) -> None:
+    high_rung = Rung(agent="codex", model="high-model", effort=None)
+    settings = make_settings(implementer_complexity={"high": ComplexityLadder(ladder=[high_rung])})
+    task = make_task(
+        step=Step.TRIAGE,
+        complexity=submitted_complexity,
+        rung_index={Role.IMPLEMENTER: 1, Role.LEADER: 1},
+    )
+
+    transition = next_step(task, make_triage_report(complexity=triaged_complexity), settings)
+
+    assert transition.rung_index[Role.IMPLEMENTER] == expected_index
+    assert transition.rung_index[Role.LEADER] == 1
+    updated = task.model_copy(
+        update={
+            "complexity": transition.complexity or task.complexity,
+            "rung_index": transition.rung_index,
+        }
+    )
+    if expected_index == 0:
+        assert pick_rung(updated, Role.IMPLEMENTER, settings) == high_rung
+    else:
+        assert (
+            pick_rung(updated, Role.IMPLEMENTER, settings) == settings.roles.implementer.ladder[1]
+        )
+
+
+_NORMAL_LADDER = [
+    Rung(agent="claude", model="normal-claude", effort=None),
+    Rung(agent="codex", model="normal-codex", effort=None),
+]
+_HIGH_CLAUDE = Rung(agent="claude", model="high-claude", effort=None)
+_HIGH_CODEX = Rung(agent="codex", model="high-codex", effort=None)
+
+
+@pytest.mark.parametrize(
+    ("old_index", "high_ladder", "expected_index"),
+    [
+        (1, [_HIGH_CLAUDE, _HIGH_CODEX], 1),
+        (1, [_HIGH_CODEX, _HIGH_CLAUDE], 0),
+        (1, [_HIGH_CLAUDE], 0),
+        (0, [_HIGH_CODEX, _HIGH_CLAUDE], 0),
+    ],
+    ids=["preserves-fallback", "reordered", "agent-absent", "initial-rung"],
+)
+def test_triage_keeps_an_advanced_agent_in_the_new_complexity_ladder(
+    old_index: int, high_ladder: list[Rung], expected_index: int
+) -> None:
+    settings = make_settings(
+        implementer_ladder=_NORMAL_LADDER,
+        implementer_complexity={"high": ComplexityLadder(ladder=high_ladder)},
+    )
+    task = make_task(
+        step=Step.TRIAGE,
+        complexity=None,
+        rung_index={Role.IMPLEMENTER: old_index},
+    )
+
+    transition = next_step(task, make_triage_report(complexity="high"), settings)
+
+    updated = task.model_copy(
+        update={"complexity": transition.complexity, "rung_index": transition.rung_index}
+    )
+    assert updated.rung_index[Role.IMPLEMENTER] == expected_index
+    assert pick_rung(updated, Role.IMPLEMENTER, settings) == high_ladder[expected_index]
 
 
 def test_plan_moves_to_integrate_and_enqueues_new_tasks() -> None:

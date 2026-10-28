@@ -6,7 +6,7 @@ import asyncio
 import dataclasses
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
@@ -14,9 +14,18 @@ from shikiru.agents.contracts import Rung
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import Submit
 from shikiru.domain.events import EventKind
+from shikiru.domain.ladder import pick_rung
 from shikiru.domain.reports import NewTask
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Hold, Status, StatusReason, Step, TaskOrigin
+from shikiru.domain.tasks import (
+    EscalationReason,
+    Hold,
+    Role,
+    Status,
+    StatusReason,
+    Step,
+    TaskOrigin,
+)
 from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.layout_guard import LayoutGuard
@@ -106,6 +115,9 @@ async def test_dispatch_and_guard_recovery_keep_an_attached_client_in_place(
 
 
 _FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
+_FALLBACK_RUNG = Rung(agent="fallback", model="fallback-1", effort=None)
+_BLOCKED_RUNG = Rung(agent="blocked", model="blocked-1", effort=None)
+_QUOTA_WAIT_SECONDS = 300
 _SAMPLED_CPU_PERCENT = 50.0
 _TRACKER = "TODO.md"
 _IMPLEMENTATION = "impl.py"
@@ -213,6 +225,7 @@ async def scheduler_env(
     tmux_server: TmuxServer,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> SchedulerFixture:
     def fixed_cpu_percent(interval: float | None = None) -> float:
         del interval
@@ -221,7 +234,7 @@ async def scheduler_env(
     monkeypatch.setattr(resources_module.psutil, "cpu_percent", fixed_cpu_percent)
     await init_project_repo(tmp_path)
     clock = FakeClock(TASK_CREATED_AT)
-    settings = _settings()
+    settings = cast("Settings", request.param) if hasattr(request, "param") else _settings()
     tasks = TaskStore(connection, clock)
     quotas = QuotaStore(connection)
     events = EventLog(connection, clock)
@@ -472,6 +485,188 @@ async def test_quota_gate_persists_wait_reason(
     waiting = scheduler_env.tasks.get(task.id)
     assert waiting is not None
     assert waiting.wait_reason == "quota"
+
+
+def _quota_settings(role: Role, ladder: list[Rung], *, both_roles: bool = False) -> Settings:
+    settings = _settings()
+    role_configs = {
+        selected.value: getattr(settings.roles, selected.value).model_copy(
+            update={"ladder": ladder if selected is role or both_roles else [_FALLBACK_RUNG]}
+        )
+        for selected in (Role.LEADER, Role.IMPLEMENTER)
+    }
+    return settings.model_copy(
+        update={
+            "roles": settings.roles.model_copy(update=role_configs),
+            "agents": {
+                **settings.agents,
+                _FALLBACK_RUNG.agent: AgentConfig(),
+                _BLOCKED_RUNG.agent: AgentConfig(),
+            },
+            "orchestration": settings.orchestration.model_copy(
+                update={
+                    "timeouts": settings.orchestration.timeouts.model_copy(
+                        update={"max_quota_wait": _QUOTA_WAIT_SECONDS}
+                    )
+                }
+            ),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    ("scheduler_env", "role"),
+    [
+        (_quota_settings(role, [_FAKE_RUNG, _FALLBACK_RUNG]), role)
+        for role in (Role.LEADER, Role.IMPLEMENTER)
+    ],
+    indirect=["scheduler_env"],
+    ids=["leader", "implementer"],
+)
+async def test_persisted_quota_block_falls_back_for_consecutive_queued_tasks(
+    scheduler_env: SchedulerFixture, connection: Connection, role: Role
+) -> None:
+    settings = scheduler_env.settings
+    until = scheduler_env.clock.now() + timedelta(hours=5)
+    scheduler_env.quotas.block(_FAKE_RUNG.agent, until, "quota")
+    scheduler = _scheduler(scheduler_env, settings)
+
+    for title in ("first task after restart", "next task"):
+        queued = _submit(connection, scheduler_env.clock, title=title)
+
+        schedule = await scheduler.run_once()
+
+        assert [dispatch.task_id for dispatch in schedule.dispatches] == [queued.id]
+        running = scheduler_env.tasks.require(queued.id)
+        assert running.status is Status.RUNNING
+        assert running.wait_reason is None
+        assert pick_rung(running, role, settings) == _FALLBACK_RUNG
+        changes = scheduler_env.events.since(0, task_id=queued.id, kinds=[EventKind.RUNG_CHANGED])
+        assert len(changes) == 1
+        assert changes[0].data["role"] == role.value
+        assert changes[0].data["reason"] == "quota"
+
+    block = scheduler_env.quotas.block_for(_FAKE_RUNG.agent)
+    assert block is not None
+    assert block.until == until
+
+
+@pytest.mark.parametrize(
+    ("remaining_seconds", "expected_index"),
+    [(0, 0), (_QUOTA_WAIT_SECONDS, 0), (_QUOTA_WAIT_SECONDS + 1, 1)],
+    ids=["expired", "within-wait-budget", "beyond-wait-budget"],
+)
+@pytest.mark.parametrize(
+    "scheduler_env",
+    [_quota_settings(Role.IMPLEMENTER, [_FAKE_RUNG, _FALLBACK_RUNG])],
+    indirect=True,
+)
+async def test_queued_quota_fallback_respects_remaining_wait_budget(
+    scheduler_env: SchedulerFixture,
+    connection: Connection,
+    remaining_seconds: int,
+    expected_index: int,
+) -> None:
+    role = Role.IMPLEMENTER
+    settings = scheduler_env.settings
+    queued = _submit(connection, scheduler_env.clock, title="quota boundary")
+    scheduler_env.quotas.block(
+        _FAKE_RUNG.agent,
+        scheduler_env.clock.now() + timedelta(seconds=remaining_seconds),
+        "quota",
+    )
+
+    schedule = await _scheduler(scheduler_env, settings).run_once()
+
+    updated = scheduler_env.tasks.require(queued.id)
+    assert updated.rung_index.get(role, 0) == expected_index
+    if remaining_seconds == _QUOTA_WAIT_SECONDS:
+        assert schedule.dispatches == ()
+        assert updated.wait_reason == "quota"
+    else:
+        assert [dispatch.task_id for dispatch in schedule.dispatches] == [queued.id]
+        assert updated.wait_reason is None
+
+
+@pytest.mark.parametrize("all_blocked", [False, True])
+@pytest.mark.parametrize(
+    "scheduler_env",
+    [_quota_settings(Role.IMPLEMENTER, [_FAKE_RUNG, _BLOCKED_RUNG, _FALLBACK_RUNG])],
+    indirect=True,
+)
+async def test_queued_quota_fallback_skips_other_blocked_agents(
+    scheduler_env: SchedulerFixture, connection: Connection, *, all_blocked: bool
+) -> None:
+    role = Role.IMPLEMENTER
+    ladder = [_FAKE_RUNG, _BLOCKED_RUNG, _FALLBACK_RUNG]
+    settings = scheduler_env.settings
+    queued = _submit(connection, scheduler_env.clock, title="multiple quota blocks")
+    for rung in ladder if all_blocked else ladder[:-1]:
+        scheduler_env.quotas.block(
+            rung.agent, scheduler_env.clock.now() + timedelta(hours=5), "quota"
+        )
+
+    schedule = await _scheduler(scheduler_env, settings).run_once()
+
+    updated = scheduler_env.tasks.require(queued.id)
+    if all_blocked:
+        assert schedule.dispatches == ()
+        assert updated.rung_index.get(role, 0) == 0
+        assert updated.wait_reason == "quota"
+    else:
+        assert [dispatch.task_id for dispatch in schedule.dispatches] == [queued.id]
+        assert pick_rung(updated, role, settings) == _FALLBACK_RUNG
+        assert updated.rung_index[role] == 2
+
+
+@pytest.mark.parametrize("first_reset", [_FAKE_RUNG, _FALLBACK_RUNG], ids=["original", "later"])
+@pytest.mark.parametrize(
+    "scheduler_env",
+    [
+        _quota_settings(
+            Role.IMPLEMENTER, [_FAKE_RUNG, _BLOCKED_RUNG, _FALLBACK_RUNG], both_roles=True
+        )
+    ],
+    indirect=True,
+)
+async def test_all_agents_on_quota_wait_without_moving_and_resume_when_one_resets(
+    scheduler_env: SchedulerFixture, connection: Connection, first_reset: Rung
+) -> None:
+    clock = scheduler_env.clock
+    assert isinstance(clock, FakeClock)
+    settings = scheduler_env.settings
+    queued = _submit(connection, clock, title="all agents exhausted")
+    reset_after = _QUOTA_WAIT_SECONDS * 2
+    for rung in (_FAKE_RUNG, _BLOCKED_RUNG, _FALLBACK_RUNG):
+        delay = timedelta(seconds=reset_after) if rung == first_reset else timedelta(hours=5)
+        scheduler_env.quotas.block(rung.agent, clock.now() + delay, "quota")
+    scheduler = _scheduler(scheduler_env, settings)
+
+    for advance in (0, _QUOTA_WAIT_SECONDS + 1):
+        clock.advance(advance)
+
+        schedule = await scheduler.run_once()
+
+        assert schedule.dispatches == ()
+        waiting = scheduler_env.tasks.require(queued.id)
+        assert waiting.status is Status.QUEUED
+        assert waiting.wait_reason == "quota"
+        assert waiting.slot is None
+        assert waiting.rung_index == {}
+        assert not scheduler_env.events.since(0, task_id=queued.id, kinds=[EventKind.RUNG_CHANGED])
+        assert len(scheduler_env.quotas.active_blocks(clock.now())) == 3
+
+    clock.advance(reset_after - (_QUOTA_WAIT_SECONDS + 1))
+
+    resumed = await _scheduler(scheduler_env, settings).run_once()
+
+    assert [dispatch.task_id for dispatch in resumed.dispatches] == [queued.id]
+    running = scheduler_env.tasks.require(queued.id)
+    assert running.status is Status.RUNNING
+    assert running.wait_reason is None
+    for role in (Role.LEADER, Role.IMPLEMENTER):
+        assert pick_rung(running, role, settings) == first_reset
+    assert len(scheduler_env.quotas.active_blocks(clock.now())) == 2
 
 
 async def test_dispatch_failures_are_reported_and_eventually_escalated(
