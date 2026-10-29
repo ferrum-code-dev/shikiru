@@ -16,6 +16,7 @@ from shikiru.agents.contracts import (
     Compacted,
     FailureKind,
     Message,
+    QuotaBoundary,
     QuotaReported,
     QuotaWindow,
     SessionStarted,
@@ -142,6 +143,7 @@ def _quota_reported(entry: Mapping[str, Any]) -> AgentSignal:
                 datetime.fromisoformat(window["resets_at"]) if window["resets_at"] else None
             ),
             observed_at=datetime.fromisoformat(window["observed_at"]),
+            boundary=QuotaBoundary(window["boundary"]) if window.get("boundary") else None,
         )
         for window in entry["windows"]
     )

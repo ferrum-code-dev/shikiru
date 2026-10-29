@@ -11,6 +11,7 @@ import threading
 import warnings
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 import psutil
@@ -27,6 +28,12 @@ from shikiru.bootstrap import build_engine
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import Cancel, Pause, Prioritize, Resume, Submit
 from shikiru.domain.events import EventKind
+from shikiru.domain.quota_consumption import (
+    Coverage,
+    CoverageGap,
+    TurnOutcome,
+    task_quota_consumption,
+)
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Hold, Role, Status, Step
@@ -44,8 +51,8 @@ from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
 from shikiru.store.events import EventLog
-from shikiru.store.quotas import fetch_quotas
 from shikiru.store.runs import RunStore
+from shikiru.store.task_quota import fetch_task_quota_evidence
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.session import SessionView
 from shikiru.workspace.messages import OperatorMessages
@@ -74,7 +81,20 @@ _REQUEST = "restart me"
 _STALL = {
     "kind": "stall",
     "quota_windows": [
-        {"name": "stalled", "used_pct": 1, "observed_at": TASK_CREATED_AT.isoformat()}
+        {
+            "name": "5h",
+            "used_pct": 20,
+            "resets_at": (TASK_CREATED_AT + timedelta(hours=5)).isoformat(),
+            "observed_at": (TASK_CREATED_AT + timedelta(minutes=1)).isoformat(),
+            "boundary": "start",
+        },
+        {
+            "name": "5h",
+            "used_pct": 23.5,
+            "resets_at": (TASK_CREATED_AT + timedelta(hours=5)).isoformat(),
+            "observed_at": (TASK_CREATED_AT + timedelta(minutes=1, seconds=1)).isoformat(),
+            "boundary": "end",
+        },
     ],
 }
 _REPORT_THEN_STALL = {"kind": "accept", "stall_after_report": True}
@@ -108,11 +128,15 @@ class _Boundary:
     conflicting_base: bool = False
     status: Status = Status.DONE
     repo_less_leftover: bool = False
+    verify_quota_after_restart: bool = False
 
 
 _BOUNDARIES = {
     "triage turn running": _Boundary(
-        (_Kill(Step.TRIAGE, Role.LEADER),), {Role.LEADER: [_STALL]}, step_turns=2
+        (_Kill(Step.TRIAGE, Role.LEADER),),
+        {Role.LEADER: [_STALL]},
+        step_turns=2,
+        verify_quota_after_restart=True,
     ),
     "triage report submitted": _Boundary(
         (_Kill(Step.TRIAGE, Role.LEADER, reported=True),),
@@ -120,7 +144,10 @@ _BOUNDARIES = {
         step_turns=1,
     ),
     "implement turn running": _Boundary(
-        (_Kill(Step.IMPLEMENT, Role.IMPLEMENTER),), {Role.IMPLEMENTER: [_STALL]}, step_turns=2
+        (_Kill(Step.IMPLEMENT, Role.IMPLEMENTER),),
+        {Role.IMPLEMENTER: [_STALL]},
+        step_turns=2,
+        verify_quota_after_restart=True,
     ),
     "implement report submitted": _Boundary(
         (_Kill(Step.IMPLEMENT, Role.IMPLEMENTER, reported=True),),
@@ -319,7 +346,15 @@ class _Project:
         stalled = (
             (role_path / CURRENT_TURN_LINK_NAME / REPORT_FILENAME).is_file()
             if boundary.reported
-            else bool(fetch_quotas(self.connection, FAKE_RUNG.agent))
+            else self.connection.execute(
+                """
+                SELECT COUNT(*) FROM task_quota_samples AS samples
+                JOIN task_quota_turns AS turns ON turns.id = samples.turn_id
+                WHERE turns.task_id = ? AND turns.role = ? AND turns.outcome = ?
+                """,
+                (task_id, boundary.role.value, TurnOutcome.RUNNING.value),
+            ).fetchone()[0]
+            >= len(_STALL["quota_windows"])
         )
         return (
             bool(started)
@@ -585,10 +620,28 @@ async def test_a_restarted_engine_completes_the_task_it_lost_at_a_step_boundary(
             if index == 0:
                 await _while_first_engine_down(tmp_path, boundary)
         assert task_id is not None
-        clock = FakeClock(TASK_CREATED_AT)
+        clock = FakeClock(TASK_CREATED_AT + timedelta(minutes=2))
         await _run_until_finished(project, task_id, boundary.status, engines.build(clock), clock)
 
         await _assert_resumed(project, task_id, boundary, interrupted, initial, tmux=tmux)
+        quota_outcomes = [
+            row["outcome"]
+            for row in project.connection.execute(
+                "SELECT outcome FROM task_quota_turns WHERE task_id = ? ORDER BY id",
+                (task_id,),
+            )
+        ]
+        assert TurnOutcome.RUNNING.value not in quota_outcomes
+        if boundary.verify_quota_after_restart:
+            assert TurnOutcome.ABORTED.value in quota_outcomes
+            quota_evidence = fetch_task_quota_evidence(project.connection, task_id)
+            consumption = task_quota_consumption(quota_evidence)
+            assert any(
+                item.consumed_pct == 3.5
+                and item.coverage is Coverage.PARTIAL
+                and CoverageGap.INTERRUPTED in item.gaps
+                for item in consumption
+            )
         if leftover_id is not None:
             await _assert_leftover_reclaimed_once(project, engines, leftover_id)
     finally:

@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import (
     Compacted,
+    FailureKind,
+    QuotaObservationTimeSource,
     QuotaReported,
     QuotaWindow,
     SessionStarted,
     TurnEnded,
+    TurnFailed,
     Usage,
     UsageReported,
 )
@@ -92,6 +95,7 @@ def test_finish_reads_rollout_created_after_session_started(tmp_path: Path) -> N
                 ),
                 json.dumps(
                     {
+                        "timestamp": _SAMPLE_NOW.isoformat(),
                         "type": "event_msg",
                         "payload": {
                             "type": "token_count",
@@ -127,8 +131,20 @@ def test_finish_reads_rollout_created_after_session_started(tmp_path: Path) -> N
         Compacted(_PRE_COMPACTION_TOKENS, _POST_COMPACTION_TOKENS),
         QuotaReported(
             (
-                QuotaWindow("5h", _PRIMARY_USED_PERCENT, _RESET_AT, _SAMPLE_NOW),
-                QuotaWindow("7d", _SECONDARY_USED_PERCENT, None, _SAMPLE_NOW),
+                QuotaWindow(
+                    "5h",
+                    _PRIMARY_USED_PERCENT,
+                    _RESET_AT,
+                    _SAMPLE_NOW,
+                    time_source=QuotaObservationTimeSource.PROVIDER,
+                ),
+                QuotaWindow(
+                    "7d",
+                    _SECONDARY_USED_PERCENT,
+                    None,
+                    _SAMPLE_NOW,
+                    time_source=QuotaObservationTimeSource.PROVIDER,
+                ),
             )
         ),
         UsageReported(
@@ -144,3 +160,152 @@ def test_finish_reads_rollout_created_after_session_started(tmp_path: Path) -> N
         ),
         TurnEnded("Turn complete"),
     ]
+
+
+def test_finish_keeps_each_current_turn_quota_sample_at_its_source_time(tmp_path: Path) -> None:
+    home = tmp_path / "codex-home"
+    rollout = (
+        home
+        / "sessions"
+        / "2030"
+        / "01"
+        / "01"
+        / f"rollout-2030-01-01T00-00-00-{_SESSION_ID}.jsonl"
+    )
+    rollout.parent.mkdir(parents=True)
+    older = _SAMPLE_NOW - timedelta(seconds=60)
+    later = _SAMPLE_NOW + timedelta(seconds=60)
+    entries = [
+        {
+            "timestamp": observed_at.isoformat(),
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "rate_limits": {
+                    "primary": {"used_percent": value, "resets_at": _RESET_AT.isoformat()}
+                },
+            },
+        }
+        for observed_at, value in ((older, 20), (later, 23.5))
+    ]
+    rollout.write_text("\n".join(json.dumps(item) for item in entries) + "\n", encoding="utf-8")
+    clock = FakeClock(_SAMPLE_NOW)
+    parser = CodexTurnParser(
+        session_id=_SESSION_ID,
+        initial_usage=None,
+        home=home,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+
+    signals = parser.finish(0, "")
+    quota_signals = [signal for signal in signals if isinstance(signal, QuotaReported)]
+
+    assert quota_signals == [
+        QuotaReported(
+            (
+                QuotaWindow(
+                    "5h",
+                    23.5,
+                    _RESET_AT,
+                    later,
+                    time_source=QuotaObservationTimeSource.PROVIDER,
+                ),
+            )
+        )
+    ]
+
+
+def test_feed_reports_in_turn_quota_before_the_turn_finishes(tmp_path: Path) -> None:
+    clock = FakeClock(_SAMPLE_NOW)
+    parser = CodexTurnParser(
+        session_id=_SESSION_ID,
+        initial_usage=None,
+        home=tmp_path / "codex-home",
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+
+    signals = parser.feed(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "rate_limits": {
+                        "primary": {
+                            "used_percent": 20,
+                            "resets_at": _RESET_AT.isoformat(),
+                        }
+                    },
+                },
+            }
+        )
+    )
+
+    assert signals == [
+        QuotaReported(
+            (
+                QuotaWindow(
+                    "5h",
+                    20,
+                    _RESET_AT,
+                    _SAMPLE_NOW,
+                    time_source=QuotaObservationTimeSource.COLLECTED,
+                ),
+            )
+        )
+    ]
+
+
+def test_malformed_stdout_keeps_rollout_quota_before_protocol_failure(tmp_path: Path) -> None:
+    home = tmp_path / "codex-home"
+    rollout = (
+        home
+        / "sessions"
+        / "2030"
+        / "01"
+        / "01"
+        / f"rollout-2030-01-01T00-00-00-{_SESSION_ID}.jsonl"
+    )
+    rollout.parent.mkdir(parents=True)
+    entries = [
+        {
+            "timestamp": (_SAMPLE_NOW + timedelta(seconds=offset)).isoformat(),
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "rate_limits": {
+                    "primary": {
+                        "used_percent": used,
+                        "resets_at": _RESET_AT.isoformat(),
+                    }
+                },
+            },
+        }
+        for offset, used in ((1, 20), (2, 23.5))
+    ]
+    rollout.write_text("\n".join(json.dumps(item) for item in entries) + "\n", encoding="utf-8")
+    clock = FakeClock(_SAMPLE_NOW)
+    parser = CodexTurnParser(
+        session_id=_SESSION_ID,
+        initial_usage=None,
+        home=home,
+        rollout_path=rollout,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+    parser.feed("malformed stdout")
+
+    signals = parser.finish(0, "")
+    quota_samples = [
+        window.used_pct
+        for signal in signals
+        if isinstance(signal, QuotaReported)
+        for window in signal.windows
+    ]
+
+    assert quota_samples == [20, 23.5]
+    assert isinstance(signals[-1], TurnFailed)
+    [failure] = [signal for signal in signals if isinstance(signal, TurnFailed)]
+    assert failure.kind is FailureKind.UNKNOWN

@@ -47,6 +47,7 @@ from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
+from shikiru.store.task_quota import TaskQuotaStore
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.glyphs import GLYPH_ENGINE, GLYPH_ESCALATED, GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, TaskStrip
@@ -1170,60 +1171,28 @@ async def test_command_history_callback_after_close_is_safe(
         reader.close()
 
 
-_DAY_SECONDS = 24 * 60 * 60
-
-
-@dataclass(frozen=True)
-class _CountdownCase:
-    window: str
-    resets_in: timedelta | None
-    countdowns: tuple[tuple[int, str], ...]
-
-
-@pytest.mark.parametrize(
-    "case",
-    [
-        pytest.param(
-            _CountdownCase("weekly", timedelta(seconds=10), ((0, "10s"), (2, "8s"))),
-            id="sub-minute",
-        ),
-        pytest.param(
-            _CountdownCase(
-                "7d", timedelta(hours=135, minutes=46), ((0, "5d 15h 46m"), (60, "5d 15h 45m"))
-            ),
-            id="multi-day",
-        ),
-        pytest.param(
-            _CountdownCase(
-                "7d",
-                timedelta(seconds=_DAY_SECONDS + 2),
-                ((0, "1d 0h 0m"), (3, "23h 59m"), (_DAY_SECONDS, "0s"), (60, "0s")),
-            ),
-            id="crosses-a-day-then-expires",
-        ),
-        pytest.param(_CountdownCase("7d", None, ((0, "\N{EN DASH}"),)), id="unknown-reset"),
-    ],
-)
-async def test_task_usage_quota_reset_ticks_without_motion_evidence_reads(
+async def test_task_usage_quota_consumption_follows_recorded_task_evidence_not_the_account(
     database: Database,
     connection: Connection,
     tmp_path: Path,
-    case: _CountdownCase,
 ) -> None:
-    window, resets_in, countdowns = case.window, case.resets_in, case.countdowns
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_START)
     settings = _motion_settings(project_dir)
-    task, _ = _seed_dashboard_state(connection, clock)
-    QuotaStore(connection).record(
-        "codex",
-        QuotaWindow(
-            window,
-            50,
-            _START + resets_in if resets_in is not None else None,
-            _START - timedelta(seconds=59),
-        ),
+    task, task_run = _seed_dashboard_state(connection, clock)
+    reset = _START + timedelta(hours=3)
+    evidence = TaskQuotaStore(connection)
+    turn_id = evidence.begin_turn(
+        task_id=task.id,
+        run_id=task_run.id,
+        turn="01-implement-i1",
+        role=Role.IMPLEMENTER,
+        agent="codex",
+        started_at=_START,
     )
+    evidence.record_sample(turn_id, QuotaWindow("5h", 20.0, reset, _START))
+    evidence.record_sample(turn_id, QuotaWindow("5h", 23.5, reset, _START + timedelta(seconds=5)))
+    QuotaStore(connection).record("codex", QuotaWindow("5h", 61.0, reset, _START))
     reader = StateReader(database, clock)
     try:
         views = _build_views(reader, project_dir, settings, clock, task)
@@ -1246,7 +1215,7 @@ async def test_task_usage_quota_reset_ticks_without_motion_evidence_reads(
             widget_names=settings.dashboard.widgets,
             timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
         )
-        async with app.run_test(size=(90, 40)) as pilot:
+        async with app.run_test(size=(120, 40)) as pilot:
             await wait_until(
                 lambda: (
                     task.title in plain_text(app.query_one("#task-detail-identity", Static).content)
@@ -1255,15 +1224,20 @@ async def test_task_usage_quota_reset_ticks_without_motion_evidence_reads(
             )
             await choose_details_entry(pilot, TASK_VIEW_USAGE)
             sessions = app.screen.query_one("#task-detail-sessions", Static)
-            for advance_seconds, countdown in countdowns:
-                if advance_seconds:
-                    await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
-                    clock.advance(advance_seconds)
-                expected = f"codex {window} 50% used resets {countdown}"
-                await wait_until(
-                    lambda expected=expected: expected in plain_text(sessions.content),
-                    timeout=UI_WAIT_SECONDS,
-                )
+            await wait_until(
+                lambda: "3.5%" in plain_text(sessions.content), timeout=UI_WAIT_SECONDS
+            )
+
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+            clock.advance(60)
+            QuotaStore(connection).record("codex", QuotaWindow("5h", 75.0, reset, clock.now()))
+            evidence.record_sample(
+                turn_id, QuotaWindow("5h", 25.0, reset, _START + timedelta(seconds=30))
+            )
+            await wait_until(lambda: "5%" in plain_text(sessions.content), timeout=UI_WAIT_SECONDS)
+            text = plain_text(sessions.content)
+            assert "resets" not in text
+            assert "75" not in text
     finally:
         reader.close()
 
@@ -2197,9 +2171,12 @@ async def test_legacy_quota_rows_give_way_to_canonical_observations_in_project_a
             }
             detail = await views.task_detail(task.id)
             assert detail is not None
-            assert {
-                usage.agent: [w.name for w in usage.quotas] for usage in detail.quota_observations
-            } == {"codex": ["5h", "7d", "weekly"]}
+            [consumption] = detail.quota_consumption
+            assert consumption.agent == "codex"
+            assert consumption.window is None
+            assert consumption.consumed_pct is None
+            assert consumption.coverage == "unavailable"
+            assert "legacy_history" in consumption.gaps
             block = QuotaStore(migrated).block_for("codex")
             assert block is not None
             assert block.until == block_until

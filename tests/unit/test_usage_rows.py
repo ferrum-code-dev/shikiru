@@ -96,16 +96,16 @@ def test_usage_table_orders_current_first_humanises_values_and_drops_columns_by_
 
 def _heading_text(view: Any) -> Text:
     console = Console(width=100)
-    body = UsageBody(view, quota_warn_pct=80, quota_alert_pct=95)
+    body = UsageBody(view)
     group = cast("Group", next(iter(body.__rich_console__(console, console.options))))
     return cast("Text", group.renderables[0])
 
 
 def test_usage_body_starts_with_the_totals_not_its_fold_title() -> None:
-    view: Any = SimpleNamespace(usage=object(), sessions=SESSIONS, quota_observations=())
+    view: Any = SimpleNamespace(usage=object(), sessions=SESSIONS, quota_consumption=())
     console = Console(width=100, record=True, color_system=None)
 
-    console.print(UsageBody(view, quota_warn_pct=80, quota_alert_pct=95))
+    console.print(UsageBody(view))
 
     first = console.export_text().splitlines()[0]
     assert first.startswith("$")

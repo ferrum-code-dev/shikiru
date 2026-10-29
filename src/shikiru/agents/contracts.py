@@ -137,14 +137,35 @@ QUOTA_WINDOW_FIVE_HOUR = "5h"
 QUOTA_WINDOW_SEVEN_DAY = "7d"
 
 
+class QuotaBoundary(StrEnum):
+    """Which edge of a turn a plugin certifies a quota observation was taken at."""
+
+    START = "start"
+    END = "end"
+
+
+class QuotaObservationTimeSource(StrEnum):
+    """Where an observation's time came from."""
+
+    PROVIDER = "provider"
+    COLLECTED = "collected"
+    UNKNOWN = "unknown"
+
+
 @dataclass(frozen=True)
 class QuotaWindow:
-    """One quota window an agent plugin reports, with `used_pct` in percent (0-100)."""
+    """One quota window an agent plugin reports, with `used_pct` in percent (0-100).
+
+    `boundary` is set only by a plugin that can certify the observation was taken before the
+    turn began or after it finished; every other observation is just taken during the turn.
+    """
 
     name: str
     used_pct: float
     resets_at: datetime | None
     observed_at: datetime
+    boundary: QuotaBoundary | None = None
+    time_source: QuotaObservationTimeSource = QuotaObservationTimeSource.COLLECTED
 
 
 @dataclass(frozen=True)

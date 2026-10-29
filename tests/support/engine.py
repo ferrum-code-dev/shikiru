@@ -40,6 +40,7 @@ from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.runs import RunStore
+from shikiru.store.task_quota import TaskQuotaStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.decorator import PaneDecorator
@@ -244,6 +245,7 @@ def build_turn_system(
         sessions=sessions,
         runs=runs,
         quotas=quotas,
+        task_quotas=TaskQuotaStore(connection),
         events=events,
         clock=clock,
         settings=settings,

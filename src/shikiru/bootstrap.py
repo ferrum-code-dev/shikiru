@@ -112,6 +112,7 @@ from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.retention import StateRetention
 from shikiru.store.runs import RunStore
+from shikiru.store.task_quota import TaskQuotaStore
 from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.disk import DiskSampler
 from shikiru.telemetry.docker import DockerSampler
@@ -696,7 +697,7 @@ def build_engine(
     tasks = TaskStore(connection, resolved_clock)
     runs = RunStore(connection, resolved_clock)
     events = EventLog(connection, resolved_clock)
-    quotas = QuotaStore(connection)
+    quotas, task_quotas = QuotaStore(connection), TaskQuotaStore(connection)
     escalations_store = EscalationStore(connection, resolved_clock)
     command_queue = CommandQueue(connection, resolved_clock)
 
@@ -716,6 +717,7 @@ def build_engine(
         sessions=sessions,
         runs=runs,
         quotas=quotas,
+        task_quotas=task_quotas,
         events=events,
         clock=resolved_clock,
         settings=resolved_settings,
@@ -971,8 +973,10 @@ def build_engine(
         ),
         reconciler=Reconciler(
             tasks=tasks,
+            task_quotas=task_quotas,
             layout=layout,
             processes=turn_processes,
+            clock=resolved_clock,
             resume_task=task_supervisor.resume_task,
             finish_task=task_finisher.finish_task,
             restore_escalation=escalation_raiser.ensure_actionable,

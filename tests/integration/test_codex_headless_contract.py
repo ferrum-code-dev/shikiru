@@ -25,6 +25,7 @@ from shikiru.agents.contracts import (
     Compacted,
     FailureKind,
     Message,
+    QuotaObservationTimeSource,
     QuotaReported,
     QuotaWindow,
     Rung,
@@ -172,8 +173,20 @@ _FIRST_SIGNALS = [
     Message("Change committed."),
     QuotaReported(
         (
-            QuotaWindow("5h", 20.0, None, _SAMPLE_NOW),
-            QuotaWindow("7d", 29.0, None, _SAMPLE_NOW),
+            QuotaWindow(
+                "5h",
+                20.0,
+                None,
+                _SAMPLE_NOW,
+                time_source=QuotaObservationTimeSource.UNKNOWN,
+            ),
+            QuotaWindow(
+                "7d",
+                29.0,
+                None,
+                _SAMPLE_NOW,
+                time_source=QuotaObservationTimeSource.UNKNOWN,
+            ),
         )
     ),
     UsageReported(_USAGE_FIRST),
@@ -191,8 +204,20 @@ _RESUMED_SIGNALS = [
     Message("Change committed."),
     QuotaReported(
         (
-            QuotaWindow("5h", 21.0, None, _SAMPLE_NOW),
-            QuotaWindow("7d", 30.0, None, _SAMPLE_NOW),
+            QuotaWindow(
+                "5h",
+                21.0,
+                None,
+                _SAMPLE_NOW,
+                time_source=QuotaObservationTimeSource.UNKNOWN,
+            ),
+            QuotaWindow(
+                "7d",
+                30.0,
+                None,
+                _SAMPLE_NOW,
+                time_source=QuotaObservationTimeSource.UNKNOWN,
+            ),
         )
     ),
     UsageReported(_USAGE_RESUMED),

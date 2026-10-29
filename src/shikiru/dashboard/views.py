@@ -32,6 +32,7 @@ from shikiru.dashboard.contract import (
     HeaderView,
     HeldTaskStateView,
     QueueRow,
+    QuotaConsumptionView,
     QuotaGaugeView,
     RecordedUsageView,
     RepoStatus,
@@ -297,6 +298,7 @@ class StateDashboardViews:
         )
         self._project_usage_view_cache: RecordedUsageView | None = None
         self._task_usage_cache: dict[str, list[UsageView]] = {}
+        self._task_quota_cache: dict[str, tuple[QuotaConsumptionView, ...]] = {}
         self._task_cache: _VersionedCache[tuple[Status, ...] | None, list[Task]] = _VersionedCache(
             state
         )
@@ -1003,11 +1005,7 @@ class StateDashboardViews:
             if stored_relationships is not None
             else None
         )
-        task_agents = {session.agent for session in detail.sessions}
         task_agent_usage = tuple(self.usage(task_id))
-        quota_observations = tuple(
-            item for item in self.usage() if item.agent in task_agents and item.quotas
-        )
         task_frame = self._motion.frames((task,), now, engine_running=self.engine_up()).tasks[0]
         latest_verdict = next(
             (item.data for item in reversed(detail.reports) if isinstance(item.data, Verdict)),
@@ -1059,7 +1057,7 @@ class StateDashboardViews:
             requeued_age=_age(now - task.requeued_at) if task.requeued_at is not None else None,
             usage=_recorded_usage(detail.sessions),
             signal_observed=task_frame.signal_observed,
-            quota_observations=quota_observations,
+            quota_consumption=self.task_quota_consumption(task_id),
             agent_usage=task_agent_usage,
             priority=task.priority,
             actual_stage=task.step.value if task.step is not None else None,
@@ -1478,6 +1476,24 @@ class StateDashboardViews:
         """Build recent project or task decisions and activity in event order."""
         return self._dialogue_view(task_id)
 
+    def task_quota_consumption(self, task_id: str) -> tuple[QuotaConsumptionView, ...]:
+        """Build the quota consumption recorded for one task."""
+        self._refresh_usage_cache_version()
+        cached = self._task_quota_cache.get(task_id)
+        if cached is None:
+            cached = tuple(
+                QuotaConsumptionView(
+                    agent=item.agent,
+                    window=item.window,
+                    consumed_pct=item.consumed_pct,
+                    coverage=item.coverage.value,
+                    gaps=tuple(gap.value for gap in item.gaps),
+                )
+                for item in self._queries.task_quota_consumption(task_id)
+            )
+            self._task_quota_cache[task_id] = cached
+        return cached
+
     def usage(self, task_id: str | None = None) -> list[AgentUsageView]:
         """Build project usage or usage recorded for one task."""
         now = self._now()
@@ -1664,6 +1680,7 @@ class StateDashboardViews:
             self._project_usage_cache = None
             self._project_usage_view_cache = None
             self._task_usage_cache.clear()
+            self._task_quota_cache.clear()
 
 
 def _event_role(kind: EventKind, data: dict[str, object]) -> Role | None:

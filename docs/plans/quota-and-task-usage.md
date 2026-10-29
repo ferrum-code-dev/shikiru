@@ -72,7 +72,7 @@ References: `src/shikiru/plugins/agents/claude/turn.py`,
 
 ### Q2 — Record and display historical task quota consumption
 
-- [ ] Replace task Usage live quota rows with durable, task-scoped consumption evidence.
+- [x] Replace task Usage live quota rows with durable, task-scoped consumption evidence.
 
 Depends on Q1.
 

@@ -12,7 +12,8 @@ from rich.text import Text
 
 from shikiru.agents.contracts import BILLING_MODE_SUBSCRIPTION, BILLING_MODE_UNKNOWN
 from shikiru.dashboard.briefing_view import counted, total_cost_text
-from shikiru.domain.levels import UsageLevel, displayed_pct, usage_level
+from shikiru.domain.levels import UsageLevel, displayed_pct
+from shikiru.domain.quota_consumption import CoverageGap
 from shikiru.ui.compact import ROLE_LABELS, compact_count
 from shikiru.ui.section import BOLD_PRIMARY, BOLD_STEEL, GROUP_SEPARATOR, grey
 from shikiru.ui.tokens import AMBER, SECONDARY_TEXT_COLOR, USAGE_LEVEL_COLORS
@@ -22,10 +23,17 @@ if TYPE_CHECKING:
 
     from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 
-    from shikiru.dashboard.contract import AgentUsageView, TaskDetailView, TaskSessionView
+    from shikiru.dashboard.contract import (
+        QuotaConsumptionView,
+        TaskDetailView,
+        TaskSessionView,
+    )
 
 NO_VALUE = "\N{EM DASH}"
-QUOTA_TITLE = "Quota"
+QUOTA_TITLE = "Quota consumed"
+QUOTA_ESTIMATE_NOTE = " (account-wide estimate; other activity may contribute)"
+QUOTA_NO_EVIDENCE = "unavailable \N{EM DASH} no quota observations recorded for this task"
+QUOTA_DECIMALS = 2
 NO_USAGE = "No usage is recorded yet."
 COVERAGE_UNAVAILABLE = "Task usage coverage unavailable"
 OLD_TAG = "old"
@@ -35,6 +43,19 @@ LEAD = "  "
 GAP = "  "
 ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 MODEL_MIN_WIDTH = 8
+_GAP_PHRASES = {
+    CoverageGap.NO_OBSERVATIONS.value: "no observations",
+    CoverageGap.NO_START_BOUNDARY.value: "no start boundary",
+    CoverageGap.NO_END_BOUNDARY.value: "no end boundary",
+    CoverageGap.STALE_OBSERVATION.value: "stale observation ignored",
+    CoverageGap.MISSING_RESET.value: "reset time unknown",
+    CoverageGap.UNKNOWN_OBSERVATION_TIME.value: "observation time unknown",
+    CoverageGap.RESET_CHANGED.value: "window reset mid-turn",
+    CoverageGap.USAGE_DECREASED.value: "usage decreased",
+    CoverageGap.SHARED_ACCOUNT.value: "overlaps another task on this account",
+    CoverageGap.INTERRUPTED.value: "turn interrupted",
+    CoverageGap.LEGACY_HISTORY.value: "older turn history unavailable",
+}
 _NOUN_SESSION = "session"
 _NOUN_GAP = "model-history gap"
 _VERB_NO_USAGE = "reported no usage"
@@ -179,31 +200,35 @@ def _heading(sessions: Sequence[TaskSessionView]) -> Text | None:
     return Text(GROUP_SEPARATOR).join(parts) if parts else None
 
 
-def _quota_lines(
-    observations: Sequence[AgentUsageView], warn_pct: int, alert_pct: int
-) -> list[RenderableType]:
-    windows = [(item.agent, window) for item in observations for window in item.quotas]
-    if not windows:
-        return []
-    agent_width = max(cell_len(agent) for agent, _ in windows)
-    name_width = max(cell_len(window.name) for _, window in windows)
-    used_width = max(len(f"{window.used_pct:g}%") for _, window in windows)
-    lines: list[RenderableType] = [Text(QUOTA_TITLE, style=BOLD_PRIMARY)]
-    for agent, window in windows:
-        level = usage_level(window.used_pct, warn_pct=warn_pct, alert_pct=alert_pct)
-        used = f"{window.used_pct:g}%".rjust(used_width)
+def _quota_lines(consumption: Sequence[QuotaConsumptionView]) -> list[RenderableType]:
+    title = Text.assemble((QUOTA_TITLE, BOLD_PRIMARY), grey(QUOTA_ESTIMATE_NOTE))
+    if not consumption:
+        return [title, Text.assemble(LEAD, grey(QUOTA_NO_EVIDENCE))]
+    agent_width = max(cell_len(item.agent) for item in consumption)
+    name_width = max(cell_len(item.window or NO_VALUE) for item in consumption)
+    consumed_width = max(len(_consumed(item)) for item in consumption)
+    lines: list[RenderableType] = [title]
+    for item in consumption:
+        gaps = [_GAP_PHRASES[gap] for gap in item.gaps]
+        detail = GROUP_SEPARATOR.join([item.coverage, *gaps]) if gaps else item.coverage
         lines.append(
             Text.assemble(
                 LEAD,
-                agent.ljust(agent_width),
+                item.agent.ljust(agent_width),
                 GAP,
-                window.name.ljust(name_width),
+                (item.window or NO_VALUE).ljust(name_width),
                 GAP,
-                (used, USAGE_LEVEL_COLORS[level] if level is not UsageLevel.OK else ""),
-                grey(f" used{GAP}resets {window.resets_in}"),
+                _consumed(item).rjust(consumed_width),
+                grey(f"{GAP}{detail}"),
             )
         )
     return lines
+
+
+def _consumed(item: QuotaConsumptionView) -> str:
+    if item.consumed_pct is None:
+        return NO_VALUE
+    return f"{round(item.consumed_pct, QUOTA_DECIMALS):g}%"
 
 
 def _note(sessions: Sequence[TaskSessionView]) -> Text | None:
@@ -225,29 +250,30 @@ class UsageBody:
     """Render the Usage fold of a task at the width it is drawn at."""
 
     view: TaskDetailView
-    quota_warn_pct: int
-    quota_alert_pct: int
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         """Yield the heading, the session table, the quota windows and the note."""
         del console
         view = self.view
+        blocks: list[RenderableType] = []
         if view.usage is None:
-            yield grey(COVERAGE_UNAVAILABLE)
+            blocks.append(grey(COVERAGE_UNAVAILABLE))
         if not view.sessions:
             if view.usage is not None:
-                yield grey(NO_USAGE)
+                blocks.append(grey(NO_USAGE))
+            blocks.extend([Text(), *_quota_lines(view.quota_consumption)])
+            yield Group(*blocks)
             return
         table = usage_rows(view.sessions, options.max_width)
         heading = _heading(view.sessions)
-        blocks: list[RenderableType] = [
-            *([heading] if heading is not None else []),
-            _line(table, {column: column.value for column in Column}, SECONDARY_TEXT_COLOR),
-            *(_row_text(table, row) for row in table.rows),
-        ]
-        quota = _quota_lines(view.quota_observations, self.quota_warn_pct, self.quota_alert_pct)
-        if quota:
-            blocks.extend([Text(), *quota])
+        blocks.extend(
+            [
+                *([heading] if heading is not None else []),
+                _line(table, {column: column.value for column in Column}, SECONDARY_TEXT_COLOR),
+                *(_row_text(table, row) for row in table.rows),
+            ]
+        )
+        blocks.extend([Text(), *_quota_lines(view.quota_consumption)])
         note = _note(view.sessions)
         if note is not None:
             blocks.extend([Text(), note])

@@ -20,6 +20,7 @@ from shikiru.store.commands import CommandQueue
 from shikiru.store.database import OperationalDatabaseError
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
+from shikiru.store.task_quota import TaskQuotaStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import exact_target
 from shikiru.tmux.decorator import PaneDecorator
@@ -103,8 +104,10 @@ async def _reconciler(
     )
     return Reconciler(
         tasks=tasks,
+        task_quotas=TaskQuotaStore(connection),
         layout=layout,
         processes=TurnProcesses(runner=SubprocessRunner(), clock=clock, project_root=project),
+        clock=clock,
         resume_task=_noop,
         finish_task=_noop,
         restore_escalation=_noop,
