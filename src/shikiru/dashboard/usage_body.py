@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
@@ -14,7 +15,12 @@ from shikiru.agents.contracts import BILLING_MODE_SUBSCRIPTION, BILLING_MODE_UNK
 from shikiru.dashboard.briefing_view import counted, total_cost_text
 from shikiru.domain.levels import UsageLevel, displayed_pct
 from shikiru.domain.quota_consumption import CoverageGap
-from shikiru.ui.compact import ROLE_LABELS, compact_count
+from shikiru.ui.compact import (
+    COUNT_SHORT_MILLION,
+    COUNT_SHORT_SCALE,
+    ROLE_LABELS,
+    compact_count,
+)
 from shikiru.ui.section import BOLD_PRIMARY, BOLD_STEEL, GROUP_SEPARATOR, grey
 from shikiru.ui.tokens import AMBER, SECONDARY_TEXT_COLOR, USAGE_LEVEL_COLORS
 
@@ -43,6 +49,8 @@ LEAD = "  "
 GAP = "  "
 ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 MODEL_MIN_WIDTH = 8
+SIGNIFICANT_DIGITS = 3
+PAIR_SEPARATOR = " / "
 _GAP_PHRASES = {
     CoverageGap.NO_OBSERVATIONS.value: "no observations",
     CoverageGap.NO_START_BOUNDARY.value: "no start boundary",
@@ -67,13 +75,13 @@ class Column(StrEnum):
 
     ROLE = "Role"
     MODEL = "Model"
-    TOKENS = "Tokens"
+    TOKENS = "Tokens r/w"
     COST = "Cost"
     CONTEXT = "Ctx"
 
 
 _LEFT_ALIGNED = (Column.ROLE, Column.MODEL)
-_DROP_ORDER = (Column.MODEL, Column.CONTEXT)
+_DROP_ORDER = (Column.MODEL, Column.CONTEXT, Column.COST)
 
 
 @dataclass(frozen=True)
@@ -95,7 +103,7 @@ class UsageTable:
 
 
 def usage_rows(sessions: Sequence[TaskSessionView], width: int) -> UsageTable:
-    """Derive the session table for `width`: the model is cut first, then dropped, then Ctx."""
+    """Derive the session table for `width`: shrink the model, drop it, then drop Ctx and Cost."""
     ordered = sorted(sessions, key=lambda session: not session.current_lineage)
     rows = tuple(_row(session) for session in ordered)
     columns = list(Column)
@@ -141,7 +149,29 @@ def _session_tokens(session: TaskSessionView) -> int:
 
 
 def _tokens(session: TaskSessionView) -> str:
-    return compact_count(_session_tokens(session)) if _tokens_known(session) else NO_VALUE
+    if not _tokens_known(session):
+        return NO_VALUE
+    return PAIR_SEPARATOR.join(
+        (_abbreviated(session.input_tokens), _abbreviated(session.output_tokens))
+    )
+
+
+def _abbreviated(count: int) -> str:
+    if count < COUNT_SHORT_SCALE:
+        return str(count)
+    thousands = _significant(Decimal(count) / COUNT_SHORT_SCALE)
+    if thousands < COUNT_SHORT_SCALE:
+        return f"{_plain(thousands)}k"
+    return f"{_plain(_significant(Decimal(count) / COUNT_SHORT_MILLION))}M"
+
+
+def _significant(value: Decimal) -> Decimal:
+    exponent = value.adjusted() - (SIGNIFICANT_DIGITS - 1)
+    return value.quantize(Decimal(1).scaleb(exponent), rounding=ROUND_HALF_UP)
+
+
+def _plain(value: Decimal) -> str:
+    return format(value.normalize(), "f")
 
 
 def _cost(session: TaskSessionView) -> str:

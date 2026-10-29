@@ -134,7 +134,7 @@ References: `src/shikiru/engine/monitor.py`, `src/shikiru/engine/turns.py`,
 
 ### Q3 — Split task token counts into read/write values
 
-- [ ] Show task session input/output values in a single `Tokens r/w` column.
+- [x] Show task session input/output values in a single `Tokens r/w` column.
 
 Acceptance criteria:
 

@@ -117,6 +117,7 @@ from tests.support.actions import (
     structure,
     title_text,
 )
+from tests.support.cells import rendered_lines as painted_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
@@ -759,7 +760,7 @@ async def _assert_billing_details_are_visible(
             for line in rendered_lines(sessions_widget.content, width=90)
             if "Implementer" in line
         )
-        assert row.split()[-3:] == ["19", "\N{EM DASH}", "20%"]
+        assert row.split()[-5:] == ["12", "/", "7", "\N{EM DASH}", "20%"]
 
 
 async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
@@ -808,7 +809,7 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             lines = rendered_lines(sessions.content, width=90)
 
             legacy = next(line for line in lines if "Implementer" in line)
-            assert "550" in legacy
+            assert "500 / 50" in legacy
             assert "$1.25" in legacy
             assert "10%" in legacy
             silent = [line for line in lines if "Leader" in line]
@@ -817,6 +818,78 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             assert any(line.startswith("!") and "billing unknown" in line for line in lines)
             assert "Quota consumed" in plain_text(sessions.content)
             assert "unavailable" in plain_text(sessions.content)
+    finally:
+        reader.close()
+
+
+def _painted_lines(widget: Static) -> list[str]:
+    return ["".join(char for char, _ in cells) for cells in painted_lines(widget)]
+
+
+def _line_with(lines: list[str], needle: str) -> str:
+    return next(line for line in lines if needle in line)
+
+
+async def test_token_pair_keeps_reported_input_and_output_apart_at_wide_and_narrow_widths(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Token pairs stay readable")
+    runs = RunStore(connection, clock)
+    superseded = runs.start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
+    runs.record_usage(superseded.id, Usage(1_000_000, 12, 0, 0, None, _COST_BASIS_BILLED, None))
+    runs.close(superseded.id)
+    current = runs.start(task.id, Role.LEADER, IMPLEMENTER_RUNGS[0])
+    runs.record_usage(
+        current.id,
+        Usage(1_340_000, 83_500, 9_000_000, 400, None, _COST_BASIS_BILLED, 20),
+    )
+    reported_zero = runs.start(task.id, Role.HELPER, IMPLEMENTER_RUNGS[0])
+    runs.record_usage(reported_zero.id, Usage(0, 0, 0, 0, None, _COST_BASIS_BILLED, None))
+    runs.start(task.id, Role.HELPER, IMPLEMENTER_RUNGS[0])
+    reader = StateReader(database, clock)
+    try:
+        app = _dashboard_app(
+            reader,
+            project_root,
+            focus_task=task.id,
+            widget_names=TASK_DETAIL_WIDGETS,
+            clock=clock,
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _open_task_view(app, pilot, TASK_VIEW_USAGE)
+            sessions = app.screen.query_one("#task-detail-sessions", Static)
+            await wait_until(
+                lambda: "Helper" in plain_text(sessions.content),
+                timeout=UI_WAIT_SECONDS,
+            )
+            await pilot.pause()
+            wide = _painted_lines(sessions)
+            leader = _line_with(wide, "Leader")
+            assert leader.split()[-5:] == ["1.34M", "/", "83.5k", "\N{EM DASH}", "20%"]
+            implementer = _line_with(wide, "Implementer")
+            assert implementer.split()[-6:] == [
+                "1M",
+                "/",
+                "12",
+                "\N{EM DASH}",
+                "\N{EM DASH}",
+                "old",
+            ]
+            zero = _line_with(wide, "0 / 0")
+            assert zero.split()[-5:] == ["0", "/", "0", "\N{EM DASH}", "\N{EM DASH}"]
+            unknown = next(line for line in wide if "Helper" in line and "0 / 0" not in line)
+            assert unknown.split()[-3:] == ["\N{EM DASH}", "\N{EM DASH}", "\N{EM DASH}"]
+
+            await pilot.resize_terminal(36, 20)
+            await pilot.wait_for_scheduled_animations()
+            narrow = _painted_lines(sessions)
+            assert "1.34M / 83.5k" in _line_with(narrow, "Leader")
+            assert "1M / 12" in _line_with(narrow, "Implementer")
+            assert "0 / 0" in _line_with(narrow, "0 / 0")
     finally:
         reader.close()
 
@@ -1030,7 +1103,7 @@ async def _assert_task_history_rendering(
     }
     assert rows["gpt-5"].endswith("old")
     assert not rows["opus"].endswith("old")
-    assert rows["opus"].split()[-3:] == ["13", "\N{EM DASH}", "\N{EM DASH}"]
+    assert rows["opus"].split()[-5:] == ["11", "/", "2", "\N{EM DASH}", "\N{EM DASH}"]
     assert not rows["gpt-6-sol"].endswith("old")
     assert not any("sonnet" in line for line in lines)
 
