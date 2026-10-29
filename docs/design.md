@@ -87,10 +87,13 @@ compaction behavior.
 
 Recovery is explicit and bounded by failure type: unavailable providers receive backoff/retries,
 quota failures wait for reset within policy or move to a later different-provider rung, and stalls
-receive limited continuation attempts. Authentication errors, unsupported/unclassified failures,
-missing reports and exhausted limits produce visible decisions. Helper can rebuild a missing
-report or classify an otherwise unknown failure, trying its own ladder after call failures or
-unusable answers within one shared timeout. Its output is validated before recovery uses it.
+receive limited continuation attempts. Model capacity errors count as unavailability, including
+capacity errors returned as HTTP 429: retry after 30 seconds, 2 minutes and 5 minutes, then advance
+to the next rung, which may use another model on the same agent. Authentication errors,
+unsupported/unclassified failures, missing reports and exhausted limits produce visible decisions.
+Helper can rebuild a missing report or classify an otherwise unknown failure, trying its own
+ladder after call failures or unusable answers within one shared timeout. Its output is validated
+before recovery uses it.
 
 An escalation retains the question, evidence, what was tried and applicable resolutions. Operator
 answers can return to Leader consultation; retry, accept-as-is or cancellation is offered only

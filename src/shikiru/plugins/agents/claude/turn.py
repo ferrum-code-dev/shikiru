@@ -153,6 +153,7 @@ _CONTEXT_ERROR_TEXTS = (
     "context window",
 )
 _QUOTA_ERROR_TEXTS = ("usage limit", "rate limit", "too many requests")
+_CAPACITY_ERROR_TEXTS = ("at capacity", "model_capacity", "model_at_capacity")
 _UNAVAILABLE_ERROR_TEXTS = ("overloaded", "unrecognized_model", "unrecognized model")
 _AUTH_ERROR_TEXTS = ("authentication", "unauthorized", "invalid api key")
 _TOOL_DETAIL_MAX_CHARS = 160
@@ -464,9 +465,11 @@ class ClaudeTurnParser:
         terminal_reason = payload.get(_TERMINAL_REASON_FIELD) if payload is not None else None
         lowered = f"{lowered} {terminal_reason or ''} {code}"
         classified = _classify_status(status, message, self._reset_time)
-        if status == STATUS_PAYMENT_REQUIRED:
+        if classified is not None and classified[0] is FailureKind.AUTH:
             return classified
-        if classified is None:
+        if _contains(lowered, _CAPACITY_ERROR_TEXTS):
+            classified = FailureKind.UNAVAILABLE, message or stderr.strip(), None
+        elif classified is None:
             classified = _classify_text(lowered, message, stderr)
         if classified is None and _contains(lowered, _CONTEXT_ERROR_TEXTS):
             self._context_exceeded = True

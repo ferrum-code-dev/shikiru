@@ -16,6 +16,7 @@ from shikiru.config.settings import AgentConfig
 from shikiru.dashboard.contract import TaskBrowserFilter
 from shikiru.domain.commands import SetRung
 from shikiru.domain.events import EventKind
+from shikiru.domain.recovery import BACKOFF_SCHEDULE
 from shikiru.domain.steps import Step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
 from shikiru.process import SubprocessRunner
@@ -410,6 +411,40 @@ async def test_unavailable_failure_uses_backoff_then_resumes_the_session(
     ]
     starts = [row["session_id"] for row in rows if row["signal"] == "SessionStarted"]
     assert starts == [run.session_id, run.session_id]
+
+
+@pytest.mark.parametrize("agent", [FAKE_AGENT_NAME, FAKE_AGENT_ALIAS])
+async def test_unavailable_retries_end_with_the_next_ladder_rung(
+    engine_env: EngineEnv, tmux_server: TmuxServer, agent: str
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    next_rung = Rung(agent=agent, model="fake-2", effort=None)
+    settings = _rung_settings(next_rung)
+    failure: dict[str, object] = {"kind": "fail", "failure_kind": "unavailable"}
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=[*[failure for _ in range(len(BACKOFF_SCHEDULE) + 1)], {"kind": "accept"}],
+    )
+
+    await _drive(flow_task, clock)
+
+    final = engine_env.tasks.require(task_id)
+    assert final.status is Status.INTEGRATING
+    assert final.step is Step.INTEGRATE
+    assert final.rung_index[Role.IMPLEMENTER] == 1
+    events = build_flow(engine_env, settings, clock=clock).events
+    failures = events.since(0, task_id=task_id, kinds=[EventKind.TURN_FAILED])
+    assert len(failures) == len(BACKOFF_SCHEDULE) + 1
+    [changed] = events.since(0, task_id=task_id, kinds=[EventKind.RUNG_CHANGED])
+    assert changed.data["to"] == next_rung.model
+    assert changed.data["different_agent"] is False
+    assert not events.since(0, task_id=task_id, kinds=[EventKind.QUOTA_BLOCKED])
+    runs = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
+    assert runs[0].agent == agent
+    assert runs[0].model == next_rung.model
 
 
 async def test_auth_failure_escalates_with_the_agent_auth_reason(
