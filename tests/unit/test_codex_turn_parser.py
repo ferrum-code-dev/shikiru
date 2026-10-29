@@ -304,6 +304,7 @@ def test_newer_rollout_quota_replaces_an_earlier_streamed_sample(tmp_path: Path)
     streamed = parser.feed(
         json.dumps(
             {
+                "timestamp": _SAMPLE_NOW.isoformat(),
                 "type": "event_msg",
                 "payload": {
                     "type": "token_count",
@@ -321,6 +322,7 @@ def test_newer_rollout_quota_replaces_an_earlier_streamed_sample(tmp_path: Path)
     rollout.write_text(
         json.dumps(
             {
+                "timestamp": (_SAMPLE_NOW + _AFTER_STREAMED_RESET).isoformat(),
                 "type": "event_msg",
                 "payload": {
                     "type": "token_count",
@@ -345,6 +347,78 @@ def test_newer_rollout_quota_replaces_an_earlier_streamed_sample(tmp_path: Path)
     assert streamed == [
         QuotaReported((QuotaWindow("5h", _STREAMED_USED_PERCENT, _STREAMED_RESET_AT, _SAMPLE_NOW),))
     ]
+    assert quota_updates == [
+        QuotaReported(
+            (
+                QuotaWindow(
+                    "5h",
+                    _ROLLOUT_USED_PERCENT,
+                    _ROLLOUT_RESET_AT,
+                    _SAMPLE_NOW + _AFTER_STREAMED_RESET,
+                ),
+            )
+        )
+    ]
+    assert failure.kind is FailureKind.QUOTA
+    assert failure.resets_at == _ROLLOUT_RESET_AT
+    assert _quota_recovery(failure, clock.now()) == WaitForQuota(_ROLLOUT_RESET_AT + QUOTA_MARGIN)
+
+
+def test_older_rollout_quota_does_not_replace_a_newer_streamed_sample(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    clock = FakeClock(_SAMPLE_NOW + timedelta(seconds=1))
+    parser = CodexTurnParser(
+        session_id=None,
+        initial_usage=None,
+        home=tmp_path / "codex-home",
+        rollout_path=rollout,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+    rollout.write_text(
+        json.dumps(
+            {
+                "timestamp": _SAMPLE_NOW.isoformat(),
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "rate_limits": {
+                        "primary": {
+                            "used_percent": _STREAMED_USED_PERCENT,
+                            "resets_at": _STREAMED_RESET_AT.isoformat(),
+                        }
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    streamed = parser.feed(
+        json.dumps(
+            {
+                "timestamp": clock.now().isoformat(),
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "rate_limits": {
+                        "primary": {
+                            "used_percent": _ROLLOUT_USED_PERCENT,
+                            "resets_at": _ROLLOUT_RESET_AT.isoformat(),
+                        }
+                    },
+                },
+            }
+        )
+    )
+    parser.feed(json.dumps(_USAGE_LIMIT_FAILURE))
+
+    signals = parser.finish(1, "")
+    quota_updates = [
+        signal for signal in [*streamed, *signals] if isinstance(signal, QuotaReported)
+    ]
+    [failure] = [signal for signal in signals if isinstance(signal, TurnFailed)]
+
     assert quota_updates == [
         QuotaReported((QuotaWindow("5h", _ROLLOUT_USED_PERCENT, _ROLLOUT_RESET_AT, clock.now()),))
     ]

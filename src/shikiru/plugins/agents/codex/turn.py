@@ -43,7 +43,7 @@ from shikiru.plugins.agents.codex.options import (
     RESUME_SUBCOMMAND,
     USAGE_EVENT_TYPE,
 )
-from shikiru.plugins.agents.codex.quota import CodexQuotaProbe
+from shikiru.plugins.agents.codex.quota import CodexQuotaProbe, QuotaObservation
 from shikiru.plugins.agents.codex.sandbox import sandbox_config_args
 from shikiru.plugins.agents.codex.usage import latest_token_count, rollout_usage
 
@@ -196,10 +196,10 @@ class CodexTurnParser:
         payload = cast("Mapping[str, Any]", raw)
         handler = self._handlers.get(cast("str", payload.get(_TYPE_FIELD)))
         signals = handler(payload) if handler is not None else []
-        windows = self._quota_probe.parse(line, self._clock.now())
-        if windows:
-            self._latest_streamed_quota = tuple(windows)
-            signals.append(QuotaReported(tuple(windows)))
+        observation = self._quota_probe.parse_observation(line, self._clock.now())
+        if observation is not None:
+            self._latest_streamed_quota = observation.windows
+            signals.append(QuotaReported(observation.windows))
         return signals
 
     def _turn_completed(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
@@ -230,12 +230,14 @@ class CodexTurnParser:
             _compaction_signals(entries, self._initial_compaction_count)
         )
         quota: Sequence[QuotaWindow] = self._latest_streamed_quota
-        rollout_quota = _quota_windows(
+        rollout_quota = _quota_observation(
             self._rollout, entries, self._home, self._clock, self._reset_time
         )
-        if rollout_quota and _quota_reading(rollout_quota) != _quota_reading(quota):
-            quota = tuple(rollout_quota)
-            signals.append(QuotaReported(quota))
+        if rollout_quota is not None and _quota_is_newer(rollout_quota, quota):
+            rollout_reading = rollout_quota.windows
+            if _quota_reading(rollout_reading) != _quota_reading(quota):
+                signals.append(QuotaReported(rollout_reading))
+            quota = rollout_reading
         usage = _reported_usage(entries, self._turn_usage, self._initial_usage)
         if usage is not None:
             signals.append(UsageReported(usage))
@@ -559,23 +561,32 @@ def _rollout_type(entry: Mapping[str, Any]) -> object:
     return payload.get(_TYPE_FIELD) if payload is not None else None
 
 
-def _quota_windows(
+def _quota_observation(
     path: Path | None,
     entries: Sequence[Mapping[str, Any]],
     home: Path,
     clock: Clock,
     reset_time: ResetTimeParser,
-) -> list[QuotaWindow]:
+) -> QuotaObservation | None:
     if path is None or not entries:
-        return []
+        return None
     probe = CodexQuotaProbe(home, clock, reset_time)
-    return probe.parse(path.read_text(encoding="utf-8"), clock.now())
+    return probe.parse_observation(path.read_text(encoding="utf-8"), clock.now())
 
 
 def _quota_reading(
     windows: Sequence[QuotaWindow],
 ) -> tuple[tuple[str, float, datetime | None], ...]:
     return tuple((window.name, window.used_pct, window.resets_at) for window in windows)
+
+
+def _quota_is_newer(candidate: QuotaObservation, current: Sequence[QuotaWindow]) -> bool:
+    if not current:
+        return True
+    if candidate.timestamp is None:
+        return False
+    current_time = max(window.observed_at for window in current)
+    return candidate.timestamp > current_time
 
 
 def _reported_usage(
