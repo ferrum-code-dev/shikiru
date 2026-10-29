@@ -1,31 +1,42 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import sys
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
 from shikiru.agents.contracts import (
     AgentSignal,
     FailureKind,
+    Message,
     Rung,
     SessionStarted,
     TurnEnded,
     TurnFailed,
     TurnSpec,
 )
+from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import (
     StreamingTurn,
     TurnProcess,
     TurnProcessResult,
     TurnProcessSequence,
+    stream_log_path,
 )
+from shikiru.plugins.agents.codex.turn import CodexTurnSequence
 from shikiru.process import SubprocessRunner
+from tests.support.clock import FakeClock
+from tests.support.waiting import wait_until
 
-if TYPE_CHECKING:
-    from pathlib import Path
+_CODEX_FIXTURES = Path(__file__).parents[1] / "fixtures" / "agents" / "codex"
+_CONTEXT_FAILURE_FIXTURE = "turn_context_failure.jsonl"
+_TEST_NOW = datetime(2026, 1, 1, tzinfo=UTC)
+_TURN_STOP_TIMEOUT_SECONDS = 10
 
 
 @dataclass
@@ -224,3 +235,99 @@ async def test_every_process_of_a_turn_is_reported_when_it_is_spawned_including_
     assert signals[-1] == TurnEnded("finished")
     assert len(reported) == 2
     assert len(set(reported)) == 2
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_context_failure_does_not_start_its_retry(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    turn_dir = tmp_path / "turn"
+    home = tmp_path / "codex-home"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    block_fifo = tmp_path / "blocked.fifo"
+    os.mkfifo(block_fifo)
+    ready = tmp_path / "ready"
+    calls = tmp_path / "calls"
+    fixture = _CODEX_FIXTURES / _CONTEXT_FAILURE_FIXTURE
+    executable = fake_bin / "codex"
+    executable.write_text(
+        "#!/bin/sh\n"
+        'printf x >> "$CALLS_FILE"\n'
+        'if [ ! -e "$READY_FILE" ]; then\n'
+        '  cat "$FAILURE_FIXTURE"\n'
+        '  : > "$READY_FILE"\n'
+        '  cat "$BLOCK_FIFO" >/dev/null\n'
+        "else\n"
+        "  printf '%s\\n' \\\n"
+        '    \'{"type":"thread.started","thread_id":"session-recovery"}\' \\\n'
+        '    \'{"type":"item.completed","item":'
+        '{"type":"agent_message","text":"retry began"}}\' \\\n'
+        '    \'{"type":"turn.completed"}\'\n'
+        "fi\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "BLOCK_FIFO": str(block_fifo),
+        "CALLS_FILE": str(calls),
+        "FAILURE_FIXTURE": str(fixture),
+        "READY_FILE": str(ready),
+    }
+    spec = TurnSpec(
+        rung=Rung(agent="codex", model="test"),
+        role="implementer",
+        prompt="continue the task",
+        cwd=repo,
+        run_dir=run_dir,
+        turn_dir=turn_dir,
+        add_dirs=(),
+        env=env,
+        session_id=None,
+        usage=None,
+    )
+    clock = FakeClock(_TEST_NOW)
+    sequence = CodexTurnSequence(
+        spec,
+        args=(),
+        environment=lambda _spec: env,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+        home=home,
+        git_dirs=(),
+        compact_at_pct=80,
+    )
+    turn = await StreamingTurn.start(spec, SubprocessRunner(), sequence)
+    signals = turn.signals()
+
+    async def next_signal() -> AgentSignal:
+        return await anext(signals)
+
+    first = await asyncio.wait_for(anext(signals), timeout=_TURN_STOP_TIMEOUT_SECONDS)
+    pending = asyncio.create_task(next_signal())
+    await wait_until(
+        lambda: (
+            ready.is_file()
+            and stream_log_path(turn_dir, spec.role).is_file()
+            and "turn.failed" in stream_log_path(turn_dir, spec.role).read_text(encoding="utf-8")
+        ),
+        timeout=_TURN_STOP_TIMEOUT_SECONDS,
+    )
+    await turn.stop()
+    remaining: list[AgentSignal] = [first]
+    async with asyncio.timeout(_TURN_STOP_TIMEOUT_SECONDS):
+        while True:
+            try:
+                remaining.append(await pending)
+            except StopAsyncIteration:
+                break
+            pending = asyncio.create_task(next_signal())
+
+    assert first == SessionStarted("session-recovery")
+    assert any(isinstance(signal, TurnFailed) for signal in remaining)
+    assert not any(signal == Message("retry began") for signal in remaining)
+    assert calls.read_text(encoding="utf-8") == "x"

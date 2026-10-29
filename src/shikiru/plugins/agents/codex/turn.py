@@ -158,6 +158,7 @@ class CodexTurnParser:
         self._reset_time = reset_time
         self._quota_probe = CodexQuotaProbe(home, clock, reset_time)
         self._streamed_quota_samples: set[QuotaWindow] = set()
+        self._streamed_quota_groups: list[list[QuotaWindow]] = []
         self._tools: dict[str, str] = {}
         self._last_message = ""
         self._turn_usage: Mapping[str, Any] | None = None
@@ -205,6 +206,7 @@ class CodexTurnParser:
             ]
             self._streamed_quota_samples.update(new_samples)
             if new_samples:
+                self._streamed_quota_groups.append(new_samples)
                 signals.append(QuotaReported(tuple(new_samples)))
         return signals
 
@@ -241,6 +243,13 @@ class CodexTurnParser:
             reset_time=self._reset_time,
             since=self._started_at,
         )
+        available_quota_samples = [*quota_samples, *self._streamed_quota_groups]
+        latest_quota = max(
+            available_quota_samples,
+            key=lambda sample: max(window.observed_at for window in sample),
+            default=None,
+        )
+        quota = [] if latest_quota is None else latest_quota
         quota_samples = [
             [
                 window
@@ -255,7 +264,6 @@ class CodexTurnParser:
         ]
         quota_samples = [sample for sample in quota_samples if sample]
         signals.extend(QuotaReported(tuple(sample)) for sample in quota_samples)
-        quota = quota_samples[-1] if quota_samples else []
         usage = _reported_usage(entries, self._turn_usage, self._initial_usage)
         if self._malformed:
             signals.append(TurnFailed(FailureKind.UNKNOWN, _MALFORMED_STREAM_MESSAGE, None))

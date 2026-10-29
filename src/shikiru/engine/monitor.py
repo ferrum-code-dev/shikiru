@@ -215,26 +215,33 @@ class TurnMonitor:
         quota_turn_id: int,
         tool_running: bool,
     ) -> tuple[bool, asyncio.Task[AgentSignal]]:
-        while True:
-            try:
-                signal = await pending_signal
-            except StopAsyncIteration:
-                return tool_running, pending_signal
-            self._append_view(run_dir, turn_dir, role, rung, signal)
-            tool_running, terminal = await self._record_signal(
-                signal,
-                agent=agent,
-                task=task,
-                role=role,
-                rung=rung,
-                run_id=run_id,
-                run_dir=run_dir,
-                tool_running=tool_running,
-                quota_turn_id=quota_turn_id,
-            )
-            if terminal is not None:
-                return tool_running, pending_signal
-            pending_signal = asyncio.create_task(_next_signal(iterator))
+        try:
+            async with asyncio.timeout(self._settings.orchestration.shutdown_seconds):
+                while True:
+                    try:
+                        signal = await pending_signal
+                    except StopAsyncIteration:
+                        return tool_running, pending_signal
+                    self._append_view(run_dir, turn_dir, role, rung, signal)
+                    tool_running, terminal = await self._record_signal(
+                        signal,
+                        agent=agent,
+                        task=task,
+                        role=role,
+                        rung=rung,
+                        run_id=run_id,
+                        run_dir=run_dir,
+                        tool_running=tool_running,
+                        quota_turn_id=quota_turn_id,
+                    )
+                    if terminal is not None:
+                        return tool_running, pending_signal
+                    pending_signal = asyncio.create_task(_next_signal(iterator))
+        except TimeoutError:
+            if not pending_signal.done():
+                pending_signal.cancel()
+            await asyncio.gather(pending_signal, return_exceptions=True)
+            return tool_running, pending_signal
 
     async def _record_signal(
         self,

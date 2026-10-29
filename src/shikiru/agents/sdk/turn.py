@@ -102,6 +102,7 @@ class StreamingTurn:
         self._current_process_spec = first_process
         self._process = process
         self._signal_reader_started = False
+        self._stopped = False
         self._session_id: str | None = None
         self._session_started = False
         self._process_session_started = False
@@ -158,6 +159,14 @@ class StreamingTurn:
                         process.stderr_tail,
                     )
                     return
+                if self._stopped:
+                    terminal = execution.terminal or self._unknown_failure(
+                        "agent process ended without a turn result",
+                        outcome.exit_code,
+                        process.stderr_tail,
+                    )
+                    yield terminal
+                    return
                 next_process = self._sequence.advance(self._spec, outcome)
                 if next_process is None:
                     terminal = execution.terminal or self._unknown_failure(
@@ -181,6 +190,7 @@ class StreamingTurn:
 
     async def stop(self) -> None:
         """Stop the process running now, allowing a later turn to resume its session."""
+        self._stopped = True
         await self._process.stop()
 
     @classmethod

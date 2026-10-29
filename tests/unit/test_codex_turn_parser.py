@@ -6,6 +6,8 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+import pytest
+
 from shikiru.agents.contracts import (
     Compacted,
     FailureKind,
@@ -19,6 +21,14 @@ from shikiru.agents.contracts import (
     UsageReported,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
+from shikiru.domain.recovery import (
+    QUOTA_MARGIN,
+    Failed,
+    RecoveryPolicy,
+    TurnCounters,
+    WaitForQuota,
+    decide,
+)
 from shikiru.plugins.agents.codex.turn import CodexTurnParser
 from tests.support.clock import FakeClock
 
@@ -36,6 +46,7 @@ _CACHED_INPUT_TOKENS = 5_000
 _PRIMARY_USED_PERCENT = 30.0
 _SECONDARY_USED_PERCENT = 40.0
 _RESET_AT = datetime(2030, 1, 1, tzinfo=UTC)
+_QUOTA_FAILURE_RESET_AT = datetime(2026, 9, 26, 5, tzinfo=UTC)
 
 
 def test_finish_reads_rollout_created_after_session_started(tmp_path: Path) -> None:
@@ -256,6 +267,80 @@ def test_feed_reports_in_turn_quota_before_the_turn_finishes(tmp_path: Path) -> 
             )
         )
     ]
+
+
+@pytest.mark.parametrize("rollout_contains_streamed_sample", [False, True])
+def test_streamed_quota_reset_survives_rollout_dedup_for_recovery(
+    tmp_path: Path, rollout_contains_streamed_sample: bool
+) -> None:
+    home = tmp_path / "codex-home"
+    rollout = tmp_path / "rollout.jsonl"
+    clock = FakeClock(_SAMPLE_NOW)
+    parser = CodexTurnParser(
+        session_id=None,
+        initial_usage=None,
+        home=home,
+        rollout_path=rollout,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+    parser.feed(json.dumps({"type": "thread.started", "thread_id": _SESSION_ID}))
+    quota_event = {
+        "timestamp": (_SAMPLE_NOW + timedelta(seconds=1)).isoformat(),
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "rate_limits": {
+                "primary": {
+                    "used_percent": 100,
+                    "resets_at": _QUOTA_FAILURE_RESET_AT.isoformat(),
+                }
+            },
+        },
+    }
+
+    streamed = parser.feed(json.dumps(quota_event))
+    if rollout_contains_streamed_sample:
+        rollout.write_text(json.dumps(quota_event) + "\n", encoding="utf-8")
+    parser.feed(
+        json.dumps(
+            {
+                "type": "turn.failed",
+                "error": {
+                    "message": json.dumps(
+                        {
+                            "status": 429,
+                            "code": "usage_limit_reached",
+                            "message": "Usage limit reached",
+                        }
+                    )
+                },
+            }
+        )
+    )
+
+    signals = parser.finish(1, "")
+    [failure] = [signal for signal in signals if isinstance(signal, TurnFailed)]
+    action = decide(
+        Failed(failure.kind, failure.resets_at, failure.message),
+        TurnCounters(),
+        RecoveryPolicy(
+            now=_SAMPLE_NOW,
+            max_quota_wait=timedelta(days=2),
+            has_next_rung=False,
+            has_next_rung_different_agent=False,
+            unavailable_initial_seconds=30,
+            unavailable_multiplier=4,
+            unavailable_max_seconds=300,
+            unavailable_max_retries=3,
+        ),
+    )
+
+    assert isinstance(streamed[0], QuotaReported)
+    assert not any(isinstance(signal, QuotaReported) for signal in signals)
+    assert failure.kind is FailureKind.QUOTA
+    assert failure.resets_at == _QUOTA_FAILURE_RESET_AT
+    assert action == WaitForQuota(_QUOTA_FAILURE_RESET_AT + QUOTA_MARGIN)
 
 
 def test_malformed_stdout_keeps_rollout_quota_before_protocol_failure(tmp_path: Path) -> None:
