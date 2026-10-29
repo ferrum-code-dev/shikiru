@@ -133,9 +133,13 @@ UNKNOWN_BILLING_DECLARATION = BillingDeclaration(
 )
 
 
+QUOTA_WINDOW_FIVE_HOUR = "5h"
+QUOTA_WINDOW_SEVEN_DAY = "7d"
+
+
 @dataclass(frozen=True)
 class QuotaWindow:
-    """One quota window an agent plugin reports."""
+    """One quota window an agent plugin reports, with `used_pct` in percent (0-100)."""
 
     name: str
     used_pct: float

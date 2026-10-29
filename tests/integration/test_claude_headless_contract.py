@@ -312,8 +312,8 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     Message("Ready."),
                     QuotaReported(
                         (
-                            QuotaWindow("five_hour", 12.5, _RESET_FIVE_HOUR, _SAMPLE_NOW),
-                            QuotaWindow("seven_day", 4, _RESET_SEVEN_DAY, _SAMPLE_NOW),
+                            QuotaWindow("5h", 12.5, _RESET_FIVE_HOUR, _SAMPLE_NOW),
+                            QuotaWindow("7d", 4, _RESET_SEVEN_DAY, _SAMPLE_NOW),
                         )
                     ),
                     UsageReported(subscription_usage),
@@ -468,8 +468,8 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     SessionStarted("session-rate-limit"),
                     QuotaReported(
                         (
-                            QuotaWindow("five_hour", 100, _RESET_FIVE_HOUR, _SAMPLE_NOW),
-                            QuotaWindow("seven_day", 22, _RESET_SEVEN_DAY, _SAMPLE_NOW),
+                            QuotaWindow("5h", 100, _RESET_FIVE_HOUR, _SAMPLE_NOW),
+                            QuotaWindow("7d", 22, _RESET_SEVEN_DAY, _SAMPLE_NOW),
                         )
                     ),
                     TurnFailed(

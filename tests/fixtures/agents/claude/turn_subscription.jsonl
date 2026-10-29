@@ -2,5 +2,5 @@
 {"type":"assistant","message":{"id":"msg-tool","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":80,"output_tokens":2,"cache_read_input_tokens":10,"cache_creation_input_tokens":2},"content":[{"type":"tool_use","id":"tool-1","name":"Read","input":{"file_path":"README.md"}}]}}
 {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"read"}]}}
 {"type":"assistant","message":{"id":"msg-final","model":"claude-haiku-4-5-20251001","usage":{"input_tokens":100,"output_tokens":5,"cache_read_input_tokens":12,"cache_creation_input_tokens":3},"content":[{"type":"text","text":"Ready."}]}}
-{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":12.5,"resetsAt":"2030-01-01T01:00:00+00:00"},"seven_day":{"utilization":4,"resetsAt":"2030-01-05T00:00:00+00:00"}}}}
+{"type":"rate_limit_event","rate_limit_info":{"unifiedWindows":{"five_hour":{"utilization":0.125,"resetsAt":"2030-01-01T01:00:00+00:00"},"seven_day":{"utilization":0.04,"resetsAt":"2030-01-05T00:00:00+00:00"}}}}
 {"type":"result","subtype":"success","result":"Ready.","usage":{"input_tokens":100,"output_tokens":5,"cache_read_input_tokens":12,"cache_creation_input_tokens":3},"total_cost_usd":0.00001,"modelUsage":{"claude-haiku-4-5-20251001":{"costBasis":"list","contextWindow":200000}}}

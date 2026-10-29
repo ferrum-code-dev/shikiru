@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 from shikiru.agents.contracts import (
     PERCENT,
+    QUOTA_WINDOW_FIVE_HOUR,
+    QUOTA_WINDOW_SEVEN_DAY,
     AgentSignal,
     Compacted,
     FailureKind,
@@ -118,8 +120,12 @@ _PRE_TOKENS_FIELD = "pre_tokens"
 _POST_TOKENS_FIELD = "post_tokens"
 _RATE_LIMIT_INFO_FIELD = "rate_limit_info"
 _UNIFIED_WINDOWS_FIELD = "unifiedWindows"
-_FIVE_HOUR_WINDOW = "five_hour"
-_SEVEN_DAY_WINDOW = "seven_day"
+_FIVE_HOUR_PROTOCOL_KEY = "five_hour"
+_SEVEN_DAY_PROTOCOL_KEY = "seven_day"
+_QUOTA_WINDOW_NAMES = {
+    _FIVE_HOUR_PROTOCOL_KEY: QUOTA_WINDOW_FIVE_HOUR,
+    _SEVEN_DAY_PROTOCOL_KEY: QUOTA_WINDOW_SEVEN_DAY,
+}
 _UTILIZATION_FIELD = "utilization"
 _RESETS_AT_FIELD = "resetsAt"
 _API_ERROR_STATUS_FIELD = "api_error_status"
@@ -348,8 +354,8 @@ class ClaudeTurnParser:
         observed_at = self._clock.now()
         reported = tuple(
             self._quota_window(name, raw, observed_at)
-            for name in (_FIVE_HOUR_WINDOW, _SEVEN_DAY_WINDOW)
-            if (raw := _mapping(windows.get(name))) is not None
+            for key, name in _QUOTA_WINDOW_NAMES.items()
+            if (raw := _mapping(windows.get(key))) is not None
             and isinstance(raw.get(_UTILIZATION_FIELD), int | float)
         )
         if not reported:
@@ -364,7 +370,7 @@ class ClaudeTurnParser:
         resets_at = self._reset_time.parse(str(reset_value)) if reset_value is not None else None
         return QuotaWindow(
             name=name,
-            used_pct=float(cast("int | float", raw[_UTILIZATION_FIELD])),
+            used_pct=float(cast("int | float", raw[_UTILIZATION_FIELD])) * PERCENT,
             resets_at=resets_at,
             observed_at=observed_at,
         )

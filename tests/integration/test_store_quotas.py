@@ -6,9 +6,12 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import QuotaWindow
+from shikiru.store.database import Database
 from shikiru.store.quotas import QuotaStore, fetch_quotas
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from tests.support.store import Connection
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -78,3 +81,39 @@ def test_record_keeps_the_plugin_supplied_observed_at(connection: Connection) ->
 
     [reloaded] = fetch_quotas(connection, "claude")
     assert reloaded == window
+
+
+_PRE_CANONICAL_SCHEMA_VERSION = 9
+
+
+def _insert_legacy(connection: Connection, agent: str, window: str, used_pct: float) -> None:
+    connection.execute(
+        "INSERT INTO quotas (agent, window, used_pct, resets_at, observed_at) "
+        "VALUES (?, ?, ?, NULL, ?)",
+        (agent, window, used_pct, START.isoformat()),
+    )
+
+
+def test_legacy_builtin_window_aliases_are_dropped_and_never_shown_beside_canonical_ones(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "state.db")
+    connection = database.connect()
+    _insert_legacy(connection, "claude", "five_hour", 36.0)
+    _insert_legacy(connection, "codex", "primary", 20.0)
+    _insert_legacy(connection, "other", "primary", 7.0)
+    connection.execute(f"PRAGMA user_version = {_PRE_CANONICAL_SCHEMA_VERSION}")
+    connection.commit()
+    connection.close()
+
+    connection = database.connect()
+    try:
+        assert fetch_quotas(connection, "claude") == []
+        assert fetch_quotas(connection, "codex") == []
+        assert [w.name for w in fetch_quotas(connection, "other")] == ["primary"]
+
+        QuotaStore(connection).record("claude", QuotaWindow("5h", 36.0, None, START))
+
+        assert [w.name for w in fetch_quotas(connection, "claude")] == ["5h"]
+    finally:
+        connection.close()

@@ -289,7 +289,7 @@ _FULL_LAYOUT = [
     _rule(_WIDE[0]),
     _heading("Limits"),
     _limit_row("claude", _gauge("5h", f"{_HALF} 38%", _OK, "1h 40m")),
-    _limit_row("", _gauge("weekly", f"{_FULL} 91%", _ALERT, "74h 0m")),
+    _limit_row("", _gauge("weekly", f"{_FULL} 91%", _ALERT, "3d 2h 0m")),
     _limit_row("codex", _gauge("5h", f"{_HALF} 62%", _WARN, "2h 15m")),
     _row("observed 2m ago"),
 ]
@@ -463,13 +463,13 @@ async def test_panel_without_runs_says_so_under_the_unknown_totals(
 
 _SHARED_AGE_LIMITS = [
     f"claude 5h {GAUGE_GLYPHS[2]} 38% resets 1h 40m",
-    f"       weekly {GAUGE_GLYPHS[4]} 91% resets 74h 0m",
+    f"       weekly {GAUGE_GLYPHS[4]} 91% resets 3d 2h 0m",
     f"codex  5h {GAUGE_GLYPHS[2]} 62% resets 2h 15m",
     "observed 2m ago",
 ]
 _MIXED_AGE_LIMITS = [
     f"claude 5h {GAUGE_GLYPHS[0]} 10% resets 1h 0m · observed 2m ago",
-    f"       weekly {GAUGE_GLYPHS[1]} 20% resets 24h 0m · observed 1h ago",
+    f"       weekly {GAUGE_GLYPHS[1]} 20% resets 1d 0h 0m · observed 1h ago",
 ]
 
 
@@ -515,7 +515,7 @@ _COMPACT_LAYOUT = [
     _RULE_CHARACTER * _COMPACT[0],
     "Limits",
     f"claude 5h {GAUGE_GLYPHS[2]} 38% resets 1h 40m",
-    f"       weekly {GAUGE_GLYPHS[4]} 91% resets 74h 0m",
+    f"       weekly {GAUGE_GLYPHS[4]} 91% resets 3d 2h 0m",
     f"codex  5h {GAUGE_GLYPHS[2]} 62% resets 2h 15m",
     "observed 2m ago",
 ]
@@ -560,7 +560,7 @@ _TINY_LAYOUT = [
     f"5h {GAUGE_GLYPHS[2]} 38% resets 1h",
     "40m",
     f"weekly {GAUGE_GLYPHS[4]} 91%",
-    "resets 74h 0m",
+    "resets 3d 2h 0m",
     "codex",
     f"5h {GAUGE_GLYPHS[2]} 62% resets 2h",
     "15m",
@@ -607,3 +607,40 @@ async def test_tiny_popup_is_titled_and_keeps_every_section_label_in_a_scrolling
         lines = _plain_lines(panel)
         assert all(label in lines for label in ("Totals", "By agent", "Limits"))
         assert app.screen.query_one("#context-widget-content", VerticalScroll).max_scroll_y > 0
+
+
+@pytest.mark.parametrize(
+    ("resets_in", "expected"),
+    [
+        (timedelta(hours=135, minutes=46), "resets 5d 15h 46m"),
+        (timedelta(hours=24), "resets 1d 0h 0m"),
+        (timedelta(hours=23, minutes=59, seconds=59), "resets 23h 59m"),
+        (timedelta(minutes=5, seconds=7), "resets 5m 7s"),
+        (timedelta(seconds=-30), "resets 0s"),
+        (None, "resets \N{EN DASH}"),
+    ],
+    ids=["multi-day", "exactly-a-day", "just-under-a-day", "minutes", "expired", "unknown"],
+)
+async def test_reset_countdown_shows_days_from_a_day_and_never_goes_negative(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    resets_in: timedelta | None,
+    expected: str,
+) -> None:
+    clock = FakeClock(_START)
+    _record_run(connection, clock, "claude", _SUBSCRIPTION, _tokens(None, COST_BASIS_UNKNOWN))
+    QuotaStore(connection).record(
+        "claude",
+        QuotaWindow(
+            "7d",
+            50.0,
+            _START + resets_in if resets_in is not None else None,
+            _START - _OBSERVED_AGO,
+        ),
+    )
+    panel = UsagePanel(widget_context(reader, write_minimal_project(tmp_path), clock))
+    async with WidgetHostApp(panel).run_test(size=_WIDE):
+        await _settled_lines(panel)
+        text = "\n".join(_plain_lines(panel))
+        assert f"7d {GAUGE_GLYPHS[2]} 50% {expected}" in text

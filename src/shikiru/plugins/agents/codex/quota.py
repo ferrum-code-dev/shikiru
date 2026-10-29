@@ -6,7 +6,7 @@ import json
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
-from shikiru.agents.contracts import QuotaWindow
+from shikiru.agents.contracts import QUOTA_WINDOW_FIVE_HOUR, QUOTA_WINDOW_SEVEN_DAY, QuotaWindow
 from shikiru.plugins.agents.codex.options import USAGE_EVENT_TYPE
 
 if TYPE_CHECKING:
@@ -20,7 +20,13 @@ _EVENT_MESSAGE_TYPE = "event_msg"
 _RATE_LIMITS_FIELD = "rate_limits"
 _PRIMARY_WINDOW = "primary"
 _SECONDARY_WINDOW = "secondary"
-_WINDOW_NAMES = (_PRIMARY_WINDOW, _SECONDARY_WINDOW)
+_DEFAULT_WINDOW_NAMES = {
+    _PRIMARY_WINDOW: QUOTA_WINDOW_FIVE_HOUR,
+    _SECONDARY_WINDOW: QUOTA_WINDOW_SEVEN_DAY,
+}
+_WINDOW_MINUTES_FIELD = "window_minutes"
+_MINUTES_PER_HOUR = 60
+_MINUTES_PER_DAY = 24 * _MINUTES_PER_HOUR
 _USED_PERCENT_FIELD = "used_percent"
 _RESETS_AT_FIELD = "resets_at"
 _ROLLOUT_GLOB = "rollout-*.jsonl"
@@ -60,23 +66,23 @@ class CodexQuotaProbe:
         if latest is None:
             return []
         windows: list[QuotaWindow] = []
-        for name in _WINDOW_NAMES:
-            raw_window = latest.get(name)
+        for key in _DEFAULT_WINDOW_NAMES:
+            raw_window = latest.get(key)
             if isinstance(raw_window, Mapping):
                 windows.append(
-                    self._window(name, cast("Mapping[str, Any]", raw_window), observed_at)
+                    self._window(key, cast("Mapping[str, Any]", raw_window), observed_at)
                 )
         return windows
 
-    def _window(self, name: str, raw: Mapping[str, Any], observed_at: datetime) -> QuotaWindow:
+    def _window(self, key: str, raw: Mapping[str, Any], observed_at: datetime) -> QuotaWindow:
         value = raw.get(_USED_PERCENT_FIELD)
         if not isinstance(value, int | float):
-            message = f"Codex quota window {name!r} has no numeric used_percent"
+            message = f"Codex quota window {key!r} has no numeric used_percent"
             raise TypeError(message)
         reset_value = raw.get(_RESETS_AT_FIELD)
         resets_at = self._reset_time.parse(str(reset_value)) if reset_value is not None else None
         return QuotaWindow(
-            name=name,
+            name=_window_name(key, raw.get(_WINDOW_MINUTES_FIELD)),
             used_pct=float(value),
             resets_at=resets_at,
             observed_at=observed_at,
@@ -94,3 +100,13 @@ def _payload(entry: Mapping[str, Any]) -> Mapping[str, Any]:
         if isinstance(payload, Mapping):
             return cast("Mapping[str, Any]", payload)
     return entry
+
+
+def _window_name(key: str, minutes: object) -> str:
+    if not isinstance(minutes, int) or isinstance(minutes, bool) or minutes <= 0:
+        return _DEFAULT_WINDOW_NAMES[key]
+    if minutes % _MINUTES_PER_DAY == 0:
+        return f"{minutes // _MINUTES_PER_DAY}d"
+    if minutes % _MINUTES_PER_HOUR == 0:
+        return f"{minutes // _MINUTES_PER_HOUR}h"
+    return f"{minutes}m"

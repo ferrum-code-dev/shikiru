@@ -127,8 +127,8 @@ def test_finish_reads_rollout_created_after_session_started(tmp_path: Path) -> N
         Compacted(_PRE_COMPACTION_TOKENS, _POST_COMPACTION_TOKENS),
         QuotaReported(
             (
-                QuotaWindow("primary", _PRIMARY_USED_PERCENT, _RESET_AT, _SAMPLE_NOW),
-                QuotaWindow("secondary", _SECONDARY_USED_PERCENT, None, _SAMPLE_NOW),
+                QuotaWindow("5h", _PRIMARY_USED_PERCENT, _RESET_AT, _SAMPLE_NOW),
+                QuotaWindow("7d", _SECONDARY_USED_PERCENT, None, _SAMPLE_NOW),
             )
         ),
         UsageReported(

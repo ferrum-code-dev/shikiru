@@ -172,8 +172,8 @@ _FIRST_SIGNALS = [
     Message("Change committed."),
     QuotaReported(
         (
-            QuotaWindow("primary", 20.0, None, _SAMPLE_NOW),
-            QuotaWindow("secondary", 29.0, None, _SAMPLE_NOW),
+            QuotaWindow("5h", 20.0, None, _SAMPLE_NOW),
+            QuotaWindow("7d", 29.0, None, _SAMPLE_NOW),
         )
     ),
     UsageReported(_USAGE_FIRST),
@@ -191,8 +191,8 @@ _RESUMED_SIGNALS = [
     Message("Change committed."),
     QuotaReported(
         (
-            QuotaWindow("primary", 21.0, None, _SAMPLE_NOW),
-            QuotaWindow("secondary", 30.0, None, _SAMPLE_NOW),
+            QuotaWindow("5h", 21.0, None, _SAMPLE_NOW),
+            QuotaWindow("7d", 30.0, None, _SAMPLE_NOW),
         )
     ),
     UsageReported(_USAGE_RESUMED),

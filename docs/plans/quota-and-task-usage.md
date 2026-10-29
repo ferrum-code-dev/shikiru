@@ -38,7 +38,7 @@ than performed by this planning task.
 
 ### Q1 — Normalize quota presentation
 
-- [ ] Implement quota labels, Claude percent conversion and day-aware reset countdowns.
+- [x] Implement quota labels, Claude percent conversion and day-aware reset countdowns.
 
 Acceptance criteria:
 

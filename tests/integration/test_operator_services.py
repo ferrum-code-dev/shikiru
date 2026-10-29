@@ -154,8 +154,8 @@ def _record_status_quota_windows(connection: Connection) -> None:
     for agent, name, used_pct in (
         ("codex", "5h", 42.5),
         ("codex", "7d", 28.0),
-        ("claude", "primary", 52.0),
-        ("claude", "secondary", 20.0),
+        ("claude", "5h", 52.0),
+        ("claude", "7d", 20.0),
     ):
         quotas.record(
             agent,

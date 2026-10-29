@@ -92,7 +92,7 @@ from shikiru.operator.queries import (
     aggregate_usage,
 )
 from shikiru.operator.strip_views import task_strip_data
-from shikiru.ui.age import format_age
+from shikiru.ui.age import SECONDS_PER_DAY, format_age, format_duration
 from shikiru.ui.age import format_short_age as _age
 from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
@@ -1794,6 +1794,8 @@ def _quota_countdown(seconds: int | None, has_reset: bool) -> str:
     if seconds is None:
         message = "a quota reset deadline did not produce a countdown"
         raise RuntimeError(message)
+    if seconds >= SECONDS_PER_DAY:
+        return format_duration(seconds)
     return _duration(seconds)
 
 
