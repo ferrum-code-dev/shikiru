@@ -22,6 +22,7 @@ from shikiru.agents.contracts import (
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.domain.recovery import (
     QUOTA_MARGIN,
+    Action,
     Failed,
     RecoveryPolicy,
     TurnCounters,
@@ -46,6 +47,23 @@ _PRIMARY_USED_PERCENT = 30.0
 _SECONDARY_USED_PERCENT = 40.0
 _RESET_AT = datetime(2030, 1, 1, tzinfo=UTC)
 _QUOTA_FAILURE_RESET_AT = datetime(2026, 9, 26, 5, tzinfo=UTC)
+_STREAMED_USED_PERCENT = 20
+_STREAMED_RESET_AT = datetime(2026, 9, 25, 13, tzinfo=UTC)
+_ROLLOUT_USED_PERCENT = 100
+_ROLLOUT_RESET_AT = datetime(2026, 9, 25, 18, 0, 1, tzinfo=UTC)
+_AFTER_STREAMED_RESET = timedelta(hours=1, seconds=1)
+_USAGE_LIMIT_FAILURE = {
+    "type": "turn.failed",
+    "error": {
+        "message": json.dumps(
+            {
+                "status": 429,
+                "code": "usage_limit_reached",
+                "message": "Usage limit reached",
+            }
+        )
+    },
+}
 
 
 def test_finish_reads_rollout_created_after_session_started(tmp_path: Path) -> None:
@@ -263,11 +281,84 @@ def test_streamed_quota_reset_survives_rollout_dedup_for_recovery(
 
     signals = parser.finish(1, "")
     [failure] = [signal for signal in signals if isinstance(signal, TurnFailed)]
-    action = decide(
+    action = _quota_recovery(failure, _SAMPLE_NOW)
+
+    assert isinstance(streamed[0], QuotaReported)
+    assert not any(isinstance(signal, QuotaReported) for signal in signals)
+    assert failure.kind is FailureKind.QUOTA
+    assert failure.resets_at == _QUOTA_FAILURE_RESET_AT
+    assert action == WaitForQuota(_QUOTA_FAILURE_RESET_AT + QUOTA_MARGIN)
+
+
+def test_newer_rollout_quota_replaces_an_earlier_streamed_sample(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    clock = FakeClock(_SAMPLE_NOW)
+    parser = CodexTurnParser(
+        session_id=None,
+        initial_usage=None,
+        home=tmp_path / "codex-home",
+        rollout_path=rollout,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+    streamed = parser.feed(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "rate_limits": {
+                        "primary": {
+                            "used_percent": _STREAMED_USED_PERCENT,
+                            "resets_at": _STREAMED_RESET_AT.isoformat(),
+                        }
+                    },
+                },
+            }
+        )
+    )
+    clock.advance(_AFTER_STREAMED_RESET.total_seconds())
+    rollout.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "rate_limits": {
+                        "primary": {
+                            "used_percent": _ROLLOUT_USED_PERCENT,
+                            "resets_at": _ROLLOUT_RESET_AT.isoformat(),
+                        }
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    parser.feed(json.dumps(_USAGE_LIMIT_FAILURE))
+
+    signals = parser.finish(1, "")
+    quota_updates = [signal for signal in signals if isinstance(signal, QuotaReported)]
+    [failure] = [signal for signal in signals if isinstance(signal, TurnFailed)]
+
+    assert streamed == [
+        QuotaReported((QuotaWindow("5h", _STREAMED_USED_PERCENT, _STREAMED_RESET_AT, _SAMPLE_NOW),))
+    ]
+    assert quota_updates == [
+        QuotaReported((QuotaWindow("5h", _ROLLOUT_USED_PERCENT, _ROLLOUT_RESET_AT, clock.now()),))
+    ]
+    assert failure.kind is FailureKind.QUOTA
+    assert failure.resets_at == _ROLLOUT_RESET_AT
+    assert _quota_recovery(failure, clock.now()) == WaitForQuota(_ROLLOUT_RESET_AT + QUOTA_MARGIN)
+
+
+def _quota_recovery(failure: TurnFailed, now: datetime) -> Action:
+    return decide(
         Failed(failure.kind, failure.resets_at, failure.message),
         TurnCounters(),
         RecoveryPolicy(
-            now=_SAMPLE_NOW,
+            now=now,
             max_quota_wait=timedelta(days=2),
             has_next_rung=False,
             has_next_rung_different_agent=False,
@@ -277,9 +368,3 @@ def test_streamed_quota_reset_survives_rollout_dedup_for_recovery(
             unavailable_max_retries=3,
         ),
     )
-
-    assert isinstance(streamed[0], QuotaReported)
-    assert not any(isinstance(signal, QuotaReported) for signal in signals)
-    assert failure.kind is FailureKind.QUOTA
-    assert failure.resets_at == _QUOTA_FAILURE_RESET_AT
-    assert action == WaitForQuota(_QUOTA_FAILURE_RESET_AT + QUOTA_MARGIN)

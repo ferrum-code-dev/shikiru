@@ -230,12 +230,12 @@ class CodexTurnParser:
             _compaction_signals(entries, self._initial_compaction_count)
         )
         quota: Sequence[QuotaWindow] = self._latest_streamed_quota
-        if not quota:
-            quota = _quota_windows(
-                self._rollout, entries, self._home, self._clock, self._reset_time
-            )
-            if quota:
-                signals.append(QuotaReported(tuple(quota)))
+        rollout_quota = _quota_windows(
+            self._rollout, entries, self._home, self._clock, self._reset_time
+        )
+        if rollout_quota and _quota_reading(rollout_quota) != _quota_reading(quota):
+            quota = tuple(rollout_quota)
+            signals.append(QuotaReported(quota))
         usage = _reported_usage(entries, self._turn_usage, self._initial_usage)
         if usage is not None:
             signals.append(UsageReported(usage))
@@ -570,6 +570,12 @@ def _quota_windows(
         return []
     probe = CodexQuotaProbe(home, clock, reset_time)
     return probe.parse(path.read_text(encoding="utf-8"), clock.now())
+
+
+def _quota_reading(
+    windows: Sequence[QuotaWindow],
+) -> tuple[tuple[str, float, datetime | None], ...]:
+    return tuple((window.name, window.used_pct, window.resets_at) for window in windows)
 
 
 def _reported_usage(
