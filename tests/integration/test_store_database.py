@@ -213,22 +213,30 @@ def test_database_opens_exactly_the_requested_file(tmp_path: Path, directory: st
     }
 
 
-def _database_one_migration_behind(path: Path) -> int:
-    migrations = sorted(
+def _migration_scripts() -> list[tuple[str, str]]:
+    return sorted(
         (entry.name, entry.read_text(encoding="utf-8"))
         for entry in resources.files("shikiru.store.migrations").iterdir()
         if entry.name.endswith(".sql")
     )
+
+
+def _migration_number(name: str) -> int:
+    return int(name.split("_", 1)[0])
+
+
+def _database_one_migration_behind(path: Path) -> int:
+    *earlier, (latest_name, _latest_sql) = _migration_scripts()
     legacy = sqlite3.connect(path)
     try:
         legacy.execute("PRAGMA journal_mode = WAL")
-        for _name, sql in migrations[:-1]:
+        for _name, sql in earlier:
             legacy.executescript(sql)
-        legacy.execute(f"PRAGMA user_version = {len(migrations) - 1}")
+        legacy.execute(f"PRAGMA user_version = {_migration_number(earlier[-1][0])}")
         legacy.commit()
     finally:
         legacy.close()
-    return len(migrations)
+    return _migration_number(latest_name)
 
 
 def test_concurrent_opens_of_an_outdated_database_migrate_it_exactly_once(
@@ -254,3 +262,63 @@ def test_concurrent_opens_of_an_outdated_database_migrate_it_exactly_once(
             ]
 
         assert versions == [latest] * _MIGRATION_RACERS
+
+
+_TASK_QUOTA_DROP_MIGRATION = "012_drop_task_quota_evidence.sql"
+_TASK_QUOTA_EVIDENCE_VERSION = 11
+_LEGACY_TASK_QUOTA_EVIDENCE = """
+CREATE TABLE task_quota_turns (
+  id INTEGER PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
+  run_id INTEGER NOT NULL REFERENCES runs(id), turn TEXT NOT NULL, role TEXT NOT NULL,
+  agent TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, outcome TEXT NOT NULL
+);
+CREATE INDEX idx_task_quota_turns_task_id ON task_quota_turns(task_id);
+CREATE TABLE task_quota_samples (
+  id INTEGER PRIMARY KEY, turn_id INTEGER NOT NULL REFERENCES task_quota_turns(id),
+  window TEXT NOT NULL, used_pct REAL NOT NULL, resets_at TEXT, observed_at TEXT NOT NULL,
+  boundary TEXT, time_source TEXT NOT NULL DEFAULT 'collected'
+);
+CREATE INDEX idx_task_quota_samples_turn_id ON task_quota_samples(turn_id);
+"""
+
+
+def _schema(connection: sqlite3.Connection) -> set[tuple[str, str, str]]:
+    return {
+        (kind, name, " ".join(sql.split()))
+        for kind, name, sql in connection.execute(
+            "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'"
+        )
+    }
+
+
+def test_upgrade_drops_task_quota_evidence_and_matches_a_fresh_schema(tmp_path: Path) -> None:
+    legacy_path = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(legacy_path)
+    try:
+        for name, sql in _migration_scripts():
+            if name < _TASK_QUOTA_DROP_MIGRATION:
+                legacy.executescript(sql)
+        legacy.executescript(_LEGACY_TASK_QUOTA_EVIDENCE)
+        legacy.execute(
+            "INSERT INTO task_quota_turns "
+            "(task_id, run_id, turn, role, agent, started_at, outcome) "
+            "VALUES ('T-1', 1, '01-implement-i1', 'implementer', 'codex', ?, 'ended')",
+            (format_timestamp(START),),
+        )
+        legacy.execute(
+            "INSERT INTO task_quota_samples (turn_id, window, used_pct, observed_at) "
+            "VALUES (1, '5h', 20, ?)",
+            (format_timestamp(START),),
+        )
+        legacy.execute(f"PRAGMA user_version = {_TASK_QUOTA_EVIDENCE_VERSION}")
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    migrated = Database(legacy_path).connect()
+    fresh = Database(tmp_path / "fresh.db").connect()
+    try:
+        assert _schema(migrated) == _schema(fresh)
+    finally:
+        migrated.close()
+        fresh.close()
