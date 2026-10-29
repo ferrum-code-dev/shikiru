@@ -1,7 +1,6 @@
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
-import pytest
 from rich.console import Console
 
 from shikiru.dashboard.contract import TaskSessionView
@@ -98,64 +97,6 @@ def test_usage_table_orders_current_first_humanises_values_and_drops_columns_by_
     for width, columns in WIDTH_COLUMNS:
         assert usage_rows(SESSIONS, width).columns == columns
     assert usage_rows(SESSIONS, 60).widths[Column.MODEL] < len(SESSIONS[0].model)
-
-
-@pytest.mark.parametrize(
-    ("input_tokens", "output_tokens", "cell"),
-    [
-        (0, 0, "0 / 0"),
-        (5, 0, "5 / 0"),
-        (999, 1, "999 / 1"),
-        (1_000, 1_500, "1k / 1.5k"),
-        (1_050, 12_355, "1.05k / 12.4k"),
-        (83_500, 999_499, "83.5k / 999k"),
-        (999_500, 1_340_000, "1M / 1.34M"),
-        (999_950, 100_000, "1M / 100k"),
-        (1_000_000, 0, "1M / 0"),
-    ],
-)
-def test_token_pair_keeps_reported_input_and_output_at_three_significant_digits(
-    input_tokens: int,
-    output_tokens: int,
-    cell: str,
-) -> None:
-    session = _session(
-        "implementer",
-        "opus-5",
-        usage_reported=True,
-        input_tokens=input_tokens,
-        output_tokens=output_tokens,
-    )
-
-    assert usage_rows((session,), 100).rows[0].cells[Column.TOKENS] == cell
-
-
-@pytest.mark.parametrize(
-    ("usage_reported", "legacy_token_totals", "cell"),
-    [
-        (None, False, DASH),
-        (False, False, DASH),
-        (None, True, "500 / 50"),
-        (True, False, "500 / 50"),
-    ],
-)
-def test_token_pair_is_shown_only_for_known_totals(
-    usage_reported: bool | None,
-    legacy_token_totals: bool,
-    cell: str,
-) -> None:
-    session = _session(
-        "implementer",
-        "opus-5",
-        usage_reported=usage_reported,
-        legacy_token_totals=legacy_token_totals,
-        input_tokens=500,
-        output_tokens=50,
-        cache_read_tokens=9_000,
-        cache_write_tokens=300,
-    )
-
-    assert usage_rows((session,), 100).rows[0].cells[Column.TOKENS] == cell
 
 
 def _heading_text(view: Any) -> Text:

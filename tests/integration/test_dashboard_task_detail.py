@@ -809,9 +809,7 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             lines = rendered_lines(sessions.content, width=90)
 
             legacy = next(line for line in lines if "Implementer" in line)
-            assert "500 / 50" in legacy
-            assert "$1.25" in legacy
-            assert "10%" in legacy
+            assert legacy.split()[-5:] == ["500", "/", "50", "$1.25", "10%"]
             silent = [line for line in lines if "Leader" in line]
             assert len(silent) == 2
             assert all(line.split()[-1] == "\N{EM DASH}" for line in silent)
@@ -830,6 +828,58 @@ def _line_with(lines: list[str], needle: str) -> str:
     return next(line for line in lines if needle in line)
 
 
+_ROUNDED_PAIRS = (
+    ((0, 0), "0 / 0"),
+    ((5, 0), "5 / 0"),
+    ((999, 1), "999 / 1"),
+    ((1_000, 1_500), "1k / 1.5k"),
+    ((1_050, 12_355), "1.05k / 12.4k"),
+    ((83_500, 999_499), "83.5k / 999k"),
+    ((999_500, 1_340_000), "1M / 1.34M"),
+    ((999_950, 100_000), "1M / 100k"),
+    ((1_000_000, 0), "1M / 0"),
+)
+
+
+async def test_token_pair_rounds_reported_counts_at_three_significant_digits(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Token pairs round predictably")
+    runs = RunStore(connection, clock)
+    for index, ((input_tokens, output_tokens), _) in enumerate(_ROUNDED_PAIRS):
+        run = runs.start(task.id, Role.HELPER, Rung("claude", f"case-{index}", "high"))
+        runs.record_usage(
+            run.id,
+            Usage(input_tokens, output_tokens, 9_000_000, 400, None, _COST_BASIS_BILLED, None),
+        )
+    reader = StateReader(database, clock)
+    try:
+        app = _dashboard_app(
+            reader,
+            project_root,
+            focus_task=task.id,
+            widget_names=TASK_DETAIL_WIDGETS,
+            clock=clock,
+        )
+        async with app.run_test(size=(120, 40)) as pilot:
+            await _open_task_view(app, pilot, TASK_VIEW_USAGE)
+            sessions = app.screen.query_one("#task-detail-sessions", Static)
+            await wait_until(
+                lambda: "case-0" in plain_text(sessions.content),
+                timeout=UI_WAIT_SECONDS,
+            )
+            lines = rendered_lines(sessions.content, width=120)
+            for index, (_, pair) in enumerate(_ROUNDED_PAIRS):
+                row = _line_with(lines, f"case-{index}")
+                assert row.split()[-5:] == [*pair.split(), "\N{EM DASH}", "\N{EM DASH}"]
+    finally:
+        reader.close()
+
+
 async def test_token_pair_keeps_reported_input_and_output_apart_at_wide_and_narrow_widths(
     connection: Connection,
     database: Database,
@@ -840,7 +890,10 @@ async def test_token_pair_keeps_reported_input_and_output_apart_at_wide_and_narr
     task = seed_task(connection, clock, title="Token pairs stay readable")
     runs = RunStore(connection, clock)
     superseded = runs.start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
-    runs.record_usage(superseded.id, Usage(1_000_000, 12, 0, 0, None, _COST_BASIS_BILLED, None))
+    runs.record_usage(
+        superseded.id,
+        Usage(1_340_000, 1_340_000, 0, 0, None, _COST_BASIS_BILLED, None),
+    )
     runs.close(superseded.id)
     current = runs.start(task.id, Role.LEADER, IMPLEMENTER_RUNGS[0])
     runs.record_usage(
@@ -872,9 +925,9 @@ async def test_token_pair_keeps_reported_input_and_output_apart_at_wide_and_narr
             assert leader.split()[-5:] == ["1.34M", "/", "83.5k", "\N{EM DASH}", "20%"]
             implementer = _line_with(wide, "Implementer")
             assert implementer.split()[-6:] == [
-                "1M",
+                "1.34M",
                 "/",
-                "12",
+                "1.34M",
                 "\N{EM DASH}",
                 "\N{EM DASH}",
                 "old",
@@ -884,12 +937,15 @@ async def test_token_pair_keeps_reported_input_and_output_apart_at_wide_and_narr
             unknown = next(line for line in wide if "Helper" in line and "0 / 0" not in line)
             assert unknown.split()[-3:] == ["\N{EM DASH}", "\N{EM DASH}", "\N{EM DASH}"]
 
-            await pilot.resize_terminal(36, 20)
-            await pilot.wait_for_scheduled_animations()
-            narrow = _painted_lines(sessions)
-            assert "1.34M / 83.5k" in _line_with(narrow, "Leader")
-            assert "1M / 12" in _line_with(narrow, "Implementer")
-            assert "0 / 0" in _line_with(narrow, "0 / 0")
+            for width in (36, 32):
+                await pilot.resize_terminal(width, 20)
+                await pilot.wait_for_scheduled_animations()
+                stacked = [line.split() for line in _painted_lines(sessions)]
+                assert ["r/w", "1.34M", "/", "83.5k"] in stacked
+                assert ["r/w", "1.34M", "/", "1.34M"] in stacked
+                assert ["Implementer", "old"] in stacked
+                assert ["r/w", "0", "/", "0"] in stacked
+                assert ["r/w", "\N{EM DASH}"] in stacked
     finally:
         reader.close()
 

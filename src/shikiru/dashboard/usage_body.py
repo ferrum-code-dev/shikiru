@@ -51,6 +51,7 @@ ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 MODEL_MIN_WIDTH = 8
 SIGNIFICANT_DIGITS = 3
 PAIR_SEPARATOR = " / "
+PAIR_LABEL = "r/w"
 _GAP_PHRASES = {
     CoverageGap.NO_OBSERVATIONS.value: "no observations",
     CoverageGap.NO_START_BOUNDARY.value: "no start boundary",
@@ -95,11 +96,12 @@ class UsageRow:
 
 @dataclass(frozen=True)
 class UsageTable:
-    """The columns that fit the width, their widths and the rows, current sessions first."""
+    """The columns that fit the width, their widths, the rows and whether they stack."""
 
     columns: tuple[Column, ...]
     widths: dict[Column, int]
     rows: tuple[UsageRow, ...]
+    stacked: bool
 
 
 def usage_rows(sessions: Sequence[TaskSessionView], width: int) -> UsageTable:
@@ -123,7 +125,7 @@ def usage_rows(sessions: Sequence[TaskSessionView], width: int) -> UsageTable:
     for column in _DROP_ORDER:
         if total() > width:
             columns.remove(column)
-    return UsageTable(tuple(columns), widths, rows)
+    return UsageTable(tuple(columns), widths, rows, stacked=total() > width)
 
 
 def _row(session: TaskSessionView) -> UsageRow:
@@ -214,9 +216,26 @@ def _row_text(table: UsageTable, row: UsageRow) -> Text:
     if row.level is not None and row.level is not UsageLevel.OK and Column.CONTEXT in table.columns:
         context_width = table.widths[Column.CONTEXT]
         line.stylize(USAGE_LEVEL_COLORS[row.level], len(line) - context_width, len(line))
+    return _old_tagged(line, row)
+
+
+def _old_tagged(line: Text, row: UsageRow) -> Text:
     if row.old:
         line.append(f"{GAP}{OLD_TAG}", style=SECONDARY_TEXT_COLOR)
     return line
+
+
+def _table_lines(table: UsageTable) -> list[Text]:
+    if table.stacked:
+        return [line for row in table.rows for line in _stacked_row(row)]
+    header = _line(table, {column: column.value for column in Column}, SECONDARY_TEXT_COLOR)
+    return [header, *(_row_text(table, row) for row in table.rows)]
+
+
+def _stacked_row(row: UsageRow) -> list[Text]:
+    role = _old_tagged(Text(LEAD + row.cells[Column.ROLE]), row)
+    pair = Text.assemble(LEAD, GAP, grey(PAIR_LABEL), GAP, row.cells[Column.TOKENS])
+    return [role, pair]
 
 
 def _heading(sessions: Sequence[TaskSessionView]) -> Text | None:
@@ -299,8 +318,7 @@ class UsageBody:
         blocks.extend(
             [
                 *([heading] if heading is not None else []),
-                _line(table, {column: column.value for column in Column}, SECONDARY_TEXT_COLOR),
-                *(_row_text(table, row) for row in table.rows),
+                *_table_lines(table),
             ]
         )
         blocks.extend([Text(), *_quota_lines(view.quota_consumption)])
