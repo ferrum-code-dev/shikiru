@@ -1170,11 +1170,47 @@ async def test_command_history_callback_after_close_is_safe(
         reader.close()
 
 
+_DAY_SECONDS = 24 * 60 * 60
+
+
+@dataclass(frozen=True)
+class _CountdownCase:
+    window: str
+    resets_in: timedelta | None
+    countdowns: tuple[tuple[int, str], ...]
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(
+            _CountdownCase("weekly", timedelta(seconds=10), ((0, "10s"), (2, "8s"))),
+            id="sub-minute",
+        ),
+        pytest.param(
+            _CountdownCase(
+                "7d", timedelta(hours=135, minutes=46), ((0, "5d 15h 46m"), (60, "5d 15h 45m"))
+            ),
+            id="multi-day",
+        ),
+        pytest.param(
+            _CountdownCase(
+                "7d",
+                timedelta(seconds=_DAY_SECONDS + 2),
+                ((0, "1d 0h 0m"), (3, "23h 59m"), (_DAY_SECONDS, "0s"), (60, "0s")),
+            ),
+            id="crosses-a-day-then-expires",
+        ),
+        pytest.param(_CountdownCase("7d", None, ((0, "\N{EN DASH}"),)), id="unknown-reset"),
+    ],
+)
 async def test_task_usage_quota_reset_ticks_without_motion_evidence_reads(
     database: Database,
     connection: Connection,
     tmp_path: Path,
+    case: _CountdownCase,
 ) -> None:
+    window, resets_in, countdowns = case.window, case.resets_in, case.countdowns
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_START)
     settings = _motion_settings(project_dir)
@@ -1182,9 +1218,9 @@ async def test_task_usage_quota_reset_ticks_without_motion_evidence_reads(
     QuotaStore(connection).record(
         "codex",
         QuotaWindow(
-            "weekly",
+            window,
             50,
-            _START + timedelta(seconds=10),
+            _START + resets_in if resets_in is not None else None,
             _START - timedelta(seconds=59),
         ),
     )
@@ -1219,16 +1255,15 @@ async def test_task_usage_quota_reset_ticks_without_motion_evidence_reads(
             )
             await choose_details_entry(pilot, TASK_VIEW_USAGE)
             sessions = app.screen.query_one("#task-detail-sessions", Static)
-            await wait_until(
-                lambda: "codex weekly 50% used resets 10s" in plain_text(sessions.content),
-                timeout=UI_WAIT_SECONDS,
-            )
-            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
-            clock.advance(2)
-            await wait_until(
-                lambda: "resets 8s" in plain_text(sessions.content),
-                timeout=UI_WAIT_SECONDS,
-            )
+            for advance_seconds, countdown in countdowns:
+                if advance_seconds:
+                    await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+                    clock.advance(advance_seconds)
+                expected = f"codex {window} 50% used resets {countdown}"
+                await wait_until(
+                    lambda expected=expected: expected in plain_text(sessions.content),
+                    timeout=UI_WAIT_SECONDS,
+                )
     finally:
         reader.close()
 
@@ -2118,3 +2153,57 @@ def _detail_marker(view: TaskDetailView) -> str:
 def _uptime_text(header: Static) -> str:
     match = re.search(r"Uptime \d+[hms](?: \d+m)?", plain_text(header.content))
     return match.group(0) if match else ""
+
+
+async def test_legacy_quota_rows_give_way_to_canonical_observations_in_project_and_task_views(
+    database: Database,
+    connection: Connection,
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock(_START)
+    settings = _motion_settings(write_minimal_project(tmp_path))
+    task, _ = _seed_dashboard_state(connection, clock)
+    quotas = QuotaStore(connection)
+    block_until = _START + timedelta(hours=3)
+    quotas.block("codex", block_until, "quota")
+    for agent, legacy_window, used_pct in (
+        ("codex", "primary", 77.0),
+        ("codex", "secondary", 66.0),
+        ("claude", "five_hour", 36.0),
+    ):
+        quotas.record(agent, QuotaWindow(legacy_window, used_pct, None, _START))
+    connection.execute("PRAGMA user_version = 9")
+    connection.commit()
+
+    migrated = database.connect()
+    try:
+        reader = StateReader(database, clock)
+        try:
+            views = _build_views(reader, tmp_path, settings, clock, task)
+            fresh = QuotaStore(migrated)
+            reset = _START + timedelta(days=1)
+            fresh.record("codex", QuotaWindow("5h", 23.5, reset, _START))
+            fresh.record("codex", QuotaWindow("7d", 41.0, reset, _START))
+            fresh.record("claude", QuotaWindow("5h", 36.0, reset, _START))
+            migrated.commit()
+
+            project = {usage.agent: usage for usage in views.usage(None)}
+            assert {
+                agent: [(w.name, w.used_pct) for w in usage.quotas]
+                for agent, usage in project.items()
+            } == {
+                "codex": [("5h", 23.5), ("7d", 41.0), ("weekly", 50.0)],
+                "claude": [("5h", 36.0)],
+            }
+            detail = await views.task_detail(task.id)
+            assert detail is not None
+            assert {
+                usage.agent: [w.name for w in usage.quotas] for usage in detail.quota_observations
+            } == {"codex": ["5h", "7d", "weekly"]}
+            block = QuotaStore(migrated).block_for("codex")
+            assert block is not None
+            assert block.until == block_until
+        finally:
+            reader.close()
+    finally:
+        migrated.close()
