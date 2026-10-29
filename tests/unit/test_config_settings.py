@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -7,9 +8,11 @@ from pydantic import ValidationError
 
 from shikiru.agents.contracts import Rung
 from shikiru.config.settings import (
+    MAX_RETRY_DELAY_SECONDS,
     ComplexityLadder,
     DashboardConfig,
     GaugesConfig,
+    RetriesConfig,
     RoleConfig,
     RolesConfig,
     Settings,
@@ -103,3 +106,55 @@ def test_dashboard_rejects_disk_thresholds_outside_alert_below_warn_at_most_100(
         DashboardConfig.model_validate(
             {**dict(dashboard), "disk_warn_free_pct": warn_pct, "disk_alert_free_pct": alert_pct}
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("unavailable_initial_seconds", 0),
+        ("unavailable_initial_seconds", float("inf")),
+        ("unavailable_initial_seconds", float("nan")),
+        ("unavailable_initial_seconds", MAX_RETRY_DELAY_SECONDS * 2),
+        ("unavailable_multiplier", 1),
+        ("unavailable_multiplier", float("inf")),
+        ("unavailable_multiplier", float("nan")),
+        ("unavailable_max_seconds", 0),
+        ("unavailable_max_seconds", float("inf")),
+        ("unavailable_max_seconds", MAX_RETRY_DELAY_SECONDS * 2),
+        ("unavailable_max_retries", -1),
+        ("unavailable_max_retries", 21),
+    ],
+)
+def test_unavailable_retries_reject_invalid_values(field: str, value: object) -> None:
+    retries = make_settings().orchestration.retries
+
+    with pytest.raises(ValidationError):
+        RetriesConfig.model_validate({**dict(retries), field: value})
+
+
+def test_unavailable_retries_reject_a_cap_below_the_initial_delay() -> None:
+    retries = make_settings().orchestration.retries
+
+    with pytest.raises(ValidationError, match="must be at least"):
+        RetriesConfig.model_validate(
+            {
+                **dict(retries),
+                "unavailable_initial_seconds": 10,
+                "unavailable_max_seconds": 9,
+            }
+        )
+
+
+def test_maximum_unavailable_retry_delay_is_convertible_to_timedelta() -> None:
+    retries = make_settings().orchestration.retries
+    maximum = MAX_RETRY_DELAY_SECONDS
+
+    accepted = RetriesConfig.model_validate(
+        {
+            **dict(retries),
+            "unavailable_initial_seconds": maximum,
+            "unavailable_max_seconds": maximum,
+        }
+    )
+
+    assert timedelta(seconds=accepted.unavailable_max_seconds) <= timedelta.max

@@ -87,10 +87,16 @@ compaction behavior.
 
 Recovery is explicit and bounded by failure type: unavailable providers receive backoff/retries,
 quota failures wait for reset within policy or move to a later different-provider rung, and stalls
-receive limited continuation attempts. Model capacity errors count as unavailability, including
-capacity errors returned as HTTP 429: retry after 30 seconds, 2 minutes and 5 minutes, then advance
-to the next rung, which may use another model on the same agent. Authentication errors,
-unsupported/unclassified failures, missing reports and exhausted limits produce visible decisions.
+receive limited continuation attempts. A Codex failure message containing `at capacity` counts as
+unavailability: retry using `[orchestration.retries]`'s initial delay, multiplier and maximum delay,
+then advance to the next rung when its retry count is exhausted. The packaged policy uses 30 seconds,
+a multiplier of 4, a 300-second cap and three retries, which gives delays of 30, 120 and 300 seconds.
+The retry count can be set to zero for immediate ladder fallback and is capped at 20. These settings
+are loaded when the engine starts; stop and restart it to apply changes. A later rung may use another
+model on the same agent. Engine tick retries remain configured separately under
+`[orchestration.faults]`.
+Authentication errors, unsupported/unclassified failures, missing reports and exhausted limits
+produce visible decisions.
 Helper can rebuild a missing report or classify an otherwise unknown failure, trying its own
 ladder after call failures or unusable answers within one shared timeout. Its output is validated
 before recovery uses it.

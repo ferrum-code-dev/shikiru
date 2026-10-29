@@ -78,6 +78,7 @@ from shikiru.plugins.agents.codex.turn import CodexTurnParser, CodexTurnSequence
 from shikiru.process import SubprocessRunner
 from tests.e2e.diagnostics import SANDBOX_DENIAL_MARKERS
 from tests.support.clock import FakeClock
+from tests.support.factories import make_settings
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -86,6 +87,7 @@ _FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "agents" / "codex"
 _ROLE = "implementer"
 _MODEL = "gpt-5.6-sol"
 _OTHER_MODEL = "gpt-5.6-terra"
+_UNAVAILABLE_RETRIES = make_settings().orchestration.retries
 _LIVE_MODEL = "gpt-5.6-luna"
 _LIVE_OTHER_MODEL = "gpt-5.6-terra"
 _EFFORT = "low"
@@ -709,6 +711,10 @@ class TestCodexHeadlessContract(AgentContractSuite):
                 max_quota_wait=timedelta(hours=8),
                 has_next_rung=False,
                 has_next_rung_different_agent=False,
+                unavailable_initial_seconds=_UNAVAILABLE_RETRIES.unavailable_initial_seconds,
+                unavailable_multiplier=_UNAVAILABLE_RETRIES.unavailable_multiplier,
+                unavailable_max_seconds=_UNAVAILABLE_RETRIES.unavailable_max_seconds,
+                unavailable_max_retries=_UNAVAILABLE_RETRIES.unavailable_max_retries,
             ),
         )
 
@@ -732,6 +738,10 @@ class TestCodexHeadlessContract(AgentContractSuite):
                 max_quota_wait=timedelta(hours=8),
                 has_next_rung=False,
                 has_next_rung_different_agent=False,
+                unavailable_initial_seconds=_UNAVAILABLE_RETRIES.unavailable_initial_seconds,
+                unavailable_multiplier=_UNAVAILABLE_RETRIES.unavailable_multiplier,
+                unavailable_max_seconds=_UNAVAILABLE_RETRIES.unavailable_max_seconds,
+                unavailable_max_retries=_UNAVAILABLE_RETRIES.unavailable_max_retries,
             ),
         )
 

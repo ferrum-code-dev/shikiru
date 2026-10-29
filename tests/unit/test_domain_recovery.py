@@ -6,7 +6,6 @@ import pytest
 
 from shikiru.agents.contracts import FailureKind
 from shikiru.domain.recovery import (
-    BACKOFF_SCHEDULE,
     QUOTA_MARGIN,
     QUOTA_PROBE,
     Backoff,
@@ -24,9 +23,10 @@ from shikiru.domain.recovery import (
     decide,
 )
 from shikiru.domain.tasks import EscalationReason
-from tests.support.factories import make_verdict
+from tests.support.factories import make_settings, make_verdict
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
+_DEFAULT_RETRIES = make_settings().orchestration.retries
 
 
 def _policy(
@@ -35,12 +35,20 @@ def _policy(
     max_quota_wait: timedelta = timedelta(hours=8),
     has_next_rung: bool = False,
     has_next_rung_different_agent: bool = False,
+    unavailable_initial_seconds: float = _DEFAULT_RETRIES.unavailable_initial_seconds,
+    unavailable_multiplier: float = _DEFAULT_RETRIES.unavailable_multiplier,
+    unavailable_max_seconds: float = _DEFAULT_RETRIES.unavailable_max_seconds,
+    unavailable_max_retries: int = _DEFAULT_RETRIES.unavailable_max_retries,
 ) -> RecoveryPolicy:
     return RecoveryPolicy(
         now=now,
         max_quota_wait=max_quota_wait,
         has_next_rung=has_next_rung,
         has_next_rung_different_agent=has_next_rung_different_agent,
+        unavailable_initial_seconds=unavailable_initial_seconds,
+        unavailable_multiplier=unavailable_multiplier,
+        unavailable_max_seconds=unavailable_max_seconds,
+        unavailable_max_retries=unavailable_max_retries,
     )
 
 
@@ -80,13 +88,13 @@ def _policy(
             None,
             _policy(),
             TurnCounters(),
-            Backoff(BACKOFF_SCHEDULE[0]),
+            Backoff(timedelta(seconds=30)),
         ),
         (
             FailureKind.UNAVAILABLE,
             None,
             _policy(has_next_rung=True),
-            TurnCounters(unavailable_retries=len(BACKOFF_SCHEDULE)),
+            TurnCounters(unavailable_retries=3),
             NextRung(different_agent=False),
         ),
         (
@@ -161,6 +169,67 @@ def test_stall_resumes_then_escalates_after_the_limit(
 def test_protocol_error_escalates() -> None:
     assert decide(ProtocolError(), TurnCounters(), _policy()) == Escalate(
         EscalationReason.AGENT_PROTOCOL
+    )
+
+
+def test_default_unavailable_backoff_preserves_existing_three_delays() -> None:
+    failure = Failed(FailureKind.UNAVAILABLE, None, "model at capacity")
+    policy = _policy(has_next_rung=True)
+
+    assert [
+        decide(failure, TurnCounters(unavailable_retries=attempt), policy) for attempt in range(3)
+    ] == [
+        Backoff(timedelta(seconds=30)),
+        Backoff(timedelta(seconds=120)),
+        Backoff(timedelta(seconds=300)),
+    ]
+    assert decide(failure, TurnCounters(unavailable_retries=3), policy) == NextRung(
+        different_agent=False
+    )
+
+
+def test_custom_unavailable_backoff_uses_exponential_delays_capped_at_maximum() -> None:
+    failure = Failed(FailureKind.UNAVAILABLE, None, "model at capacity")
+    policy = _policy(
+        has_next_rung=True,
+        unavailable_initial_seconds=2,
+        unavailable_multiplier=3,
+        unavailable_max_seconds=10,
+        unavailable_max_retries=4,
+    )
+
+    assert [
+        decide(failure, TurnCounters(unavailable_retries=attempt), policy) for attempt in range(4)
+    ] == [
+        Backoff(timedelta(seconds=2)),
+        Backoff(timedelta(seconds=6)),
+        Backoff(timedelta(seconds=10)),
+        Backoff(timedelta(seconds=10)),
+    ]
+    assert decide(failure, TurnCounters(unavailable_retries=4), policy) == NextRung(
+        different_agent=False
+    )
+
+
+def test_zero_unavailable_retries_moves_to_the_next_rung_immediately() -> None:
+    failure = Failed(FailureKind.UNAVAILABLE, None, "model at capacity")
+    policy = _policy(has_next_rung=True, unavailable_max_retries=0)
+
+    assert decide(failure, TurnCounters(), policy) == NextRung(different_agent=False)
+
+
+def test_very_large_finite_multiplier_caps_without_overflow() -> None:
+    failure = Failed(FailureKind.UNAVAILABLE, None, "model at capacity")
+    policy = _policy(
+        has_next_rung=True,
+        unavailable_initial_seconds=1,
+        unavailable_multiplier=1e308,
+        unavailable_max_seconds=10,
+        unavailable_max_retries=2,
+    )
+
+    assert decide(failure, TurnCounters(unavailable_retries=1), policy) == Backoff(
+        timedelta(seconds=10)
     )
 
 

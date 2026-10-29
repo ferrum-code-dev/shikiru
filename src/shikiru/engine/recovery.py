@@ -113,11 +113,16 @@ class TurnRecovery:
     def _policy(self, task: Task, role: Role, *, quota_wait_exhausted: bool) -> RecoveryPolicy:
         current = move_up(task, role, self._settings)
         different = move_up(task, role, self._settings, different_agent=True)
+        retries = self._settings.orchestration.retries
         return RecoveryPolicy(
             now=self._clock.now(),
             max_quota_wait=timedelta(seconds=self._settings.orchestration.timeouts.max_quota_wait),
             has_next_rung=current is not None,
             has_next_rung_different_agent=different is not None,
+            unavailable_initial_seconds=retries.unavailable_initial_seconds,
+            unavailable_multiplier=retries.unavailable_multiplier,
+            unavailable_max_seconds=retries.unavailable_max_seconds,
+            unavailable_max_retries=retries.unavailable_max_retries,
             quota_wait_exhausted=quota_wait_exhausted,
         )
 

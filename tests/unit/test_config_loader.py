@@ -24,6 +24,34 @@ def test_deep_merge_keeps_sibling_keys_from_lower_sources(tmp_path: Path) -> Non
     assert settings.orchestration.resources.min_free_ram_gb == 4
 
 
+def test_unavailable_retry_defaults_keep_the_existing_retry_schedule(tmp_path: Path) -> None:
+    settings = load_settings(_project(tmp_path))
+    retries = settings.orchestration.retries
+
+    assert retries.unavailable_initial_seconds == 30
+    assert retries.unavailable_multiplier == 4
+    assert retries.unavailable_max_seconds == 300
+    assert retries.unavailable_max_retries == 3
+
+
+def test_unavailable_retry_settings_load_from_project_config(tmp_path: Path) -> None:
+    project_dir = _project(
+        tmp_path,
+        "\n[orchestration.retries]\n"
+        "unavailable_initial_seconds = 2\n"
+        "unavailable_multiplier = 3\n"
+        "unavailable_max_seconds = 10\n"
+        "unavailable_max_retries = 4\n",
+    )
+
+    retries = load_settings(project_dir).orchestration.retries
+
+    assert retries.unavailable_initial_seconds == 2
+    assert retries.unavailable_multiplier == 3
+    assert retries.unavailable_max_seconds == 10
+    assert retries.unavailable_max_retries == 4
+
+
 def test_deep_merge_replaces_arrays_instead_of_concatenating(tmp_path: Path) -> None:
     project_dir = _project(
         tmp_path,

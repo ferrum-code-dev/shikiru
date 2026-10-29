@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -18,6 +19,8 @@ DockerScope = Literal["project", "all"]
 PaneName = Literal["system", "leader", "implementer", "shell"]
 GIT_DEFAULT_REMOTE = "origin"
 MAX_MOTION_REFRESH_HZ = 4
+MAX_UNAVAILABLE_RETRIES = 20
+MAX_RETRY_DELAY_SECONDS = timedelta.max.days * 86_400 + timedelta.max.seconds
 MAX_TIMELINE_PAGE_SIZE = 49
 MAX_TIMELINE_SIGNAL_SCAN_ROWS = 1024
 MAX_USAGE_PCT = 100
@@ -82,6 +85,24 @@ class FaultsConfig(ConfigModel):
     repeat_notify_seconds: float = Field(gt=0)
 
 
+class RetriesConfig(ConfigModel):
+    """`[orchestration.retries]`: bounded retries for unavailable agent providers."""
+
+    unavailable_initial_seconds: float = Field(
+        gt=0, le=MAX_RETRY_DELAY_SECONDS, allow_inf_nan=False
+    )
+    unavailable_multiplier: float = Field(gt=1, allow_inf_nan=False)
+    unavailable_max_seconds: float = Field(gt=0, le=MAX_RETRY_DELAY_SECONDS, allow_inf_nan=False)
+    unavailable_max_retries: int = Field(ge=0, le=MAX_UNAVAILABLE_RETRIES)
+
+    @model_validator(mode="after")
+    def cap_is_at_least_initial_delay(self) -> RetriesConfig:
+        if self.unavailable_max_seconds < self.unavailable_initial_seconds:
+            message = "unavailable_max_seconds must be at least unavailable_initial_seconds"
+            raise ValueError(message)
+        return self
+
+
 class NetworkConfig(ConfigModel):
     """`[orchestration.network]`: bounds of the remote calls pull request mode makes."""
 
@@ -103,6 +124,7 @@ class OrchestrationConfig(ConfigModel):
     resources: ResourcesConfig
     timeouts: TimeoutsConfig
     faults: FaultsConfig
+    retries: RetriesConfig
     network: NetworkConfig
 
 

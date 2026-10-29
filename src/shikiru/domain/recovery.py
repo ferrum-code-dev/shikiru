@@ -12,11 +12,6 @@ from shikiru.domain.tasks import EscalationReason
 if TYPE_CHECKING:
     from shikiru.domain.reports import Report
 
-BACKOFF_SCHEDULE: tuple[timedelta, ...] = (
-    timedelta(seconds=30),
-    timedelta(minutes=2),
-    timedelta(minutes=5),
-)
 MAX_STALL_RECOVERIES_PER_TURN = 2
 OTHER_RETRIES_PER_TURN = 1
 QUOTA_MARGIN = timedelta(seconds=60)
@@ -71,6 +66,10 @@ class RecoveryPolicy:
     max_quota_wait: timedelta
     has_next_rung: bool
     has_next_rung_different_agent: bool
+    unavailable_initial_seconds: float
+    unavailable_multiplier: float
+    unavailable_max_seconds: float
+    unavailable_max_retries: int
     quota_wait_exhausted: bool = False
 
 
@@ -134,8 +133,14 @@ def _quota_action(resets_at: datetime | None, policy: RecoveryPolicy) -> Action:
 
 
 def _decide_unavailable(counters: TurnCounters, policy: RecoveryPolicy) -> Action:
-    if counters.unavailable_retries < len(BACKOFF_SCHEDULE):
-        return Backoff(delay=BACKOFF_SCHEDULE[counters.unavailable_retries])
+    if counters.unavailable_retries < policy.unavailable_max_retries:
+        delay = policy.unavailable_initial_seconds
+        for _ in range(counters.unavailable_retries):
+            if delay >= policy.unavailable_max_seconds / policy.unavailable_multiplier:
+                delay = policy.unavailable_max_seconds
+                break
+            delay *= policy.unavailable_multiplier
+        return Backoff(delay=timedelta(seconds=min(delay, policy.unavailable_max_seconds)))
     if policy.has_next_rung:
         return NextRung(different_agent=False)
     return Escalate(EscalationReason.LADDER_EXHAUSTED)

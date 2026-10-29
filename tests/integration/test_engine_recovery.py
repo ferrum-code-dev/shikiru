@@ -4,7 +4,7 @@ import asyncio
 import json
 import os
 from contextlib import suppress
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,7 +16,6 @@ from shikiru.config.settings import AgentConfig
 from shikiru.dashboard.contract import TaskBrowserFilter
 from shikiru.domain.commands import SetRung
 from shikiru.domain.events import EventKind
-from shikiru.domain.recovery import BACKOFF_SCHEDULE
 from shikiru.domain.steps import Step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
 from shikiru.process import SubprocessRunner
@@ -48,6 +47,16 @@ if TYPE_CHECKING:
 
 _FLOW_TIMEOUT_SECONDS = 60
 _RUNNER = SubprocessRunner()
+
+
+class _RecordingClock(FakeClock):
+    def __init__(self, start: datetime) -> None:
+        super().__init__(start)
+        self.sleep_requests: list[float] = []
+
+    async def sleep(self, seconds: float) -> None:
+        self.sleep_requests.append(seconds)
+        await super().sleep(seconds)
 
 
 async def _drive(flow_task: asyncio.Task[None], clock: FakeClock) -> None:
@@ -420,13 +429,14 @@ async def test_unavailable_retries_end_with_the_next_ladder_rung(
     clock = FakeClock(TASK_CREATED_AT)
     next_rung = Rung(agent=agent, model="fake-2", effort=None)
     settings = _rung_settings(next_rung)
+    retries = settings.orchestration.retries.unavailable_max_retries
     failure: dict[str, object] = {"kind": "fail", "failure_kind": "unavailable"}
     flow_task, task_id = await _start_flow(
         engine_env,
         tmux_server,
         settings=settings,
         clock=clock,
-        script=[*[failure for _ in range(len(BACKOFF_SCHEDULE) + 1)], {"kind": "accept"}],
+        script=[*[failure for _ in range(retries + 1)], {"kind": "accept"}],
     )
 
     await _drive(flow_task, clock)
@@ -437,7 +447,7 @@ async def test_unavailable_retries_end_with_the_next_ladder_rung(
     assert final.rung_index[Role.IMPLEMENTER] == 1
     events = build_flow(engine_env, settings, clock=clock).events
     failures = events.since(0, task_id=task_id, kinds=[EventKind.TURN_FAILED])
-    assert len(failures) == len(BACKOFF_SCHEDULE) + 1
+    assert len(failures) == retries + 1
     [changed] = events.since(0, task_id=task_id, kinds=[EventKind.RUNG_CHANGED])
     assert changed.data["to"] == next_rung.model
     assert changed.data["different_agent"] is False
@@ -445,6 +455,44 @@ async def test_unavailable_retries_end_with_the_next_ladder_rung(
     runs = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
     assert runs[0].agent == agent
     assert runs[0].model == next_rung.model
+
+
+async def test_custom_unavailable_retry_settings_are_used_by_engine_recovery(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    clock = _RecordingClock(TASK_CREATED_AT)
+    next_rung = Rung(agent=FAKE_AGENT_ALIAS, model="fake-2", effort=None)
+    settings = _rung_settings(next_rung)
+    retries = settings.orchestration.retries.model_copy(
+        update={
+            "unavailable_initial_seconds": 2,
+            "unavailable_multiplier": 3,
+            "unavailable_max_seconds": 10,
+            "unavailable_max_retries": 2,
+        }
+    )
+    orchestration = settings.orchestration.model_copy(update={"retries": retries})
+    settings = settings.model_copy(update={"orchestration": orchestration})
+    failure: dict[str, object] = {"kind": "fail", "failure_kind": "unavailable"}
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=[failure, failure, failure, {"kind": "accept"}],
+    )
+
+    await _drive(flow_task, clock)
+
+    final = engine_env.tasks.require(task_id)
+    assert final.status is Status.INTEGRATING
+    assert final.step is Step.INTEGRATE
+    assert final.rung_index[Role.IMPLEMENTER] == 1
+    assert clock.sleep_requests == [2, 6]
+    events = build_flow(engine_env, settings, clock=clock).events
+    assert len(events.since(0, task_id=task_id, kinds=[EventKind.TURN_FAILED])) == 3
+    [changed] = events.since(0, task_id=task_id, kinds=[EventKind.RUNG_CHANGED])
+    assert changed.data["to"] == next_rung.model
 
 
 async def test_auth_failure_escalates_with_the_agent_auth_reason(

@@ -189,7 +189,7 @@ stop/start it to apply engine policy changes.
 | `roles`, `agents` | Role and complexity ladders, review escalation policy; plugin CLI arguments, compaction threshold and optional billing declaration. |
 | `orchestration` | Parallel task slots, review iterations and local merge versus pull-request integration. |
 | `orchestration.resources` | CPU/free-RAM gates for dispatch; these do not impose CPU/RAM limits on already-running agents. |
-| `orchestration.timeouts`, `.network`, `.faults` | Stall/tool/Helper/quota/integration/PR limits, remote polling and engine-fault retry policy. |
+| `orchestration.timeouts`, `.network`, `.faults`, `.retries` | Stall/tool/Helper/quota/integration/PR limits, remote polling, engine-fault retries, and configurable provider-unavailable retries. |
 | `dashboard` | Widgets, pane splits/titles, animation, display/refresh limits and resource/quota warning thresholds. |
 | `sessions`, `doctor`, `escalation` | SSH-query timeout, live-probe limits and the amount of attempted work summarized in decision context. |
 | `notify` | Optional external notification command and timeout; receives a JSON event on stdin. |
@@ -208,6 +208,12 @@ an expensive ordinary copy. Trackers and caches are optional.
 **Notifications:** tmux messages and an optional hook report completions, escalations, integration
 waits, lost takeovers and engine faults. Urgent undelivered notifications survive restarts; a crash
 can cause a duplicate delivery, so hooks should tolerate repeats.
+
+**Provider retry timing:** `[orchestration.retries]` configures unavailable-agent retries in
+seconds, with a multiplier and maximum delay. Defaults are 30 seconds, multiplier 4, 300 seconds
+maximum and 3 retries (delays of 30, 120 and 300 seconds before ladder fallback). The retry count
+may be zero and is limited to 20. Stop and restart the engine to load changed values. These settings
+are separate from `[orchestration.faults]`, which controls engine tick retries.
 
 **Automation and extensions:** CLI JSON supports scripts. MCP exposes status/task/escalation queries
 (an escalation carries its packet plus parsed `question`, `agent_options` and `resolutions`),

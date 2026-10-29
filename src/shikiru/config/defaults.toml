@@ -35,6 +35,12 @@ unexpected_fault_limit = 10
 stop_notify_seconds = 30
 repeat_notify_seconds = 300
 
+[orchestration.retries]
+unavailable_initial_seconds = 30
+unavailable_multiplier = 4
+unavailable_max_seconds = 300
+unavailable_max_retries = 3
+
 [orchestration.network]
 fetch_timeout_seconds = 30
 poll_attempts = 8

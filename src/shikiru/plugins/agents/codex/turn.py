@@ -101,7 +101,7 @@ _UNAVAILABLE_STATUS_MAX = 599
 _PAYMENT_REQUIRED_STATUS = 402
 _RATE_LIMIT_STATUS = 429
 _AUTH_STATUSES = (401, 403)
-_CAPACITY_TEXT = ("at capacity", "model_capacity", "model_at_capacity")
+_CAPACITY_TEXT = ("at capacity",)
 _UNAVAILABLE_TEXT = ("overloaded", "temporarily unavailable", "service unavailable")
 _CONTEXT_TEXT = (
     "context_length_exceeded",
@@ -110,6 +110,7 @@ _CONTEXT_TEXT = (
     "context window",
     "too many tokens",
 )
+_CONTEXT_LENGTH_EXCEEDED_CODE = "context_length_exceeded"
 _QUOTA_TEXT = ("usage_limit_reached", "usage limit", "rate_limit", "rate limit", "quota")
 _AUTH_TEXT = ("authentication", "unauthorized", "invalid api key")
 _UNKNOWN_ERROR_MESSAGE = "Codex turn ended without a structured result"
@@ -298,7 +299,7 @@ class CodexTurnParser:
         quota: Sequence[QuotaWindow],
     ) -> TurnFailed:
         message, status, code, reset_value = _error_details(payload)
-        classification = _classify_error(f"{message} {stderr}", status, code)
+        classification = _classify_error(message, status, code)
         error_reset = (
             reset_value
             if isinstance(reset_value, datetime)
@@ -628,7 +629,9 @@ def _classify_error(message: str, status: int | None, code: str) -> _Classificat
         or any(token in text for token in _AUTH_TEXT)
     ):
         return _Classification(FailureKind.AUTH)
-    if any(token in text for token in _CAPACITY_TEXT):
+    if code.lower() != _CONTEXT_LENGTH_EXCEEDED_CODE and any(
+        token in text for token in _CAPACITY_TEXT
+    ):
         return _Classification(FailureKind.UNAVAILABLE)
     if status == _RATE_LIMIT_STATUS or any(token in text for token in _QUOTA_TEXT):
         return _Classification(FailureKind.QUOTA)

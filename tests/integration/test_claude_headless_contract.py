@@ -65,6 +65,7 @@ from shikiru.plugins.agents.claude.options import DEFAULT_ARGS, MODEL_CATALOG_RE
 from shikiru.plugins.agents.claude.turn import CONTINUE_PROMPT, ClaudeTurnParser
 from shikiru.process import SubprocessRunner
 from tests.support.clock import FakeClock
+from tests.support.factories import make_settings
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -72,6 +73,7 @@ if TYPE_CHECKING:
     from shikiru.agents.sdk.turn import TurnParser, TurnProcessSequence
 
 _FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "agents" / "claude"
+_UNAVAILABLE_RETRIES = make_settings().orchestration.retries
 _ROLE = "implementer"
 _MODEL = "claude-haiku-4-5-20251001"
 _OTHER_MODEL = "claude-sonnet-4-5-20250929"
@@ -941,6 +943,10 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 max_quota_wait=timedelta(hours=8),
                 has_next_rung=False,
                 has_next_rung_different_agent=False,
+                unavailable_initial_seconds=_UNAVAILABLE_RETRIES.unavailable_initial_seconds,
+                unavailable_multiplier=_UNAVAILABLE_RETRIES.unavailable_multiplier,
+                unavailable_max_seconds=_UNAVAILABLE_RETRIES.unavailable_max_seconds,
+                unavailable_max_retries=_UNAVAILABLE_RETRIES.unavailable_max_retries,
             ),
         )
 

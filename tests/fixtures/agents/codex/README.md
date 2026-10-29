@@ -64,3 +64,9 @@ cover `status: failed` with exit code 2, a `completed` item with a non-zero exit
 code, older completed items without an exit code, a successful command, and a
 stream that exits without a terminal turn event. They are not captured T-35
 transcripts.
+
+## User-supplied model-capacity output
+
+`turn_model_capacity.jsonl` contains the two exact structured records the user
+supplied after reporting three Codex capacity failures. This is user-provided
+output, not a project-collected or independently verified live capture.
