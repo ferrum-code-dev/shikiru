@@ -1,8 +1,8 @@
 # Quota and task usage improvements
 
-The Operator requested fixes to quota labels, Claude percentages, long reset countdowns,
-historical task quota consumption, and separate input/output token counts. This document is the
-tracker for the three follow-up tasks below. Each task checks only its own entry when complete.
+The Operator requested fixes to quota labels, Claude percentages, long reset countdowns, and
+separate input/output token counts. This document is the tracker for the two follow-up tasks
+below. Each task checks only its own entry when complete.
 This planning change implements no application behaviour.
 
 ## Findings and decisions
@@ -15,12 +15,6 @@ This planning change implements no application behaviour.
 - Dashboard `_quota_countdown` calls `_duration`, which never emits days. The shared
   `ui.age.format_duration` already supports days, but has different sub-hour formatting; preserve
   existing sub-day countdown behaviour when reusing it or its day decomposition.
-- `DashboardViews.task_detail` attaches current project quota observations for the task's agents.
-  `dashboard.detail` refreshes those observations on motion. `UsageBody` renders them as current
-  account percentages and reset countdowns. Neither is evidence of quota consumed by this task.
-- `QuotaStore.record` upserts one account snapshot per agent/window. `TurnMonitor` also writes
-  signals into role view logs, but durable task accounting must not depend on reading retained
-  logs or live account snapshots on every dashboard refresh.
 - `UsageBody._tokens` adds session input and output into one number. The requested `r/w` means
   the existing normalized `input_tokens / output_tokens`, not cache read/write. Keep those
   existing token semantics: do not add cache counters, which overlap input for Codex, or change
@@ -29,10 +23,9 @@ This planning change implements no application behaviour.
 
 ## Execution order
 
-The quota display task can run alongside the token column task. Historical task quota accounting
-depends on quota normalization so it stores canonical names and consistent percentage units.
-No other dependencies are required. Implementation work is emitted in the plan report rather
-than performed by this planning task.
+The quota display task can run alongside the token column task. No other dependencies are
+required. Implementation work is emitted in the plan report rather than performed by this
+planning task.
 
 ## Tasks
 
@@ -68,68 +61,6 @@ References: `src/shikiru/plugins/agents/claude/turn.py`,
 `tests/integration/test_claude_headless_contract.py`,
 `tests/integration/test_codex_headless_contract.py`,
 `tests/integration/test_store_quotas.py`, `tests/integration/test_dashboard_usage_panel.py`,
-`tests/integration/test_dashboard_motion.py`.
-
-### Q2 — Record and display historical task quota consumption
-
-- [x] Replace task Usage live quota rows with durable, task-scoped consumption evidence.
-
-Depends on Q1.
-
-Acceptance criteria:
-
-1. Persist quota evidence with task, run/session and turn identity, canonical provider/window,
-   percentage, observation time and reset deadline. Capture the available start/end observations
-   around each turn, including failed/interrupted work; distinguish a missing baseline from zero.
-   Store enough coverage/provenance to explain an unavailable or partial total after restart.
-   Keep SQL in the store and calculation rules pure in the domain.
-2. A usable pair of ordered observations in the same reset period contributes the percentage
-   point increase, e.g. 20% to 23.5% contributes 3.5% of that window. Sum disjoint observed
-   intervals across this task's roles, resumed turns and old/new sessions by provider/window.
-   Never add cumulative session values repeatedly or count duplicate observations twice.
-3. Establish a baseline before charging an interval. A lone end observation cannot establish
-   total task usage, and an older cached account snapshot cannot establish full turn coverage.
-   Use observations collected within the turn for a partial observed delta when full boundaries
-   are unavailable. Preserve any boundary gap as partial coverage. Inspect provider collection:
-   Codex currently collapses rollout quota to the latest sample at finish; retain available
-   in-turn observations or capture trustworthy boundaries where supported. Filter resumed
-   rollouts to this turn; collection time must not redate older samples. Do not fabricate a
-   baseline, use another task's final value as this task's start, or add live provider calls
-   solely for dashboard refreshes.
-4. Split accounting at a changed reset deadline or a decrease in usage. Require a baseline in
-   the new period; never subtract across resets or infer that the old window reached 100%.
-   Missing reset identity, out-of-order/stale samples, interrupted collection and missing
-   boundaries produce partial/unavailable coverage rather than invented consumption. A true
-   observed zero delta is distinct from missing data. Summed consumption can exceed 100%
-   across reset periods; do not clamp the task total to a gauge range.
-5. Provider quota is account-wide. Present recorded deltas as observed estimates of task quota
-   consumption, with coverage visible when incomplete. Overlapping same-provider task intervals
-   are ambiguous: do not allocate or double-charge their shared account delta as exact usage;
-   mark affected coverage unavailable/partial. External account activity cannot be detected
-   reliably, so document the estimate limitation without inventing a token-to-quota conversion.
-6. Task Usage shows historical percentages per provider/window and no live remaining quota or
-   reset countdown. For example, a fully observed 20% to 23.5% interval shows 3.5% consumed,
-   not the current 23.5% account usage. Active tasks update only from new recorded task evidence;
-   finished task figures remain stable after later account use, reset countdown ticks, reopen
-   and engine restart. Legacy tasks without sufficient evidence show unavailable consumption;
-   no historical backfill from current snapshots is required.
-7. Replace the task-detail motion refresh path as well as initial rendering. Keep project-wide
-   quota gauges and scheduler quota blocks live and functioning. Use durable task evidence that
-   survives ordinary run-log/event retention; avoid a new dashboard log-scanning path.
-8. Domain rule tables cover interval validity, resets, coverage and aggregation. Real SQLite,
-   fake-agent and dashboard integration covers persistence/restart, resumed turns, failed turns,
-   two tasks sharing a provider, missing evidence and stable finished-task values while global
-   quota changes. Adapt the current motion test that expects task quota reset ticking.
-
-References: `src/shikiru/engine/monitor.py`, `src/shikiru/engine/turns.py`,
-`src/shikiru/engine/sessions.py`, `src/shikiru/plugins/agents/codex/turn.py`,
-`src/shikiru/plugins/agents/codex/quota.py`, `src/shikiru/agents/contracts.py`,
-`src/shikiru/store/quotas.py`, `src/shikiru/store/runs.py`,
-`src/shikiru/store/reader.py`, `src/shikiru/store/retention.py`,
-`src/shikiru/operator/queries.py`, `src/shikiru/dashboard/contract.py`,
-`src/shikiru/dashboard/views.py`, `src/shikiru/dashboard/detail.py`,
-`src/shikiru/dashboard/usage_body.py`, `tests/integration/test_engine_monitor.py`,
-`tests/integration/test_engine_restart.py`, `tests/integration/test_dashboard_task_detail.py`,
 `tests/integration/test_dashboard_motion.py`.
 
 ### Q3 — Split task token counts into read/write values
