@@ -23,7 +23,6 @@ from shikiru.store.events import (
 )
 from shikiru.store.quotas import AgentBlock, fetch_agent_block, fetch_quota_agents, fetch_quotas
 from shikiru.store.runs import fetch_all_runs, fetch_runs_for_task, fetch_taken_over_roles_for_task
-from shikiru.store.task_quota import fetch_task_quota_evidence
 from shikiru.store.tasks import (
     fetch_task,
     fetch_task_browser_page,
@@ -40,7 +39,6 @@ if TYPE_CHECKING:
     from shikiru.domain.commands import Command, CommandStatus
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.events import Event, EventKind
-    from shikiru.domain.quota_consumption import TaskQuotaEvidence
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Role, Status, Task
     from shikiru.store.database import Database
@@ -210,10 +208,6 @@ class StateReader:
     def list_quotas(self, agents: Sequence[str]) -> dict[str, list[QuotaWindow]]:
         """Read quota windows for each requested agent."""
         return {agent: fetch_quotas(self._connection, agent) for agent in agents}
-
-    def task_quota_evidence(self, task_id: str) -> TaskQuotaEvidence:
-        """See `shikiru.store.task_quota.fetch_task_quota_evidence`."""
-        return fetch_task_quota_evidence(self._connection, task_id)
 
     def list_quota_agents(self) -> list[str]:
         """Read every agent with persisted quota windows."""

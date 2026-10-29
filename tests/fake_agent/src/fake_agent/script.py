@@ -17,7 +17,6 @@ class QuotaWindowStep(BaseModel):
     used_pct: float
     resets_at: str | None = None
     observed_at: str
-    boundary: Literal["start", "end"] | None = None
 
 
 class _StepModel(BaseModel):

@@ -25,7 +25,6 @@ from shikiru.agents.contracts import (
 )
 from shikiru.domain.activity import is_stalled, seconds_until_stall
 from shikiru.domain.events import EventKind
-from shikiru.domain.quota_consumption import TurnOutcome
 from shikiru.domain.recovery import ProtocolError, Stalled
 from shikiru.private import append_private_text, make_private_dir
 from shikiru.ui.glyphs import GLYPH_STALLED, ROLE_GLYPHS
@@ -51,7 +50,6 @@ if TYPE_CHECKING:
     from shikiru.store.events import EventLog
     from shikiru.store.quotas import QuotaStore
     from shikiru.store.runs import RunStore
-    from shikiru.store.task_quota import TaskQuotaStore
     from shikiru.tmux.decorator import PaneDecorator
 
 _LINE_ENDING = "\n"
@@ -66,7 +64,6 @@ class TurnMonitor:
         sessions: SessionManager,
         runs: RunStore,
         quotas: QuotaStore,
-        task_quotas: TaskQuotaStore,
         events: EventLog,
         clock: Clock,
         settings: Settings,
@@ -77,7 +74,6 @@ class TurnMonitor:
         self._sessions = sessions
         self._runs = runs
         self._quotas = quotas
-        self._task_quotas = task_quotas
         self._events = events
         self._clock = clock
         self._settings = settings
@@ -106,15 +102,6 @@ class TurnMonitor:
         last_signal_at = self._clock.now()
         tool_running = False
         pending_signal = asyncio.create_task(_next_signal(iterator))
-        quota_turn_id = self._task_quotas.begin_turn(
-            task_id=task.id,
-            run_id=run_id,
-            turn=turn_dir.name,
-            role=role,
-            agent=agent.name,
-            started_at=last_signal_at,
-        )
-        outcome = TurnOutcome.ABORTED
         try:
             await self._decorator.set_pane_state(
                 task.panes[role], color=ROLE_COLORS[role], glyph=ROLE_GLYPHS[role]
@@ -124,7 +111,6 @@ class TurnMonitor:
                 timeouts = self._settings.orchestration.timeouts
                 if is_stalled(last_signal_at, tool_running, now, timeouts):
                     await turn.stop()
-                    outcome = TurnOutcome.STALLED
                     tool_running, pending_signal = await self._drain_stopped_turn(
                         pending_signal,
                         iterator,
@@ -135,7 +121,6 @@ class TurnMonitor:
                         role=role,
                         rung=rung,
                         run_id=run_id,
-                        quota_turn_id=quota_turn_id,
                         tool_running=tool_running,
                     )
                     await self._decorator.set_pane_state(
@@ -162,15 +147,10 @@ class TurnMonitor:
                     run_id=run_id,
                     run_dir=run_dir,
                     tool_running=tool_running,
-                    quota_turn_id=quota_turn_id,
                 )
                 if terminal is not None:
-                    outcome = (
-                        TurnOutcome.ENDED if isinstance(terminal, TurnEnded) else TurnOutcome.FAILED
-                    )
                     return terminal
         except StopAsyncIteration:
-            outcome = TurnOutcome.PROTOCOL_ERROR
             return ProtocolError()
         except asyncio.CancelledError:
             await turn.stop()
@@ -185,7 +165,6 @@ class TurnMonitor:
                     role=role,
                     rung=rung,
                     run_id=run_id,
-                    quota_turn_id=quota_turn_id,
                     tool_running=tool_running,
                 )
             )
@@ -194,7 +173,6 @@ class TurnMonitor:
             await turn.stop()
             raise
         finally:
-            self._task_quotas.end_turn(quota_turn_id, ended_at=self._clock.now(), outcome=outcome)
             if not pending_signal.done():
                 pending_signal.cancel()
             await asyncio.gather(pending_signal, return_exceptions=True)
@@ -212,7 +190,6 @@ class TurnMonitor:
         role: Role,
         rung: Rung,
         run_id: int,
-        quota_turn_id: int,
         tool_running: bool,
     ) -> tuple[bool, asyncio.Task[AgentSignal]]:
         try:
@@ -232,7 +209,6 @@ class TurnMonitor:
                         run_id=run_id,
                         run_dir=run_dir,
                         tool_running=tool_running,
-                        quota_turn_id=quota_turn_id,
                     )
                     if terminal is not None:
                         return tool_running, pending_signal
@@ -254,7 +230,6 @@ class TurnMonitor:
         run_id: int,
         run_dir: Path,
         tool_running: bool,
-        quota_turn_id: int,
     ) -> tuple[bool, TurnEnded | TurnFailed | None]:
         if isinstance(signal, SessionStarted):
             self._sessions.record_session_started(
@@ -280,18 +255,15 @@ class TurnMonitor:
         elif isinstance(signal, TurnFailed):
             return tool_running, signal
         else:
-            await self._record_auxiliary_signal(
-                signal, agent=agent, task=task, role=role, quota_turn_id=quota_turn_id
-            )
+            await self._record_auxiliary_signal(signal, agent=agent, task=task, role=role)
         return tool_running, None
 
     async def _record_auxiliary_signal(
-        self, signal: AgentSignal, *, agent: Agent, task: Task, role: Role, quota_turn_id: int
+        self, signal: AgentSignal, *, agent: Agent, task: Task, role: Role
     ) -> None:
         if isinstance(signal, QuotaReported):
             for window in signal.windows:
                 self._quotas.record(agent.name, window)
-                self._task_quotas.record_sample(quota_turn_id, window)
         elif isinstance(signal, Compacted):
             self._events.append(
                 EventKind.COMPACTED,

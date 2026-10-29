@@ -12,7 +12,6 @@ from shikiru.agents.contracts import (
     Compacted,
     FailureKind,
     Message,
-    QuotaObservationTimeSource,
     QuotaReported,
     QuotaWindow,
     SessionStarted,
@@ -154,11 +153,9 @@ class CodexTurnParser:
         self._home = home
         self._rollout_override = rollout_path
         self._clock = clock
-        self._started_at = clock.now()
         self._reset_time = reset_time
         self._quota_probe = CodexQuotaProbe(home, clock, reset_time)
-        self._streamed_quota_samples: set[QuotaWindow] = set()
-        self._streamed_quota_groups: list[list[QuotaWindow]] = []
+        self._latest_streamed_quota: tuple[QuotaWindow, ...] = ()
         self._tools: dict[str, str] = {}
         self._last_message = ""
         self._turn_usage: Mapping[str, Any] | None = None
@@ -199,15 +196,10 @@ class CodexTurnParser:
         payload = cast("Mapping[str, Any]", raw)
         handler = self._handlers.get(cast("str", payload.get(_TYPE_FIELD)))
         signals = handler(payload) if handler is not None else []
-        quota_windows = self._quota_probe.live_sample(line, self._clock.now())
-        if quota_windows:
-            new_samples = [
-                window for window in quota_windows if window not in self._streamed_quota_samples
-            ]
-            self._streamed_quota_samples.update(new_samples)
-            if new_samples:
-                self._streamed_quota_groups.append(new_samples)
-                signals.append(QuotaReported(tuple(new_samples)))
+        windows = self._quota_probe.parse(line, self._clock.now())
+        if windows:
+            self._latest_streamed_quota = tuple(windows)
+            signals.append(QuotaReported(tuple(windows)))
         return signals
 
     def _turn_completed(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
@@ -229,45 +221,22 @@ class CodexTurnParser:
         if self._terminal:
             return []
         self._terminal = True
+        if self._malformed:
+            return [TurnFailed(FailureKind.UNKNOWN, _MALFORMED_STREAM_MESSAGE, None)]
         if self._rollout is None:
             self._rollout = _rollout_path(self._home, self._session_id)
         entries = _read_rollout(self._rollout)
         signals: list[AgentSignal] = list(
             _compaction_signals(entries, self._initial_compaction_count)
         )
-        quota_samples = _quota_samples(
-            self._rollout,
-            entries,
-            home=self._home,
-            clock=self._clock,
-            reset_time=self._reset_time,
-            since=self._started_at,
-        )
-        available_quota_samples = [*quota_samples, *self._streamed_quota_groups]
-        latest_quota = max(
-            available_quota_samples,
-            key=lambda sample: max(window.observed_at for window in sample),
-            default=None,
-        )
-        quota = [] if latest_quota is None else latest_quota
-        quota_samples = [
-            [
-                window
-                for window in sample
-                if window not in self._streamed_quota_samples
-                and not (
-                    self._streamed_quota_samples
-                    and window.time_source is QuotaObservationTimeSource.UNKNOWN
-                )
-            ]
-            for sample in quota_samples
-        ]
-        quota_samples = [sample for sample in quota_samples if sample]
-        signals.extend(QuotaReported(tuple(sample)) for sample in quota_samples)
+        quota: Sequence[QuotaWindow] = self._latest_streamed_quota
+        if not quota:
+            quota = _quota_windows(
+                self._rollout, entries, self._home, self._clock, self._reset_time
+            )
+            if quota:
+                signals.append(QuotaReported(tuple(quota)))
         usage = _reported_usage(entries, self._turn_usage, self._initial_usage)
-        if self._malformed:
-            signals.append(TurnFailed(FailureKind.UNKNOWN, _MALFORMED_STREAM_MESSAGE, None))
-            return signals
         if usage is not None:
             signals.append(UsageReported(usage))
         if self._failure is not None:
@@ -590,19 +559,17 @@ def _rollout_type(entry: Mapping[str, Any]) -> object:
     return payload.get(_TYPE_FIELD) if payload is not None else None
 
 
-def _quota_samples(
+def _quota_windows(
     path: Path | None,
     entries: Sequence[Mapping[str, Any]],
-    *,
     home: Path,
     clock: Clock,
     reset_time: ResetTimeParser,
-    since: datetime,
-) -> list[list[QuotaWindow]]:
+) -> list[QuotaWindow]:
     if path is None or not entries:
         return []
     probe = CodexQuotaProbe(home, clock, reset_time)
-    return probe.samples(path.read_text(encoding="utf-8"), since)
+    return probe.parse(path.read_text(encoding="utf-8"), clock.now())
 
 
 def _reported_usage(

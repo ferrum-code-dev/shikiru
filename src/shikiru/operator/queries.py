@@ -37,7 +37,6 @@ from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.faults import FaultStreak, open_fault_streaks
-from shikiru.domain.quota_consumption import task_quota_consumption
 from shikiru.domain.reports import (
     FACTS_FILENAME,
     HELPER_REPORT_FILENAME,
@@ -96,7 +95,6 @@ from shikiru.workspace.reports import (
 if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.domain.escalation_evidence import EscalationPacket
-    from shikiru.domain.quota_consumption import WindowConsumption
     from shikiru.process import ProcessIdentity
     from shikiru.store.commands import StoredCommand
     from shikiru.store.reader import StateReader
@@ -591,10 +589,6 @@ class OperatorQueries:
     def task_usage(self, task_id: str) -> list[UsageView]:
         """Return agent-reported usage totals for one task's sessions."""
         return aggregate_usage(self._reader.list_runs(task_id))
-
-    def task_quota_consumption(self, task_id: str) -> tuple[WindowConsumption, ...]:
-        """Return the quota a task consumed, derived from its recorded observations."""
-        return task_quota_consumption(self._reader.task_quota_evidence(task_id))
 
     def task_runs(self, task_id: str) -> tuple[Run, ...]:
         """Return every persisted session row for one task in recorded order."""

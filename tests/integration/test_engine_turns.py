@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import signal
-from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -13,7 +12,6 @@ import pytest
 from shikiru.agents.contracts import role_dir
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.events import EventKind
-from shikiru.domain.quota_consumption import Coverage, CoverageGap, task_quota_consumption
 from shikiru.domain.reports import HELPER_REPORT_FILENAME, REPORT_FILENAME
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Mode, Role, Status, Step
@@ -21,11 +19,9 @@ from shikiru.engine.turn_processes import TURN_PID_NAME, read_turn_pid
 from shikiru.engine.turns import NUDGE_LIMIT
 from shikiru.paths import PROMPT_OVERRIDES_RELATIVE_PATH, turns_dir
 from shikiru.store.events import fetch_timeline_events
-from shikiru.store.task_quota import fetch_task_quota_evidence
 from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import FAKE_AGENT_NAME, set_role_script
-from tests.support.factories import TASK_CREATED_AT
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.permissions import requires_enforced_permissions
 from tests.support.waiting import wait_until
@@ -211,40 +207,7 @@ async def test_operator_message_is_redelivered_when_its_turn_fails(
     await set_role_script(
         tmux_server,
         Role.IMPLEMENTER,
-        [
-            {
-                "kind": "fail",
-                "failure_kind": "other",
-                "quota_windows": [
-                    {
-                        "name": "5h",
-                        "used_pct": 20,
-                        "resets_at": (TASK_CREATED_AT + timedelta(hours=5)).isoformat(),
-                        "observed_at": TASK_CREATED_AT.isoformat(),
-                        "boundary": "start",
-                    },
-                    {
-                        "name": "5h",
-                        "used_pct": 23.5,
-                        "resets_at": (TASK_CREATED_AT + timedelta(hours=5)).isoformat(),
-                        "observed_at": (TASK_CREATED_AT + timedelta(seconds=1)).isoformat(),
-                        "boundary": "end",
-                    },
-                ],
-            },
-            {
-                "kind": "accept",
-                "quota_windows": [
-                    {
-                        "name": "5h",
-                        "used_pct": 24,
-                        "resets_at": (TASK_CREATED_AT + timedelta(hours=5)).isoformat(),
-                        "observed_at": (TASK_CREATED_AT + timedelta(seconds=2)).isoformat(),
-                        "boundary": "end",
-                    }
-                ],
-            },
-        ],
+        [{"kind": "fail", "failure_kind": "other"}, {"kind": "accept"}],
     )
     OperatorMessages(engine_env.project_root).queue(
         task.id, Role.IMPLEMENTER, "use the helper", "c1"
@@ -280,21 +243,6 @@ async def test_operator_message_is_redelivered_when_its_turn_fails(
         turn=failed.name,
     )
     assert failed_event.data["iteration"] == failed_start.data["iteration"]
-    quota_evidence = fetch_task_quota_evidence(engine_env.connection, task.id)
-    implementer_turns = engine_env.connection.execute(
-        "SELECT run_id, turn, outcome FROM task_quota_turns "
-        "WHERE task_id = ? AND role = ? ORDER BY id",
-        (task.id, Role.IMPLEMENTER.value),
-    ).fetchall()
-    assert [turn["turn"] for turn in implementer_turns] == [failed.name, retried.name]
-    assert [turn["outcome"] for turn in implementer_turns] == ["failed", "ended"]
-    assert implementer_turns[0]["run_id"] == implementer_turns[1]["run_id"]
-    assert [sample.used_pct for sample in quota_evidence.samples] == [20, 23.5, 24]
-    assert len({sample.turn_id for sample in quota_evidence.samples}) == 2
-    [consumption] = task_quota_consumption(quota_evidence)
-    assert consumption.consumed_pct == 3.5
-    assert consumption.coverage is Coverage.PARTIAL
-    assert CoverageGap.NO_START_BOUNDARY in consumption.gaps
 
 
 async def test_messages_delivered_to_a_killed_turn_lead_the_replacement_prompt(

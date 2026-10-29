@@ -20,8 +20,6 @@ from shikiru.agents.contracts import (
     COST_BASIS_BILLED,
     COST_BASIS_UNKNOWN,
     BillingDeclaration,
-    QuotaBoundary,
-    QuotaWindow,
     Rung,
     Usage,
 )
@@ -74,7 +72,6 @@ from shikiru.domain.briefing import (
 from shikiru.domain.commands import HandBack, Resume
 from shikiru.domain.escalation import options_for
 from shikiru.domain.events import EventKind
-from shikiru.domain.quota_consumption import TurnOutcome
 from shikiru.domain.recovery import Completed
 from shikiru.domain.reports import (
     FACTS_FILENAME,
@@ -99,10 +96,8 @@ from shikiru.process import ProcessIdentity
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
-from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.store.runs import RunStore
-from shikiru.store.task_quota import TaskQuotaStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.session import HOME_WINDOW_NAME
@@ -814,8 +809,6 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             assert len(silent) == 2
             assert all(line.split()[-1] == "\N{EM DASH}" for line in silent)
             assert any(line.startswith("!") and "billing unknown" in line for line in lines)
-            assert "Quota consumed" in plain_text(sessions.content)
-            assert "unavailable" in plain_text(sessions.content)
     finally:
         reader.close()
 
@@ -948,91 +941,6 @@ async def test_token_pair_keeps_reported_input_and_output_apart_at_wide_and_narr
                 assert ["r/w", "\N{EM DASH}"] in stacked
     finally:
         reader.close()
-
-
-async def test_finished_task_quota_stays_historical_when_account_usage_and_time_change(
-    connection: Connection,
-    database: Database,
-    tmp_path: Path,
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Stable task quota evidence")
-    runs = RunStore(connection, clock)
-    run = runs.start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
-    runs.set_session(run.id, "session-stable", "resume session-stable")
-    quota_turns = TaskQuotaStore(connection)
-    turn_id = quota_turns.begin_turn(
-        task_id=task.id,
-        run_id=run.id,
-        turn="02-implement-i1",
-        role=Role.IMPLEMENTER,
-        agent="codex",
-        started_at=START,
-    )
-    reset = START + timedelta(hours=5)
-    quota_turns.record_sample(
-        turn_id,
-        QuotaWindow("5h", 20, reset, START + timedelta(seconds=1), QuotaBoundary.START),
-    )
-    quota_turns.record_sample(
-        turn_id,
-        QuotaWindow("5h", 23.5, reset, START + timedelta(seconds=2), QuotaBoundary.END),
-    )
-    quota_turns.end_turn(turn_id, ended_at=START + timedelta(seconds=3), outcome=TurnOutcome.ENDED)
-    runs.close(run.id)
-    task_store = TaskStore(connection, clock)
-    task_store.apply_transition(
-        task.id,
-        Transition.stay(task_store.require(task.id), step=None, status=Status.DONE),
-    )
-    QuotaStore(connection).record("codex", QuotaWindow("5h", 23.5, reset, START))
-
-    reader = StateReader(database, clock)
-    try:
-        app = _dashboard_app(
-            reader,
-            project_root,
-            focus_task=task.id,
-            widget_names=TASK_DETAIL_WIDGETS,
-            clock=clock,
-        )
-        async with app.run_test(size=(120, 42)) as pilot:
-            await _open_task_view(app, pilot, TASK_VIEW_USAGE)
-            sessions = app.screen.query_one("#task-detail-sessions", Static)
-            await wait_until(
-                lambda: "3.5%" in plain_text(sessions.content), timeout=UI_WAIT_SECONDS
-            )
-            assert "23.5%" not in plain_text(sessions.content)
-            assert "resets" not in plain_text(sessions.content)
-
-            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
-            QuotaStore(connection).record("codex", QuotaWindow("5h", 81, reset, START))
-            clock.advance(60)
-            await wait_until(
-                lambda: "3.5%" in plain_text(sessions.content), timeout=UI_WAIT_SECONDS
-            )
-            assert "81%" not in plain_text(sessions.content)
-
-        clock.advance(3600)
-        detail = await state_views(reader, project_root, clock, StubServices()).task_detail(task.id)
-        assert detail is not None
-        assert detail.quota_consumption[0].consumed_pct == 3.5
-        assert detail.quota_consumption[0].coverage == "complete"
-    finally:
-        reader.close()
-
-    restarted_reader = StateReader(database, clock)
-    try:
-        restarted = await state_views(
-            restarted_reader, project_root, clock, StubServices()
-        ).task_detail(task.id)
-        assert restarted is not None
-        assert restarted.status == Status.DONE.value
-        assert restarted.quota_consumption[0].consumed_pct == 3.5
-        assert restarted.quota_consumption[0].coverage == "complete"
-    finally:
-        restarted_reader.close()
 
 
 async def test_task_history_keeps_closed_lineages_and_observed_model_deltas(

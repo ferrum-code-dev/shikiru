@@ -559,7 +559,6 @@ class TaskDetailView:
     requeued_age: str | None = None
     usage: RecordedUsageView | None = None
     signal_observed: bool = False
-    quota_consumption: tuple[QuotaConsumptionView, ...] = ()
     agent_usage: tuple[AgentUsageView, ...] = ()
     priority: int | None = None
     actual_stage: str | None = None
@@ -674,21 +673,6 @@ class QuotaGaugeView:
     used_pct: float
     resets_in: str
     observed_ago: str
-
-
-@dataclass(frozen=True)
-class QuotaConsumptionView:
-    """Estimated share of one provider window a task consumed, with how well it was observed.
-
-    `window` is `None` when the provider reported no window; `consumed_pct` is `None` when the
-    recorded observations cannot establish any consumption.
-    """
-
-    agent: str
-    window: str | None
-    consumed_pct: float | None
-    coverage: str
-    gaps: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -918,10 +902,6 @@ class DashboardViews(Protocol):
 
     def usage(self, task_id: str | None = None) -> list[AgentUsageView]:
         """Return project usage or usage recorded for one task."""
-        ...
-
-    def task_quota_consumption(self, task_id: str) -> tuple[QuotaConsumptionView, ...]:
-        """Return the quota consumption recorded for one task, never live account usage."""
         ...
 
     def command_history(

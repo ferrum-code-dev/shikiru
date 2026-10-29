@@ -1,4 +1,4 @@
-"""Body of the Usage fold: a totals line, one aligned line per session, quota windows, one note."""
+"""Body of the Usage fold: a totals line, one aligned line per session, one note."""
 
 from __future__ import annotations
 
@@ -14,14 +14,13 @@ from rich.text import Text
 from shikiru.agents.contracts import BILLING_MODE_SUBSCRIPTION, BILLING_MODE_UNKNOWN
 from shikiru.dashboard.briefing_view import counted, total_cost_text
 from shikiru.domain.levels import UsageLevel, displayed_pct
-from shikiru.domain.quota_consumption import CoverageGap
 from shikiru.ui.compact import (
     COUNT_SHORT_MILLION,
     COUNT_SHORT_SCALE,
     ROLE_LABELS,
     compact_count,
 )
-from shikiru.ui.section import BOLD_PRIMARY, BOLD_STEEL, GROUP_SEPARATOR, grey
+from shikiru.ui.section import BOLD_STEEL, GROUP_SEPARATOR, grey
 from shikiru.ui.tokens import AMBER, SECONDARY_TEXT_COLOR, USAGE_LEVEL_COLORS
 
 if TYPE_CHECKING:
@@ -29,17 +28,9 @@ if TYPE_CHECKING:
 
     from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 
-    from shikiru.dashboard.contract import (
-        QuotaConsumptionView,
-        TaskDetailView,
-        TaskSessionView,
-    )
+    from shikiru.dashboard.contract import TaskDetailView, TaskSessionView
 
 NO_VALUE = "\N{EM DASH}"
-QUOTA_TITLE = "Quota consumed"
-QUOTA_ESTIMATE_NOTE = " (account-wide estimate; other activity may contribute)"
-QUOTA_NO_EVIDENCE = "unavailable \N{EM DASH} no quota observations recorded for this task"
-QUOTA_DECIMALS = 2
 NO_USAGE = "No usage is recorded yet."
 COVERAGE_UNAVAILABLE = "Task usage coverage unavailable"
 OLD_TAG = "old"
@@ -52,19 +43,6 @@ MODEL_MIN_WIDTH = 8
 SIGNIFICANT_DIGITS = 3
 PAIR_SEPARATOR = " / "
 PAIR_LABEL = "r/w"
-_GAP_PHRASES = {
-    CoverageGap.NO_OBSERVATIONS.value: "no observations",
-    CoverageGap.NO_START_BOUNDARY.value: "no start boundary",
-    CoverageGap.NO_END_BOUNDARY.value: "no end boundary",
-    CoverageGap.STALE_OBSERVATION.value: "stale observation ignored",
-    CoverageGap.MISSING_RESET.value: "reset time unknown",
-    CoverageGap.UNKNOWN_OBSERVATION_TIME.value: "observation time unknown",
-    CoverageGap.RESET_CHANGED.value: "window reset mid-turn",
-    CoverageGap.USAGE_DECREASED.value: "usage decreased",
-    CoverageGap.SHARED_ACCOUNT.value: "overlaps another task on this account",
-    CoverageGap.INTERRUPTED.value: "turn interrupted",
-    CoverageGap.LEGACY_HISTORY.value: "older turn history unavailable",
-}
 _NOUN_SESSION = "session"
 _NOUN_GAP = "model-history gap"
 _VERB_NO_USAGE = "reported no usage"
@@ -249,37 +227,6 @@ def _heading(sessions: Sequence[TaskSessionView]) -> Text | None:
     return Text(GROUP_SEPARATOR).join(parts) if parts else None
 
 
-def _quota_lines(consumption: Sequence[QuotaConsumptionView]) -> list[RenderableType]:
-    title = Text.assemble((QUOTA_TITLE, BOLD_PRIMARY), grey(QUOTA_ESTIMATE_NOTE))
-    if not consumption:
-        return [title, Text.assemble(LEAD, grey(QUOTA_NO_EVIDENCE))]
-    agent_width = max(cell_len(item.agent) for item in consumption)
-    name_width = max(cell_len(item.window or NO_VALUE) for item in consumption)
-    consumed_width = max(len(_consumed(item)) for item in consumption)
-    lines: list[RenderableType] = [title]
-    for item in consumption:
-        gaps = [_GAP_PHRASES[gap] for gap in item.gaps]
-        detail = GROUP_SEPARATOR.join([item.coverage, *gaps]) if gaps else item.coverage
-        lines.append(
-            Text.assemble(
-                LEAD,
-                item.agent.ljust(agent_width),
-                GAP,
-                (item.window or NO_VALUE).ljust(name_width),
-                GAP,
-                _consumed(item).rjust(consumed_width),
-                grey(f"{GAP}{detail}"),
-            )
-        )
-    return lines
-
-
-def _consumed(item: QuotaConsumptionView) -> str:
-    if item.consumed_pct is None:
-        return NO_VALUE
-    return f"{round(item.consumed_pct, QUOTA_DECIMALS):g}%"
-
-
 def _note(sessions: Sequence[TaskSessionView]) -> Text | None:
     silent = sum(session.usage_reported is False for session in sessions)
     gaps = sum(len(session.history_gaps) for session in sessions)
@@ -301,27 +248,21 @@ class UsageBody:
     view: TaskDetailView
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        """Yield the heading, the session table, the quota windows and the note."""
+        """Yield the heading, the session table and the note."""
         del console
         view = self.view
-        blocks: list[RenderableType] = []
         if view.usage is None:
-            blocks.append(grey(COVERAGE_UNAVAILABLE))
+            yield grey(COVERAGE_UNAVAILABLE)
         if not view.sessions:
             if view.usage is not None:
-                blocks.append(grey(NO_USAGE))
-            blocks.extend([Text(), *_quota_lines(view.quota_consumption)])
-            yield Group(*blocks)
+                yield grey(NO_USAGE)
             return
         table = usage_rows(view.sessions, options.max_width)
         heading = _heading(view.sessions)
-        blocks.extend(
-            [
-                *([heading] if heading is not None else []),
-                *_table_lines(table),
-            ]
-        )
-        blocks.extend([Text(), *_quota_lines(view.quota_consumption)])
+        blocks: list[RenderableType] = [
+            *([heading] if heading is not None else []),
+            *_table_lines(table),
+        ]
         note = _note(view.sessions)
         if note is not None:
             blocks.extend([Text(), note])

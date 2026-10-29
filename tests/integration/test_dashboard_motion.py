@@ -27,7 +27,6 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
-    TASK_VIEW_USAGE,
 )
 from shikiru.domain.escalation import Escalation, options_for
 from shikiru.domain.events import EventKind
@@ -47,7 +46,6 @@ from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.runs import RunStore
-from shikiru.store.task_quota import TaskQuotaStore
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.glyphs import GLYPH_ENGINE, GLYPH_ESCALATED, GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, TaskStrip
@@ -69,7 +67,6 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
-    choose_details_entry,
     ignore_palette_action,
     open_command_history,
     open_usage_details,
@@ -1171,77 +1168,6 @@ async def test_command_history_callback_after_close_is_safe(
         reader.close()
 
 
-async def test_task_usage_quota_consumption_follows_recorded_task_evidence_not_the_account(
-    database: Database,
-    connection: Connection,
-    tmp_path: Path,
-) -> None:
-    project_dir = write_minimal_project(tmp_path)
-    clock = FakeClock(_START)
-    settings = _motion_settings(project_dir)
-    task, task_run = _seed_dashboard_state(connection, clock)
-    reset = _START + timedelta(hours=3)
-    evidence = TaskQuotaStore(connection)
-    turn_id = evidence.begin_turn(
-        task_id=task.id,
-        run_id=task_run.id,
-        turn="01-implement-i1",
-        role=Role.IMPLEMENTER,
-        agent="codex",
-        started_at=_START,
-    )
-    evidence.record_sample(turn_id, QuotaWindow("5h", 20.0, reset, _START))
-    evidence.record_sample(turn_id, QuotaWindow("5h", 23.5, reset, _START + timedelta(seconds=5)))
-    QuotaStore(connection).record("codex", QuotaWindow("5h", 61.0, reset, _START))
-    reader = StateReader(database, clock)
-    try:
-        views = _build_views(reader, project_dir, settings, clock, task)
-
-        async def open_palette(action: str) -> None:
-            del action
-
-        app = DashboardApp(
-            focus_task=task.id,
-            views=views,
-            on_change=reader.watch,
-            clock=clock,
-            motion_interval_seconds=None,
-            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-            disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-            quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-            quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
-            open_palette=open_palette,
-            widget_names=settings.dashboard.widgets,
-            timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
-        )
-        async with app.run_test(size=(120, 40)) as pilot:
-            await wait_until(
-                lambda: (
-                    task.title in plain_text(app.query_one("#task-detail-identity", Static).content)
-                ),
-                timeout=UI_WAIT_SECONDS,
-            )
-            await choose_details_entry(pilot, TASK_VIEW_USAGE)
-            sessions = app.screen.query_one("#task-detail-sessions", Static)
-            await wait_until(
-                lambda: "3.5%" in plain_text(sessions.content), timeout=UI_WAIT_SECONDS
-            )
-
-            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
-            clock.advance(60)
-            QuotaStore(connection).record("codex", QuotaWindow("5h", 75.0, reset, clock.now()))
-            evidence.record_sample(
-                turn_id, QuotaWindow("5h", 25.0, reset, _START + timedelta(seconds=30))
-            )
-            await wait_until(lambda: "5%" in plain_text(sessions.content), timeout=UI_WAIT_SECONDS)
-            text = plain_text(sessions.content)
-            assert "resets" not in text
-            assert "75" not in text
-    finally:
-        reader.close()
-
-
 async def test_task_activity_distinguishes_setup_from_a_missing_signal(
     task_activity_environment: tuple[
         Connection, Path, FakeClock, Settings, Task, StateReader, StateDashboardViews
@@ -2129,7 +2055,7 @@ def _uptime_text(header: Static) -> str:
     return match.group(0) if match else ""
 
 
-async def test_legacy_quota_rows_give_way_to_canonical_observations_in_project_and_task_views(
+async def test_legacy_quota_rows_give_way_to_canonical_observations_in_project_view(
     database: Database,
     connection: Connection,
     tmp_path: Path,
@@ -2169,14 +2095,6 @@ async def test_legacy_quota_rows_give_way_to_canonical_observations_in_project_a
                 "codex": [("5h", 23.5), ("7d", 41.0), ("weekly", 50.0)],
                 "claude": [("5h", 36.0)],
             }
-            detail = await views.task_detail(task.id)
-            assert detail is not None
-            [consumption] = detail.quota_consumption
-            assert consumption.agent == "codex"
-            assert consumption.window is None
-            assert consumption.consumed_pct is None
-            assert consumption.coverage == "unavailable"
-            assert "legacy_history" in consumption.gaps
             block = QuotaStore(migrated).block_for("codex")
             assert block is not None
             assert block.until == block_until

@@ -504,8 +504,6 @@ class TaskDetailPanel(Vertical):
             await self._widget_context.clock.sleep(self._widget_context.timeline_refresh_seconds)
             if self._task_id is None or not self._screen_is_active():
                 continue
-            if self._folds[TASK_VIEW_USAGE].is_open:
-                await self._refresh_quota_consumption()
             await self._refresh_activity()
             for timeline in self._timelines.values():
                 await timeline.refresh_when_due()
@@ -758,17 +756,6 @@ class TaskDetailPanel(Vertical):
                 self._set_feedback("Task state could not be read.")
                 return
             self._render_view(view)
-
-    async def _refresh_quota_consumption(self) -> None:
-        view = self._view
-        if view is None:
-            return
-        quota_consumption = self._widget_context.views.task_quota_consumption(view.task_id)
-        if not self._screen_is_active() or self._view is not view:
-            return
-        refreshed = replace(view, quota_consumption=quota_consumption)
-        self._view = refreshed
-        self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(self._usage_body(refreshed))
 
     def _usage_body(self, view: TaskDetailView) -> UsageBody:
         return UsageBody(view)

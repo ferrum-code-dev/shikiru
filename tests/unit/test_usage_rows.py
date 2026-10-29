@@ -107,7 +107,7 @@ def _heading_text(view: Any) -> Text:
 
 
 def test_usage_body_starts_with_the_totals_not_its_fold_title() -> None:
-    view: Any = SimpleNamespace(usage=object(), sessions=SESSIONS, quota_consumption=())
+    view: Any = SimpleNamespace(usage=object(), sessions=SESSIONS)
     console = Console(width=100, record=True, color_system=None)
 
     console.print(UsageBody(view))

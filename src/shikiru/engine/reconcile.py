@@ -11,12 +11,10 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
-    from shikiru.clock import Clock
     from shikiru.domain.tasks import Task
     from shikiru.engine.fault_reporter import FaultReporter
     from shikiru.engine.layout_guard import LayoutGuard
     from shikiru.engine.turn_processes import TurnProcesses
-    from shikiru.store.task_quota import TaskQuotaStore
     from shikiru.store.tasks import TaskStore
 
 _IN_FLIGHT = (Status.RUNNING, Status.INTEGRATING)
@@ -30,10 +28,8 @@ class Reconciler:
         self,
         *,
         tasks: TaskStore,
-        task_quotas: TaskQuotaStore,
         layout: LayoutGuard,
         processes: TurnProcesses,
-        clock: Clock,
         resume_task: Callable[[str], Awaitable[None]],
         finish_task: Callable[[Task], Awaitable[Path | None]],
         restore_escalation: Callable[[Task], Awaitable[None]],
@@ -46,10 +42,8 @@ class Reconciler:
         A fault in one step or task is recorded through `faults`; the rest goes on.
         """
         self._tasks = tasks
-        self._task_quotas = task_quotas
         self._layout = layout
         self._processes = processes
-        self._clock = clock
         self._resume_task = resume_task
         self._finish_task = finish_task
         self._restore_escalation = restore_escalation
@@ -77,7 +71,6 @@ class Reconciler:
             await self._layout.restore(active)
         if not self._orphans_ended:
             await self._processes.end_orphans()
-            self._task_quotas.abort_open_turns(self._clock.now())
             self._orphans_ended = True
         for task in terminal:
             async with self._faults.isolate("reconcile cleanup", task_id=task.id):
