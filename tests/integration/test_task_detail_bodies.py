@@ -110,6 +110,13 @@ def _write_triage(project_root: Path, task: Task, criteria: list[str]) -> None:
 
 _HEADED_REQUEST = "Make the parser strict\n\n## Acceptance criteria\n- from the request\n"
 _PLAIN_REQUEST = "Make the parser strict\n\n- a list that is not criteria\n"
+_WRAPPED_REQUEST = (
+    "Make the parser strict\n\n## Acceptance criteria\n- Reject invalid input and\n"
+    "  preserve the original file.\n- Keep valid input.\n"
+)
+_FENCED_EXAMPLE_REQUEST = (
+    "Make the parser strict\n\n```markdown\n## Acceptance criteria\n- example only\n```\n"
+)
 DESCRIPTION_CRITERIA_CASES = [
     pytest.param(
         ["from triage"],
@@ -140,6 +147,18 @@ DESCRIPTION_CRITERIA_CASES = [
         _PLAIN_REQUEST,
         (),
         id="skipped-triage-without-a-heading-keeps-the-notice",
+    ),
+    pytest.param(
+        None,
+        _WRAPPED_REQUEST,
+        ("Reject invalid input and preserve the original file.", "Keep valid input."),
+        id="skipped-triage-keeps-wrapped-criteria-whole",
+    ),
+    pytest.param(
+        None,
+        _FENCED_EXAMPLE_REQUEST,
+        (),
+        id="skipped-triage-ignores-a-fenced-example",
     ),
 ]
 

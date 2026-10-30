@@ -23,11 +23,30 @@ _CASES: list[tuple[str, tuple[str, ...]]] = [
     ("Acceptance criteria\n- no heading marker\n", ()),
     ("## Acceptance criteria\nNo bullets here.\n- not a criterion\n", ()),
     ("## Acceptance criteria\n", ()),
+    (
+        (
+            "## Acceptance criteria\n- Reject invalid input and\n  preserve the original file.\n"
+            "- Keep valid input.\n"
+        ),
+        ("Reject invalid input and preserve the original file.", "Keep valid input."),
+    ),
+    ("## Acceptance criteria\n- a\n  b\n## Scope\n- not a criterion\n", ("a b",)),
+    ("## Acceptance criteria\n- a\n  b\nNotes\n- not a criterion\n", ("a b",)),
+    ("## Acceptance criteria\n- a\n```\n- example\n```\n- not a criterion\n", ("a",)),
+    ("```markdown\n## Acceptance criteria\n- example only\n```\n", ()),
+    (
+        (
+            "```markdown\n## Acceptance criteria\n- example only\n```\n\n"
+            "## Acceptance criteria\n- real\n"
+        ),
+        ("real",),
+    ),
+    ("````markdown\n```\n## Acceptance criteria\n- example\n```\n````\n", ()),
 ]
 
 
 @pytest.mark.parametrize(("request_text", "criteria"), _CASES)
-def test_criteria_are_the_bullets_under_the_heading_up_to_the_first_non_bullet_line(
+def test_criteria_are_the_bullets_and_their_continuations_under_the_heading_outside_code(
     request_text: str, criteria: tuple[str, ...]
 ) -> None:
     assert acceptance_criteria_from_request(request_text) == criteria
