@@ -10,4 +10,14 @@ trackers already describe it: leaving it empty ends this task with nothing imple
 When you fill `new_tasks`, restructure the tracker entries so each new task has its own
 entry and together they replace this task's entry; each new task ticks its own entry when done.
 Record any tracker changes outside the plan itself in `scope_changes`.
+
+Give each tracker entry for a task, and each `new_tasks` request, an acceptance-criteria section
+in exactly this form: the heading verbatim, then one independently verifiable criterion per bullet.
+
+## {{ acceptance_criteria_heading }}
+- <criterion>
+- <criterion>
+
+Put nothing else under that heading: a prose line or another heading ends the section, and
+criteria written after it are not read.
 {% endblock %}

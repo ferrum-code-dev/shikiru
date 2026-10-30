@@ -15,6 +15,7 @@ from jinja2 import (
 )
 
 from shikiru.agents.contracts import shikiru_command
+from shikiru.domain.acceptance import ACCEPTANCE_CRITERIA_HEADING
 from shikiru.domain.fencing import fence
 from shikiru.paths import PROMPT_OVERRIDES_RELATIVE_PATH
 
@@ -75,6 +76,7 @@ class PromptRenderer:
         merged = {
             "report_instruction": REPORT_INSTRUCTION,
             "already_done_sentence": ALREADY_DONE_SENTENCE,
+            "acceptance_criteria_heading": ACCEPTANCE_CRITERIA_HEADING,
             **context,
         }
         return template.render(**merged)

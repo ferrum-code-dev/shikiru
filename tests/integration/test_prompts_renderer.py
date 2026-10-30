@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from shikiru.domain.acceptance import ACCEPTANCE_CRITERIA_HEADING
 from shikiru.domain.fencing import fence
 from shikiru.prompts.renderer import (
     REPORT_INSTRUCTION,
@@ -54,6 +55,15 @@ def test_every_template_renders_the_request_the_workspace_fenced_reports_and_end
     assert f"`{_WORKSPACE}`" in rendered
     assert fence(_FENCING_REPORT_JSON, "json") in rendered
     assert rendered.rstrip().endswith(REPORT_INSTRUCTION)
+
+
+@pytest.mark.parametrize("name", [PromptName.TRIAGE, PromptName.PLAN])
+def test_triage_and_planning_name_the_acceptance_criteria_heading_the_dashboard_reads(
+    tmp_path: Path, name: PromptName
+) -> None:
+    rendered = PromptRenderer(tmp_path).render(name, _full_context(name))
+
+    assert f"## {ACCEPTANCE_CRITERIA_HEADING}" in rendered
 
 
 def test_verify_points_the_leader_at_the_diff_against_the_base(tmp_path: Path) -> None:
