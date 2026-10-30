@@ -22,6 +22,7 @@ POPUP_RULE_CLASS = "popup-rule"
 POPUP_BODY_CLASS = "popup-body"
 POPUP_SECONDARY_CLASS = "popup-secondary"
 POPUP_EDIT_CLASS = "popup-edit"
+POPUP_ROW_CLASS = "palette-row"
 POPUP_CLOSE_LABEL = "Esc \N{MULTIPLICATION SIGN}"
 
 

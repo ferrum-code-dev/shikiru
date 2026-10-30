@@ -65,9 +65,11 @@ from shikiru.ui.keys import key_hint
 from shikiru.ui.popup import (
     POPUP_BODY_CLASS,
     POPUP_CLOSE_CLASS,
+    POPUP_COMPACT_CONTROL_CSS,
     POPUP_CSS,
     POPUP_FRAME_CLASS,
     POPUP_HEADER_CLASS,
+    POPUP_ROW_CLASS,
     POPUP_RULE_CLASS,
     POPUP_SECONDARY_CLASS,
     POPUP_TITLE_CLASS,
@@ -494,12 +496,9 @@ class _CommandHistoryScreen(ModalScreen[None]):
     ]
     DEFAULT_CSS = (
         POPUP_CSS
+        + POPUP_COMPACT_CONTROL_CSS
         + """
-    #command-history-filter-row { width: 100%; height: 3; }
-    #command-history-filter-label {
-        width: 9; height: 3; color: $secondary-text; content-align: left middle;
-    }
-    #command-history-filter { width: 1fr; height: 3; }
+    #command-history-filter-row { width: 100%; }
     #command-history-scroll { min-height: 0; }
     #command-history-copy { height: auto; padding: 0; }
     #command-history-page { height: 1; }
@@ -535,7 +534,7 @@ class _CommandHistoryScreen(ModalScreen[None]):
                     popup_close_label(), id=_COMMAND_HISTORY_CLOSE, classes=POPUP_CLOSE_CLASS
                 )
             yield Rule(classes=POPUP_RULE_CLASS)
-            with Horizontal(id=_COMMAND_HISTORY_FILTER_ROW):
+            with Horizontal(id=_COMMAND_HISTORY_FILTER_ROW, classes=POPUP_ROW_CLASS):
                 yield Label("Status", id=_COMMAND_HISTORY_FILTER_LABEL)
                 yield Select(
                     (
