@@ -203,7 +203,7 @@ def _scheduler(environment: SchedulerFixture, settings: Settings) -> Scheduler:
         tasks=environment.tasks,
         settings=settings,
         quotas=environment.quotas,
-        resources=ResourceSampler(environment.clock, settings.orchestration.resources),
+        resources=ResourceSampler(environment.clock, lambda: settings.orchestration.resources),
         clock=environment.clock,
         layout=environment.layout,
         roots=RootPreparation(
@@ -279,7 +279,7 @@ async def scheduler_env(
         tasks=tasks,
         settings=settings,
         quotas=quotas,
-        resources=ResourceSampler(clock, settings.orchestration.resources),
+        resources=ResourceSampler(clock, lambda: settings.orchestration.resources),
         clock=clock,
         layout=layout,
         roots=RootPreparation(

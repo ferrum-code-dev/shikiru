@@ -168,9 +168,10 @@ Model catalogs come from installed plugin/CLI capabilities; lack of authoritativ
 rather than a claim that an arbitrary model is supported. Probe mode runs live checks; ordinary
 diagnostics do not run workflow turns. When the engine starts a new run, the dashboard re-applies the
 settings its views and widgets read as they render: gauge thresholds, briefing line counts, timeline
-refresh, animations and the palette confirmation delay. Timers set at mount, sampler and cache
-configuration, timeouts, the motion timer and the widget list keep the values the dashboard started
-with. An invalid file keeps the last valid values and raises a header alert.
+refresh, animations, the palette confirmation delay, and the disk, Docker and resource refresh and
+sampling intervals. Timeouts, Docker scope, the repository status cache, the motion timer and the
+widget list keep the values the dashboard started with. An invalid file keeps the last valid values
+and raises a header alert.
 
 Plugins normalize streamed signals, reports, session identity, errors, usage, billing and quota
 into [agent contracts](../src/shikiru/agents/contracts.py). The engine imports those contracts,

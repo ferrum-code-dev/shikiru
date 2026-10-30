@@ -17,6 +17,8 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 TIMEOUT_SECONDS = 5.0
 SHORT_TIMEOUT_SECONDS = 1.5
 REFRESH_SECONDS = 5.0
+LONG_REFRESH_SECONDS = 3600.0
+SHORT_REFRESH_SECONDS = 0.5
 PROJECT = "/work/app"
 MEBI = 1024**2
 HANG_SCRIPT = "exec sleep 30"
@@ -66,7 +68,7 @@ def _sampler(
     return DockerSampler(
         SubprocessRunner(),
         clock,
-        refresh_seconds=REFRESH_SECONDS,
+        refresh_seconds=lambda: REFRESH_SECONDS,
         timeout_seconds=timeout,
         project_roots=roots,
     )
@@ -212,6 +214,27 @@ async def test_a_later_failure_keeps_the_last_observation(
     assert second.failed
     assert second.summary is first.summary
     assert second.sampled_at == first.sampled_at
+
+
+async def test_a_shorter_refresh_cadence_resamples_on_the_next_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, clock: FakeClock
+) -> None:
+    _install_docker(tmp_path, monkeypatch, ps="", stats="")
+    cadence = [LONG_REFRESH_SECONDS]
+    sampler = DockerSampler(
+        SubprocessRunner(),
+        clock,
+        refresh_seconds=lambda: cadence[0],
+        timeout_seconds=TIMEOUT_SECONDS,
+        project_roots=None,
+    )
+    first = await sampler.sample()
+    clock.advance(SHORT_REFRESH_SECONDS)
+
+    assert (await sampler.sample_if_due()).sampled_at == first.sampled_at
+
+    cadence[0] = SHORT_REFRESH_SECONDS
+    assert (await sampler.sample_if_due()).sampled_at == clock.now()
 
 
 async def test_no_containers_is_an_empty_available_sample(

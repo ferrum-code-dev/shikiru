@@ -36,7 +36,10 @@ def clock() -> FakeClock:
 
 def _sampler(clock: FakeClock, project: Path) -> DiskSampler:
     return DiskSampler(
-        clock, project, refresh_seconds=REFRESH_SECONDS, size_refresh_seconds=SIZE_REFRESH_SECONDS
+        clock,
+        project,
+        refresh_seconds=lambda: REFRESH_SECONDS,
+        size_refresh_seconds=lambda: SIZE_REFRESH_SECONDS,
     )
 
 

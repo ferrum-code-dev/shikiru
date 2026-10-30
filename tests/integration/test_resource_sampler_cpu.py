@@ -68,7 +68,7 @@ async def test_agents_cpu_counts_a_busy_child_from_its_first_sample(
     cpu_count = psutil.cpu_count(logical=True)
     assert cpu_count is not None
     expected_pct = 100.0 / cpu_count
-    sampler = ResourceSampler(SystemClock(), RESOURCES)
+    sampler = ResourceSampler(SystemClock(), lambda: RESOURCES)
     root = identify_pid(wrapper_pid)
     assert root is not None
     roots = ResourceProcessRoots((), (root,))

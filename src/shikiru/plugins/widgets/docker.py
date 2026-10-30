@@ -13,6 +13,7 @@ from rich.text import Text
 from shikiru.dashboard.contract import DiagnosticSampleState, WidgetPlacement
 from shikiru.ui.compact import format_cpu_pct, format_memory
 from shikiru.ui.gated_static import GatedStatic
+from shikiru.ui.live_interval import LiveInterval
 from shikiru.ui.screen import is_first_child, widget_is_attached
 from shikiru.ui.section import (
     BOLD_PRIMARY,
@@ -189,12 +190,17 @@ class DockerPanel(GatedStatic):
         """Hold `context`; Docker sampling starts on mount."""
         super().__init__(id="docker")
         self._widget_context = context
+        self._interval = LiveInterval(
+            self,
+            lambda: context.settings.current().dashboard.docker_refresh_seconds,
+            self._refresh,
+        )
 
     async def on_mount(self) -> None:
         """Render and refresh Docker state at the configured cadence."""
         await self._refresh()
-        refresh_seconds = self._widget_context.settings.current().dashboard.docker_refresh_seconds
-        self.set_interval(refresh_seconds, self._refresh)
+        self._interval.apply()
+        self.run_worker(self._widget_context.on_change(self._interval.reapply), exclusive=True)
 
     async def _refresh(self) -> None:
         if not widget_is_attached(self):

@@ -1002,7 +1002,7 @@ def _home_review_services(
 ) -> StubServices:
     settings = load_settings(project_dir)
     root_identity = identify_pid(engine_pid) if engine_pid is not None else None
-    sampler = ResourceSampler(clock, settings.orchestration.resources)
+    sampler = ResourceSampler(clock, lambda: settings.orchestration.resources)
     roots = ResourceProcessRoots((root_identity,) if root_identity is not None else (), ())
     resource_snapshot = sampler.sample_process_roots(roots)
     services = StubServices(engine_running=engine_running)
@@ -1277,7 +1277,7 @@ async def test_headless_agent_resources_are_disjoint_and_diagnostics_reuses_the_
         project_dir,
         task,
     )
-    sampler = ResourceSampler(clock, settings.orchestration.resources)
+    sampler = ResourceSampler(clock, lambda: settings.orchestration.resources)
     services = resource_services(
         reader,
         project_dir,

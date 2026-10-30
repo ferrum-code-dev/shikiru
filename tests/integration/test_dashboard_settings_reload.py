@@ -8,8 +8,15 @@ import pytest
 
 from shikiru.agents.contracts import QuotaWindow
 from shikiru.config.loader import load_settings
+from shikiru.dashboard.contract import (
+    DiagnosticSampleState,
+    DockerSummaryView,
+    DockerView,
+    ElsewhereView,
+)
 from shikiru.dashboard.live_settings import LiveSettings
 from shikiru.domain.events import EventKind
+from shikiru.plugins.widgets.docker import DockerPanel, DockerWidget
 from shikiru.plugins.widgets.header import HeaderPanel, HeaderWidget
 from shikiru.plugins.widgets.usage import UsagePanel
 from shikiru.store.events import EventLog
@@ -42,6 +49,35 @@ QUOTA_USED_PCT = 40.0
 GAUGE_TEXT = "40%"
 QUOTA_WARN_CONFIG = "\n[dashboard.gauges]\nquota_warn_pct = 30\n"
 PRUNE_AFTER_SECONDS = 3600
+DOCKER_TOTAL = 5
+DOCKER_RUNNING_BEFORE = 1
+DOCKER_RUNNING_AFTER = 4
+DOCKER_LONG_REFRESH_CONFIG = "\n[dashboard]\ndocker_refresh_seconds = 3600\n"
+DOCKER_SHORT_REFRESH_CONFIG = "\n[dashboard]\ndocker_refresh_seconds = 0.05\n"
+
+
+class _DockerServices(StubServices):
+    def __init__(self) -> None:
+        super().__init__()
+        self.running = DOCKER_RUNNING_BEFORE
+
+    async def containers(self) -> DockerView:
+        summary = DockerSummaryView(
+            running=self.running,
+            total=DOCKER_TOTAL,
+            cpu_pct=None,
+            memory_bytes=None,
+            problems=(),
+            top=(),
+            elsewhere=ElsewhereView(0, None, None),
+            usage_available=True,
+        )
+        return DockerView(
+            available=True,
+            summary=summary,
+            state=DiagnosticSampleState.AVAILABLE,
+            sampled_ago="0s",
+        )
 
 
 def _plain(content: object) -> str:
@@ -150,6 +186,31 @@ async def test_usage_gauges_apply_edited_thresholds_when_the_engine_starts_again
         _start_engine(connection, clock)
 
         await wait_until(lambda: set(foregrounds(panel, GAUGE_TEXT)) == {AMBER}, timeout=5.0)
+
+
+async def test_docker_refresh_applies_an_edited_cadence_when_the_engine_starts_again(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    _write_config(project_dir, DOCKER_LONG_REFRESH_CONFIG)
+    clock = FakeClock(START)
+    services = _DockerServices()
+    context = widget_context(reader, project_dir, clock, services=services)
+    panel = cast("DockerPanel", DockerWidget().create(context))
+    async with WidgetHostApp(panel).run_test():
+        await wait_until(
+            lambda: f"{DOCKER_RUNNING_BEFORE} of {DOCKER_TOTAL}" in _plain(panel.content),
+            timeout=5.0,
+        )
+
+        services.running = DOCKER_RUNNING_AFTER
+        _write_config(project_dir, DOCKER_SHORT_REFRESH_CONFIG)
+        _start_engine(connection, clock)
+
+        await wait_until(
+            lambda: f"{DOCKER_RUNNING_AFTER} of {DOCKER_TOTAL}" in _plain(panel.content),
+            timeout=5.0,
+        )
 
 
 def test_a_start_during_the_first_load_is_applied_on_the_next_read(

@@ -150,13 +150,13 @@ def resource_services(
         disk=DiskSampler(
             clock,
             project_dir,
-            refresh_seconds=settings.dashboard.disk_refresh_seconds,
-            size_refresh_seconds=settings.dashboard.disk_size_refresh_seconds,
+            refresh_seconds=lambda: settings.dashboard.disk_refresh_seconds,
+            size_refresh_seconds=lambda: settings.dashboard.disk_size_refresh_seconds,
         ),
         docker=DockerSampler(
             runner,
             clock,
-            refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            refresh_seconds=lambda: settings.dashboard.docker_refresh_seconds,
             timeout_seconds=settings.dashboard.docker_timeout_seconds,
             project_roots=None,
         ),

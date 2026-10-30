@@ -11,7 +11,7 @@ import psutil
 from shikiru.process import ProcessIdentity
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
     from datetime import datetime
 
     from shikiru.clock import Clock
@@ -72,8 +72,8 @@ class ResourceSampleError(RuntimeError):
 class ResourceSampler:
     """Samples host CPU and available memory through `psutil`."""
 
-    def __init__(self, clock: Clock, config: ResourcesConfig) -> None:
-        """Use `clock` and configured cadences for resource samples."""
+    def __init__(self, clock: Clock, config: Callable[[], ResourcesConfig]) -> None:
+        """Use `clock` and the cadences `config` returns when each sample is due."""
         self._clock = clock
         self._config = config
         self._host_cpu: deque[tuple[datetime, float]] = deque()
@@ -109,7 +109,7 @@ class ResourceSampler:
         sampled_at = self._sampled_at
         if (
             sampled_at is None
-            or (self._clock.now() - sampled_at).total_seconds() >= self._config.sample_seconds
+            or (self._clock.now() - sampled_at).total_seconds() >= self._config().sample_seconds
         ):
             return self.sample()
         return self._last
@@ -127,7 +127,7 @@ class ResourceSampler:
         sampled_at = self._instance_sampled_at
         return (
             sampled_at is not None
-            and (self._clock.now() - sampled_at).total_seconds() < self._config.sample_seconds
+            and (self._clock.now() - sampled_at).total_seconds() < self._config().sample_seconds
         )
 
     def sample_process_roots(self, roots: ResourceProcessRoots) -> ResourceSnapshot:
@@ -268,7 +268,7 @@ class ResourceSampler:
             raise ResourceSampleError(str(error)) from error
 
     def _trim(self, now: datetime) -> None:
-        cutoff = now.timestamp() - self._config.cpu_window_seconds
+        cutoff = now.timestamp() - self._config().cpu_window_seconds
         while self._host_cpu and self._host_cpu[0][0].timestamp() < cutoff:
             self._host_cpu.popleft()
 

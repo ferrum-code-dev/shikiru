@@ -93,8 +93,8 @@ class DiskSampler:
         clock: Clock,
         project_root: Path,
         *,
-        refresh_seconds: float,
-        size_refresh_seconds: float,
+        refresh_seconds: Callable[[], float],
+        size_refresh_seconds: Callable[[], float],
     ) -> None:
         """Measure `project_root` at most once per cadence of `clock` time."""
         self._clock = clock
@@ -121,8 +121,8 @@ class DiskSampler:
                 await self._sample_free_space()
             return self._snapshot()
 
-    def _is_due(self, since: datetime | None, interval: float) -> bool:
-        return since is None or (self._clock.now() - since).total_seconds() >= interval
+    def _is_due(self, since: datetime | None, interval: Callable[[], float]) -> bool:
+        return since is None or (self._clock.now() - since).total_seconds() >= interval()
 
     def _start_size_walk_if_due(self) -> None:
         if self._size_task is not None and not self._size_task.done():

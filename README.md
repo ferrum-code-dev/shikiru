@@ -201,10 +201,10 @@ Settings merge in this order: packaged defaults → `.shikiru/config.toml` → r
 `--set key.path=value` overrides for that invocation. Use the wizard for project choices and edit
 the config for additional controls. An already-running engine keeps the settings it started with;
 stop/start it to apply engine policy changes. When a new engine run starts, the dashboard re-reads
-the config for slot counts, gauge thresholds, briefing and timeline display, animations and the
-palette confirmation delay; sampling and refresh intervals, timeouts and the widget list apply when
-the dashboard starts. An invalid config keeps the last valid values and shows an alert in the
-header.
+the config for slot counts, gauge thresholds, briefing and timeline display, animations, the palette
+confirmation delay, and the disk, Docker and resource refresh intervals; timeouts, Docker scope, the
+repository status cache, the motion timer and the widget list apply when the dashboard starts. An
+invalid config keeps the last valid values and shows an alert in the header.
 
 | Configuration area | Controls |
 | --- | --- |

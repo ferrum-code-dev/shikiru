@@ -55,7 +55,7 @@ class DockerSampler:
         runner: SubprocessRunner,
         clock: Clock,
         *,
-        refresh_seconds: float,
+        refresh_seconds: Callable[[], float],
         timeout_seconds: float,
         project_roots: Sequence[PurePath] | None,
     ) -> None:
@@ -87,7 +87,7 @@ class DockerSampler:
         sampled_at = self._sampled_at
         if (
             sampled_at is None
-            or (self._clock.now() - sampled_at).total_seconds() >= self._refresh_seconds
+            or (self._clock.now() - sampled_at).total_seconds() >= self._refresh_seconds()
         ):
             return await self.sample()
         return self._last

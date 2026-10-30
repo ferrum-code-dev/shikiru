@@ -9,6 +9,7 @@ from rich.console import Console
 from shikiru.dashboard.contract import FOCUS_PROJECT_DIAGNOSTICS_VIEW, WidgetPlacement
 from shikiru.ui.compact import render_resource_metric
 from shikiru.ui.gated_static import GatedStatic
+from shikiru.ui.live_interval import LiveInterval
 from shikiru.ui.screen import widget_is_attached
 
 RESOURCE_ENTER_KEY = "enter"
@@ -31,13 +32,18 @@ class ResourcesPanel(GatedStatic):
         self._widget_context = context
         self._sample: ResourceView | None = None
         self._applied_min_height: int | None = None
+        self._interval = LiveInterval(
+            self,
+            lambda: context.settings.current().orchestration.resources.sample_seconds,
+            self._refresh,
+        )
 
     async def on_mount(self) -> None:
         """Render and resample resources at the configured cadence."""
         await self._refresh()
         if self._widget_context.placement is WidgetPlacement.RESOURCES:
-            resources = self._widget_context.settings.current().orchestration.resources
-            self.set_interval(resources.sample_seconds, self._refresh)
+            self._interval.apply()
+            self.run_worker(self._widget_context.on_change(self._interval.reapply), exclusive=True)
 
     async def on_click(self, event: events.Click) -> None:
         if self._widget_context.placement is not WidgetPlacement.RESOURCES:

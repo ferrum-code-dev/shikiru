@@ -57,7 +57,7 @@ async def test_one_sample_serves_an_interval_and_rejects_reused_and_exited_ident
         clock,
         settings=settings,
         tmux_server=tmux_server,
-        sampler=ResourceSampler(clock, settings.orchestration.resources),
+        sampler=ResourceSampler(clock, lambda: settings.orchestration.resources),
         runner=runner,
     )
     turn_pid = turn_pid_path(task_run_dir, Role.IMPLEMENTER)
@@ -110,7 +110,7 @@ async def test_overlapping_recorded_agent_roots_are_counted_once(
         connection, clock, project_dir, task
     )
     root = psutil.Process(identity.pid)
-    sampler = ResourceSampler(clock, settings.orchestration.resources)
+    sampler = ResourceSampler(clock, lambda: settings.orchestration.resources)
     roots = ResourceProcessRoots((identity,), (identity, identity))
     try:
         try:

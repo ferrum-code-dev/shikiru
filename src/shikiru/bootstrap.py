@@ -386,11 +386,14 @@ async def run_dashboard(
             state=services.reader,
             tmux=tmux,
             session_target=session_target,
-            resources=ResourceSampler(clock, settings.orchestration.resources),
+            resources=ResourceSampler(
+                clock,
+                lambda: live_settings.current().orchestration.resources,
+            ),
             docker=DockerSampler(
                 runner,
                 clock,
-                refresh_seconds=settings.dashboard.docker_refresh_seconds,
+                refresh_seconds=lambda: live_settings.current().dashboard.docker_refresh_seconds,
                 timeout_seconds=settings.dashboard.docker_timeout_seconds,
                 project_roots=(
                     None if settings.dashboard.docker_scope == DOCKER_SCOPE_ALL else (project_root,)
@@ -399,8 +402,10 @@ async def run_dashboard(
             disk=DiskSampler(
                 clock,
                 project_root,
-                refresh_seconds=settings.dashboard.disk_refresh_seconds,
-                size_refresh_seconds=settings.dashboard.disk_size_refresh_seconds,
+                refresh_seconds=lambda: live_settings.current().dashboard.disk_refresh_seconds,
+                size_refresh_seconds=lambda: (
+                    live_settings.current().dashboard.disk_size_refresh_seconds
+                ),
             ),
         )
         views = dashboard_views_module.StateDashboardViews(
@@ -919,7 +924,7 @@ def build_engine(
             StopHandler(handler_context),
         ]
     )
-    sampler = ResourceSampler(resolved_clock, resolved_settings.orchestration.resources)
+    sampler = ResourceSampler(resolved_clock, lambda: resolved_settings.orchestration.resources)
     notifier = Notifier(
         resolved_tmux,
         resolved_runner,

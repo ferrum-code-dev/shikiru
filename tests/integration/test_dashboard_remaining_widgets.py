@@ -179,17 +179,17 @@ def _dashboard_services(
         state=state,
         tmux=tmux,
         session_target=UNUSED_SESSION_TARGET,
-        resources=ResourceSampler(clock, settings.orchestration.resources),
+        resources=ResourceSampler(clock, lambda: settings.orchestration.resources),
         disk=DiskSampler(
             clock,
             project_dir,
-            refresh_seconds=settings.dashboard.disk_refresh_seconds,
-            size_refresh_seconds=settings.dashboard.disk_size_refresh_seconds,
+            refresh_seconds=lambda: settings.dashboard.disk_refresh_seconds,
+            size_refresh_seconds=lambda: settings.dashboard.disk_size_refresh_seconds,
         ),
         docker=DockerSampler(
             runner,
             clock,
-            refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            refresh_seconds=lambda: settings.dashboard.docker_refresh_seconds,
             timeout_seconds=settings.dashboard.docker_timeout_seconds,
             project_roots=None,
         ),
@@ -1457,7 +1457,7 @@ async def test_resources_service_excludes_panes_from_other_projects(
     reader = StateReader(database, clock)
     request.addfinalizer(reader.close)
     settings = load_settings(project_dir)
-    sampler = ResourceSampler(clock, settings.orchestration.resources)
+    sampler = ResourceSampler(clock, lambda: settings.orchestration.resources)
     task = seed_task(connection, clock, title="Owned role pane")
     tasks = TaskStore(connection, clock)
     runs = RunStore(connection, clock)
@@ -1490,13 +1490,13 @@ async def test_resources_service_excludes_panes_from_other_projects(
         disk=DiskSampler(
             clock,
             project_dir,
-            refresh_seconds=settings.dashboard.disk_refresh_seconds,
-            size_refresh_seconds=settings.dashboard.disk_size_refresh_seconds,
+            refresh_seconds=lambda: settings.dashboard.disk_refresh_seconds,
+            size_refresh_seconds=lambda: settings.dashboard.disk_size_refresh_seconds,
         ),
         docker=DockerSampler(
             SubprocessRunner(),
             clock,
-            refresh_seconds=settings.dashboard.docker_refresh_seconds,
+            refresh_seconds=lambda: settings.dashboard.docker_refresh_seconds,
             timeout_seconds=settings.dashboard.docker_timeout_seconds,
             project_roots=None,
         ),
