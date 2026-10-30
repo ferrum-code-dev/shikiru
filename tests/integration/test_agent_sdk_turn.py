@@ -12,6 +12,7 @@ import pytest
 
 from shikiru.agents.contracts import (
     AgentSignal,
+    Compacted,
     FailureKind,
     Message,
     Rung,
@@ -19,6 +20,7 @@ from shikiru.agents.contracts import (
     TurnEnded,
     TurnFailed,
     TurnSpec,
+    UsageReported,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import (
@@ -28,7 +30,7 @@ from shikiru.agents.sdk.turn import (
     TurnProcessSequence,
     stream_log_path,
 )
-from shikiru.plugins.agents.claude.turn import ClaudeTurnParser
+from shikiru.plugins.agents.claude.turn import CONTINUE_PROMPT, ClaudeTurnParser, ClaudeTurnSequence
 from shikiru.plugins.agents.codex.turn import CodexTurnSequence
 from shikiru.process import SubprocessRunner
 from tests.support.clock import FakeClock
@@ -221,10 +223,222 @@ async def test_claude_activity_after_task_notification_reaches_the_turn_consumer
 
     assert signals[0] == SessionStarted("session-background-redacted")
     assert Message("Verification is continuing.") in signals
-    assert Message("Implementation is complete.") in signals
+    assert Message("The latest follow-up is complete.") in signals
     assert len([signal for signal in signals if isinstance(signal, TurnEnded)]) == 1
     assert len([signal for signal in signals if isinstance(signal, TurnFailed)]) == 0
+    assert len([signal for signal in signals if isinstance(signal, SessionStarted)]) == 1
+    [usage] = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
+    assert (usage.input_tokens, usage.output_tokens) == (122, 49109)
+    assert (usage.cache_read_tokens, usage.cache_write_tokens) == (4828854, 121323)
     assert (spec.turn_dir / "implementer.stream.jsonl").read_bytes() == stream
+
+
+@pytest.mark.asyncio
+async def test_claude_repeated_init_with_a_different_session_remains_a_protocol_error(
+    tmp_path: Path,
+) -> None:
+    output = (
+        b'{"type":"system","subtype":"init","session_id":"session-a"}\n'
+        b'{"type":"system","subtype":"init","session_id":"session-b"}\n'
+        b'{"type":"result","subtype":"success","result":"finished"}\n'
+    )
+    program = f"import sys; sys.stdout.buffer.write({output!r})"
+    spec = replace(_spec(tmp_path, session_id=None), rung=Rung("claude", "haiku"))
+    clock = FakeClock(_TEST_NOW)
+    parser = ClaudeTurnParser(
+        session_id="unused-session",
+        model="haiku",
+        initial_usage=None,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+    process = TurnProcess((sys.executable, "-c", program), tmp_path, {}, parser)
+    turn = await StreamingTurn.start(spec, SubprocessRunner(), _SingleProcessSequence(process))
+
+    signals = [signal async for signal in turn.signals()]
+
+    assert signals[0] == SessionStarted("session-a")
+    assert isinstance(signals[-1], TurnFailed)
+    assert "process emitted more than one SessionStarted" in signals[-1].message
+
+
+@pytest.mark.asyncio
+async def test_claude_compaction_sequence_continues_after_intermediate_results(
+    tmp_path: Path,
+) -> None:
+    session_id = "session-background-redacted"
+    compacted_fixture = (
+        (_CLAUDE_FIXTURES / "turn_background_result_compaction.jsonl")
+        .read_text()
+        .replace("session-compact-redacted", session_id)
+    )
+    initial_stream = (
+        "\n".join(
+            [
+                json.dumps({"type": "system", "subtype": "init", "session_id": session_id}),
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "stop_reason": "end_turn",
+                        "terminal_reason": "completed",
+                        "result": "Intermediate work completed.",
+                        "result_index": 0,
+                        "usage": {
+                            "input_tokens": 12619,
+                            "output_tokens": 319121,
+                            "cache_read_input_tokens": 15593363,
+                            "cache_creation_input_tokens": 694420,
+                        },
+                        "total_cost_usd": 1.442999615,
+                        "modelUsage": {
+                            "claude-haiku-5-5": {
+                                "inputTokens": 12619,
+                                "outputTokens": 319121,
+                                "cacheReadInputTokens": 15593363,
+                                "cacheCreationInputTokens": 694420,
+                                "costUSD": 1.442999615,
+                                "contextWindow": 1000000,
+                                "costBasis": "list",
+                            }
+                        },
+                        "model_usage_since_last_result": {
+                            "claude-haiku-5-5": {
+                                "inputTokens": 12619,
+                                "outputTokens": 319121,
+                                "cacheReadInputTokens": 15593363,
+                                "cacheCreationInputTokens": 694420,
+                                "costUSD": 1.442999615,
+                                "contextWindow": 1000000,
+                                "costBasis": "list",
+                            }
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    continuation_stream = (
+        "\n".join(
+            [
+                json.dumps({"type": "system", "subtype": "init", "session_id": session_id}),
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "stop_reason": "end_turn",
+                        "terminal_reason": "completed",
+                        "result": "Requested continuation completed.",
+                        "result_index": 0,
+                        "usage": {
+                            "input_tokens": 9,
+                            "output_tokens": 11,
+                            "cache_read_input_tokens": 13,
+                            "cache_creation_input_tokens": 17,
+                        },
+                        "total_cost_usd": 1.5,
+                        "modelUsage": {
+                            "claude-haiku-5-5": {
+                                "inputTokens": 14739,
+                                "outputTokens": 331091,
+                                "cacheReadInputTokens": 15739413,
+                                "cacheCreationInputTokens": 695347,
+                                "costUSD": 1.5,
+                                "contextWindow": 1000000,
+                                "costBasis": "list",
+                            }
+                        },
+                        "model_usage_since_last_result": {
+                            "claude-haiku-5-5": {
+                                "inputTokens": 9,
+                                "outputTokens": 11,
+                                "cacheReadInputTokens": 13,
+                                "cacheCreationInputTokens": 17,
+                                "costUSD": 0.018176785,
+                                "contextWindow": 1000000,
+                                "costBasis": "list",
+                            }
+                        },
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    cli_dir = tmp_path / "bin"
+    cli_dir.mkdir()
+    cli = cli_dir / "claude"
+    prompt_log = tmp_path / "prompts.txt"
+    marker = tmp_path / "turn" / "implementer.compact-marker"
+    cli.write_text(
+        "\n".join(
+            [
+                f"#!{sys.executable}",
+                "import sys",
+                "from pathlib import Path",
+                "prompt = sys.argv[sys.argv.index('-p') + 1]",
+                f"prompt_log = Path({str(prompt_log)!r})",
+                "with prompt_log.open('a') as output_file:",
+                "    output_file.write(prompt + '\\n')",
+                "if prompt == '/compact':",
+                f"    output = {compacted_fixture!r}",
+                f"elif prompt == {CONTINUE_PROMPT!r}:",
+                f"    output = {continuation_stream!r}",
+                "else:",
+                f"    output = {initial_stream!r}",
+                "    if prompt != '/compact':",
+                f"        marker = Path({str(marker)!r})",
+                "        marker.parent.mkdir(parents=True, exist_ok=True)",
+                "        marker.touch()",
+                "sys.stdout.write(output)",
+                "sys.stdout.flush()",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cli.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PATH": f"{cli_dir}{os.pathsep}{os.environ['PATH']}",
+        "CLAUDE_CONFIG_DIR": str(tmp_path / "claude-config"),
+    }
+    spec = replace(
+        _spec(tmp_path, session_id=session_id),
+        rung=Rung("claude", "claude-haiku-4-5-20251001"),
+        prompt="Implement the requested task.",
+    )
+    clock = FakeClock(_TEST_NOW)
+    sequence = ClaudeTurnSequence(
+        spec,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+        compact_at_pct=80,
+        args=(),
+        environment=lambda turn_spec: {**environment, **turn_spec.env},
+    )
+    turn = await StreamingTurn.start(spec, SubprocessRunner(), sequence)
+
+    signals = [signal async for signal in turn.signals()]
+
+    assert len([signal for signal in signals if isinstance(signal, SessionStarted)]) == 1
+    assert len([signal for signal in signals if isinstance(signal, Compacted)]) == 1
+    assert [signal for signal in signals if isinstance(signal, TurnEnded)] == [
+        TurnEnded("Requested continuation completed.")
+    ]
+    usages = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
+    assert [(usage.input_tokens, usage.output_tokens) for usage in usages] == [
+        (12619, 319121),
+        (14730, 331080),
+        (14739, 331091),
+    ]
+    assert [usage.cost_usd for usage in usages] == [1.442999615, 1.481823215, 1.5]
+    assert prompt_log.read_text().splitlines() == [
+        "Implement the requested task.",
+        "/compact",
+        CONTINUE_PROMPT,
+    ]
 
 
 @dataclass

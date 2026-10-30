@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
+    from shikiru.agents.registry import AgentRegistry
     from shikiru.clock import Clock
     from shikiru.config.settings import ComplexityName, Settings
     from shikiru.domain.tasks import Mode, Task
@@ -151,6 +152,7 @@ def build_flow(
     strategy: IntegrationStrategy | None = None,
     base_refs: BaseRefs | None = None,
     lock: asyncio.Lock | None = None,
+    registry: AgentRegistry | None = None,
 ) -> FlowEnv:
     """Build one flow and its production turn collaborators with fake CLI processes.
 
@@ -158,7 +160,7 @@ def build_flow(
     """
     flow_clock = clock if clock is not None else env.clock
     resolved_turn_clock = turn_clock if turn_clock is not None else flow_clock
-    system = env.build_turn_system(settings, clock=resolved_turn_clock)
+    system = env.build_turn_system(settings, clock=resolved_turn_clock, registry=registry)
     escalations_store = EscalationStore(env.connection, flow_clock)
     history = ReportHistory(env.project_root)
     facts = TaskFacts(

@@ -54,15 +54,22 @@ def test_task_notification_result_keeps_later_activity_and_final_usage() -> None
 
     assert activity == [
         SessionStarted("session-background-redacted"),
+        Message("Run the required verification"),
         Message("Verification is continuing."),
         ToolStarted("Bash", '{"command":"[redacted verification]"}'),
+        Message("Verification finished; reviewing the result"),
         ToolFinished("Bash", ToolOutcome.SUCCESS),
-        Message("Implementation is complete."),
+        ToolStarted("shikiru report", '{"file":"[redacted report]"}'),
+        ToolFinished("shikiru report", ToolOutcome.SUCCESS),
+        Message("The latest follow-up is complete."),
     ]
-    assert terminal == [
-        UsageReported(Usage(60, 12, 20, 4, None, "unknown", None)),
-        TurnEnded("Implementation is complete."),
-    ]
+    assert len([signal for signal in activity if isinstance(signal, SessionStarted)]) == 1
+    [usage_signal, terminal_signal] = terminal
+    assert isinstance(usage_signal, UsageReported)
+    assert usage_signal.usage == Usage(
+        122, 49109, 4828854, 121323, 0.2708916, "api_equivalent", 0.0022
+    )
+    assert terminal_signal == TurnEnded("The latest follow-up is complete.")
 
 
 def test_intermediate_result_before_compact_boundary_does_not_fail_compaction() -> None:
@@ -71,11 +78,33 @@ def test_intermediate_result_before_compact_boundary_does_not_fail_compaction() 
     activity = _feed(parser, "turn_background_result_compaction.jsonl")
     terminal = parser.finish(0, "")
 
-    assert activity == [SessionStarted("session-compact-redacted"), Compacted(150731, 16926)]
+    assert activity == [
+        SessionStarted("session-compact-redacted"),
+        Message("Compact the session context"),
+        Message("Context compaction completed"),
+        Compacted(147542, 13268),
+    ]
     assert terminal == [
-        UsageReported(Usage(0, 0, 0, 0, 0.07, "api_equivalent", None)),
+        UsageReported(Usage(2111, 11959, 146037, 910, 1.481823215, "api_equivalent", None)),
         TurnEnded(""),
     ]
+
+
+def test_later_assistant_message_becomes_the_final_text_after_an_intermediate_result() -> None:
+    parser = _parser()
+    parser.feed('{"type":"system","subtype":"init","session_id":"session-a"}')
+    parser.feed(
+        '{"type":"result","subtype":"success","result":"Earlier outcome",'
+        '"stop_reason":"end_turn","terminal_reason":"completed"}'
+    )
+
+    activity = parser.feed(
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"Later work outcome"}]}}'
+    )
+    terminal = parser.finish(0, "")
+
+    assert activity == [Message("Later work outcome")]
+    assert terminal == [TurnEnded("Later work outcome")]
 
 
 def test_task_notification_without_compact_boundary_remains_a_compaction_failure() -> None:

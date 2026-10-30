@@ -279,7 +279,13 @@ class EngineEnv:
     clock: Clock
     turn_system: TurnSystem
 
-    def build_turn_system(self, settings: Settings, *, clock: Clock | None = None) -> TurnSystem:
+    def build_turn_system(
+        self,
+        settings: Settings,
+        *,
+        clock: Clock | None = None,
+        registry: AgentRegistry | None = None,
+    ) -> TurnSystem:
         """Build a second turn stack with settings specific to one flow test."""
         return build_turn_system(
             connection=self.connection,
@@ -288,6 +294,7 @@ class EngineEnv:
             runs=self.runs,
             settings=settings,
             clock=clock if clock is not None else self.clock,
+            registry=registry,
         )
 
     async def new_pane(self) -> str:

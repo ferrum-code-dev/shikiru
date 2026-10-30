@@ -98,6 +98,7 @@ _ERROR_TERMINAL_REASONS = (
     "context_length_exceeded",
 )
 _LIST_COST_BASIS = "list"
+_EMPTY_RESULT = ""
 _TEXT_BLOCK_TYPE = "text"
 _TOOL_USE_BLOCK_TYPE = "tool_use"
 _TOOL_RESULT_BLOCK_TYPE = "tool_result"
@@ -112,13 +113,30 @@ _CACHE_WRITE_TOKENS_FIELD = "cache_creation_input_tokens"
 _SESSION_ID_FIELD = "session_id"
 _MODEL_FIELD = "model"
 _MODEL_USAGE_FIELD = "modelUsage"
+_MODEL_USAGE_DELTA_FIELD = "model_usage_since_last_result"
+_INPUT_TOKENS_DELTA_FIELD = "inputTokens"
+_OUTPUT_TOKENS_DELTA_FIELD = "outputTokens"
+_CACHE_READ_TOKENS_DELTA_FIELD = "cacheReadInputTokens"
+_CACHE_WRITE_TOKENS_DELTA_FIELD = "cacheCreationInputTokens"
 _CONTEXT_WINDOW_FIELD = "contextWindow"
 _COST_BASIS_FIELD = "costBasis"
+_COST_USD_FIELD = "costUSD"
 _TOTAL_COST_FIELD = "total_cost_usd"
 _COMPACT_METADATA_FIELD = "compact_metadata"
 _ORIGIN_FIELD = "origin"
 _ORIGIN_KIND_FIELD = "kind"
 _TASK_NOTIFICATION_ORIGIN_KIND = "task-notification"
+_TASK_STARTED_SUBTYPE = "task_started"
+_TASK_UPDATED_SUBTYPE = "task_updated"
+_TASK_NOTIFICATION_SUBTYPE = "task_notification"
+_TASK_ID_FIELD = "task_id"
+_TASK_DESCRIPTION_FIELD = "description"
+_TASK_SUMMARY_FIELD = "summary"
+_TASK_STATUS_FIELD = "status"
+_TASK_PATCH_FIELD = "patch"
+_IS_BACKGROUNDED_FIELD = "is_backgrounded"
+_RESULT_INDEX_FIELD = "result_index"
+_STOP_REASON_FIELD = "stop_reason"
 _PRE_TOKENS_FIELD = "pre_tokens"
 _POST_TOKENS_FIELD = "post_tokens"
 _RATE_LIMIT_INFO_FIELD = "rate_limit_info"
@@ -201,6 +219,17 @@ class ClaudeTurnParser:
         self._latest_cost_basis: str | None = None
         self._latest_cost: float | None = None
         self._latest_message = ""
+        self._record_order = 0
+        self._latest_message_order = -1
+        self._latest_result_order = -1
+        self._saw_result_usage = False
+        self._result_input_tokens = 0
+        self._result_output_tokens = 0
+        self._result_cache_read_tokens = 0
+        self._result_cache_write_tokens = 0
+        self._session_started = False
+        self._started_session_id: str | None = None
+        self._pending_activity: list[AgentSignal] = []
         self._latest_quota: tuple[QuotaWindow, ...] = ()
         self._terminal = False
         self._malformed_line: str | None = None
@@ -227,6 +256,7 @@ class ClaudeTurnParser:
             self._malformed_line = self._malformed_line or line
             return []
         payload = cast("Mapping[str, Any]", raw)
+        self._record_order += 1
         handlers = {
             _SYSTEM_TYPE: self._system,
             _ASSISTANT_TYPE: self._assistant,
@@ -261,9 +291,14 @@ class ClaudeTurnParser:
         if compaction_problem is not None:
             self._terminal = True
             return [TurnFailed(FailureKind.OTHER, compaction_problem, None)]
-        usage = self._reported_usage(_mapping(payload.get(_USAGE_FIELD)))
+        usage = self._reported_usage()
         result_text = payload.get(_RESULT_FIELD)
-        last_message = result_text if isinstance(result_text, str) else self._latest_message
+        if self._latest_message_order > self._latest_result_order:
+            last_message = self._latest_message
+        elif isinstance(result_text, str):
+            last_message = result_text
+        else:
+            last_message = self._latest_message
         self._terminal = True
         signals: list[AgentSignal] = []
         if usage is not None:
@@ -286,54 +321,107 @@ class ClaudeTurnParser:
     def _system(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         subtype = payload.get(_SUBTYPE_FIELD)
         if subtype == _INIT_SUBTYPE:
-            raw_session_id = payload.get(_SESSION_ID_FIELD)
-            if not isinstance(raw_session_id, str) or not raw_session_id.strip():
-                return []
-            session_id = raw_session_id
-            model = payload.get(_MODEL_FIELD)
-            if isinstance(model, str):
-                self._model = model
-            return [SessionStarted(session_id)]
+            return self._init_session(payload)
         if subtype == _COMPACT_BOUNDARY_SUBTYPE:
-            self._did_compact = True
-            metadata = _mapping(payload.get(_COMPACT_METADATA_FIELD))
-            self._post_compaction_tokens = _optional_integer(metadata, _POST_TOKENS_FIELD)
-            return [
-                Compacted(
-                    _optional_integer(metadata, _PRE_TOKENS_FIELD),
-                    self._post_compaction_tokens,
-                )
-            ]
+            return self._compact_boundary(payload)
+        return self._system_activity(payload)
+
+    def _init_session(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        raw_session_id = payload.get(_SESSION_ID_FIELD)
+        if not isinstance(raw_session_id, str) or not raw_session_id.strip():
+            return []
+        session_id = raw_session_id
+        model = payload.get(_MODEL_FIELD)
+        if isinstance(model, str):
+            self._model = model
+        if self._session_started and session_id == self._started_session_id:
+            return []
+        if self._session_started:
+            return [SessionStarted(session_id)]
+        self._session_started = True
+        self._started_session_id = session_id
+        pending, self._pending_activity = self._pending_activity, []
+        return [SessionStarted(session_id), *pending]
+
+    def _compact_boundary(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        self._did_compact = True
+        metadata = _mapping(payload.get(_COMPACT_METADATA_FIELD))
+        self._post_compaction_tokens = _optional_integer(metadata, _POST_TOKENS_FIELD)
+        return [
+            Compacted(
+                _optional_integer(metadata, _PRE_TOKENS_FIELD),
+                self._post_compaction_tokens,
+            )
+        ]
+
+    def _system_activity(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        activity = self._background_activity(payload)
+        if not activity:
+            return []
+        if self._session_started:
+            return activity
+        self._pending_activity.extend(activity)
+        return []
+
+    def _background_activity(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        subtype = payload.get(_SUBTYPE_FIELD)
+        if subtype == _TASK_STARTED_SUBTYPE:
+            description = payload.get(_TASK_DESCRIPTION_FIELD)
+            if payload.get(_IS_BACKGROUNDED_FIELD) is True and isinstance(description, str):
+                return [Message(description)] if description else []
+        if subtype == _TASK_NOTIFICATION_SUBTYPE:
+            summary = payload.get(_TASK_SUMMARY_FIELD)
+            if isinstance(summary, str) and summary:
+                return [Message(summary)]
+        if subtype == _TASK_UPDATED_SUBTYPE:
+            patch = _mapping(payload.get(_TASK_PATCH_FIELD))
+            status = patch.get(_TASK_STATUS_FIELD) if patch is not None else None
+            task_id = payload.get(_TASK_ID_FIELD)
+            if isinstance(status, str) and isinstance(task_id, str):
+                return [Message(f"Background task {task_id}: {status}")]
         return []
 
     def _assistant(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
-        message = _mapping(payload.get(_MESSAGE_FIELD))
-        if message is not None:
-            self._latest_assistant_usage = _mapping(message.get(_USAGE_FIELD))
-            blocks = message.get(_CONTENT_FIELD)
-        else:
-            blocks = payload.get(_CONTENT_FIELD)
+        blocks = self._assistant_content(payload)
         if not isinstance(blocks, list):
             return []
         signals: list[AgentSignal] = []
         for block in cast("list[object]", blocks):
-            item = _mapping(block)
-            if item is None:
-                continue
-            if item.get(_TYPE_FIELD) == _TEXT_BLOCK_TYPE:
-                text = item.get(_TEXT_FIELD)
-                if isinstance(text, str) and text:
-                    self._latest_message = text
-                    signals.append(Message(text))
-            elif item.get(_TYPE_FIELD) == _TOOL_USE_BLOCK_TYPE:
-                name = item.get(_TOOL_NAME_FIELD)
-                tool_id = item.get(_TOOL_ID_FIELD)
-                if isinstance(name, str):
-                    detail = _tool_detail(item.get(_TOOL_INPUT_FIELD))
-                    signals.append(ToolStarted(name, detail))
-                    if isinstance(tool_id, str):
-                        self._tool_names[tool_id] = name
-                        self._tool_ids.append(tool_id)
+            signals.extend(self._assistant_block(block))
+        return signals
+
+    def _assistant_content(self, payload: Mapping[str, Any]) -> object:
+        message = _mapping(payload.get(_MESSAGE_FIELD))
+        if message is not None:
+            usage = _mapping(message.get(_USAGE_FIELD))
+            if usage is not None:
+                self._latest_assistant_usage = usage
+            return message.get(_CONTENT_FIELD)
+        return payload.get(_CONTENT_FIELD)
+
+    def _assistant_block(self, block: object) -> list[AgentSignal]:
+        item = _mapping(block)
+        if item is None:
+            return []
+        if item.get(_TYPE_FIELD) == _TEXT_BLOCK_TYPE:
+            text = item.get(_TEXT_FIELD)
+            if isinstance(text, str) and text:
+                self._latest_message = text
+                self._latest_message_order = self._record_order
+                return [Message(text)]
+        if item.get(_TYPE_FIELD) == _TOOL_USE_BLOCK_TYPE:
+            return self._tool_started(item)
+        return []
+
+    def _tool_started(self, item: Mapping[str, Any]) -> list[AgentSignal]:
+        name = item.get(_TOOL_NAME_FIELD)
+        if not isinstance(name, str):
+            return []
+        signals: list[AgentSignal] = [ToolStarted(name, _tool_detail(item.get(_TOOL_INPUT_FIELD)))]
+        tool_id = item.get(_TOOL_ID_FIELD)
+        if isinstance(tool_id, str):
+            self._tool_names[tool_id] = name
+            self._tool_ids.append(tool_id)
         return signals
 
     def _user(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
@@ -401,37 +489,75 @@ class ClaudeTurnParser:
         if _is_error_result(payload):
             self._failure_payload = payload
             return []
-        if _is_task_notification_result(payload):
+        if _is_no_work_task_notification_result(payload, self._model):
             return []
         self._success_payload = payload
+        self._latest_result_order = self._record_order
+        self._accumulate_result_usage(payload)
         model_usage = _mapping(payload.get(_MODEL_USAGE_FIELD))
         selected_model_usage = _select_model_usage(model_usage, self._model)
         if selected_model_usage is not None:
-            self._latest_model_usage = selected_model_usage
+            latest_model_usage = dict(self._latest_model_usage or {})
+            latest_model_usage.update(selected_model_usage)
+            self._latest_model_usage = latest_model_usage
             cost_basis = selected_model_usage.get(_COST_BASIS_FIELD)
-            self._latest_cost_basis = cost_basis if isinstance(cost_basis, str) else None
+            if isinstance(cost_basis, str):
+                self._latest_cost_basis = cost_basis
         total_cost = payload.get(_TOTAL_COST_FIELD)
-        self._latest_cost = float(total_cost) if isinstance(total_cost, int | float) else None
+        if isinstance(total_cost, int | float) and not isinstance(total_cost, bool):
+            self._latest_cost = float(total_cost)
+        elif selected_model_usage is not None:
+            model_cost = selected_model_usage.get(_COST_USD_FIELD)
+            if isinstance(model_cost, int | float) and not isinstance(model_cost, bool):
+                self._latest_cost = float(model_cost)
         return []
 
-    def _reported_usage(self, turn_usage: Mapping[str, Any] | None) -> Usage | None:
-        source = turn_usage or self._latest_assistant_usage
+    def _accumulate_result_usage(self, payload: Mapping[str, Any]) -> None:
+        source = _result_usage_delta(payload, self._model)
+        if source is None:
+            return
+        self._saw_result_usage = True
+        self._result_input_tokens += _integer(source, _INPUT_TOKENS_FIELD)
+        self._result_output_tokens += _integer(source, _OUTPUT_TOKENS_FIELD)
+        self._result_cache_read_tokens += _integer(source, _CACHE_READ_TOKENS_FIELD)
+        self._result_cache_write_tokens += _integer(source, _CACHE_WRITE_TOKENS_FIELD)
+
+    def _reported_usage(self) -> Usage | None:
+        source = self._latest_assistant_usage
         token_fields = (
             _INPUT_TOKENS_FIELD,
             _OUTPUT_TOKENS_FIELD,
             _CACHE_READ_TOKENS_FIELD,
             _CACHE_WRITE_TOKENS_FIELD,
         )
-        if source is None or not any(field in source for field in token_fields):
+        if not self._saw_result_usage and (
+            source is None or not any(field in source for field in token_fields)
+        ):
             return None
-        input_tokens = self._initial_usage.input_tokens + _integer(source, _INPUT_TOKENS_FIELD)
-        output_tokens = self._initial_usage.output_tokens + _integer(source, _OUTPUT_TOKENS_FIELD)
-        cache_read_tokens = self._initial_usage.cache_read_tokens + _integer(
-            source, _CACHE_READ_TOKENS_FIELD
+        input_delta = (
+            self._result_input_tokens
+            if self._saw_result_usage
+            else _integer(source, _INPUT_TOKENS_FIELD)
         )
-        cache_write_tokens = self._initial_usage.cache_write_tokens + _integer(
-            source, _CACHE_WRITE_TOKENS_FIELD
+        output_delta = (
+            self._result_output_tokens
+            if self._saw_result_usage
+            else _integer(source, _OUTPUT_TOKENS_FIELD)
         )
+        cache_read_delta = (
+            self._result_cache_read_tokens
+            if self._saw_result_usage
+            else _integer(source, _CACHE_READ_TOKENS_FIELD)
+        )
+        cache_write_delta = (
+            self._result_cache_write_tokens
+            if self._saw_result_usage
+            else _integer(source, _CACHE_WRITE_TOKENS_FIELD)
+        )
+        input_tokens = self._initial_usage.input_tokens + input_delta
+        output_tokens = self._initial_usage.output_tokens + output_delta
+        cache_read_tokens = self._initial_usage.cache_read_tokens + cache_read_delta
+        cache_write_tokens = self._initial_usage.cache_write_tokens + cache_write_delta
         priced = self._latest_cost_basis == _LIST_COST_BASIS and self._latest_cost is not None
         context_window = (
             self._latest_model_usage.get(_CONTEXT_WINDOW_FIELD)
@@ -644,9 +770,78 @@ def _is_error_result(payload: Mapping[str, Any]) -> bool:
     )
 
 
-def _is_task_notification_result(payload: Mapping[str, Any]) -> bool:
+def _is_no_work_task_notification_result(payload: Mapping[str, Any], model: str) -> bool:
     origin = _mapping(payload.get(_ORIGIN_FIELD))
-    return origin is not None and origin.get(_ORIGIN_KIND_FIELD) == _TASK_NOTIFICATION_ORIGIN_KIND
+    usage = _mapping(payload.get(_USAGE_FIELD))
+    if (
+        origin is None
+        or origin.get(_ORIGIN_KIND_FIELD) != _TASK_NOTIFICATION_ORIGIN_KIND
+        or payload.get(_RESULT_FIELD) != _EMPTY_RESULT
+        or type(payload.get(_RESULT_INDEX_FIELD)) is not int
+        or payload.get(_RESULT_INDEX_FIELD) != 0
+        or payload.get(_STOP_REASON_FIELD) is not None
+        or payload.get(_TERMINAL_REASON_FIELD) is not None
+        or usage is None
+    ):
+        return False
+    zero_usage = all(
+        key in usage
+        and isinstance(usage[key], int | float)
+        and not isinstance(usage[key], bool)
+        and usage[key] == 0
+        for key in (
+            _INPUT_TOKENS_FIELD,
+            _OUTPUT_TOKENS_FIELD,
+            _CACHE_READ_TOKENS_FIELD,
+            _CACHE_WRITE_TOKENS_FIELD,
+        )
+    )
+    if not zero_usage:
+        return False
+    delta = _mapping(payload.get(_MODEL_USAGE_DELTA_FIELD))
+    return delta is None or not _has_model_usage_delta(delta, model)
+
+
+def _has_model_usage_delta(delta: Mapping[str, Any], model: str) -> bool:
+    selected = _select_model_usage(delta, model)
+    if selected is None:
+        return False
+    return any(
+        isinstance(selected.get(field), int | float)
+        and not isinstance(selected.get(field), bool)
+        and selected[field] != 0
+        for field in (
+            _INPUT_TOKENS_DELTA_FIELD,
+            _OUTPUT_TOKENS_DELTA_FIELD,
+            _CACHE_READ_TOKENS_DELTA_FIELD,
+            _CACHE_WRITE_TOKENS_DELTA_FIELD,
+            _COST_USD_FIELD,
+        )
+    )
+
+
+def _result_usage_delta(payload: Mapping[str, Any], model: str) -> Mapping[str, Any] | None:
+    raw_delta = _mapping(payload.get(_MODEL_USAGE_DELTA_FIELD))
+    selected_delta = _select_model_usage(raw_delta, model)
+    if selected_delta is not None:
+        translated = {
+            _INPUT_TOKENS_FIELD: selected_delta.get(_INPUT_TOKENS_DELTA_FIELD),
+            _OUTPUT_TOKENS_FIELD: selected_delta.get(_OUTPUT_TOKENS_DELTA_FIELD),
+            _CACHE_READ_TOKENS_FIELD: selected_delta.get(_CACHE_READ_TOKENS_DELTA_FIELD),
+            _CACHE_WRITE_TOKENS_FIELD: selected_delta.get(_CACHE_WRITE_TOKENS_DELTA_FIELD),
+        }
+        if any(value is not None for value in translated.values()):
+            return translated
+    usage = _mapping(payload.get(_USAGE_FIELD))
+    token_fields = (
+        _INPUT_TOKENS_FIELD,
+        _OUTPUT_TOKENS_FIELD,
+        _CACHE_READ_TOKENS_FIELD,
+        _CACHE_WRITE_TOKENS_FIELD,
+    )
+    if usage is None or not any(field in usage for field in token_fields):
+        return None
+    return usage
 
 
 def _api_error_status(payload: Mapping[str, Any] | None) -> int | None:
@@ -737,7 +932,7 @@ def _stderr_message(exit_code: int, stderr: str, message: str) -> str:
 
 def _integer(payload: Mapping[str, Any] | None, key: str) -> int:
     value = payload.get(key, 0) if payload is not None else 0
-    return int(value) if isinstance(value, int | float) else 0
+    return int(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0
 
 
 def _context_tokens(usage: Mapping[str, Any] | None) -> int | None:
