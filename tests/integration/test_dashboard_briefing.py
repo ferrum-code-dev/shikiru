@@ -638,6 +638,7 @@ async def test_briefing_details_hint_aligns_and_moves_focus_to_a_fold(
         await wait_until(lambda: isinstance(app.focused, FoldHeader), timeout=UI_WAIT_SECONDS)
 
 
+@pytest.mark.usefixtures("colour_terminal")
 async def test_cost_heading_is_cyan_and_its_role_labels_are_grey_beside_their_amounts(
     connection: Connection,
     reader: StateReader,
