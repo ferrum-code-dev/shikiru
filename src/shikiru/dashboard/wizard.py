@@ -20,6 +20,7 @@ from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.detectors import (
     DetectedProject,
     InitWizardResult,
+    OrchestrationChoices,
     ProjectDetectors,
 )
 from shikiru.paths import project_config_path
@@ -946,8 +947,10 @@ class InitWizardApp(App[InitWizardResult | None]):
                 caches=caches,
                 ladders=ladders.ladders,
                 complexity=ladders.complexity,
-                max_parallel=max_parallel,
-                integration=integration,
+                orchestration=OrchestrationChoices(
+                    max_parallel=max_parallel,
+                    integration=integration,
+                ),
             )
             self._config_path = config_path.resolve()
             self._writing_config = False

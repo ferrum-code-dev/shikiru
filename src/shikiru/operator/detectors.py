@@ -74,6 +74,14 @@ class InitWizardResult:
     doctor_error: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class OrchestrationChoices:
+    """The orchestration values the wizard writes under `[orchestration]`."""
+
+    max_parallel: int
+    integration: str
+
+
 class ProjectDetectors:
     """Detect the repository base, trackers, installed agents and caches for `init`."""
 
@@ -129,8 +137,7 @@ class ProjectDetectors:
         caches: Sequence[str],
         ladders: Mapping[str, Sequence[Rung]],
         complexity: Mapping[ComplexityName, Sequence[Rung]] | None = None,
-        max_parallel: int,
-        integration: str,
+        orchestration: OrchestrationChoices,
     ) -> Path:
         """Write the wizard's validated configuration and exclude `.shikiru/`."""
         await self._validate_root()
@@ -142,8 +149,7 @@ class ProjectDetectors:
             caches=caches,
             ladders=ladders,
             complexity=complexity,
-            max_parallel=max_parallel,
-            integration=integration,
+            orchestration=orchestration,
         )
         validate_project_config_text(contents)
         await self._write_and_exclude(config_path, contents)
@@ -229,8 +235,7 @@ def render_config(
     caches: Sequence[str] | None = None,
     ladders: Mapping[str, Sequence[Rung]] | None = None,
     complexity: Mapping[ComplexityName, Sequence[Rung]] | None = None,
-    max_parallel: int | None = None,
-    integration: str | None = None,
+    orchestration: OrchestrationChoices | None = None,
 ) -> str:
     """Render a complete default config from detected project facts."""
     agent = project.agents[0]
@@ -270,13 +275,15 @@ def render_config(
             lines.append(f"[roles.{IMPLEMENTER_ROLE}.complexity.{name}]")
             lines.append(f"ladder = {_render_ladder(rungs)}")
             lines.append("")
-    if max_parallel is not None or integration is not None:
-        lines.extend(("[orchestration]",))
-        if max_parallel is not None:
-            lines.append(f"max_parallel = {max_parallel}")
-        if integration is not None:
-            lines.append(f"integration = {json.dumps(integration)}")
-        lines.append("")
+    if orchestration is not None:
+        lines.extend(
+            (
+                "[orchestration]",
+                f"max_parallel = {orchestration.max_parallel}",
+                f"integration = {json.dumps(orchestration.integration)}",
+                "",
+            )
+        )
     return "\n".join(lines)
 
 
