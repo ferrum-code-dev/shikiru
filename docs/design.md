@@ -154,7 +154,11 @@ Shikiru admits one attached client per project session; direct raw tmux use is o
 ## Configuration, observability and extensions
 
 Configuration merges packaged defaults, project `.shikiru/config.toml` and invocation `--set`
-overrides, then validates common and plugin-specific settings. The wizard configures repository,
+overrides, then validates common and plugin-specific settings. Packaged defaults declare no role
+ladders because agents and models are project choices. A ladder rung is either an
+`agent:model[:effort]` string or an inline `{ agent, model, effort }` table, and one ladder may mix
+both. The short form takes its third part as effort, so a model containing `:` is written as a
+table; `init` and the wizard write strings except for such models. The wizard configures repository,
 role ladders, trackers, caches, orchestration limits (maximum parallel tasks, iterations, quota wait,
 stall and tool timeouts, CPU percent and free RAM) and integration, and finishes with Doctor. Its
 orchestration values are checked against the step's own rules at Finish, before anything is written,

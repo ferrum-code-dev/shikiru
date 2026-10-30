@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import ModelCatalog, Rung
+from shikiru.agents.contracts import ModelCatalog, Rung, short_rung_text
 from shikiru.config.loader import validate_project_config_text
 from shikiru.errors import ConfigError, ProjectNotRepositoryRootError, RepositoryHasNoCommitsError
 from shikiru.paths import EXCLUDE_LINE, SHIKIRU_DIR_NAME, project_config_path
@@ -304,7 +304,15 @@ def render_config(
 
 
 def _render_ladder(rungs: Sequence[Rung]) -> str:
-    rung_lines = [
+    rung_texts = [_render_rung(rung) for rung in rungs]
+    return f"[{', '.join(rung_texts)}]"
+
+
+def _render_rung(rung: Rung) -> str:
+    short = short_rung_text(rung)
+    if short is not None:
+        return json.dumps(short)
+    return (
         "{ "
         + ", ".join(
             value
@@ -316,9 +324,7 @@ def _render_ladder(rungs: Sequence[Rung]) -> str:
             if value is not None
         )
         + " }"
-        for rung in rungs
-    ]
-    return f"[{', '.join(rung_lines)}]"
+    )
 
 
 def _write_config(config_path: Path, contents: str) -> None:

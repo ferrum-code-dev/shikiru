@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
-from shikiru.agents.contracts import Rung
+from shikiru.agents.contracts import Rung, parse_rung
+from shikiru.errors import ConfigError
 
 ComplexityName = Literal["low", "normal", "high"]
 MERGE_INTEGRATION = "merge"
@@ -140,16 +141,28 @@ class AgentConfig(ConfigModel):
     options: dict[str, Any] = Field(default_factory=dict)
 
 
+def _rung_from_short_form(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    try:
+        return parse_rung(value)
+    except ConfigError as error:
+        raise ValueError(str(error)) from error
+
+
+ConfiguredRung = Annotated[Rung, BeforeValidator(_rung_from_short_form)]
+
+
 class ComplexityLadder(ConfigModel):
     """One `[roles.implementer.complexity.<name>]` table."""
 
-    ladder: list[Rung]
+    ladder: list[ConfiguredRung]
 
 
 class RoleConfig(ConfigModel):
     """A role's base ladder: `[roles.leader]` and `[roles.helper]`."""
 
-    ladder: list[Rung]
+    ladder: list[ConfiguredRung]
 
 
 class ImplementerConfig(RoleConfig):

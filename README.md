@@ -168,6 +168,19 @@ Shikiru progress to another choice under its recovery/review policy, including a
 Leader and Implementer have their own ladders. Implementer can additionally use `low`, `normal`
 and `high` complexity ladders; an unspecified complexity ladder inherits its base ladder.
 
+In `.shikiru/config.toml`, a rung can be written as a short string, `"agent:model"` or
+`"agent:model:effort"`, or as an inline table, `{ agent, model, effort }` (effort optional).
+Both forms can appear in one ladder, and existing table ladders keep loading unchanged:
+
+```toml
+[roles.leader]
+ladder = ["codex:gpt-6.1-sol:high", { agent = "claude", model = "claude-sonnet-5-5" }]
+```
+
+The short form reads its third part as the effort, so a model name containing `:` must use the
+table form. A malformed short entry, or one with an empty part, fails config loading and names the
+entry. `init` and the wizard write the short form, using the table form only for such models.
+
 Rejected implementations return for another review iteration, with a possible Implementer rung
 increase. Provider unavailability gets bounded backoff/retries; quota can wait for a reset or move
 to a later different-provider rung when the configured wait budget is exhausted. Stalls receive

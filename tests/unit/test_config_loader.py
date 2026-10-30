@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 from operator import attrgetter
 from typing import TYPE_CHECKING
 
 import pytest
 
+from shikiru.agents.contracts import Rung
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import PaneLeaf
 from shikiru.errors import ConfigError
@@ -13,6 +15,8 @@ from tests.support.config import write_minimal_project as _project
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+_MINIMAL_LEADER_LADDER = 'ladder = [ { agent = "claude", model = "opus", effort = "high" } ]'
 
 
 def test_deep_merge_keeps_sibling_keys_from_lower_sources(tmp_path: Path) -> None:
@@ -99,6 +103,12 @@ def test_set_override_wins_over_project_file(tmp_path: Path) -> None:
         pytest.param("project.name=demo-project", "project.name", "demo-project", id="hyphen"),
         pytest.param("orchestration.max_parallel=3", "orchestration.max_parallel", 3, id="integer"),
         pytest.param('project.trackers=["a.md"]', "project.trackers", ["a.md"], id="list"),
+        pytest.param(
+            'roles.leader.ladder=["claude:haiku"]',
+            "roles.leader.ladder",
+            [Rung(agent="claude", model="haiku")],
+            id="short-rung-list",
+        ),
     ],
 )
 def test_set_override_parses_toml_values_and_bare_words(
@@ -108,6 +118,46 @@ def test_set_override_parses_toml_values_and_bare_words(
     settings = load_settings(project_dir, overrides=[override])
 
     assert attrgetter(path)(settings) == expected
+
+
+def _project_with_leader_ladder(project_dir: Path, ladder: str) -> Path:
+    shikiru_dir = project_dir / ".shikiru"
+    shikiru_dir.mkdir(parents=True)
+    (shikiru_dir / "config.toml").write_text(
+        MINIMAL_PROJECT_CONFIG.replace(_MINIMAL_LEADER_LADDER, f"ladder = {ladder}")
+    )
+    return project_dir
+
+
+def test_short_rungs_load_the_same_roles_as_their_table_form(tmp_path: Path) -> None:
+    short = load_settings(
+        _project_with_leader_ladder(tmp_path / "short", '["claude:opus:high", "claude:haiku"]')
+    )
+    table = load_settings(
+        _project_with_leader_ladder(
+            tmp_path / "table",
+            '[{ agent = "claude", model = "opus", effort = "high" }, '
+            '{ agent = "claude", model = "haiku" }]',
+        )
+    )
+
+    assert short.roles.leader.ladder == [
+        Rung(agent="claude", model="opus", effort="high"),
+        Rung(agent="claude", model="haiku"),
+    ]
+    assert short.roles == table.roles
+
+
+@pytest.mark.parametrize("entry", ["claude", "claude:", ":opus", "claude::high", "claude:opus:"])
+def test_a_malformed_short_rung_fails_loading_and_names_the_entry(
+    tmp_path: Path, entry: str
+) -> None:
+    project_dir = _project_with_leader_ladder(tmp_path, f'["{entry}"]')
+
+    with pytest.raises(ConfigError, match=re.escape(f"'{entry}'")) as excinfo:
+        load_settings(project_dir)
+
+    assert str(excinfo.value).startswith(".shikiru/config.toml: roles.leader.ladder.0: ")
 
 
 _PROJECT_NAME_LINE = 'name = "demo"\n'

@@ -48,6 +48,31 @@ def test_settings_rejects_a_ladder_agent_with_no_agents_table(
         build()
 
 
+@pytest.mark.parametrize(
+    ("short", "table", "rung"),
+    [
+        pytest.param(
+            "codex:gpt-5.6-sol:high",
+            {"agent": "codex", "model": "gpt-5.6-sol", "effort": "high"},
+            Rung(agent="codex", model="gpt-5.6-sol", effort="high"),
+            id="with-effort",
+        ),
+        pytest.param(
+            "claude:opus",
+            {"agent": "claude", "model": "opus"},
+            Rung(agent="claude", model="opus"),
+            id="without-effort",
+        ),
+    ],
+)
+def test_short_and_table_rungs_validate_to_the_same_rung_when_mixed_in_one_ladder(
+    short: str, table: dict[str, str], rung: Rung
+) -> None:
+    ladder = RoleConfig.model_validate({"ladder": [short, table]}).ladder
+
+    assert ladder == [rung, rung]
+
+
 def test_settings_rejects_an_empty_helper_ladder() -> None:
     settings = make_settings()
     roles = RolesConfig(
