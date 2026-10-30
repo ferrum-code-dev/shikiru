@@ -230,6 +230,7 @@ forbidden_modules = [
   "shikiru.dashboard.help_screen",
   "shikiru.dashboard.interaction",
   "shikiru.dashboard.ladder_editor",
+  "shikiru.dashboard.live_settings",
   "shikiru.dashboard.motion",
   "shikiru.dashboard.orchestration_fields",
   "shikiru.dashboard.palette",

@@ -36,6 +36,7 @@ from shikiru.config.settings import RepoConfig
 from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.contract import DiagnosticSampleState
+from shikiru.dashboard.live_settings import LiveSettings
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.services import DashboardServices, GitRepoStatusService
 from shikiru.dashboard.views import StateDashboardViews
@@ -211,15 +212,16 @@ def _dashboard_views(
         max_parallel=settings.orchestration.max_parallel,
         clock=clock,
     )
+    live_settings = LiveSettings(reader, lambda: settings, settings)
     return StateDashboardViews(
         reader,
         focus_task=None,
-        settings=settings,
+        settings=live_settings,
         sources=sources,
         queries=queries,
         clock=clock,
         motion=DashboardMotion(
-            reader, project_dir, settings, RoleViewTail(settings.dashboard.last_words_chars)
+            reader, project_dir, live_settings, RoleViewTail(settings.dashboard.last_words_chars)
         ),
         work=live_work_service(clock, settings),
     )

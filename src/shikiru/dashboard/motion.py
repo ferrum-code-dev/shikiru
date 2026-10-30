@@ -27,8 +27,8 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
-    from shikiru.config.settings import Settings
     from shikiru.dashboard.activity import RoleViewTail
+    from shikiru.dashboard.live_settings import LiveSettings
     from shikiru.store.reader import StateReader
 
 _MILLISECONDS_PER_SECOND = 1000
@@ -51,7 +51,7 @@ class DashboardMotion:
         self,
         state: StateReader,
         project_root: Path,
-        settings: Settings,
+        settings: LiveSettings,
         role_view_tail: RoleViewTail,
     ) -> None:
         """Use the read-only state, configuration and injected role-log tail."""
@@ -68,10 +68,11 @@ class DashboardMotion:
     def recent_merges(self, now: datetime) -> list[Task]:
         """Return completed tasks whose merge stamp is still within its flash window."""
         self._sync_event_cache()
-        if not self._settings.dashboard.animations:
+        if not self._settings.current().dashboard.animations:
             return []
         flash_seconds = (
-            self._settings.dashboard.motion.stamp_flash_milliseconds / _MILLISECONDS_PER_SECOND
+            self._settings.current().dashboard.motion.stamp_flash_milliseconds
+            / _MILLISECONDS_PER_SECOND
         )
         tasks: list[Task] = []
         for event in reversed(self._merge_events):
@@ -120,7 +121,7 @@ class DashboardMotion:
         self._task_runs.clear()
         self._merge_events = tuple(
             self._state.latest_events(
-                self._settings.dashboard.motion.merge_event_limit,
+                self._settings.current().dashboard.motion.merge_event_limit,
                 kinds=(EventKind.TASK_DONE,),
             )
         )
@@ -175,7 +176,7 @@ class DashboardMotion:
         if events is None:
             events = tuple(
                 self._state.latest_events(
-                    self._settings.dashboard.motion.task_event_limit,
+                    self._settings.current().dashboard.motion.task_event_limit,
                     kinds=_TASK_EVENT_KINDS,
                     task_id=task.id,
                 )
@@ -347,10 +348,10 @@ class DashboardMotion:
         escalations_open: bool = False,
         engine_running: bool = True,
     ) -> MotionState:
-        config = self._settings.dashboard.motion
+        config = self._settings.current().dashboard.motion
         return MotionState(
-            animations=self._settings.dashboard.animations,
-            timeouts=self._settings.orchestration.timeouts,
+            animations=self._settings.current().dashboard.animations,
+            timeouts=self._settings.current().orchestration.timeouts,
             refresh_hz=config.refresh_hz,
             stamp_flash_seconds=config.stamp_flash_milliseconds / _MILLISECONDS_PER_SECOND,
             escalation_pulse_hz=config.escalation_pulse_hz,

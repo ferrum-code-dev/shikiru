@@ -104,7 +104,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import QuotaWindow
     from shikiru.clock import Clock
-    from shikiru.config.settings import Settings
+    from shikiru.dashboard.live_settings import LiveSettings
     from shikiru.dashboard.motion import DashboardMotion
     from shikiru.dashboard.services import TaskWorkSample, TaskWorkService
     from shikiru.domain.briefing import PullRequestLine, ReportedTests
@@ -279,7 +279,7 @@ class StateDashboardViews:
         state: StateReader,
         *,
         focus_task: str | None,
-        settings: Settings,
+        settings: LiveSettings,
         sources: DashboardSources,
         queries: OperatorQueries,
         clock: Clock,
@@ -329,13 +329,13 @@ class StateDashboardViews:
         tasks = self._cached_tasks()
         engine = self.engine_status()
         return HeaderView(
-            project=self._settings.project.name,
+            project=self._settings.current().project.name,
             engine_up=engine.up,
             occupied_slots=len(occupied_slot_ids(tasks)),
-            maximum_slots=self._settings.orchestration.max_parallel,
+            maximum_slots=self._settings.current().orchestration.max_parallel,
             repo=await self._sources.repo_status(),
             alerts=self._alerts(),
-            integration_mode=self._settings.orchestration.integration,
+            integration_mode=self._settings.current().orchestration.integration,
             engine_uptime_seconds=engine.uptime_seconds,
             previous_engine_run_seconds=engine.previous_run_seconds,
         )
@@ -446,6 +446,9 @@ class StateDashboardViews:
         age = self._queries.oldest_escalation_age_seconds()
         if age is not None:
             lines.append(f"oldest escalation {format_age(age)}")
+        reload_error = self._settings.reload_error()
+        if reload_error is not None:
+            lines.append(f"settings not reloaded · {' · '.join(reload_error.splitlines())}")
         return tuple(lines)
 
     def _cached_faults(self) -> tuple[FaultStreak, ...]:
@@ -547,12 +550,12 @@ class StateDashboardViews:
     @property
     def recent_task_limit(self) -> int:
         """Return how many most recent terminal tasks Home Recent can page through."""
-        return self._settings.dashboard.recent_task_limit
+        return self._settings.current().dashboard.recent_task_limit
 
     @property
     def recent_task_window(self) -> int:
         """Return how many Recent tasks Home shows at once."""
-        return self._settings.dashboard.recent_task_window
+        return self._settings.current().dashboard.recent_task_window
 
     def task_browser_pages(
         self,
@@ -1083,12 +1086,12 @@ class StateDashboardViews:
                 if latest_signal is not None and latest_signal.timestamp is not None
                 else None
             ),
-            max_iterations=self._settings.orchestration.max_iterations,
+            max_iterations=self._settings.current().orchestration.max_iterations,
             started_at=task.started_at,
             escalation_remaining=escalation_remaining(
                 task.counters.rejections_on_rung,
-                self._settings.roles.implementer.escalate_after,
-                can_escalate=move_up(task, Role.IMPLEMENTER, self._settings) is not None,
+                self._settings.current().roles.implementer.escalate_after,
+                can_escalate=move_up(task, Role.IMPLEMENTER, self._settings.current()) is not None,
             ),
             verdict_counts=(verdict_counts(latest_verdict) if latest_verdict is not None else None),
             last_words=task_frame.last_words,
@@ -1122,12 +1125,12 @@ class StateDashboardViews:
         """Return the task's bounded normalized evidence page without loading other files."""
         timeline = await self._queries.task_timeline(
             task_id,
-            limit=self._settings.dashboard.timeline_page_size,
+            limit=self._settings.current().dashboard.timeline_page_size,
             cursor=cursor,
             role=role,
             turn=turn,
             category=category,
-            scan_limit=self._settings.dashboard.timeline_scan_rows,
+            scan_limit=self._settings.current().dashboard.timeline_scan_rows,
         )
         if timeline is None:
             return None
@@ -1155,7 +1158,7 @@ class StateDashboardViews:
     def _with_context_levels(
         self, sessions: tuple[TaskSessionView, ...]
     ) -> tuple[TaskSessionView, ...]:
-        titles = self._settings.dashboard.titles
+        titles = self._settings.current().dashboard.titles
         return tuple(
             replace(
                 session,
@@ -1244,7 +1247,7 @@ class StateDashboardViews:
         if task.status not in _ACTIVE_TURN_STATUSES or task.step is None:
             return None
         role = task_acting_role(task)
-        agent = pick_rung(task, role, self._settings).agent
+        agent = pick_rung(task, role, self._settings.current()).agent
         quota_events = self._current_quota_wait_events(task, role, agent)
         if quota_events is None:
             return None
@@ -1336,9 +1339,8 @@ class StateDashboardViews:
             for task in self._cached_tasks(statuses=(Status.RUNNING, Status.INTEGRATING))
             if task.slot is not None
         ]
-        lines = [
-            f"Current occupancy · {len(occupied)}/{self._settings.orchestration.max_parallel} slots"
-        ]
+        maximum = self._settings.current().orchestration.max_parallel
+        lines = [f"Current occupancy · {len(occupied)}/{maximum} slots"]
         if occupied:
             lines.append(
                 "Occupying tasks · "
@@ -1366,7 +1368,7 @@ class StateDashboardViews:
         lines: list[str] = []
         required_agents = tuple(
             dict.fromkeys(
-                pick_rung(task, role, self._settings).agent
+                pick_rung(task, role, self._settings.current()).agent
                 for role in (Role.LEADER, Role.IMPLEMENTER)
             )
         )
@@ -1427,7 +1429,7 @@ class StateDashboardViews:
             titles=self._new_task_titles(scope),
             verdict_risks=verdict_risks,
             plan_summary=_latest_plan_summary(detail.reports),
-            commit_cap=self._settings.dashboard.results_commits,
+            commit_cap=self._settings.current().dashboard.results_commits,
             live=live.work if live is not None else None,
             live_error=live.error if live is not None else None,
         )
@@ -1632,15 +1634,15 @@ class StateDashboardViews:
         level = free_space_level(
             view.free_bytes,
             view.total_bytes,
-            warn_pct=self._settings.dashboard.disk_warn_free_pct,
-            alert_pct=self._settings.dashboard.disk_alert_free_pct,
+            warn_pct=self._settings.current().dashboard.disk_warn_free_pct,
+            alert_pct=self._settings.current().dashboard.disk_alert_free_pct,
         )
         return replace(view, free_level=level)
 
     def _strip_with_motion(
         self, task: Task, motion: TaskMotionFrame, cost_usd: float | None
     ) -> TaskStripData:
-        data = task_strip_data(task, self._settings)
+        data = task_strip_data(task, self._settings.current())
         panels = list(data.panels)
         active_index = next(
             (index for index, panel in enumerate(panels) if panel.state is PanelState.ACTIVE),

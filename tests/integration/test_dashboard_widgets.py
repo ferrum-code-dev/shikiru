@@ -163,7 +163,7 @@ async def test_header_colours_the_dirty_line_counts_green_and_red(
             lambda: "main (+100 -20)" in _plain(widget.content), timeout=UI_WAIT_SECONDS
         )
         assert set(foregrounds(widget, "+100")) == {SAGE}
-        assert set(foregrounds(widget, "-20")) == {ALERT_COLOR}
+        assert set(foregrounds(widget, "+100 -20")[-3:]) == {ALERT_COLOR}
 
 
 @pytest.mark.usefixtures("connection")

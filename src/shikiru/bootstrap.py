@@ -345,6 +345,11 @@ async def run_dashboard(
     settings = load_settings(project_root, overrides)
     git = Git(runner, command_timeout=settings.orchestration.timeouts.git_command)
     services = build_operator(project_root, settings, clock=clock)
+    live_settings = import_module("shikiru.dashboard.live_settings").LiveSettings(
+        services.reader,
+        lambda: load_settings(project_root, overrides),
+        settings,
+    )
     try:
         evidence_exporter = TaskEvidenceExporter(
             services.queries,
@@ -392,20 +397,19 @@ async def run_dashboard(
                 size_refresh_seconds=settings.dashboard.disk_size_refresh_seconds,
             ),
         )
-        motion = dashboard_motion_module.DashboardMotion(
-            services.reader,
-            project_root,
-            settings,
-            dashboard_activity_module.RoleViewTail(settings.dashboard.last_words_chars),
-        )
         views = dashboard_views_module.StateDashboardViews(
             services.reader,
             focus_task=focus_task,
-            settings=settings,
+            settings=live_settings,
             sources=dashboard_services,
             queries=services.queries,
             clock=clock,
-            motion=motion,
+            motion=dashboard_motion_module.DashboardMotion(
+                services.reader,
+                project_root,
+                live_settings,
+                dashboard_activity_module.RoleViewTail(settings.dashboard.last_words_chars),
+            ),
             work=dashboard_services_module.TaskWorkService(
                 TaskWorkObserver(git),
                 clock,

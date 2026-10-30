@@ -166,7 +166,8 @@ orchestration values are checked against the step's own rules at Finish, before 
 and an out-of-range value focuses its field; hand-written configs keep the settings validation alone.
 Model catalogs come from installed plugin/CLI capabilities; lack of authoritative data is visible
 rather than a claim that an arbitrary model is supported. Probe mode runs live checks; ordinary
-diagnostics do not run workflow turns.
+diagnostics do not run workflow turns. The dashboard re-applies project settings when the engine
+starts a new run; an invalid file keeps the last valid values and raises a header alert.
 
 Plugins normalize streamed signals, reports, session identity, errors, usage, billing and quota
 into [agent contracts](../src/shikiru/agents/contracts.py). The engine imports those contracts,

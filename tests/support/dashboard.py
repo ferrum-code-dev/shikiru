@@ -26,6 +26,7 @@ from shikiru.dashboard.detail import (
     TaskDetailPanel,
 )
 from shikiru.dashboard.detail_fold import DetailFold, DetailFolds, FoldHeader
+from shikiru.dashboard.live_settings import LiveSettings
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.services import TaskWorkService
 from shikiru.dashboard.views import StateDashboardViews
@@ -270,11 +271,12 @@ def state_views(
     focus_task: str | None = None,
     settings: Settings | None = None,
 ) -> StateDashboardViews:
-    settings = settings or load_settings(project_dir)
+    live_settings = _live_settings(reader, project_dir, settings)
+    settings = live_settings.current()
     return StateDashboardViews(
         reader,
         focus_task=focus_task,
-        settings=settings,
+        settings=live_settings,
         sources=services,
         queries=OperatorQueries(
             reader,
@@ -286,10 +288,19 @@ def state_views(
         ),
         clock=clock,
         motion=DashboardMotion(
-            reader, project_dir, settings, RoleViewTail(settings.dashboard.last_words_chars)
+            reader,
+            project_dir,
+            live_settings,
+            RoleViewTail(settings.dashboard.last_words_chars),
         ),
         work=live_work_service(clock, settings),
     )
+
+
+def _live_settings(reader: StateReader, project_dir: Path, fixed: Settings | None) -> LiveSettings:
+    if fixed is not None:
+        return LiveSettings(reader, lambda: fixed, fixed)
+    return LiveSettings(reader, lambda: load_settings(project_dir), load_settings(project_dir))
 
 
 def widget_context(

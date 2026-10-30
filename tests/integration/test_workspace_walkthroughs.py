@@ -20,6 +20,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_OWNERSHIP,
     TaskDetailScreen,
 )
+from shikiru.dashboard.live_settings import LiveSettings
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.resolution import ResolutionScreen
@@ -183,17 +184,18 @@ class WorkspaceRuntime:
 
     def app(self, *, focus_task: str | None = None) -> DashboardApp:
         source = StubServices(engine_running=self.engine_is_up)
+        live_settings = LiveSettings(self.reader, lambda: self.settings, self.settings)
         views = StateDashboardViews(
             self.reader,
             focus_task=focus_task,
-            settings=self.settings,
+            settings=live_settings,
             sources=source,
             queries=self.queries,
             clock=self.clock,
             motion=DashboardMotion(
                 self.reader,
                 self.project_root,
-                self.settings,
+                live_settings,
                 RoleViewTail(self.settings.dashboard.last_words_chars),
             ),
             work=live_work_service(self.clock, self.settings),
