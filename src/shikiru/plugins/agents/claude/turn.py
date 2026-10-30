@@ -116,6 +116,9 @@ _CONTEXT_WINDOW_FIELD = "contextWindow"
 _COST_BASIS_FIELD = "costBasis"
 _TOTAL_COST_FIELD = "total_cost_usd"
 _COMPACT_METADATA_FIELD = "compact_metadata"
+_ORIGIN_FIELD = "origin"
+_ORIGIN_KIND_FIELD = "kind"
+_TASK_NOTIFICATION_ORIGIN_KIND = "task-notification"
 _PRE_TOKENS_FIELD = "pre_tokens"
 _POST_TOKENS_FIELD = "post_tokens"
 _RATE_LIMIT_INFO_FIELD = "rate_limit_info"
@@ -204,6 +207,7 @@ class ClaudeTurnParser:
         self._did_compact = False
         self._post_compaction_tokens: int | None = None
         self._failure_payload: Mapping[str, Any] | None = None
+        self._success_payload: Mapping[str, Any] | None = None
         self._context_exceeded = False
 
     @property
@@ -248,21 +252,36 @@ class ClaudeTurnParser:
         if self._failure_payload is not None:
             self._terminal = True
             return self._fail(self._failure_payload, stderr)
+        if self._success_payload is not None:
+            return self._finish_success(self._success_payload)
+        return self._finish_without_result(exit_code, stderr)
+
+    def _finish_success(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        compaction_problem = self._compaction_problem()
+        if compaction_problem is not None:
+            self._terminal = True
+            return [TurnFailed(FailureKind.OTHER, compaction_problem, None)]
+        usage = self._reported_usage(_mapping(payload.get(_USAGE_FIELD)))
+        result_text = payload.get(_RESULT_FIELD)
+        last_message = result_text if isinstance(result_text, str) else self._latest_message
+        self._terminal = True
+        signals: list[AgentSignal] = []
+        if usage is not None:
+            signals.append(UsageReported(usage))
+        signals.append(TurnEnded(last_message))
+        return signals
+
+    def _finish_without_result(self, exit_code: int, stderr: str) -> list[AgentSignal]:
         failure = self._classify_failure(None, stderr)
-        if failure is None:
-            message = _UNKNOWN_ERROR_MESSAGE
-        else:
+        if failure is not None:
             kind, message, resets_at = failure
             self._terminal = True
             return [TurnFailed(kind, _stderr_message(exit_code, stderr, message), resets_at)]
+        compaction_problem = self._compaction_problem()
+        message = compaction_problem or _UNKNOWN_ERROR_MESSAGE
+        kind = FailureKind.OTHER if compaction_problem is not None else FailureKind.UNKNOWN
         self._terminal = True
-        return [
-            TurnFailed(
-                FailureKind.UNKNOWN,
-                _stderr_message(exit_code, stderr, message),
-                None,
-            )
-        ]
+        return [TurnFailed(kind, _stderr_message(exit_code, stderr, message), None)]
 
     def _system(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         subtype = payload.get(_SUBTYPE_FIELD)
@@ -382,11 +401,9 @@ class ClaudeTurnParser:
         if _is_error_result(payload):
             self._failure_payload = payload
             return []
-        compaction_problem = self._compaction_problem()
-        if compaction_problem is not None:
-            self._terminal = True
-            return [TurnFailed(FailureKind.OTHER, compaction_problem, None)]
-        usage = _mapping(payload.get(_USAGE_FIELD))
+        if _is_task_notification_result(payload):
+            return []
+        self._success_payload = payload
         model_usage = _mapping(payload.get(_MODEL_USAGE_FIELD))
         selected_model_usage = _select_model_usage(model_usage, self._model)
         if selected_model_usage is not None:
@@ -395,15 +412,7 @@ class ClaudeTurnParser:
             self._latest_cost_basis = cost_basis if isinstance(cost_basis, str) else None
         total_cost = payload.get(_TOTAL_COST_FIELD)
         self._latest_cost = float(total_cost) if isinstance(total_cost, int | float) else None
-        reported_usage = self._reported_usage(usage)
-        result_text = payload.get(_RESULT_FIELD)
-        last_message = result_text if isinstance(result_text, str) else self._latest_message
-        self._terminal = True
-        signals: list[AgentSignal] = []
-        if reported_usage is not None:
-            signals.append(UsageReported(reported_usage))
-        signals.append(TurnEnded(last_message))
-        return signals
+        return []
 
     def _reported_usage(self, turn_usage: Mapping[str, Any] | None) -> Usage | None:
         source = turn_usage or self._latest_assistant_usage
@@ -633,6 +642,11 @@ def _is_error_result(payload: Mapping[str, Any]) -> bool:
     return payload.get(_SUBTYPE_FIELD) not in (None, _SUCCESS_SUBTYPE) and isinstance(
         payload.get(_SUBTYPE_FIELD), str
     )
+
+
+def _is_task_notification_result(payload: Mapping[str, Any]) -> bool:
+    origin = _mapping(payload.get(_ORIGIN_FIELD))
+    return origin is not None and origin.get(_ORIGIN_KIND_FIELD) == _TASK_NOTIFICATION_ORIGIN_KIND
 
 
 def _api_error_status(payload: Mapping[str, Any] | None) -> int | None:

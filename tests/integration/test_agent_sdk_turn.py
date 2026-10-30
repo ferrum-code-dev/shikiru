@@ -28,12 +28,14 @@ from shikiru.agents.sdk.turn import (
     TurnProcessSequence,
     stream_log_path,
 )
+from shikiru.plugins.agents.claude.turn import ClaudeTurnParser
 from shikiru.plugins.agents.codex.turn import CodexTurnSequence
 from shikiru.process import SubprocessRunner
 from tests.support.clock import FakeClock
 from tests.support.waiting import wait_until
 
 _CODEX_FIXTURES = Path(__file__).parents[1] / "fixtures" / "agents" / "codex"
+_CLAUDE_FIXTURES = Path(__file__).parents[1] / "fixtures" / "agents" / "claude"
 _CONTEXT_FAILURE_FIXTURE = "turn_context_failure.jsonl"
 _TEST_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _TURN_STOP_TIMEOUT_SECONDS = 10
@@ -195,6 +197,34 @@ async def test_process_exit_without_a_result_yields_unknown_with_exit_and_stderr
     assert signals[-1].kind is FailureKind.UNKNOWN
     assert "status 7" in signals[-1].message
     assert diagnostic in signals[-1].message
+
+
+@pytest.mark.asyncio
+async def test_claude_activity_after_task_notification_reaches_the_turn_consumer(
+    tmp_path: Path,
+) -> None:
+    stream = (_CLAUDE_FIXTURES / "turn_background_result_then_activity.jsonl").read_bytes()
+    program = f"import sys; sys.stdout.buffer.write({stream!r}); sys.stdout.flush()"
+    spec = replace(_spec(tmp_path, session_id=None), rung=Rung("claude", "haiku"))
+    clock = FakeClock(_TEST_NOW)
+    parser = ClaudeTurnParser(
+        session_id="session-background-redacted",
+        model="haiku",
+        initial_usage=None,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+    process = TurnProcess((sys.executable, "-c", program), tmp_path, {}, parser)
+    turn = await StreamingTurn.start(spec, SubprocessRunner(), _SingleProcessSequence(process))
+
+    signals = [signal async for signal in turn.signals()]
+
+    assert signals[0] == SessionStarted("session-background-redacted")
+    assert Message("Verification is continuing.") in signals
+    assert Message("Implementation is complete.") in signals
+    assert len([signal for signal in signals if isinstance(signal, TurnEnded)]) == 1
+    assert len([signal for signal in signals if isinstance(signal, TurnFailed)]) == 0
+    assert (spec.turn_dir / "implementer.stream.jsonl").read_bytes() == stream
 
 
 @dataclass

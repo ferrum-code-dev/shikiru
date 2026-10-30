@@ -48,7 +48,7 @@ def test_success_without_reported_usage_does_not_create_measured_token_zeros() -
         reset_time=ResetTimeParser(clock),
     )
 
-    signals = [*parser.feed(INIT_LINE), *parser.feed(RESULT_LINE)]
+    signals = [*parser.feed(INIT_LINE), *parser.feed(RESULT_LINE), *parser.finish(0, "")]
 
     assert signals == [SessionStarted(SESSION_ID), TurnEnded("Finished")]
 
@@ -68,6 +68,7 @@ def test_turn_totals_keep_the_last_assistant_context_snapshot() -> None:
         *parser.feed(CONTEXT_ASSISTANT_FIRST),
         *parser.feed(CONTEXT_ASSISTANT_LATEST),
         *parser.feed(CONTEXT_RESULT_TOTALS),
+        *parser.finish(0, ""),
     ]
 
     [usage] = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
@@ -91,6 +92,7 @@ def test_complete_reported_zero_context_remains_a_measured_zero() -> None:
         *parser.feed(CONTEXT_INIT_LINE),
         *parser.feed(ZERO_CONTEXT_ASSISTANT),
         *parser.feed(ZERO_CONTEXT_RESULT),
+        *parser.finish(0, ""),
     ]
 
     [usage] = [signal.usage for signal in signals if isinstance(signal, UsageReported)]

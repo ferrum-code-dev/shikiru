@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"session-compact-redacted"}
+{"type":"result","subtype":"success","is_error":false,"result":"","duration_ms":34,"origin":{"kind":"task-notification"},"result_index":0,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}
+{"type":"system","subtype":"compact_boundary","compact_metadata":{"pre_tokens":150731,"post_tokens":16926}}
+{"type":"result","subtype":"success","is_error":false,"stop_reason":null,"num_turns":0,"result":"","total_cost_usd":0.07,"local_command":"compact","session_id":"session-compact-redacted","result_index":1,"usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0},"modelUsage":{"claude-haiku-4-5-20251001":{"costBasis":"list","contextWindow":200000}}}

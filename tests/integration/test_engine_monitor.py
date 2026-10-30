@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from contextlib import suppress
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -22,11 +23,14 @@ from tests.support.flow import build_flow, build_flow_task, flow_settings, init_
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from tests.support.engine import EngineEnv
     from tests.support.tmux import TmuxServer
 
 _FLOW_TIMEOUT_SECONDS = 60
 _SHORT_STALL_SECONDS = 2
+_BACKGROUND_STALL_SECONDS = 10
 
 
 async def test_monitor_records_quota_compaction_usage_and_turn_view(
@@ -115,6 +119,60 @@ async def test_stalled_turn_is_stopped_then_resumed_with_continue(
     ]
     assert len(continue_prompts) == 1
     assert not (role_path / "turn.pid").exists()
+
+
+async def test_monitor_observes_activity_after_a_background_wait_before_stall(
+    engine_env: EngineEnv, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    release_fifo = tmp_path / "background-activity.fifo"
+    os.mkfifo(release_fifo)
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "accept", "release_fifo": str(release_fifo)}],
+    )
+    settings = flow_settings()
+    timeouts = settings.orchestration.timeouts.model_copy(
+        update={"stall": _BACKGROUND_STALL_SECONDS}
+    )
+    orchestration = settings.orchestration.model_copy(update={"timeouts": timeouts})
+    settings = settings.model_copy(update={"orchestration": orchestration})
+    turn_clock = FakeClock(TASK_CREATED_AT)
+    flow_env = build_flow(engine_env, settings, turn_clock=turn_clock)
+    flow_task = asyncio.create_task(flow_env.flow.run(task.id))
+    role_path = run_dir(engine_env.project_root, task.id) / "implementer"
+    view_path = role_path / "view.jsonl"
+
+    def rows() -> list[dict[str, object]]:
+        if not view_path.is_file():
+            return []
+        return [json.loads(line) for line in view_path.read_text().splitlines()]
+
+    await wait_until(
+        lambda: any(row["signal"] == "Message" for row in rows()),
+        timeout=_FLOW_TIMEOUT_SECONDS,
+    )
+    await wait_until(turn_clock.has_pending_sleep, timeout=_FLOW_TIMEOUT_SECONDS)
+    turn_clock.advance(_BACKGROUND_STALL_SECONDS - 1)
+    await asyncio.to_thread(release_fifo.write_text, "", encoding="utf-8")
+    await wait_until(
+        lambda: any(
+            row["signal"] == "ToolStarted" and row.get("name") == "shikiru report" for row in rows()
+        ),
+        timeout=_FLOW_TIMEOUT_SECONDS,
+    )
+
+    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.step is Step.INTEGRATE
+    signals = [row["signal"] for row in rows()]
+    assert "ToolFinished" in signals
+    assert "UsageReported" in signals
+    assert "TurnEnded" in signals
 
 
 async def test_cancelling_a_turn_stops_its_child_process(
