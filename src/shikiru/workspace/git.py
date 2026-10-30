@@ -40,8 +40,9 @@ _NUMSTAT_MALFORMED_RECORD = "git numstat returned a malformed record"
 
 @dataclass(frozen=True, slots=True)
 class LineChangeStats:
-    """Line additions, deletions and binary entries in the current checkout."""
+    """Changed tracked files, their line additions and deletions, binary and untracked paths."""
 
+    tracked_paths: int
     added_lines: int
     deleted_lines: int
     binary_entries: int
@@ -173,15 +174,32 @@ class Git:
         result = await self._run(repo_dir, "diff", "--stat", commit_range)
         return result.stdout
 
-    async def working_tree_line_changes(self, repo_dir: Path) -> LineChangeStats:
-        """Count tracked line changes against `HEAD` and report untracked paths separately."""
-        tracked = await self._run(repo_dir, "diff", "--numstat", "-z", "HEAD")
-        added_lines, deleted_lines, binary_entries = _parse_numstat(tracked.stdout)
+    async def merge_base(self, repo_dir: Path, ref: str, other: str) -> str:
+        """Return the sha of the best common ancestor of `ref` and `other`."""
+        result = await self._run(repo_dir, "merge-base", ref, other)
+        return result.stdout.strip()
+
+    async def working_tree_line_changes(
+        self, repo_dir: Path, *, against: str = _HEAD_REF
+    ) -> LineChangeStats:
+        """Count the working tree's tracked changes against `against`, untracked paths apart.
+
+        A tracked file is compared once, so edits already committed after `against` and edits
+        still unstaged or staged are not counted twice.
+        """
+        tracked = await self._run(repo_dir, "diff", "--numstat", "-z", against)
+        tracked_paths, added_lines, deleted_lines, binary_entries = _parse_numstat(tracked.stdout)
         untracked = await self._run(repo_dir, "ls-files", "--others", "--exclude-standard", "-z")
         untracked_paths = sum(
             bool(path) for path in untracked.stdout.split(_NUMSTAT_RECORD_SEPARATOR)
         )
-        return LineChangeStats(added_lines, deleted_lines, binary_entries, untracked_paths)
+        return LineChangeStats(
+            tracked_paths=tracked_paths,
+            added_lines=added_lines,
+            deleted_lines=deleted_lines,
+            binary_entries=binary_entries,
+            untracked_paths=untracked_paths,
+        )
 
     async def diff_name_only(self, repo_dir: Path, commit_range: str) -> list[str]:
         """Return the full, unformatted path of every file changed in `commit_range`."""
@@ -402,7 +420,8 @@ class Git:
         )
 
 
-def _parse_numstat(output: str) -> tuple[int, int, int]:
+def _parse_numstat(output: str) -> tuple[int, int, int, int]:
+    tracked_paths = 0
     added_lines = 0
     deleted_lines = 0
     binary_entries = 0
@@ -417,6 +436,7 @@ def _parse_numstat(output: str) -> tuple[int, int, int]:
         deleted, second_separator, path = remainder.partition(_NUMSTAT_SEPARATOR)
         if not separator or not second_separator:
             raise InvariantError(_NUMSTAT_MALFORMED_RECORD)
+        tracked_paths += 1
         if _NUMSTAT_BINARY_MARKER in (added, deleted):
             binary_entries += 1
         else:
@@ -424,4 +444,4 @@ def _parse_numstat(output: str) -> tuple[int, int, int]:
             deleted_lines += int(deleted)
         if not path and index + 1 < len(records):
             index += _NUMSTAT_RENAME_PATH_RECORDS
-    return added_lines, deleted_lines, binary_entries
+    return tracked_paths, added_lines, deleted_lines, binary_entries

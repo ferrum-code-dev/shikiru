@@ -10,6 +10,7 @@ from shikiru.domain.briefing import (
     FACTS_DIFF_STAT_HEADING,
     FACTS_NONE_MARKER,
 )
+from shikiru.domain.results import LiveWork
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
 
     from shikiru.domain.tasks import RepoState
     from shikiru.workspace.git import Git
+
+_HEAD_REF = "HEAD"
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,4 +90,29 @@ class GitFacts:
             diff_stat=diff_stat,
             status=tuple(status),
             changed_trackers=tuple(tracker for tracker in trackers if tracker in changed_paths),
+        )
+
+
+class TaskWorkObserver:
+    """Reads a task's live work from its worktree, as it is now rather than as recorded."""
+
+    def __init__(self, git: Git) -> None:
+        """Read git state through `git`."""
+        self._git = git
+
+    async def observe(self, task_root: Path, base_ref: str) -> LiveWork:
+        """Return the commits past `base_ref` and the changes of `task_root` against their base.
+
+        Tracked edits, staged or not, are counted once against the merge base of `base_ref` and
+        `HEAD`, so committed work is never counted twice. Untracked and binary files count as
+        files, but contribute no line counts, because git gives none for them.
+        """
+        merge_base = await self._git.merge_base(task_root, base_ref, _HEAD_REF)
+        commits = await self._git.log_oneline(task_root, f"{base_ref}..{_HEAD_REF}")
+        changes = await self._git.working_tree_line_changes(task_root, against=merge_base)
+        return LiveWork.from_oneline(
+            commits,
+            files=changes.tracked_paths + changes.untracked_paths,
+            insertions=changes.added_lines,
+            deletions=changes.deleted_lines,
         )
