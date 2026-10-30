@@ -519,17 +519,20 @@ def parse_rung(text: str) -> Rung:
     if len(parts) not in _VALID_RUNG_PART_COUNTS or not all(parts):
         message = f"{text!r} is not a valid rung; expected agent:model or agent:model:effort"
         if len(parts) > max(_VALID_RUNG_PART_COUNTS):
-            message = f"{message}; a model name containing ':' cannot be written in the short form"
+            message = f"{message}; a model or effort containing ':' must use the table form"
         raise ConfigError(message)
     agent, model, *effort = parts
     return Rung(agent=agent, model=model, effort=effort[0] if effort else None)
 
 
 def short_rung_text(rung: Rung) -> str | None:
-    """Return `rung` as `agent:model[:effort]`, or None when its model contains the separator."""
-    if _RUNG_SEPARATOR in rung.model:
-        return None
+    """Return `rung` as `agent:model[:effort]` when parsing that text gives back `rung`."""
     parts = [rung.agent, rung.model]
     if rung.effort is not None:
         parts.append(rung.effort)
-    return _RUNG_SEPARATOR.join(parts)
+    text = _RUNG_SEPARATOR.join(parts)
+    try:
+        parsed = parse_rung(text)
+    except ConfigError:
+        return None
+    return text if parsed == rung else None

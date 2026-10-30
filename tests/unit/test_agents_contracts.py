@@ -50,9 +50,18 @@ def test_parse_rung_rejects_malformed_input(text: str) -> None:
             None,
             id="colon-model-with-effort",
         ),
+        pytest.param(Rung(agent="claude", model="opus", effort=""), None, id="empty-effort"),
+        pytest.param(
+            Rung(agent="claude", model="opus", effort="custom:effort"),
+            None,
+            id="colon-effort",
+        ),
+        pytest.param(Rung(agent="claude", model=""), None, id="empty-model"),
+        pytest.param(Rung(agent="", model="opus"), None, id="empty-agent"),
+        pytest.param(Rung(agent="cl:aude", model="opus"), None, id="colon-agent"),
     ],
 )
-def test_short_rung_text_is_none_only_when_the_model_contains_the_separator(
+def test_short_rung_text_is_none_exactly_when_parsing_it_would_not_give_back_the_rung(
     rung: Rung, text: str | None
 ) -> None:
     assert short_rung_text(rung) == text

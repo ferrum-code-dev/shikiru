@@ -177,9 +177,10 @@ Both forms can appear in one ladder, and existing table ladders keep loading unc
 ladder = ["codex:gpt-6.1-sol:high", { agent = "claude", model = "claude-sonnet-5-5" }]
 ```
 
-The short form reads its third part as the effort, so a model name containing `:` must use the
-table form. A malformed short entry, or one with an empty part, fails config loading and names the
-entry. `init` and the wizard write the short form, using the table form only for such models.
+The short form reads its third part as the effort, so a model or effort containing `:`, or an empty
+effort, must use the table form. A malformed short entry, or one with an empty part, fails config
+loading and names the entry. `init` and the wizard write the short form, and the table form for any
+rung the short form cannot express.
 
 Rejected implementations return for another review iteration, with a possible Implementer rung
 increase. Provider unavailability gets bounded backoff/retries; quota can wait for a reset or move

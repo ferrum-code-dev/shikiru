@@ -157,8 +157,9 @@ Configuration merges packaged defaults, project `.shikiru/config.toml` and invoc
 overrides, then validates common and plugin-specific settings. Packaged defaults declare no role
 ladders because agents and models are project choices. A ladder rung is either an
 `agent:model[:effort]` string or an inline `{ agent, model, effort }` table, and one ladder may mix
-both. The short form takes its third part as effort, so a model containing `:` is written as a
-table; `init` and the wizard write strings except for such models. The wizard configures repository,
+both. The short form takes its third part as effort. `init` and the wizard write a rung as a string
+only when parsing that string gives back the same rung; a model or effort containing `:`, or an
+empty effort, is written as a table. The wizard configures repository,
 role ladders, trackers, caches, orchestration limits (maximum parallel tasks, iterations, quota wait,
 stall and tool timeouts, CPU percent and free RAM) and integration, and finishes with Doctor. Its
 orchestration values are checked against the step's own rules at Finish, before anything is written,
