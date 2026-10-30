@@ -275,6 +275,10 @@ code, pre, .terminal { font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Cons
 .field { display: grid; grid-template-columns: 15ch minmax(0, 1fr); align-items: start; gap: 1ch; margin: 0.3lh 0; }
 .agents-editor .field { grid-template-columns: 9ch minmax(0, 1fr); }
 .field-label { padding-top: 0.12lh; color: var(--secondary); }
+.field-input { display: flex; align-items: center; gap: 1ch; min-width: 0; }
+.field-input .control { flex: 1 1 0; width: auto; min-width: 0; }
+.field-unit { flex: 0 0 auto; color: var(--secondary); }
+.field-help { margin: 0 0 0.7lh 16ch; color: var(--secondary); }
 .control {
   display: block;
   width: 100%;
@@ -430,7 +434,7 @@ code, pre, .terminal { font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Cons
     <h2>Initializer composition</h2>
     <p>The wizard appears in a neutral dashboard viewport. Its preferred 96×36-cell panel is clamped to the selected terminal size. A normal top row shows cyan-bold SHIKIRU, the white-bold step title and N / 7 counter, followed by the dashboard divider; only the body scrolls. The bottom order is body, static hint, divider, then right-aligned actions. There are no global terminal header or footer rows. The supplied ANSI artwork is embedded as a literal copy, drawn top-left in original terminal-cell positions, unscaled and clipped. Ctrl+F hides the full panel for five seconds, then restores the unchanged state and focus. The shortcut does not intercept typing in editable fields or open combos. Ordinary command examples hide the artwork; the outer review page scrolls without shrinking terminal cells.</p>
     <p>Repository displays the base and clean or changed worktree plus config destination. Agents keeps all six role/scope rows visible, each with an editable comma-separated ladder field. A dependent Agent/Model/Effort form sits below the scope list and Add appends a supported entry. Blank Implementer Low, Normal and High fields inherit Base; typing or Add creates an override. Helper accepts multiple ordered entries from installed agents with headless support. Unsupported choices are unavailable and changing a dependency clears its dependents. The standalone reference uses example catalog values; the current wizard discovers authoritative installed-agent catalogs and offered efforts. Tracker paths are project-relative Markdown files used as task trackers. Cache paths are registered for task worktrees. Path fields start blank; detected candidates add once and can be re-added after manual removal. Empty tracker input sends no tracker files to tasks; empty cache input copies no caches. The CoW row shows simulated filesystem evidence; unsupported CoW skips cache copies.</p>
-    <p>Parallelism states the maximum number of tasks the engine may run at once and shows its default of 2 without Current or Accepted rows. Pre-write Finish preserves the original explanation that it writes <code>.shikiru/config.toml</code>, excludes <code>.shikiru/</code> in Git, and runs Doctor; it shows the destination and selected summary without redundant Roles or Doctor fact rows. The <strong>Run doctor</strong> action writes the fixture configuration and displays the full post-write report in Finish, using the native check format: bold white names, grey separators, white detail, then a blank row and aggregate passed/failed line. The result is read-only with Exit and no duplicate report.</p>
+    <p>Orchestration sets five engine limits: maximum parallel tasks, maximum iterations, maximum quota wait, maximum CPU percent, and minimum free RAM in GB. Each field shows its unit and what it controls and starts at its project default; the step shows no Current or Accepted rows. An out-of-range value is rejected at Finish by focusing its field before anything is written. Pre-write Finish preserves the original explanation that it writes <code>.shikiru/config.toml</code>, excludes <code>.shikiru/</code> in Git, and runs Doctor; it shows the destination and selected summary without redundant Roles or Doctor fact rows. The <strong>Run doctor</strong> action writes the fixture configuration and displays the full post-write report in Finish, using the native check format: bold white names, grey separators, white detail, then a blank row and aggregate passed/failed line. The result is read-only with Exit and no duplicate report.</p>
     <p>Drafts persist across steps and logical sizes. Narrow terminal sizes scroll and keep the type size fixed. The left hint is step-specific; Repository has no selection/scroll hint, and scroll appears only when the body overflows. Ctrl+F and <code>富士山</code> stay right-aligned on every step. Escape never cancels or exits; explicit Cancel and Exit actions remain. Hints are static and non-focusable. Browser controls stay outside the terminal. Values use text insertion, not HTML markup.</p>
   </section>
 
@@ -502,12 +506,45 @@ const INIT_DOCTOR_CHECKS = [
   ["Agent codex · Model choices", "Configured IDs are supported", "pass"]
 ];
 
+const ORCHESTRATION_FIELDS = [
+  {id: "max-parallel", key: "maxParallel", label: "Maximum parallel tasks", summary: "Max parallel", unit: "tasks", explanation: "Task slots the engine fills at once; each running task uses one.", minimum: 1, maximum: null, whole: true, defaultValue: "2"},
+  {id: "max-iterations", key: "maxIterations", label: "Maximum iterations", summary: "Max iterations", unit: "passes", explanation: "Implement and verify passes per task, the first included; the pass that reaches this count is the last.", minimum: 1, maximum: null, whole: true, defaultValue: "5"},
+  {id: "max-quota-wait", key: "maxQuotaWait", label: "Maximum quota wait", summary: "Max quota wait", unit: "seconds", explanation: "The longest wait for an agent's usage quota to reset before the task moves to another rung or escalates; 0 moves on at once.", minimum: 0, maximum: null, whole: true, defaultValue: "28800"},
+  {id: "max-cpu", key: "maxCpu", label: "Maximum CPU use", summary: "Max CPU", unit: "percent", explanation: "New tasks start only while host CPU use is below this; 0 holds every new start, 100 holds only a fully busy host.", minimum: 0, maximum: 100, whole: true, defaultValue: "85"},
+  {id: "min-free-ram", key: "minFreeRam", label: "Minimum free RAM", summary: "Min free RAM", unit: "GB", explanation: "New tasks start only while at least this much RAM is free; 0 turns the RAM check off.", minimum: 0, maximum: null, whole: false, defaultValue: "4.0"}
+];
+
+function parseOrchestrationValue(field, raw) {
+  const text = String(raw).trim();
+  if (text === "" || (field.whole && !/^\d+$/.test(text))) return null;
+  const value = Number(text);
+  if (!Number.isFinite(value) || value < field.minimum) return null;
+  return field.maximum !== null && value > field.maximum ? null : value;
+}
+
+function orchestrationRule(field) {
+  const kind = field.whole ? "a whole number" : "a number";
+  const bounds = field.maximum === null ? `at least ${field.minimum}` : `from ${field.minimum} to ${field.maximum}`;
+  return `${field.label} must be ${kind} ${bounds}.`;
+}
+
+function orchestrationProblem(field, raw) {
+  return parseOrchestrationValue(field, raw) === null ? orchestrationRule(field) : "";
+}
+
+function orchestrationSummary(state) {
+  return ORCHESTRATION_FIELDS.map(field => {
+    const raw = String(state.orchestration[field.key]).trim();
+    return orchestrationProblem(field, raw) ? `${field.summary} needs a value` : `${field.summary} ${raw} ${field.unit}`;
+  });
+}
+
 const INITIAL_STATE = {
   step: 0,
   repoState: "clean",
   trackerText: "",
   cacheText: "",
-  parallel: "2",
+  orchestration: Object.fromEntries(ORCHESTRATION_FIELDS.map(field => [field.key, field.defaultValue])),
   integration: "merge",
   selectedScope: "leader:base",
   newEntry: {agent: "", model: "", effort: ""},
@@ -634,9 +671,9 @@ function firstConfigurationProblem(state) {
     const problem = ladderProblem(row.raw);
     if (problem) return {scope: row.id, field: "ladder-input", message: problem};
   }
-  const parallel = Number(state.parallel);
-  if (!Number.isInteger(parallel) || parallel < 1) {
-    return {step: 4, field: "parallel-input", message: "Enter a whole number greater than zero."};
+  for (const field of ORCHESTRATION_FIELDS) {
+    const message = orchestrationProblem(field, state.orchestration[field.key]);
+    if (message) return {step: 4, field: field.id, message};
   }
   return null;
 }
@@ -932,10 +969,15 @@ function makeField(parent, label, id, value, type, onChange, options = {}) {
   control.id = id;
   control.type = type;
   control.value = value;
-  if (id === "parallel-input") { control.min = "1"; control.step = "1"; }
   control.addEventListener("input", () => onChange(control.value));
   control.addEventListener("change", () => onChange(control.value));
-  wrap.append(control);
+  if (options.unit) {
+    const inputCell = node("div", "field-input");
+    inputCell.append(control, node("span", "field-unit", options.unit));
+    wrap.append(inputCell);
+  } else {
+    wrap.append(control);
+  }
   if (options.problem || options.keepValidation) {
     if (options.problem) control.setAttribute("aria-invalid", "true");
     const problem = node("div", "validation", options.problem || "");
@@ -1804,8 +1846,8 @@ function renderRepository(body) {
 function renderFinish(body) {
   appendLine(body, "Finish writes .shikiru/config.toml, excludes .shikiru/ in Git, and runs Doctor.", "description");
   readRow(body, "Config", "/projects/demo/.shikiru/config.toml");
-  const summary = `Max parallel ${wizard.parallel} · ${wizard.integration === "merge" ? "Local merge" : "Pull request"}`;
-  readRow(body, "Summary", summary);
+  const integration = wizard.integration === "merge" ? "Local merge" : "Pull request";
+  readRow(body, "Summary", [...orchestrationSummary(wizard), integration].join(" · "));
 }
 
 let artworkTimer = null;
@@ -1843,7 +1885,7 @@ function firstFocusable(step) {
     0: "wizard-next",
     2: "path-input",
     3: "path-input",
-    4: "parallel-input",
+    4: "max-parallel",
     5: "integration-input",
     6: "wizard-run-doctor"
   };
@@ -1872,13 +1914,6 @@ function tryAdvance() {
     const issue = firstConfigurationProblem(wizard);
     if (issue && issue.scope) {
       focusProblem(issue);
-      return;
-    }
-  }
-  if (wizard.step === 4) {
-    const parallel = Number(wizard.parallel);
-    if (!Number.isInteger(parallel) || parallel < 1) {
-      focusProblem({step: 4, field: "parallel-input"});
       return;
     }
   }
@@ -1978,7 +2013,7 @@ function renderWizard(restoreId = "") {
   title.append(
     node("span", "wizard-brand", "SHIKIRU"),
     document.createTextNode(" · "),
-    node("span", "wizard-step", ["Repository", "Agents and ladders", "Trackers", "Caches and CoW", "Parallelism", "Integration mode", "Finish"][wizard.step])
+    node("span", "wizard-step", ["Repository", "Agents and ladders", "Trackers", "Caches and CoW", "Orchestration", "Integration mode", "Finish"][wizard.step])
   );
   const counter = node("div", "popup-step wizard-step-count", `${wizard.step + 1} / 7`);
   counter.id = "wizard-step-count";
@@ -1998,17 +2033,18 @@ function renderWizard(restoreId = "") {
   else if (wizard.step === 2) renderPathPage(body, "trackers");
   else if (wizard.step === 3) renderPathPage(body, "caches");
   else if (wizard.step === 4) {
-    appendLine(body, "The project default is 2 active tasks; choose the maximum parallel tasks.", "description");
-    const invalid = wizard.validation && (!Number.isInteger(Number(wizard.parallel)) || Number(wizard.parallel) < 1);
-    const control = makeField(body, "Maximum parallel", "parallel-input", wizard.parallel, "number", value => {
-      const normalized = value.trim() === "" ? "" : Number.isFinite(Number(value)) && Number(value) < 1 ? "1" : value;
-      if (control.value !== normalized) control.value = normalized;
-      wizard.parallel = normalized;
-      const parallel = Number(normalized);
-      updateFieldProblem(control, wizard.validation && (!Number.isInteger(parallel) || parallel < 1) ? "Enter a whole number greater than zero." : "");
-    }, {problem: invalid ? "Enter a whole number greater than zero." : "", keepValidation: true});
-    control.min = "1";
-    control.step = "1";
+    appendLine(body, "Set how many tasks run at once and when new work may start. Each field starts at the project default.", "description");
+    for (const field of ORCHESTRATION_FIELDS) {
+      const raw = wizard.orchestration[field.key];
+      const problem = wizard.validation ? orchestrationProblem(field, raw) : "";
+      const control = makeField(body, field.label, field.id, raw, "number", value => {
+        wizard.orchestration[field.key] = value;
+        updateFieldProblem(control, wizard.validation ? orchestrationProblem(field, value) : "");
+      }, {problem, keepValidation: true, unit: field.unit});
+      control.min = String(field.minimum);
+      control.step = field.whole ? "1" : "any";
+      appendLine(body, field.explanation, "field-help");
+    }
   } else if (wizard.step === 5) {
     appendLine(body, "Choose how completed work is integrated back into the repository.", "description");
     makeField(body, "Integration mode", "integration-input", wizard.integration, "select", value => {

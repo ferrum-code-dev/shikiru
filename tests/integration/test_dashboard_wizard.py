@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from textual.pilot import Pilot
 
     from shikiru.agents.contracts import Agent, AgentFactory
+    from shikiru.config.settings import OrchestrationConfig
     from shikiru.operator.detectors import InitWizardResult
 
 pytestmark = pytest.mark.asyncio
@@ -153,7 +154,12 @@ async def _app(root: Path) -> InitWizardApp:
     )
 
 
-async def _app_with_agents(root: Path, agents: Mapping[str, AgentFactory]) -> InitWizardApp:
+async def _app_with_agents(
+    root: Path,
+    agents: Mapping[str, AgentFactory],
+    *,
+    orchestration_defaults: OrchestrationConfig | None = None,
+) -> InitWizardApp:
     runner = SubprocessRunner()
     clock = SystemClock()
     registry = AgentRegistry()
@@ -188,7 +194,11 @@ async def _app_with_agents(root: Path, agents: Mapping[str, AgentFactory]) -> In
         detectors=detectors,
         doctor=doctor,
         doctor_renderer=doctor_renderable,
-        orchestration_defaults=load_default_orchestration(),
+        orchestration_defaults=(
+            load_default_orchestration()
+            if orchestration_defaults is None
+            else orchestration_defaults
+        ),
     )
 
 
@@ -505,16 +515,40 @@ async def _verify_back_navigation_and_fill_project_fields(
         additional_candidate=LONG_CACHE_CANDIDATE,
     )
     await _click_next(pilot, "#wizard-page-4")
-    parallel = pilot.app.query_one(f"#{wizard_module.MAX_PARALLEL_INPUT_ID}", Input)
-    await _replace_input(pilot, f"#{wizard_module.MAX_PARALLEL_INPUT_ID}", "0")
-    await wait_until(lambda: parallel.value == "1", timeout=1)
-    await _replace_input(pilot, f"#{wizard_module.MAX_PARALLEL_INPUT_ID}", "-2")
-    await wait_until(lambda: parallel.value == "1", timeout=1)
-    await _replace_input(pilot, f"#{wizard_module.MAX_PARALLEL_INPUT_ID}", "")
-    await wait_until(lambda: parallel.value == "", timeout=1)
+    await _replace_input(pilot, "#max-parallel", "0")
+    await _replace_input(pilot, "#max-iterations", "7")
+    await _replace_input(pilot, "#max-quota-wait", "600")
+    await _replace_input(pilot, "#max-cpu", "90")
+    await _replace_input(pilot, "#min-free-ram", "2.5")
     await _click_next(pilot, "#wizard-page-5")
     await _choose(pilot, "#integration", "pr")
     await _click_next(pilot, "#wizard-page-6")
+
+
+async def _wait_for_orchestration_error(
+    pilot: Pilot[InitWizardResult | None], input_id: str
+) -> None:
+    field = pilot.app.query_one(f"#{input_id}", Input)
+    await wait_until(
+        lambda: (
+            pilot.app.query_one("#wizard-page-4").display
+            and pilot.app.focused is field
+            and bool(str(pilot.app.query_one("#wizard-error", Static).render()).strip())
+        ),
+        timeout=3,
+    )
+
+
+async def _advance_to_orchestration(pilot: Pilot[InitWizardResult | None]) -> None:
+    await _click_next(pilot, "#wizard-page-1")
+    await _set_base_ladders(pilot)
+    await _click_next(pilot, "#wizard-page-2")
+    await _click_next(pilot, "#wizard-page-3")
+    await _click_next(pilot, "#wizard-page-4")
+
+
+def _input_value(pilot: Pilot[InitWizardResult | None], selector: str) -> str:
+    return pilot.app.query_one(selector, Input).value
 
 
 def _assert_written_mixed_config(tmp_path: Path, result: InitWizardResult) -> None:
@@ -550,7 +584,11 @@ def _assert_written_mixed_config(tmp_path: Path, result: InitWizardResult) -> No
     ]
     assert settings.repo.caches == ["build-cache", "node_modules", LONG_CACHE_CANDIDATE]
     assert settings.orchestration.max_parallel == 3
+    assert settings.orchestration.max_iterations == 7
     assert settings.orchestration.integration == "pr"
+    assert settings.orchestration.timeouts.max_quota_wait == 600
+    assert settings.orchestration.resources.max_cpu_pct == 90
+    assert settings.orchestration.resources.min_free_ram_gb == 2.5
     assert "/.shikiru/" in (tmp_path / ".git" / "info" / "exclude").read_text()
 
 
@@ -622,17 +660,9 @@ async def test_init_writes_mixed_multirung_config_and_runtime_resolves_complexit
         await _configure_helper_rung(pilot)
         await _verify_back_navigation_and_fill_project_fields(pilot)
         await _click_button(pilot, "#wizard-finish")
-        parallel = app.query_one(f"#{wizard_module.MAX_PARALLEL_INPUT_ID}", Input)
-        await wait_until(
-            lambda: (
-                app.query_one("#wizard-page-4").display
-                and app.focused is parallel
-                and bool(str(app.query_one("#wizard-error", Static).render()).strip())
-            ),
-            timeout=3,
-        )
+        await _wait_for_orchestration_error(pilot, "max-parallel")
         assert not (tmp_path / ".shikiru" / "config.toml").exists()
-        await _replace_input(pilot, f"#{wizard_module.MAX_PARALLEL_INPUT_ID}", "3")
+        await _replace_input(pilot, "#max-parallel", "3")
         await _click_next(pilot, "#wizard-page-5")
         await _click_next(pilot, "#wizard-page-6")
         assert (frame.region.width, frame.region.height) == preferred_frame_size
@@ -659,6 +689,100 @@ async def test_init_writes_mixed_multirung_config_and_runtime_resolves_complexit
         await pilot.click("#wizard-finish")
 
     _assert_written_mixed_config(tmp_path, cast("InitWizardResult", app.return_value))
+
+
+async def test_orchestration_fields_start_from_injected_defaults_and_keep_edits(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    packaged = load_default_orchestration()
+    defaults = packaged.model_copy(
+        update={
+            "max_parallel": 4,
+            "max_iterations": 6,
+            "timeouts": packaged.timeouts.model_copy(update={"max_quota_wait": 1200}),
+            "resources": packaged.resources.model_copy(
+                update={"max_cpu_pct": 70, "min_free_ram_gb": 6.0}
+            ),
+        }
+    )
+    app = await _app_with_agents(
+        tmp_path,
+        {"fake": create_fake_agent},
+        orchestration_defaults=defaults,
+    )
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await _advance_to_orchestration(pilot)
+        assert _input_value(pilot, "#max-parallel") == "4"
+        assert _input_value(pilot, "#max-iterations") == "6"
+        assert _input_value(pilot, "#max-quota-wait") == "1200"
+        assert _input_value(pilot, "#max-cpu") == "70"
+        assert _input_value(pilot, "#min-free-ram") == "6.0"
+        await _replace_input(pilot, "#max-parallel", "3")
+        await _replace_input(pilot, "#max-cpu", "90")
+        await _click_back(pilot, "#wizard-page-3")
+        await _click_next(pilot, "#wizard-page-4")
+        assert _input_value(pilot, "#max-parallel") == "3"
+        assert _input_value(pilot, "#max-cpu") == "90"
+        await _click_next(pilot, "#wizard-page-5")
+        await _choose(pilot, "#integration", "pr")
+        await _click_next(pilot, "#wizard-page-6")
+        summary = str(pilot.app.query_one("#wizard-summary .wizard-detail-value", Static).render())
+        assert summary == (
+            "Max parallel 3 tasks · Max iterations 6 passes · Max quota wait 1200 seconds · "
+            "Max CPU 90 percent · Min free RAM 6.0 GB · Pull request"
+        )
+
+
+async def test_invalid_orchestration_values_focus_their_field_and_boundaries_round_trip(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    _private_doctor_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    app = await _app_with_agents(tmp_path, {"fake": create_fake_agent})
+    config_path = tmp_path / ".shikiru" / "config.toml"
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await _advance_to_orchestration(pilot)
+        await _replace_input(pilot, "#max-cpu", "101")
+        await _click_next(pilot, "#wizard-page-5")
+        await _click_next(pilot, "#wizard-page-6")
+        await _click_button(pilot, "#wizard-finish")
+        await _wait_for_orchestration_error(pilot, "max-cpu")
+        assert not config_path.exists()
+
+        await _replace_input(pilot, "#max-cpu", "100")
+        await _replace_input(pilot, "#max-parallel", "0")
+        await _click_next(pilot, "#wizard-page-5")
+        await _click_next(pilot, "#wizard-page-6")
+        await _click_button(pilot, "#wizard-finish")
+        await _wait_for_orchestration_error(pilot, "max-parallel")
+        assert not config_path.exists()
+
+        await _replace_input(pilot, "#max-parallel", "1")
+        await _replace_input(pilot, "#max-iterations", "1")
+        await _replace_input(pilot, "#max-quota-wait", "0")
+        await _replace_input(pilot, "#min-free-ram", "0")
+        await _click_next(pilot, "#wizard-page-5")
+        await _click_next(pilot, "#wizard-page-6")
+        await _click_button(pilot, "#wizard-finish")
+        await wait_until(config_path.is_file, timeout=3)
+        await wait_until(
+            lambda: bool(_doctor_text(app.query_one("#doctor-report", Static)).strip()),
+            timeout=60,
+        )
+        await pilot.click("#wizard-finish")
+
+    orchestration = load_settings(tmp_path).orchestration
+    assert (orchestration.max_parallel, orchestration.max_iterations) == (1, 1)
+    assert orchestration.timeouts.max_quota_wait == 0
+    assert orchestration.resources.max_cpu_pct == 100
+    assert orchestration.resources.min_free_ram_gb == 0
 
 
 async def test_transient_small_resize_preserves_drafts_and_recovers_navigation(

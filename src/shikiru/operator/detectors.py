@@ -76,10 +76,14 @@ class InitWizardResult:
 
 @dataclass(frozen=True, slots=True)
 class OrchestrationChoices:
-    """The orchestration values the wizard writes under `[orchestration]`."""
+    """The orchestration values the wizard writes to the project config."""
 
     max_parallel: int
+    max_iterations: int
     integration: str
+    max_quota_wait: int
+    max_cpu_pct: int
+    min_free_ram_gb: float
 
 
 class ProjectDetectors:
@@ -280,7 +284,15 @@ def render_config(
             (
                 "[orchestration]",
                 f"max_parallel = {orchestration.max_parallel}",
+                f"max_iterations = {orchestration.max_iterations}",
                 f"integration = {json.dumps(orchestration.integration)}",
+                "",
+                "[orchestration.timeouts]",
+                f"max_quota_wait = {orchestration.max_quota_wait}",
+                "",
+                "[orchestration.resources]",
+                f"max_cpu_pct = {orchestration.max_cpu_pct}",
+                f"min_free_ram_gb = {orchestration.min_free_ram_gb}",
                 "",
             )
         )

@@ -14,6 +14,15 @@ from textual.widgets import Button, Input, Label, Rule, Select, Static
 
 from shikiru.config.settings import MERGE_INTEGRATION, PULL_REQUEST_INTEGRATION
 from shikiru.dashboard.ladder_editor import LADDER_ACTION_CSS, LadderConfiguration, LadderEditor
+from shikiru.dashboard.orchestration_fields import (
+    MAX_CPU,
+    MAX_ITERATIONS,
+    MAX_PARALLEL,
+    MAX_QUOTA_WAIT,
+    MIN_FREE_RAM,
+    ORCHESTRATION_FIELDS,
+    OrchestrationFieldError,
+)
 from shikiru.dashboard.row_list import RowList
 from shikiru.domain.tasks import Role
 from shikiru.errors import ConfigError, ShikiruError
@@ -57,6 +66,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import ModelCatalog
     from shikiru.config.settings import OrchestrationConfig
+    from shikiru.dashboard.orchestration_fields import OrchestrationField
     from shikiru.operator.doctor import Doctor, DoctorReport
     from shikiru.operator.plugin_checks import AgentCapabilityResult
     from shikiru.workspace.git import LineChangeStats
@@ -65,14 +75,13 @@ STEP_REPOSITORY = "Repository"
 STEP_AGENTS = "Agents and ladders"
 STEP_TRACKERS = "Trackers"
 STEP_CACHES = "Caches and CoW"
-STEP_PARALLELISM = "Parallelism"
+STEP_ORCHESTRATION = "Orchestration"
 STEP_INTEGRATION = "Integration mode"
 STEP_FINISH = "Finish"
 TRACKERS_INPUT_ID = "trackers"
 CACHES_INPUT_ID = "caches"
 TRACKERS_LIST_ID = "tracker-candidates"
 CACHES_LIST_ID = "cache-candidates"
-MAX_PARALLEL_INPUT_ID = "max-parallel"
 INTEGRATION_SELECT_ID = "integration"
 REPOSITORY_CHECKOUT_ID = "wizard-checkout"
 WIZARD_STEPS = (
@@ -80,7 +89,7 @@ WIZARD_STEPS = (
     STEP_AGENTS,
     STEP_TRACKERS,
     STEP_CACHES,
-    STEP_PARALLELISM,
+    STEP_ORCHESTRATION,
     STEP_INTEGRATION,
     STEP_FINISH,
 )
@@ -88,7 +97,7 @@ REPOSITORY_STEP_INDEX = WIZARD_STEPS.index(STEP_REPOSITORY)
 AGENTS_STEP_INDEX = WIZARD_STEPS.index(STEP_AGENTS)
 TRACKERS_STEP_INDEX = WIZARD_STEPS.index(STEP_TRACKERS)
 COW_STEP_INDEX = WIZARD_STEPS.index(STEP_CACHES)
-PARALLELISM_STEP_INDEX = WIZARD_STEPS.index(STEP_PARALLELISM)
+ORCHESTRATION_STEP_INDEX = WIZARD_STEPS.index(STEP_ORCHESTRATION)
 INTEGRATION_STEP_INDEX = WIZARD_STEPS.index(STEP_INTEGRATION)
 FINISH_STEP_INDEX = WIZARD_STEPS.index(STEP_FINISH)
 INTEGRATION_OPTIONS = (
@@ -123,8 +132,6 @@ WIZARD_HINTS = (
 SCROLL_HINT = "PgUp/PgDn scroll"
 EXIT_HINT = "Enter Exit"
 PATH_SEPARATOR = ","
-MINIMUM_PARALLEL = 1
-MINIMUM_PARALLEL_TEXT = "1"
 NO_CANDIDATES = "No detected candidates."
 DETAIL_LABEL_WIDTH = 15
 MINUS_SIGN = "\N{MINUS SIGN}"
@@ -453,6 +460,13 @@ class InitWizardApp(App[InitWizardResult | None]):
         + f"""
     #wizard-frame .wizard-wide-label Label {{ width: {DETAIL_LABEL_WIDTH}; }}
     #wizard-frame .wizard-long-label Label {{ width: {DETAIL_LABEL_WIDTH}; }}
+    .orchestration-field {{ height: auto; margin-bottom: 1; }}
+    .wizard-page .orchestration-unit {{
+        width: auto; height: 1; padding: 0 1; color: $secondary-text;
+    }}
+    .wizard-page .orchestration-help {{
+        height: auto; padding-left: {DETAIL_LABEL_WIDTH}; color: $secondary-text;
+    }}
     .wizard-detail-row {{ width: 100%; height: auto; }}
     .wizard-detail-row .wizard-detail-label {{
         width: {DETAIL_LABEL_WIDTH}; height: auto; color: $secondary-text; text-style: none;
@@ -518,7 +532,7 @@ class InitWizardApp(App[InitWizardResult | None]):
                     yield LadderEditor()
                 yield from self._trackers_page()
                 yield from self._caches_page()
-                yield from self._parallelism_page()
+                yield from self._orchestration_page()
                 yield from self._integration_page()
                 yield from self._finish_page()
                 yield Static("", id="wizard-error", markup=False)
@@ -629,8 +643,6 @@ class InitWizardApp(App[InitWizardResult | None]):
         if event.input.id in {TRACKERS_INPUT_ID, CACHES_INPUT_ID}:
             self._refresh_candidate_rows()
             self.call_after_refresh(self._update_navigation_hint)
-        elif event.input.id == MAX_PARALLEL_INPUT_ID:
-            self._clamp_parallelism(event.input)
         self._update_finish_summary()
 
     @on(Select.Changed)
@@ -649,20 +661,6 @@ class InitWizardApp(App[InitWizardResult | None]):
             return
         message.stop()
         self._add_candidate(field_id, message.control.candidates[message.index])
-
-    def _clamp_parallelism(self, field: Input) -> None:
-        raw = field.value.strip()
-        if not raw:
-            return
-        try:
-            value = int(raw)
-        except ValueError:
-            return
-        if value >= MINIMUM_PARALLEL:
-            return
-        with field.prevent(Input.Changed):
-            field.value = MINIMUM_PARALLEL_TEXT
-        field.cursor_position = len(MINIMUM_PARALLEL_TEXT)
 
     def _add_candidate(self, field_id: str, candidate: str) -> None:
         field = self.query_one(f"#{field_id}", Input)
@@ -786,7 +784,6 @@ class InitWizardApp(App[InitWizardResult | None]):
         return WIZARD_HINTS[self._step]
 
     def _update_finish_summary(self) -> None:
-        parallel = self.query_one(f"#{MAX_PARALLEL_INPUT_ID}", Input).value.strip()
         integration_value = cast(
             "Select[str]", self.query_one(f"#{INTEGRATION_SELECT_ID}", Select)
         ).value
@@ -795,8 +792,15 @@ class InitWizardApp(App[InitWizardResult | None]):
             if isinstance(integration_value, str)
             else INTEGRATION_UNSELECTED
         )
-        summary = f"Max parallel {parallel or 'needs a value'} · {integration}"
-        self.query_one("#wizard-summary", WizardDetailRow).update_value(summary)
+        parts = (*(self._field_summary(field) for field in ORCHESTRATION_FIELDS), integration)
+        self.query_one("#wizard-summary", WizardDetailRow).update_value(" · ".join(parts))
+
+    def _field_summary(self, field: OrchestrationField) -> str:
+        try:
+            value = field.parse(self.query_one(f"#{field.input_id}", Input).value)
+        except OrchestrationFieldError:
+            return f"{field.summary} needs a value"
+        return f"{field.summary} {value} {field.unit}"
 
     def action_cancel(self) -> None:
         if self._writing_config:
@@ -887,8 +891,8 @@ class InitWizardApp(App[InitWizardResult | None]):
             self._focus_candidate_list(TRACKERS_LIST_ID, TRACKERS_INPUT_ID)
         elif self._step == COW_STEP_INDEX:
             self._focus_candidate_list(CACHES_LIST_ID, CACHES_INPUT_ID)
-        elif self._step == PARALLELISM_STEP_INDEX:
-            self.query_one(f"#{MAX_PARALLEL_INPUT_ID}", Input).focus()
+        elif self._step == ORCHESTRATION_STEP_INDEX:
+            self.query_one(f"#{MAX_PARALLEL.input_id}", Input).focus()
         elif self._step == INTEGRATION_STEP_INDEX:
             self.query_one(f"#{INTEGRATION_SELECT_ID}", Select).focus()
         elif self._step == FINISH_STEP_INDEX:
@@ -929,14 +933,14 @@ class InitWizardApp(App[InitWizardResult | None]):
             self._show_step_error(COW_STEP_INDEX, CACHES_INPUT_ID, error)
             return
         try:
-            max_parallel = self._read_parallelism()
-        except ConfigError as error:
-            self._show_step_error(PARALLELISM_STEP_INDEX, MAX_PARALLEL_INPUT_ID, error)
-            return
-        try:
             integration = self._read_integration()
         except ConfigError as error:
             self._show_step_error(INTEGRATION_STEP_INDEX, INTEGRATION_SELECT_ID, error)
+            return
+        try:
+            orchestration = self._read_orchestration(integration)
+        except OrchestrationFieldError as error:
+            self._show_step_error(ORCHESTRATION_STEP_INDEX, error.input_id, error)
             return
         self._finishing = True
         self.query_one("#wizard-finish", Button).disabled = True
@@ -947,10 +951,7 @@ class InitWizardApp(App[InitWizardResult | None]):
                 caches=caches,
                 ladders=ladders.ladders,
                 complexity=ladders.complexity,
-                orchestration=OrchestrationChoices(
-                    max_parallel=max_parallel,
-                    integration=integration,
-                ),
+                orchestration=orchestration,
             )
             self._config_path = config_path.resolve()
             self._writing_config = False
@@ -996,16 +997,18 @@ class InitWizardApp(App[InitWizardResult | None]):
             raise ConfigError(message)
         return entries
 
-    def _read_parallelism(self) -> int:
-        raw = self.query_one(f"#{MAX_PARALLEL_INPUT_ID}", Input).value.strip()
-        if not raw.isdecimal():
-            message = "max parallel must be a positive whole number"
-            raise ConfigError(message)
-        value = int(raw)
-        if value < MINIMUM_PARALLEL:
-            message = "max parallel must be a positive whole number"
-            raise ConfigError(message)
-        return value
+    def _read_field(self, field: OrchestrationField) -> int | float:
+        return field.parse(self.query_one(f"#{field.input_id}", Input).value)
+
+    def _read_orchestration(self, integration: str) -> OrchestrationChoices:
+        return OrchestrationChoices(
+            max_parallel=int(self._read_field(MAX_PARALLEL)),
+            max_iterations=int(self._read_field(MAX_ITERATIONS)),
+            integration=integration,
+            max_quota_wait=int(self._read_field(MAX_QUOTA_WAIT)),
+            max_cpu_pct=int(self._read_field(MAX_CPU)),
+            min_free_ram_gb=float(self._read_field(MIN_FREE_RAM)),
+        )
 
     def _read_integration(self) -> str:
         value = cast("Select[str]", self.query_one(f"#{INTEGRATION_SELECT_ID}", Select)).value
@@ -1161,19 +1164,31 @@ class InitWizardApp(App[InitWizardResult | None]):
                 yield Label("Cache paths")
                 yield Input(id=CACHES_INPUT_ID)
 
-    def _parallelism_page(self) -> ComposeResult:
+    def _orchestration_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-4", classes="wizard-page"):
             yield Static(
-                f"The project default is {self._orchestration_defaults.max_parallel} active tasks; "
-                "choose the maximum parallel tasks.",
+                "Set how many tasks run at once and when new work may start. "
+                "Each field starts at the project default.",
                 classes="wizard-description",
                 markup=False,
             )
-            with Horizontal(classes="palette-row wizard-long-label"):
-                yield Label("Maximum parallel")
-                yield Input(
-                    value=str(self._orchestration_defaults.max_parallel), id=MAX_PARALLEL_INPUT_ID
-                )
+            for field in ORCHESTRATION_FIELDS:
+                yield self._orchestration_field(field)
+
+    def _orchestration_field(self, field: OrchestrationField) -> Vertical:
+        return Vertical(
+            Horizontal(
+                Label(field.label),
+                Input(
+                    value=str(field.default(self._orchestration_defaults)),
+                    id=field.input_id,
+                ),
+                Static(field.unit, classes="orchestration-unit", markup=False),
+                classes="palette-row wizard-long-label",
+            ),
+            Static(field.explanation, classes="orchestration-help", markup=False),
+            classes="orchestration-field",
+        )
 
     def _integration_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-5", classes="wizard-page"):

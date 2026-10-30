@@ -374,7 +374,7 @@ run_waiter ladder "$TMUX_BIN" "$SOCKET_NAME" "$WIZARD_PANE" 'Helper' 'fake:smoke
 tmux_run capture-pane -p -t "$WIZARD_WINDOW" -S - > "$RUN_ROOT/wizard-agents.txt"
 click_wizard_button 'Next' 'SHIKIRU · Trackers'
 click_wizard_button 'Next' 'SHIKIRU · Caches and CoW'
-click_wizard_button 'Next' 'SHIKIRU · Parallelism'
+click_wizard_button 'Next' 'SHIKIRU · Orchestration'
 click_wizard_button 'Next' 'SHIKIRU · Integration mode'
 click_wizard_button 'Next' 'SHIKIRU · Finish'
 wait_for_advance "$WIZARD_WINDOW" 'Doctor passed'

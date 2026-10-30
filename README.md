@@ -67,8 +67,12 @@ shikiru attach
 ```
 
 The seven-step wizard checks the repository, builds role/model/effort ladders, lets you choose
-tracker files and ignored cache paths, sets parallelism and integration mode, then writes
-`.shikiru/config.toml` and runs Doctor. Available model and effort choices come from agent plugins;
+tracker files and ignored cache paths, sets the orchestration limits and integration mode, then
+writes `.shikiru/config.toml` and runs Doctor. The Orchestration step sets the maximum parallel
+tasks, the maximum passes per task, the maximum quota wait in seconds, the host CPU percentage
+below which new tasks may start, and the free RAM in GB that must be available before a new task
+starts. Each field starts at the project default, and Finish rejects an out-of-range value by
+focusing that field before anything is written. Available model and effort choices come from agent plugins;
 where no authoritative catalog exists, Doctor cannot promise model availability. Tracker and cache
 fields start empty: add only what you want Shikiru to use. Cancel explicitly with the Cancel button;
 `Ctrl+F` briefly reveals the background artwork.
@@ -187,7 +191,7 @@ stop/start it to apply engine policy changes.
 | --- | --- |
 | `project`, `repo` | Project name, tracker files agents read/update, integration base/remote, ignored cache paths. |
 | `roles`, `agents` | Role and complexity ladders, review escalation policy; plugin CLI arguments, compaction threshold and optional billing declaration. |
-| `orchestration` | Parallel task slots, review iterations and local merge versus pull-request integration. |
+| `orchestration` | Parallel task slots, review iterations and local merge versus pull-request integration; the init wizard also sets the quota, CPU and free-RAM limits below. |
 | `orchestration.resources` | CPU/free-RAM gates for dispatch; these do not impose CPU/RAM limits on already-running agents. |
 | `orchestration.timeouts`, `.network`, `.faults`, `.retries` | Stall/tool/Helper/quota/integration/PR limits, remote polling, engine-fault retries, and configurable provider-unavailable retries. |
 | `dashboard` | Widgets, pane splits/titles, animation, display/refresh limits and resource/quota warning thresholds. |
