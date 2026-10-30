@@ -102,7 +102,6 @@ LABEL_WIDTH = max(
         PENDING_LABEL,
         ADDED_LABEL,
         RISKS_LABEL,
-        COST_LABEL,
     )
 )
 GROUP_INDENT = 2
@@ -222,7 +221,7 @@ def _escalated(view: TaskDetailView) -> bool:
 
 def total_cost_text(sessions: Sequence[TaskSessionView]) -> str | None:
     """Return the task's summed cost with its basis, `subscription`, or nothing when unknown."""
-    groups = _cost_groups(sessions, compact=True)
+    groups = _cost_groups(sessions)
     return _joined(groups).plain if groups else None
 
 
@@ -270,7 +269,7 @@ class Briefing:
             *_labelled(self._summary_rows(console, width - LABEL_WIDTH - LABEL_GAP), width),
             *_group(_result_title(view), _result_rows(view), width),
             *_group(PROBLEMS_TITLE, _problem_rows(view), width),
-            *_labelled(_cost_rows(view), width),
+            *_group(COST_LABEL, _cost_rows(view), width),
         ]
 
     def _progress_rows(self, console: Console, value_width: int) -> list[Row]:
@@ -439,8 +438,19 @@ def _problem_rows(view: TaskDetailView) -> list[Row]:
 
 
 def _cost_rows(view: TaskDetailView) -> list[Row]:
-    row = _row(COST_LABEL, _cost_groups(view.sessions, compact=False))
-    return [row] if row is not None else []
+    amounts, bases = _cost_amounts(view.sessions)
+    if not amounts:
+        groups = _subscription_groups(view.sessions)
+        return [(Text(), groups)] if groups else []
+    word, style = _cost_qualifier(bases)
+    return [
+        (
+            grey(ROLE_SHORT_LABELS.get(role, label)),
+            (Text(f"${amounts[role]:{COST_FORMAT}} {word}", style=style),),
+        )
+        for role, label in ROLE_LABELS.items()
+        if role in amounts
+    ]
 
 
 def _compact_needed(view: TaskDetailView, width: int) -> list[RenderableType]:
@@ -483,7 +493,7 @@ def _compact_verdict(view: TaskDetailView) -> list[RenderableType]:
 
 
 def _compact_cost(view: TaskDetailView) -> list[RenderableType]:
-    cost = _cost_groups(view.sessions, compact=True)
+    cost = _cost_groups(view.sessions)
     return [_joined(cost)] if cost else []
 
 
@@ -649,26 +659,27 @@ def pull_request_groups(pull_request: PullRequestLine | None) -> tuple[Text, ...
     return tuple(groups)
 
 
-def _cost_groups(sessions: Sequence[TaskSessionView], *, compact: bool) -> tuple[Text, ...]:
+def _cost_amounts(sessions: Sequence[TaskSessionView]) -> tuple[dict[str, float], set[str]]:
     amounts: dict[str, float] = {}
     bases: set[str] = set()
     for session in sessions:
         if session.cost_usd is not None:
             amounts[session.role] = amounts.get(session.role, 0.0) + session.cost_usd
             bases.add(session.cost_basis)
+    return amounts, bases
+
+
+def _subscription_groups(sessions: Sequence[TaskSessionView]) -> tuple[Text, ...]:
+    subscribed = any(session.billing_mode == BILLING_MODE_SUBSCRIPTION for session in sessions)
+    return (Text(SUBSCRIPTION_WORD, style=SAGE),) if subscribed else ()
+
+
+def _cost_groups(sessions: Sequence[TaskSessionView]) -> tuple[Text, ...]:
+    amounts, bases = _cost_amounts(sessions)
     if not amounts:
-        subscribed = any(session.billing_mode == BILLING_MODE_SUBSCRIPTION for session in sessions)
-        return (Text(SUBSCRIPTION_WORD, style=SAGE),) if subscribed else ()
+        return _subscription_groups(sessions)
     word, style = _cost_qualifier(bases)
-    if compact:
-        return (Text(f"${sum(amounts.values()):{COST_FORMAT}} {word}", style=style),)
-    labels = [
-        f"{ROLE_SHORT_LABELS.get(role, label)} ${amounts[role]:{COST_FORMAT}}"
-        for role, label in ROLE_LABELS.items()
-        if role in amounts
-    ]
-    labels[-1] = f"{labels[-1]} {word}"
-    return tuple(Text(label, style=style) for label in labels)
+    return (Text(f"${sum(amounts.values()):{COST_FORMAT}} {word}", style=style),)
 
 
 def _cost_qualifier(bases: set[str]) -> tuple[str, str]:
