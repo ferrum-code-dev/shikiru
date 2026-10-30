@@ -64,6 +64,7 @@ disk_size_refresh_seconds = 300
 disk_warn_free_pct = 10
 disk_alert_free_pct = 5
 repo_status_cache_seconds = 10
+task_work_cache_seconds = 2
 timeline_page_size = 20
 timeline_scan_rows = 256
 timeline_refresh_seconds = 1

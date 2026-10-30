@@ -260,6 +260,7 @@ class DashboardConfig(ConfigModel):
     disk_warn_free_pct: int = Field(gt=0, le=MAX_USAGE_PCT)
     disk_alert_free_pct: int = Field(gt=0, le=MAX_USAGE_PCT)
     repo_status_cache_seconds: float = Field(gt=0)
+    task_work_cache_seconds: float = Field(gt=0)
     timeline_page_size: int = Field(gt=0, le=MAX_TIMELINE_PAGE_SIZE)
     timeline_scan_rows: int = Field(gt=0, le=MAX_TIMELINE_SIGNAL_SCAN_ROWS)
     timeline_refresh_seconds: float = Field(gt=0)
