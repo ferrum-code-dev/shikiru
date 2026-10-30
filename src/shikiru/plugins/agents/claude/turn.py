@@ -184,7 +184,9 @@ _UNAVAILABLE_ERROR_TEXTS = ("overloaded", "unrecognized_model", "unrecognized mo
 _AUTH_ERROR_TEXTS = ("authentication", "unauthorized", "invalid api key")
 _TOOL_DETAIL_MAX_CHARS = 160
 _UNKNOWN_ERROR_MESSAGE = "Claude stream ended without a result"
+_PROCESS_FAILURE_MESSAGE = "Claude process exited unsuccessfully after emitting a result"
 _INVALID_COMPACTION_MESSAGE = "Claude compaction ended without compact_boundary"
+_MALFORMED_COMPACTION_MESSAGE = "Claude compaction reported malformed token counts"
 _INEFFECTIVE_COMPACTION_MESSAGE = (
     "Claude compaction left {post_tokens} tokens, not below the {limit}-token compaction limit"
 )
@@ -235,6 +237,7 @@ class ClaudeTurnParser:
         self._malformed_line: str | None = None
         self._did_compact = False
         self._post_compaction_tokens: int | None = None
+        self._malformed_compaction_metadata = False
         self._failure_payload: Mapping[str, Any] | None = None
         self._success_payload: Mapping[str, Any] | None = None
         self._context_exceeded = False
@@ -283,6 +286,8 @@ class ClaudeTurnParser:
             self._terminal = True
             return self._fail(self._failure_payload, stderr)
         if self._success_payload is not None:
+            if exit_code != 0:
+                return self._finish_failed_process(exit_code, stderr)
             return self._finish_success(self._success_payload)
         return self._finish_without_result(exit_code, stderr)
 
@@ -318,6 +323,16 @@ class ClaudeTurnParser:
         self._terminal = True
         return [TurnFailed(kind, _stderr_message(exit_code, stderr, message), None)]
 
+    def _finish_failed_process(self, exit_code: int, stderr: str) -> list[AgentSignal]:
+        failure = self._classify_failure(None, stderr)
+        kind, message, resets_at = failure or (
+            FailureKind.UNKNOWN,
+            _PROCESS_FAILURE_MESSAGE,
+            None,
+        )
+        self._terminal = True
+        return [TurnFailed(kind, _stderr_message(exit_code, stderr, message), resets_at)]
+
     def _system(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         subtype = payload.get(_SUBTYPE_FIELD)
         if subtype == _INIT_SUBTYPE:
@@ -346,10 +361,17 @@ class ClaudeTurnParser:
     def _compact_boundary(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         self._did_compact = True
         metadata = _mapping(payload.get(_COMPACT_METADATA_FIELD))
-        self._post_compaction_tokens = _optional_integer(metadata, _POST_TOKENS_FIELD)
+        if metadata is not None:
+            self._malformed_compaction_metadata |= any(
+                key in metadata and _optional_nonnegative_integer(metadata, key) is None
+                for key in (_PRE_TOKENS_FIELD, _POST_TOKENS_FIELD)
+            )
+        self._post_compaction_tokens = _optional_nonnegative_integer(metadata, _POST_TOKENS_FIELD)
+        if self._malformed_compaction_metadata:
+            return []
         return [
             Compacted(
-                _optional_integer(metadata, _PRE_TOKENS_FIELD),
+                _optional_nonnegative_integer(metadata, _PRE_TOKENS_FIELD),
                 self._post_compaction_tokens,
             )
         ]
@@ -625,6 +647,8 @@ class ClaudeTurnParser:
             return None
         if not self._did_compact:
             return _INVALID_COMPACTION_MESSAGE
+        if self._malformed_compaction_metadata:
+            return _MALFORMED_COMPACTION_MESSAGE
         post_tokens = self._post_compaction_tokens
         if post_tokens is None or post_tokens >= limit:
             return _INEFFECTIVE_COMPACTION_MESSAGE.format(post_tokens=post_tokens, limit=limit)
@@ -740,11 +764,11 @@ def _mapping(value: object) -> Mapping[str, Any] | None:
     return cast("Mapping[str, Any]", value) if isinstance(value, Mapping) else None
 
 
-def _optional_integer(payload: Mapping[str, Any] | None, key: str) -> int | None:
+def _optional_nonnegative_integer(payload: Mapping[str, Any] | None, key: str) -> int | None:
     if payload is None:
         return None
     value = payload.get(key)
-    return value if isinstance(value, int) else None
+    return value if type(value) is int and value >= 0 else None
 
 
 def _tool_detail(value: object) -> str:

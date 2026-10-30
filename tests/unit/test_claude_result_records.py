@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
+
+import pytest
 
 from shikiru.agents.contracts import (
     Compacted,
@@ -121,3 +124,48 @@ def test_task_notification_without_compact_boundary_remains_a_compaction_failure
 
     assert isinstance(failure, TurnFailed)
     assert failure.kind is FailureKind.OTHER
+
+
+@pytest.mark.parametrize(
+    "compact_metadata",
+    [
+        {"pre_tokens": 150_000, "post_tokens": True},
+        {"pre_tokens": 150_000, "post_tokens": -1},
+        {"pre_tokens": 150_000, "post_tokens": "13,268"},
+        {"pre_tokens": True, "post_tokens": 13_268},
+        {"pre_tokens": -1, "post_tokens": 13_268},
+    ],
+)
+def test_malformed_compaction_token_counts_fail(
+    compact_metadata: dict[str, object],
+) -> None:
+    parser = _parser(compact=True)
+    parser.feed(json.dumps({"type": "system", "subtype": "init", "session_id": "session-a"}))
+
+    activity = parser.feed(
+        json.dumps(
+            {
+                "type": "system",
+                "subtype": "compact_boundary",
+                "compact_metadata": compact_metadata,
+            }
+        )
+    )
+    parser.feed(
+        json.dumps(
+            {
+                "type": "result",
+                "subtype": "success",
+                "stop_reason": "end_turn",
+                "terminal_reason": "completed",
+                "result": "Compaction completed",
+            }
+        )
+    )
+
+    [failure] = parser.finish(0, "")
+
+    assert activity == []
+    assert isinstance(failure, TurnFailed)
+    assert failure.kind is FailureKind.OTHER
+    assert "malformed token counts" in failure.message

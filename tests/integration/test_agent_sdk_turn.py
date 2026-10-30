@@ -263,6 +263,187 @@ async def test_claude_repeated_init_with_a_different_session_remains_a_protocol_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("stderr", "exit_code", "error_result", "expected_failure"),
+    [
+        ("diagnostic only", 0, None, None),
+        ("authentication failed: invalid API key", 1, None, FailureKind.AUTH),
+        (
+            "",
+            0,
+            {
+                "type": "result",
+                "subtype": "error",
+                "is_error": True,
+                "terminal_reason": "error",
+                "result": "Authentication failed: invalid API key",
+            },
+            FailureKind.AUTH,
+        ),
+    ],
+)
+async def test_claude_intermediate_success_waits_for_process_outcome(
+    tmp_path: Path,
+    stderr: str,
+    exit_code: int,
+    error_result: dict[str, object] | None,
+    expected_failure: FailureKind | None,
+) -> None:
+    records: list[dict[str, object]] = [
+        {"type": "system", "subtype": "init", "session_id": "session-process-outcome"},
+        {
+            "type": "result",
+            "subtype": "success",
+            "stop_reason": "end_turn",
+            "terminal_reason": "completed",
+            "result": "Intermediate verification completed.",
+            "result_index": 0,
+        },
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "Background follow-up is running."}]},
+        },
+    ]
+    if error_result is not None:
+        records.append(error_result)
+    output = "".join(f"{json.dumps(record)}\n" for record in records).encode()
+    program = (
+        f"import sys; sys.stdout.buffer.write({output!r}); "
+        f"sys.stderr.write({stderr!r}); sys.exit({exit_code})"
+    )
+    spec = replace(_spec(tmp_path, session_id=None), rung=Rung("claude", "haiku"))
+    clock = FakeClock(_TEST_NOW)
+    parser = ClaudeTurnParser(
+        session_id="session-process-outcome",
+        model="haiku",
+        initial_usage=None,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+    process = TurnProcess((sys.executable, "-c", program), tmp_path, {}, parser)
+    turn = await StreamingTurn.start(spec, SubprocessRunner(), _SingleProcessSequence(process))
+
+    signals = [signal async for signal in turn.signals()]
+
+    [terminal] = [signal for signal in signals if isinstance(signal, (TurnEnded, TurnFailed))]
+    assert len([signal for signal in signals if isinstance(signal, SessionStarted)]) == 1
+    if expected_failure is None:
+        assert terminal == TurnEnded("Background follow-up is running.")
+    else:
+        assert isinstance(terminal, TurnFailed)
+        assert terminal.kind is expected_failure
+        assert "authentication failed" in terminal.message.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("post_tokens", [True, -1])
+async def test_claude_malformed_compaction_does_not_start_continuation(
+    tmp_path: Path,
+    post_tokens: bool | int,
+) -> None:
+    session_id = "session-malformed-compaction"
+    initial_stream = (
+        "\n".join(
+            [
+                json.dumps({"type": "system", "subtype": "init", "session_id": session_id}),
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "stop_reason": "end_turn",
+                        "terminal_reason": "completed",
+                        "result": "Implementation step completed.",
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    compact_stream = (
+        "\n".join(
+            [
+                json.dumps({"type": "system", "subtype": "init", "session_id": session_id}),
+                json.dumps(
+                    {
+                        "type": "system",
+                        "subtype": "compact_boundary",
+                        "compact_metadata": {"pre_tokens": 150_000, "post_tokens": post_tokens},
+                    }
+                ),
+                json.dumps(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "stop_reason": "end_turn",
+                        "terminal_reason": "completed",
+                        "result": "Compaction process completed.",
+                    }
+                ),
+            ]
+        )
+        + "\n"
+    )
+    cli_dir = tmp_path / "bin"
+    cli_dir.mkdir()
+    cli = cli_dir / "claude"
+    prompt_log = tmp_path / "prompts.txt"
+    marker = tmp_path / "turn" / "implementer.compact-marker"
+    cli.write_text(
+        "\n".join(
+            [
+                f"#!{sys.executable}",
+                "import sys",
+                "from pathlib import Path",
+                "prompt = sys.argv[sys.argv.index('-p') + 1]",
+                f"prompt_log = Path({str(prompt_log)!r})",
+                "with prompt_log.open('a') as output_file:",
+                "    output_file.write(prompt + '\\n')",
+                "if prompt == '/compact':",
+                f"    output = {compact_stream!r}",
+                "else:",
+                f"    output = {initial_stream!r}",
+                f"    marker = Path({str(marker)!r})",
+                "    marker.parent.mkdir(parents=True, exist_ok=True)",
+                "    marker.touch()",
+                "sys.stdout.write(output)",
+                "sys.stdout.flush()",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cli.chmod(0o755)
+    environment = {
+        **os.environ,
+        "PATH": f"{cli_dir}{os.pathsep}{os.environ['PATH']}",
+        "CLAUDE_CONFIG_DIR": str(tmp_path / "claude-config"),
+    }
+    spec = replace(
+        _spec(tmp_path, session_id=session_id),
+        rung=Rung("claude", "claude-haiku-4-5-20251001"),
+        prompt="Implement the requested task.",
+    )
+    clock = FakeClock(_TEST_NOW)
+    sequence = ClaudeTurnSequence(
+        spec,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+        compact_at_pct=80,
+        args=(),
+        environment=lambda turn_spec: {**environment, **turn_spec.env},
+    )
+    turn = await StreamingTurn.start(spec, SubprocessRunner(), sequence)
+
+    signals = [signal async for signal in turn.signals()]
+
+    [failure] = [signal for signal in signals if isinstance(signal, TurnFailed)]
+    assert failure.kind is FailureKind.OTHER
+    assert "malformed token counts" in failure.message
+    assert not any(isinstance(signal, TurnEnded) for signal in signals)
+    assert prompt_log.read_text().splitlines() == [spec.prompt, "/compact"]
+
+
+@pytest.mark.asyncio
 async def test_claude_compaction_sequence_continues_after_intermediate_results(
     tmp_path: Path,
 ) -> None:
