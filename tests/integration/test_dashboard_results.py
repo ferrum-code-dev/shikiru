@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from rich.console import Console
 
+from shikiru.config.loader import load_settings
 from shikiru.dashboard.fold_bodies import DecisionsBody, ResultsBody
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
@@ -19,7 +20,7 @@ from shikiru.domain.reports import (
 )
 from shikiru.domain.reports import TestRun as AgentTestRun
 from shikiru.domain.results import ResultOutcome
-from shikiru.domain.steps import Step, Transition, first_step
+from shikiru.domain.steps import Step, Transition, first_step, next_step
 from shikiru.domain.tasks import Mode, Status
 from shikiru.engine.events import emit_verdict
 from shikiru.operator.queries import TASK_DETAIL_EVENT_LIMIT
@@ -110,6 +111,57 @@ async def _results(views: StateDashboardViews, task_id: str) -> TaskResults:
     assert detail is not None
     assert detail.results is not None
     return detail.results
+
+
+def _rework(*risks: str) -> Verdict:
+    return Verdict(
+        decision="changes_requested",
+        summary="rework",
+        issues=[Issue(severity="major", description="fix it")],
+        residual_risks=list(risks),
+    )
+
+
+def _accept(*risks: str) -> Verdict:
+    return Verdict(decision="accept", summary="ok", residual_risks=list(risks))
+
+
+def _turn(project_root: Path, task_id: str, name: str) -> Path:
+    turn = turns_dir(project_root, task_id) / name
+    turn.mkdir(parents=True)
+    return turn
+
+
+def _record_verdict(turn: Path, verdict: Verdict) -> None:
+    (turn / REPORT_KIND_FILENAME).write_text("verdict")
+    (turn / REPORT_FILENAME).write_text(verdict.model_dump_json())
+
+
+def _record_implementation(turn: Path) -> None:
+    report = ImplementationReport(
+        status="completed", summary="s", commits=[], tests=[], trackers_updated=False
+    )
+    (turn / REPORT_KIND_FILENAME).write_text("implementation")
+    (turn / REPORT_FILENAME).write_text(report.model_dump_json())
+
+
+def _verify(
+    connection: Connection,
+    clock: FakeClock,
+    project_root: Path,
+    task_id: str,
+    *,
+    turn_name: str,
+    verdict: Verdict,
+) -> None:
+    tasks = TaskStore(connection, clock)
+    current = tasks.get(task_id)
+    assert current is not None
+    tasks.apply_transition(task_id, Transition.stay(current, step=Step.VERIFY))
+    _record_verdict(_turn(project_root, task_id, turn_name), verdict)
+    verifying = tasks.get(task_id)
+    assert verifying is not None
+    tasks.apply_transition(task_id, next_step(verifying, verdict, load_settings(project_root)))
 
 
 async def _assert_plan_results(views: StateDashboardViews, planned: str) -> None:
@@ -213,3 +265,88 @@ async def test_results_show_what_exists_so_far_and_what_a_done_task_merged(
     assert "so far" in plain_text(ResultsBody(await _results(views, running)))
 
     await _assert_plan_results(views, planned)
+
+
+async def test_rework_drops_the_risks_of_the_verdict_it_replaced(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task_id = _running(connection, clock, project_root)
+    _verify(
+        connection,
+        clock,
+        project_root,
+        task_id,
+        turn_name="03-verify-i1",
+        verdict=_rework("stale risk"),
+    )
+    _record_implementation(_turn(project_root, task_id, "04-implement-i2"))
+    views = state_views(reader, project_root, clock, StubServices())
+
+    detail = await views.task_detail(task_id)
+    assert detail is not None
+    assert detail.results is not None
+    assert detail.results.residual_risks == ()
+    assert "stale risk" not in plain_text(ResultsBody(detail.results))
+    assert detail.latest_verdict is not None
+    assert detail.latest_verdict.risks == ("stale risk",)
+
+    _verify(
+        connection,
+        clock,
+        project_root,
+        task_id,
+        turn_name="05-verify-i2",
+        verdict=_accept("current risk"),
+    )
+    assert (await _results(views, task_id)).residual_risks == ("current risk",)
+
+
+async def test_a_newer_verdict_without_risks_clears_the_current_risks(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task_id = _running(connection, clock, project_root)
+    _verify(
+        connection,
+        clock,
+        project_root,
+        task_id,
+        turn_name="03-verify-i1",
+        verdict=_accept("current risk"),
+    )
+    _record_verdict(_turn(project_root, task_id, "04-integrate-i1"), _accept())
+    views = state_views(reader, project_root, clock, StubServices())
+
+    assert (await _results(views, task_id)).residual_risks == ()
+
+
+async def test_a_done_record_with_no_risks_does_not_fall_back_to_the_verdict_risks(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task_id = _running(connection, clock, project_root)
+    _verify(
+        connection,
+        clock,
+        project_root,
+        task_id,
+        turn_name="03-verify-i1",
+        verdict=_accept("verdict risk"),
+    )
+    tasks = TaskStore(connection, clock)
+    current = tasks.get(task_id)
+    assert current is not None
+    tasks.finish(
+        task_id,
+        Transition.stay(current, step=None, status=Status.DONE),
+        EventKind.TASK_DONE,
+        message="done",
+        data={"summary": "done", "commits": [], "residual_risks": []},
+    )
+    views = state_views(reader, project_root, clock, StubServices())
+
+    assert (await _results(views, task_id)).residual_risks == ()

@@ -96,6 +96,7 @@ from shikiru.ui.age import SECONDS_PER_DAY, format_age, format_duration
 from shikiru.ui.age import format_short_age as _age
 from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
+from shikiru.view_log import turn_iteration
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -1077,7 +1078,11 @@ class StateDashboardViews:
             verdict_counts=(verdict_counts(latest_verdict) if latest_verdict is not None else None),
             last_words=task_frame.last_words,
             results=self._task_results(
-                task, detail, reported, pull_request, latest_verdict=latest_verdict
+                task,
+                detail,
+                reported,
+                pull_request,
+                verdict_risks=_current_verdict_risks(task, detail.reports),
             ),
             decisions=self._task_decisions(task.id),
             can_take_over=self._can_take_over(task),
@@ -1386,7 +1391,7 @@ class StateDashboardViews:
         reported: ReportedTests | None,
         pull_request: PullRequestLine | None,
         *,
-        latest_verdict: Verdict | None,
+        verdict_risks: tuple[str, ...],
     ) -> TaskResults:
         done = self._state.latest_events(1, kinds=(EventKind.TASK_DONE,), task_id=task.id)
         scope = self._state.latest_events(
@@ -1403,7 +1408,7 @@ class StateDashboardViews:
             pull_request=pull_request,
             scope_events=[event.data for event in scope],
             titles=self._new_task_titles(scope),
-            verdict_risks=latest_verdict.residual_risks if latest_verdict is not None else (),
+            verdict_risks=verdict_risks,
             plan_summary=_latest_plan_summary(detail.reports),
             commit_cap=self._settings.dashboard.results_commits,
         )
@@ -1828,6 +1833,14 @@ def _latest_plan_summary(reports: Sequence[ReportRow]) -> str | None:
         ),
         None,
     )
+
+
+def _current_verdict_risks(task: Task, reports: Sequence[ReportRow]) -> tuple[str, ...]:
+    for row in reversed(reports):
+        if isinstance(row.data, Verdict):
+            current = turn_iteration(row.turn) == task.iteration
+            return tuple(row.data.residual_risks) if current else ()
+    return ()
 
 
 def _task_report(row: ReportRow) -> TaskReportView:

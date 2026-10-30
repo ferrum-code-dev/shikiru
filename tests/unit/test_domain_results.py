@@ -108,6 +108,17 @@ def test_unfinished_and_cancelled_tasks_show_what_exists_without_claiming_a_merg
     assert (cancelled.branch, cancelled.base) == ("task/t-12", "main")
 
 
+def test_residual_risks_prefer_the_done_record_list_else_the_current_verdict() -> None:
+    cases: tuple[tuple[Status, Mapping[str, object] | None, tuple[str, ...]], ...] = (
+        (Status.DONE, {"residual_risks": ["done risk"]}, ("done risk",)),
+        (Status.DONE, {"residual_risks": []}, ()),
+        (Status.DONE, {"summary": "s"}, ("verdict risk",)),
+        (Status.RUNNING, None, ("verdict risk",)),
+    )
+    for status, done, risks in cases:
+        assert _derive(status, done=done, verdict_risks=["verdict risk"]).residual_risks == risks
+
+
 def test_nothing_recorded_gives_empty_fields_not_guesses() -> None:
     results = _derive(Status.DONE)
     assert results.commits == ()

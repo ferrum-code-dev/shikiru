@@ -88,6 +88,12 @@ def new_task_ids(scope_events: Sequence[Mapping[str, object]]) -> tuple[str, ...
     )
 
 
+def _residual_risks(done: Mapping[str, object], verdict_risks: Sequence[str]) -> tuple[str, ...]:
+    if DONE_RISKS_KEY in done:
+        return _strings(done[DONE_RISKS_KEY])
+    return tuple(verdict_risks)
+
+
 def derive_task_results(
     status: Status,
     *,
@@ -107,8 +113,9 @@ def derive_task_results(
     """Derive the Results of a task from its recorded events, reports and facts snapshot.
 
     Commits come from `TASK_DONE` for a Done task, else the latest report, else the facts; the
-    first source with commits wins. Residual risks come from `TASK_DONE` when it recorded them,
-    else from the latest verdict. A new task missing from `titles` keeps its id with no title.
+    first source with commits wins. Residual risks come from `TASK_DONE` when it recorded a risk
+    list, even an empty one, else from `verdict_risks`: the verdict of the task's current
+    iteration. A new task missing from `titles` keeps its id with no title.
     """
     done_data = done or {}
     candidates = (
@@ -139,5 +146,5 @@ def derive_task_results(
             for data in scope_events
         ),
         plan_summary=plan_summary,
-        residual_risks=_strings(done_data.get(DONE_RISKS_KEY)) or tuple(verdict_risks),
+        residual_risks=_residual_risks(done_data, verdict_risks),
     )

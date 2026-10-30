@@ -49,6 +49,12 @@ def ordered_turn_dirs(turns_root: Path) -> list[Path]:
     )
 
 
+def turn_iteration(turn_name: str) -> int | None:
+    """Return the task iteration a turn directory name (`NN-<step>-i<n>`) was started in."""
+    _, marker, iteration = turn_name.rpartition(TURN_DIR_ITERATION_MARKER)
+    return int(iteration) if marker and iteration.isdecimal() else None
+
+
 def view_argv(project_root: Path, task_id: str, role: str) -> tuple[str, ...]:
     """Return the argv of `role`'s read-only view pane for `task_id`."""
     return shikiru_argv(CLI_PROJECT_FLAG, str(project_root), CLI_VIEW_COMMAND, task_id, role)
