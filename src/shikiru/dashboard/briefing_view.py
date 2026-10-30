@@ -308,7 +308,7 @@ class Briefing:
         body = [
             *self._compact_progress(console, width),
             *_compact_summary(view, width),
-            *_compact_result(view),
+            *_compact_result(view, width),
             *_compact_verdict(view),
             *_compact_cost(view),
         ]
@@ -474,13 +474,13 @@ def _compact_summary(view: TaskDetailView, width: int) -> list[RenderableType]:
     return [] if summary is None else [grey(_ellipsized(summary, width))]
 
 
-def _compact_result(view: TaskDetailView) -> list[RenderableType]:
+def _compact_result(view: TaskDetailView, width: int) -> list[RenderableType]:
     results = view.results
     if results is None:
         return []
-    lines: list[RenderableType] = []
+    lines: list[RenderableType] = _compact_live_notice(results, width)
     if results.outcome is not ResultOutcome.SO_FAR:
-        lines.extend(Text.assemble(row[0], " ", row[1][0]) for row in branch_row(results))
+        lines.extend(_inline_row(row) for row in branch_row(results))
     produced = _joined((*_commit_groups(results, compact=True), *_compact_tests(results.tests)))
     if produced.plain:
         lines.append(produced)
@@ -489,6 +489,19 @@ def _compact_result(view: TaskDetailView) -> list[RenderableType]:
         lines.append(Text.assemble(grey(f"{PR_LABEL} "), _joined(pull_request)))
     lines.extend(_added_groups(results))
     return lines
+
+
+def _inline_row(row: Row) -> Text:
+    return Text.assemble(row[0], " ", row[1][0])
+
+
+def _compact_live_notice(results: TaskResults, width: int) -> list[RenderableType]:
+    notices: list[RenderableType] = []
+    for row in live_unavailable_rows(results):
+        notice = _inline_row(row)
+        notice.truncate(max(width, 1), overflow="ellipsis")
+        notices.append(notice)
+    return notices
 
 
 def _compact_verdict(view: TaskDetailView) -> list[RenderableType]:

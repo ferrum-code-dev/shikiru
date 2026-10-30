@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import pytest
 from textual.widgets import Static
 
 from shikiru.config.loader import load_settings
-from shikiru.dashboard.briefing_view import LIVE_LABEL
+from shikiru.dashboard.briefing_view import LIVE_LABEL, Briefing, BriefingLayout
 from shikiru.dashboard.detail import (
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_IDENTITY,
@@ -205,6 +206,28 @@ async def test_an_unreadable_worktree_falls_back_to_recorded_results_and_says_so
     assert results.live_error is not None
     lines = rendered_lines(ResultsBody(results), width=RENDER_WIDTH)
     assert any(line.startswith(LIVE_LABEL) for line in lines)
+
+
+@pytest.mark.parametrize("compact", [False, True], ids=["wide", "compact"])
+async def test_an_unreadable_worktree_is_labelled_in_both_briefing_layouts(
+    connection: Connection, reader: StateReader, tmp_path: Path, compact: bool
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task_id = _missing_worktree_task(connection, clock)
+    _record_implementation(project_root, task_id)
+    views = state_views(reader, project_root, clock, StubServices())
+    detail = await views.task_detail(task_id)
+    assert detail is not None
+    dashboard = load_settings(project_root).dashboard
+    layout = BriefingLayout(
+        now_lines=dashboard.now_compact_lines if compact else dashboard.now_max_lines,
+        compact=compact,
+    )
+
+    lines = rendered_lines(Briefing(detail, clock.now(), layout), width=RENDER_WIDTH)
+
+    assert any(line.lstrip().startswith(LIVE_LABEL) for line in lines)
 
 
 async def test_a_finished_task_keeps_its_recorded_results(
