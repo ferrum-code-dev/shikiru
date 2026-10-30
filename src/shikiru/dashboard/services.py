@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import os
 import shlex
+from collections import defaultdict
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -236,18 +237,24 @@ class TaskWorkService:
         self._clock = clock
         self._cache_ttl_seconds = cache_ttl_seconds
         self._cache: dict[str, _CachedTaskWork] = {}
+        self._reads: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
     async def sample(self, task_id: str, task_root: Path, base_ref: str) -> TaskWorkSample:
-        """Return the live work of `task_id`, reading `task_root` unless a fresh sample exists."""
-        now = self._clock.now()
-        cached = self._cache.get(task_id)
-        if cached is not None:
-            age = (now - cached.checked_at).total_seconds()
-            if age < self._cache_ttl_seconds:
-                return cached.sample
-        sample = await self._read(task_root, base_ref)
-        self._cache[task_id] = _CachedTaskWork(checked_at=now, sample=sample)
-        return sample
+        """Return the live work of `task_id`, reading `task_root` unless a fresh sample exists.
+
+        Concurrent callers for one task share a read: the first one reads, and the rest wait for
+        it and take its sample while it is still fresh.
+        """
+        async with self._reads[task_id]:
+            now = self._clock.now()
+            cached = self._cache.get(task_id)
+            if cached is not None:
+                age = (now - cached.checked_at).total_seconds()
+                if age < self._cache_ttl_seconds:
+                    return cached.sample
+            sample = await self._read(task_root, base_ref)
+            self._cache[task_id] = _CachedTaskWork(checked_at=now, sample=sample)
+            return sample
 
     async def _read(self, task_root: Path, base_ref: str) -> TaskWorkSample:
         if not await asyncio.to_thread(task_root.is_dir):
