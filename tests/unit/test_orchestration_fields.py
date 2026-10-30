@@ -6,6 +6,8 @@ from shikiru.dashboard.orchestration_fields import (
     MAX_CPU,
     MAX_PARALLEL,
     MIN_FREE_RAM,
+    STALL_TIMEOUT,
+    TOOL_TIMEOUT,
     OrchestrationField,
     OrchestrationFieldError,
 )
@@ -20,6 +22,8 @@ from shikiru.dashboard.orchestration_fields import (
         (MAX_CPU, "100", 100),
         (MIN_FREE_RAM, "0", 0),
         (MIN_FREE_RAM, "2.5", 2.5),
+        (STALL_TIMEOUT, "1", 1),
+        (TOOL_TIMEOUT, "1", 1),
     ],
 )
 def test_accepts_values_at_each_field_boundary(
@@ -41,6 +45,8 @@ def test_accepts_values_at_each_field_boundary(
         (MAX_CPU, "101"),
         (MIN_FREE_RAM, "-0.5"),
         (MIN_FREE_RAM, "nan"),
+        (STALL_TIMEOUT, "0"),
+        (TOOL_TIMEOUT, "0"),
     ],
 )
 def test_rejects_values_outside_each_field_rule_naming_its_input(

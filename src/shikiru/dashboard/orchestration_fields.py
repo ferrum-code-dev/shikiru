@@ -17,6 +17,8 @@ if TYPE_CHECKING:
 MINIMUM_PARALLEL = 1
 MINIMUM_ITERATIONS = 1
 MINIMUM_QUOTA_WAIT = 0
+MINIMUM_STALL_TIMEOUT = 1
+MINIMUM_TOOL_TIMEOUT = 1
 MINIMUM_CPU_PCT = 0
 MINIMUM_FREE_RAM_GB = 0
 
@@ -117,6 +119,34 @@ MAX_QUOTA_WAIT = OrchestrationField(
     maximum=None,
     whole_number=True,
 )
+STALL_TIMEOUT = OrchestrationField(
+    input_id="stall-timeout",
+    label="Stall timeout",
+    summary="Stall timeout",
+    unit="seconds",
+    explanation=(
+        "How long an agent may stay silent while no tool is running before its turn "
+        "is stopped as stalled."
+    ),
+    default=lambda config: config.timeouts.stall,
+    minimum=MINIMUM_STALL_TIMEOUT,
+    maximum=None,
+    whole_number=True,
+)
+TOOL_TIMEOUT = OrchestrationField(
+    input_id="tool-timeout",
+    label="Tool timeout",
+    summary="Tool timeout",
+    unit="seconds",
+    explanation=(
+        "How long an agent may stay silent while a tool is running before its turn "
+        "is stopped as stalled."
+    ),
+    default=lambda config: config.timeouts.tool,
+    minimum=MINIMUM_TOOL_TIMEOUT,
+    maximum=None,
+    whole_number=True,
+)
 MAX_CPU = OrchestrationField(
     input_id="max-cpu",
     label="Maximum CPU use",
@@ -144,4 +174,12 @@ MIN_FREE_RAM = OrchestrationField(
     maximum=None,
     whole_number=False,
 )
-ORCHESTRATION_FIELDS = (MAX_PARALLEL, MAX_ITERATIONS, MAX_QUOTA_WAIT, MAX_CPU, MIN_FREE_RAM)
+ORCHESTRATION_FIELDS = (
+    MAX_PARALLEL,
+    MAX_ITERATIONS,
+    MAX_QUOTA_WAIT,
+    STALL_TIMEOUT,
+    TOOL_TIMEOUT,
+    MAX_CPU,
+    MIN_FREE_RAM,
+)

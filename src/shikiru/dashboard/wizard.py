@@ -21,6 +21,8 @@ from shikiru.dashboard.orchestration_fields import (
     MAX_QUOTA_WAIT,
     MIN_FREE_RAM,
     ORCHESTRATION_FIELDS,
+    STALL_TIMEOUT,
+    TOOL_TIMEOUT,
     OrchestrationFieldError,
 )
 from shikiru.dashboard.row_list import RowList
@@ -1006,6 +1008,8 @@ class InitWizardApp(App[InitWizardResult | None]):
             max_iterations=int(self._read_field(MAX_ITERATIONS)),
             integration=integration,
             max_quota_wait=int(self._read_field(MAX_QUOTA_WAIT)),
+            stall=int(self._read_field(STALL_TIMEOUT)),
+            tool=int(self._read_field(TOOL_TIMEOUT)),
             max_cpu_pct=int(self._read_field(MAX_CPU)),
             min_free_ram_gb=float(self._read_field(MIN_FREE_RAM)),
         )

@@ -156,12 +156,12 @@ Shikiru admits one attached client per project session; direct raw tmux use is o
 Configuration merges packaged defaults, project `.shikiru/config.toml` and invocation `--set`
 overrides, then validates common and plugin-specific settings. The wizard configures repository,
 role ladders, trackers, caches, orchestration limits (maximum parallel tasks, iterations, quota wait,
-CPU percent and free RAM) and integration, and finishes with Doctor. Its orchestration values are
-checked against the step's own rules at Finish, before anything is written, and an out-of-range
-value focuses its field; hand-written configs keep the settings validation alone. Model catalogs
-come from installed plugin/CLI capabilities; lack of authoritative data is visible rather than a
-claim that an arbitrary model is supported. Probe mode runs live checks; ordinary diagnostics do
-not run workflow turns.
+stall and tool timeouts, CPU percent and free RAM) and integration, and finishes with Doctor. Its
+orchestration values are checked against the step's own rules at Finish, before anything is written,
+and an out-of-range value focuses its field; hand-written configs keep the settings validation alone.
+Model catalogs come from installed plugin/CLI capabilities; lack of authoritative data is visible
+rather than a claim that an arbitrary model is supported. Probe mode runs live checks; ordinary
+diagnostics do not run workflow turns.
 
 Plugins normalize streamed signals, reports, session identity, errors, usage, billing and quota
 into [agent contracts](../src/shikiru/agents/contracts.py). The engine imports those contracts,

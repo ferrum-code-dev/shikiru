@@ -82,6 +82,8 @@ class OrchestrationChoices:
     max_iterations: int
     integration: str
     max_quota_wait: int
+    stall: int
+    tool: int
     max_cpu_pct: int
     min_free_ram_gb: float
 
@@ -288,6 +290,8 @@ def render_config(
                 f"integration = {json.dumps(orchestration.integration)}",
                 "",
                 "[orchestration.timeouts]",
+                f"stall = {orchestration.stall}",
+                f"tool = {orchestration.tool}",
                 f"max_quota_wait = {orchestration.max_quota_wait}",
                 "",
                 "[orchestration.resources]",

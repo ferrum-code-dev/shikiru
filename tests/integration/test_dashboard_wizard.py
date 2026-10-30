@@ -702,7 +702,9 @@ async def test_orchestration_fields_start_from_injected_defaults_and_keep_edits(
         update={
             "max_parallel": 4,
             "max_iterations": 6,
-            "timeouts": packaged.timeouts.model_copy(update={"max_quota_wait": 1200}),
+            "timeouts": packaged.timeouts.model_copy(
+                update={"max_quota_wait": 1200, "stall": 900, "tool": 3600}
+            ),
             "resources": packaged.resources.model_copy(
                 update={"max_cpu_pct": 70, "min_free_ram_gb": 6.0}
             ),
@@ -719,13 +721,17 @@ async def test_orchestration_fields_start_from_injected_defaults_and_keep_edits(
         assert _input_value(pilot, "#max-parallel") == "4"
         assert _input_value(pilot, "#max-iterations") == "6"
         assert _input_value(pilot, "#max-quota-wait") == "1200"
+        assert _input_value(pilot, "#stall-timeout") == "900"
+        assert _input_value(pilot, "#tool-timeout") == "3600"
         assert _input_value(pilot, "#max-cpu") == "70"
         assert _input_value(pilot, "#min-free-ram") == "6.0"
         await _replace_input(pilot, "#max-parallel", "3")
+        await _replace_input(pilot, "#tool-timeout", "5400")
         await _replace_input(pilot, "#max-cpu", "90")
         await _click_back(pilot, "#wizard-page-3")
         await _click_next(pilot, "#wizard-page-4")
         assert _input_value(pilot, "#max-parallel") == "3"
+        assert _input_value(pilot, "#tool-timeout") == "5400"
         assert _input_value(pilot, "#max-cpu") == "90"
         await _click_next(pilot, "#wizard-page-5")
         await _choose(pilot, "#integration", "pr")
@@ -733,6 +739,7 @@ async def test_orchestration_fields_start_from_injected_defaults_and_keep_edits(
         summary = str(pilot.app.query_one("#wizard-summary .wizard-detail-value", Static).render())
         assert summary == (
             "Max parallel 3 tasks · Max iterations 6 passes · Max quota wait 1200 seconds · "
+            "Stall timeout 900 seconds · Tool timeout 5400 seconds · "
             "Max CPU 90 percent · Min free RAM 6.0 GB · Pull request"
         )
 
@@ -765,6 +772,22 @@ async def test_invalid_orchestration_values_focus_their_field_and_boundaries_rou
         assert not config_path.exists()
 
         await _replace_input(pilot, "#max-parallel", "1")
+        await _replace_input(pilot, "#stall-timeout", "0")
+        await _click_next(pilot, "#wizard-page-5")
+        await _click_next(pilot, "#wizard-page-6")
+        await _click_button(pilot, "#wizard-finish")
+        await _wait_for_orchestration_error(pilot, "stall-timeout")
+        assert not config_path.exists()
+
+        await _replace_input(pilot, "#stall-timeout", "600")
+        await _replace_input(pilot, "#tool-timeout", "0")
+        await _click_next(pilot, "#wizard-page-5")
+        await _click_next(pilot, "#wizard-page-6")
+        await _click_button(pilot, "#wizard-finish")
+        await _wait_for_orchestration_error(pilot, "tool-timeout")
+        assert not config_path.exists()
+
+        await _replace_input(pilot, "#tool-timeout", "1800")
         await _replace_input(pilot, "#max-iterations", "1")
         await _replace_input(pilot, "#max-quota-wait", "0")
         await _replace_input(pilot, "#min-free-ram", "0")
@@ -780,6 +803,7 @@ async def test_invalid_orchestration_values_focus_their_field_and_boundaries_rou
 
     orchestration = load_settings(tmp_path).orchestration
     assert (orchestration.max_parallel, orchestration.max_iterations) == (1, 1)
+    assert (orchestration.timeouts.stall, orchestration.timeouts.tool) == (600, 1800)
     assert orchestration.timeouts.max_quota_wait == 0
     assert orchestration.resources.max_cpu_pct == 100
     assert orchestration.resources.min_free_ram_gb == 0
