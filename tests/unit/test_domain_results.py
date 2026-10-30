@@ -7,15 +7,18 @@ from shikiru.domain.briefing import (
     FACTS_DIFF_STAT_HEADING,
     ProducedNumbers,
     ReportedTests,
+    parse_produced,
     pull_request_line,
 )
 from shikiru.domain.reports import Commit
 from shikiru.domain.results import (
+    LiveWork,
     PlanChange,
     ResultCommit,
     ResultOutcome,
     TaskResults,
     derive_task_results,
+    tracks_live_work,
 )
 from shikiru.domain.tasks import Status
 
@@ -34,6 +37,10 @@ DONE = {
     "residual_risks": ["slow on cold start"],
 }
 SCOPE = {"scope_changes": ["drop the CLI flag"], "new_task_ids": ["t-13", "t-14"]}
+LIVE = LiveWork.from_oneline(
+    ["1111111 live first", "2222222 live second"], files=2, insertions=5, deletions=1
+)
+REVERTED = LiveWork.from_oneline([], files=0, insertions=0, deletions=0)
 
 
 def _derive(
@@ -45,6 +52,8 @@ def _derive(
     scope: Sequence[Mapping[str, object]] = (),
     verdict_risks: Sequence[str] = (),
     titles: Mapping[str, str] | None = None,
+    live: LiveWork | None = None,
+    live_error: str | None = None,
 ) -> TaskResults:
     return derive_task_results(
         status,
@@ -60,6 +69,8 @@ def _derive(
         verdict_risks=verdict_risks,
         plan_summary=None,
         commit_cap=CAP,
+        live=live,
+        live_error=live_error,
     )
 
 
@@ -126,3 +137,39 @@ def test_nothing_recorded_gives_empty_fields_not_guesses() -> None:
     assert results.produced is None
     assert results.plan_changes == ()
     assert results.residual_risks == ()
+
+
+def test_a_live_observation_outranks_every_recorded_source() -> None:
+    report = [Commit(sha="9999999999", subject="from report")]
+    recorded = (ResultCommit("9999999", "from report"),)
+    cases = (
+        (LIVE, None, LIVE.commits, LIVE.produced, None),
+        (REVERTED, None, (), REVERTED.produced, None),
+        (None, "worktree missing", recorded, parse_produced(FACTS), "worktree missing"),
+    )
+    for live, live_error, commits, produced, error in cases:
+        results = _derive(
+            Status.RUNNING,
+            report=report,
+            facts=FACTS,
+            live=live,
+            live_error=live_error,
+        )
+        assert (results.commits, results.produced, results.live_error) == (
+            commits,
+            produced,
+            error,
+        )
+
+
+def test_only_unfinished_tasks_keep_tracking_their_live_work() -> None:
+    cases = (
+        (Status.QUEUED, True),
+        (Status.RUNNING, True),
+        (Status.INTEGRATING, True),
+        (Status.ESCALATED, True),
+        (Status.DONE, False),
+        (Status.CANCELLED, False),
+    )
+    for status, tracked in cases:
+        assert tracks_live_work(status) is tracked
