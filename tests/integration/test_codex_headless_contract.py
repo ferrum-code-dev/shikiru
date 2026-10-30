@@ -130,6 +130,10 @@ _SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
 _SESSION_FIRST = "session-first"
 _SESSION_RESUMED = "session-resume_model_change"
 _SESSION_OPENROUTER_LIVE = "session-openrouter-live"
+_SESSION_STDERR_QUOTA = "session-stderr-quota"
+_STREAMED_QUOTA_RESET_AT = _SAMPLE_NOW + timedelta(hours=5)
+_EXHAUSTED_USED_PERCENT = 100
+_USAGE_LIMIT_STDERR = "ERROR: You've hit your usage limit."
 _CONTEXT_WINDOW = 258_400
 _USAGE_FIRST = Usage(55_675, 330, 52_096, 0, None, "unknown", 5.506578947368421)
 _USAGE_RESUMED = Usage(129_393, 608, 105_344, 0, None, "unknown", 7.201238390092879)
@@ -750,6 +754,57 @@ class TestCodexHeadlessContract(AgentContractSuite):
         assert rate_limit_failure.kind is FailureKind.QUOTA
         assert rate_limit_failure.resets_at == reset_at
         assert rate_limit_action == WaitForQuota(reset_at + QUOTA_MARGIN)
+
+    def test_stderr_quota_failure_without_reset_uses_streamed_quota_reset(
+        self, tmp_path: Path
+    ) -> None:
+        clock = FakeClock(_SAMPLE_NOW)
+        parser = CodexTurnParser(
+            session_id=None,
+            initial_usage=None,
+            home=tmp_path / "codex-home",
+            clock=clock,
+            reset_time=ResetTimeParser(clock),
+        )
+        parser.feed(json.dumps({"type": "thread.started", "thread_id": _SESSION_STDERR_QUOTA}))
+        parser.feed(
+            json.dumps(
+                {
+                    "timestamp": _SAMPLE_NOW.isoformat(),
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "rate_limits": {
+                            "primary": {
+                                "used_percent": _EXHAUSTED_USED_PERCENT,
+                                "resets_at": _STREAMED_QUOTA_RESET_AT.isoformat(),
+                            }
+                        },
+                    },
+                }
+            )
+        )
+
+        signals = parser.finish(1, _USAGE_LIMIT_STDERR)
+        [failure] = [signal for signal in signals if isinstance(signal, TurnFailed)]
+        action = decide(
+            Failed(failure.kind, failure.resets_at, failure.message),
+            TurnCounters(),
+            RecoveryPolicy(
+                now=_SAMPLE_NOW,
+                max_quota_wait=timedelta(hours=8),
+                has_next_rung=False,
+                has_next_rung_different_agent=False,
+                unavailable_initial_seconds=_UNAVAILABLE_RETRIES.unavailable_initial_seconds,
+                unavailable_multiplier=_UNAVAILABLE_RETRIES.unavailable_multiplier,
+                unavailable_max_seconds=_UNAVAILABLE_RETRIES.unavailable_max_seconds,
+                unavailable_max_retries=_UNAVAILABLE_RETRIES.unavailable_max_retries,
+            ),
+        )
+
+        assert failure.kind is FailureKind.QUOTA
+        assert failure.resets_at == _STREAMED_QUOTA_RESET_AT
+        assert action == WaitForQuota(_STREAMED_QUOTA_RESET_AT + QUOTA_MARGIN)
 
     @pytest.mark.asyncio
     async def test_headless_ask_preserves_operator_provider_environment(

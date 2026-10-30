@@ -258,7 +258,8 @@ class CodexTurnParser:
                 )
             else:
                 self._context_exceeded = failure.context_exceeded
-                signals.append(TurnFailed(failure.kind, stderr.strip(), None))
+                reset = _latest_reset(quota) if failure.kind is FailureKind.QUOTA else None
+                signals.append(TurnFailed(failure.kind, stderr.strip(), reset))
         return signals
 
     def _thread_started(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
