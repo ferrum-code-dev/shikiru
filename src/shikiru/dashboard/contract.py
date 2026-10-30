@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import BillingMode, BillingSource, CostBasis
     from shikiru.clock import Clock
+    from shikiru.config.settings import ComplexityName
     from shikiru.dashboard.services import TaskWorkSample
     from shikiru.domain.briefing import (
         VerdictCounts,
@@ -554,6 +555,7 @@ class TaskDetailView:
     worktree_path: str
     window_id: str | None
     sessions: tuple[TaskSessionView, ...]
+    complexity: ComplexityName | None = None
     relationships: TaskRelationshipsView | None = None
     blocker: TaskBlockerView | None = None
     submitted_age: str = ""

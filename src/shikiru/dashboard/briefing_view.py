@@ -115,6 +115,7 @@ IN_STEP_WORD = "in step"
 TOTAL_WORD = "total"
 REWORK_WORD = "rework"
 ADDED_WORD = "added"
+COMPLEXITY_WORD = "complexity"
 QUOTE = '"'
 MINUS = "\N{MINUS SIGN}"
 PASSED_MARK = "\N{CHECK MARK}"
@@ -175,6 +176,8 @@ _STATUS_COLORS = {
     Status.QUEUED.value: IDLE_COLOR,
 }
 _BOLD_AMBER = f"{STYLE_BOLD} {AMBER}"
+_BOLD_GREY = f"{STYLE_BOLD} {SECONDARY_TEXT_COLOR}"
+_PLAIN_GREY = f"not {STYLE_BOLD} {SECONDARY_TEXT_COLOR}"
 _DONE = Status.DONE.value
 
 
@@ -229,7 +232,7 @@ def total_cost_text(sessions: Sequence[TaskSessionView]) -> str | None:
 
 def header_text(view: TaskDetailView, now: datetime, *, compact: bool) -> Text:
     """Return the identity line, the state line and, when wide, the time line."""
-    header = Text(f"{view.task_id} · {view.title}", style=BOLD_PRIMARY)
+    header = _identity_text(view)
     header.append("\n")
     header.append_text(_state_line(view, now, compact=compact))
     time_line = None if compact else _time_line(view, now)
@@ -717,6 +720,16 @@ def _in_step_time(view: TaskDetailView, now: datetime) -> str | None:
     if view.actual_stage is None or view.actual_stage_started_at is None:
         return None
     return duration_text((view.stage_ended_at or now) - view.actual_stage_started_at)
+
+
+def _identity_text(view: TaskDetailView) -> Text:
+    identity = Text(f"{view.task_id} · {view.title}", style=BOLD_PRIMARY)
+    if view.complexity is None:
+        return identity
+    identity.append(GROUP_SEPARATOR, style=BOLD_PRIMARY)
+    identity.append(view.complexity.title(), style=_BOLD_GREY)
+    identity.append(f" {COMPLEXITY_WORD}", style=_PLAIN_GREY)
+    return identity
 
 
 def _time_line(view: TaskDetailView, now: datetime) -> Text | None:

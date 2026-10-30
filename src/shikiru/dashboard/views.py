@@ -1041,6 +1041,7 @@ class StateDashboardViews:
             status=task.status.value,
             status_reason=task.status_reason.value if task.status_reason is not None else None,
             mode=task.mode.value if task.mode is not None else None,
+            complexity=task.complexity,
             step=_step_label(task.status, task.step, task.iteration),
             acting_role=task_acting_role(task).value,
             iteration=task.iteration,

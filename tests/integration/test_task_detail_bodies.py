@@ -33,7 +33,7 @@ from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.tokens import ALERT_COLOR
-from tests.support.cells import CYAN_BOLD, Cell, foregrounds
+from tests.support.cells import CYAN_BOLD, GREY, GREY_BOLD, Cell, foregrounds, styles
 from tests.support.cells import rendered_lines as painted_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -45,6 +45,7 @@ from tests.support.waiting import UI_WAIT_SECONDS, WaitTimeoutError, wait_until
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from shikiru.config.settings import ComplexityName
     from tests.support.store import Connection, Database
 
 pytestmark = pytest.mark.asyncio
@@ -52,6 +53,7 @@ pytestmark = pytest.mark.asyncio
 START = datetime(2026, 1, 1, tzinfo=UTC)
 PROJECT_WIDE_TITLES = ("Command history", "Header", "Escalations", "Queue", "Diagnostics")
 PANEL_WIDTH = 100
+COMPACT_PANEL_WIDTH = 40
 
 
 async def _loaded(panel: TaskDetailPanel, task_id: str) -> None:
@@ -188,6 +190,144 @@ async def test_dependencies_align_colour_a_cancelled_blocker_and_open_on_enter(
             panel.query_one(f"#{TASK_DETAIL_RELATED_LIST}").focus()
             await pilot.press("enter")
             await wait_until(lambda: opened == [blocker.id], timeout=UI_WAIT_SECONDS)
+    finally:
+        reader.close()
+
+
+def _title_line(panel: TaskDetailPanel) -> str:
+    identity = panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+    return "".join(char for char, _ in painted_lines(identity)[0])
+
+
+@pytest.mark.usefixtures("colour_terminal")
+@pytest.mark.parametrize(
+    ("complexity", "shown"), [("low", "Low"), ("normal", "Normal"), ("high", "High")]
+)
+async def test_recorded_complexity_follows_the_title_with_its_level_bold_and_the_word_grey(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    complexity: ComplexityName,
+    shown: str,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Ship parser", complexity=complexity)
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        task.id,
+        fixed=True,
+        initial_view=TASK_VIEW_REQUEST,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, task.id)
+            identity = panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+            assert _title_line(panel) == f"{task.id} · Ship parser · {shown} complexity"
+            assert set(styles(identity, shown)) == {GREY_BOLD}
+            assert set(styles(identity, "complexity")) == {GREY}
+    finally:
+        reader.close()
+
+
+@pytest.mark.usefixtures("colour_terminal")
+async def test_compact_detail_keeps_the_recorded_complexity_on_the_title_line(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Ship parser", complexity="high")
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        task.id,
+        fixed=True,
+        initial_view=TASK_VIEW_REQUEST,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(COMPACT_PANEL_WIDTH, 40)):
+            await _loaded(panel, task.id)
+            assert _title_line(panel) == f"{task.id} · Ship parser · High complexity"
+    finally:
+        reader.close()
+
+
+async def test_unset_complexity_leaves_the_title_without_a_suffix(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Ship parser")
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        task.id,
+        fixed=True,
+        initial_view=TASK_VIEW_REQUEST,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, task.id)
+            assert _title_line(panel) == f"{task.id} · Ship parser"
+    finally:
+        reader.close()
+
+
+async def test_title_complexity_follows_the_selected_task(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    rated = seed_task(connection, clock, title="Ship parser", complexity="high")
+    unrated = seed_task(connection, clock, title="Write docs")
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        rated.id,
+        fixed=True,
+        initial_view=TASK_VIEW_REQUEST,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, rated.id)
+            panel.select_task(unrated.id)
+            await _loaded(panel, unrated.id)
+            assert _title_line(panel) == f"{unrated.id} · Write docs"
+            panel.select_task(rated.id)
+            await _loaded(panel, rated.id)
+            assert _title_line(panel) == f"{rated.id} · Ship parser · High complexity"
+    finally:
+        reader.close()
+
+
+async def test_recorded_complexity_reaches_the_title_on_the_next_refresh(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Ship parser")
+    store = TaskStore(connection, clock)
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        task.id,
+        fixed=True,
+        initial_view=TASK_VIEW_REQUEST,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, task.id)
+            assert _title_line(panel) == f"{task.id} · Ship parser"
+            store.apply_transition(
+                task.id,
+                replace(Transition.stay(task, step=None, status=task.status), complexity="normal"),
+            )
+            panel.refresh_after_resume()
+            await wait_until(
+                lambda: _title_line(panel) == f"{task.id} · Ship parser · Normal complexity",
+                timeout=UI_WAIT_SECONDS,
+            )
     finally:
         reader.close()
 
