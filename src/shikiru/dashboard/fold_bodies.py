@@ -19,6 +19,7 @@ from shikiru.dashboard.briefing_view import (
     SUMMARY_LABEL,
     TESTS_LABEL,
     branch_row,
+    live_unavailable_rows,
     needed_from_you,
     pull_request_groups,
     tests_groups,
@@ -123,6 +124,7 @@ def _results_rows(results: TaskResults) -> list[Row]:
     )
     lead = [*plan, *_summary_rows(results)] if results.plan_summary is not None else []
     return [
+        *live_unavailable_rows(results),
         *lead,
         *branch_row(results),
         *_commit_rows(results),

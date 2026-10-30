@@ -83,6 +83,8 @@ VERDICT_LABEL = "Verdict"
 BLOCKER_LABEL = "Blocker"
 PENDING_LABEL = "Pending"
 ADDED_LABEL = "Added"
+LIVE_LABEL = "Live"
+LIVE_UNAVAILABLE = "unavailable ({error}); showing recorded results"
 RISKS_LABEL = "Risks"
 COST_LABEL = "Cost"
 LABEL_WIDTH = max(
@@ -377,6 +379,7 @@ def _result_rows(view: TaskDetailView) -> list[Row]:
     if results is None:
         return []
     rows = [
+        *live_unavailable_rows(results),
         *branch_row(results),
         _row(COMMITS_LABEL, _commit_groups(results, compact=False)),
         _row(TESTS_LABEL, tests_groups(results.tests)),
@@ -384,6 +387,13 @@ def _result_rows(view: TaskDetailView) -> list[Row]:
         _row(ADDED_LABEL, _added_groups(results)),
     ]
     return [row for row in rows if row is not None]
+
+
+def live_unavailable_rows(results: TaskResults) -> list[Row]:
+    if results.live_error is None:
+        return []
+    notice = Text(LIVE_UNAVAILABLE.format(error=results.live_error), style=AMBER)
+    return [(grey(LIVE_LABEL), (notice,))]
 
 
 def _added_groups(results: TaskResults) -> tuple[Text, ...]:

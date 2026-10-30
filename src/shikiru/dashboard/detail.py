@@ -80,6 +80,7 @@ if TYPE_CHECKING:
         TaskDetailView,
         WidgetContext,
     )
+    from shikiru.dashboard.services import TaskWorkSample
     from shikiru.ui.strip import TaskStripData
 
 TASK_DETAIL_WORKER_GROUP = "task-detail-updates"
@@ -292,6 +293,7 @@ class TaskDetailPanel(Vertical):
         self._body_focus_generation = 0
         self._rendered_task_id: str | None = None
         self._view: TaskDetailView | None = None
+        self._observed_work: tuple[str, TaskWorkSample | None] | None = None
         self._on_initial_content = on_initial_content
         self._initial_content_reported = False
 
@@ -505,8 +507,20 @@ class TaskDetailPanel(Vertical):
             if self._task_id is None or not self._screen_is_active():
                 continue
             await self._refresh_activity()
+            await self._refresh_live_work()
             for timeline in self._timelines.values():
                 await timeline.refresh_when_due()
+
+    async def _refresh_live_work(self) -> None:
+        task_id = self._task_id
+        if task_id is None or not self._screen_is_active():
+            return
+        sample = await self._widget_context.views.live_work(task_id)
+        observed = (task_id, sample)
+        if observed == self._observed_work:
+            return
+        self._observed_work = observed
+        await self._load_view()
 
     async def _refresh_activity(self) -> None:
         if (
