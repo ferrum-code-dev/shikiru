@@ -4,7 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from shikiru.agents.contracts import FailureKind
+from shikiru.agents.contracts import FailureKind, QuotaWindow
 from shikiru.domain.recovery import (
     QUOTA_MARGIN,
     QUOTA_PROBE,
@@ -19,8 +19,10 @@ from shikiru.domain.recovery import (
     RetryTurn,
     Stalled,
     TurnCounters,
+    TurnResult,
     WaitForQuota,
     decide,
+    with_known_quota_reset,
 )
 from shikiru.domain.tasks import EscalationReason
 from tests.support.factories import make_settings, make_verdict
@@ -236,3 +238,56 @@ def test_very_large_finite_multiplier_caps_without_overflow() -> None:
 def test_decide_rejects_a_completed_result() -> None:
     with pytest.raises(ValueError, match="non-Completed"):
         decide(Completed(report=make_verdict()), TurnCounters(), _policy())
+
+
+def _window(resets_at: datetime | None) -> QuotaWindow:
+    return QuotaWindow(name="5h", used_pct=100.0, resets_at=resets_at, observed_at=_NOW)
+
+
+_SOONER = _NOW + timedelta(minutes=30)
+_LATER = _NOW + timedelta(hours=1)
+
+
+@pytest.mark.parametrize(
+    ("result", "windows", "expected"),
+    [
+        (
+            Failed(FailureKind.QUOTA, _LATER, ""),
+            [_window(_SOONER)],
+            Failed(FailureKind.QUOTA, _LATER, ""),
+        ),
+        (
+            Failed(FailureKind.QUOTA, None, ""),
+            [_window(None)],
+            Failed(FailureKind.QUOTA, None, ""),
+        ),
+        (
+            Failed(FailureKind.QUOTA, None, ""),
+            [_window(_NOW - timedelta(minutes=1)), _window(_NOW)],
+            Failed(FailureKind.QUOTA, None, ""),
+        ),
+        (
+            Failed(FailureKind.QUOTA, None, ""),
+            [_window(_LATER), _window(None), _window(_SOONER)],
+            Failed(FailureKind.QUOTA, _SOONER, ""),
+        ),
+        (
+            Failed(FailureKind.UNAVAILABLE, None, ""),
+            [_window(_SOONER)],
+            Failed(FailureKind.UNAVAILABLE, None, ""),
+        ),
+        (Stalled(), [_window(_SOONER)], Stalled()),
+    ],
+    ids=[
+        "explicit-reset-kept",
+        "null-windows-ignored",
+        "expired-windows-ignored",
+        "earliest-future-reset-chosen",
+        "other-kinds-untouched",
+        "non-failure-untouched",
+    ],
+)
+def test_known_quota_reset_fills_only_a_missing_future_reset(
+    result: TurnResult, windows: list[QuotaWindow], expected: TurnResult
+) -> None:
+    assert with_known_quota_reset(result, windows, _NOW) == expected

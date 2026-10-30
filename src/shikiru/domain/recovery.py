@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -10,6 +10,9 @@ from shikiru.agents.contracts import FailureKind
 from shikiru.domain.tasks import EscalationReason
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from shikiru.agents.contracts import QuotaWindow
     from shikiru.domain.reports import Report
 
 MAX_STALL_RECOVERIES_PER_TURN = 2
@@ -117,6 +120,23 @@ Action = WaitForQuota | Backoff | NextRung | ResumeTurn | RetryTurn | Escalate
 def quota_block_until(resets_at: datetime | None, now: datetime) -> datetime:
     """Return the agent-block deadline for a quota failure."""
     return (resets_at + QUOTA_MARGIN) if resets_at is not None else (now + QUOTA_PROBE)
+
+
+def with_known_quota_reset(
+    result: TurnResult, windows: Sequence[QuotaWindow], now: datetime
+) -> TurnResult:
+    """Fill a quota failure's missing reset with the earliest future reset among `windows`."""
+    if (
+        not isinstance(result, Failed)
+        or result.kind is not FailureKind.QUOTA
+        or result.resets_at is not None
+    ):
+        return result
+    known = [window.resets_at for window in windows if window.resets_at is not None]
+    future = [resets_at for resets_at in known if resets_at > now]
+    if not future:
+        return result
+    return replace(result, resets_at=min(future))
 
 
 def _quota_action(resets_at: datetime | None, policy: RecoveryPolicy) -> Action:

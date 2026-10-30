@@ -23,6 +23,7 @@ from shikiru.domain.recovery import (
     WaitForQuota,
     decide,
     quota_block_until,
+    with_known_quota_reset,
 )
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason
@@ -88,6 +89,7 @@ class TurnRecovery:
         counters: TurnCounters,
     ) -> RecoveryStep:
         """Apply the recovery `domain.recovery.decide` chooses for `execution`'s failed result."""
+        execution = self._with_known_reset(execution)
         result = execution.result
         emit_turn_failed(
             self._events,
@@ -109,6 +111,11 @@ class TurnRecovery:
         return await self._apply(
             task, step, role, execution=execution, counters=counters, action=action
         )
+
+    def _with_known_reset(self, execution: TurnExecution) -> TurnExecution:
+        windows = self._quota.windows_for(execution.rung.agent)
+        result = with_known_quota_reset(execution.result, windows, self._clock.now())
+        return dataclasses.replace(execution, result=result)
 
     def _policy(self, task: Task, role: Role, *, quota_wait_exhausted: bool) -> RecoveryPolicy:
         current = move_up(task, role, self._settings)

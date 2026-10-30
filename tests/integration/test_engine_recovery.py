@@ -11,11 +11,12 @@ from typing import TYPE_CHECKING
 import pytest
 from fake_agent.scripted import FAKE_CHANGE_FILENAME
 
-from shikiru.agents.contracts import Rung, role_dir
+from shikiru.agents.contracts import QuotaWindow, Rung, role_dir
 from shikiru.config.settings import AgentConfig
 from shikiru.dashboard.contract import TaskBrowserFilter
 from shikiru.domain.commands import SetRung
 from shikiru.domain.events import EventKind
+from shikiru.domain.recovery import QUOTA_MARGIN, QUOTA_PROBE
 from shikiru.domain.steps import Step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
 from shikiru.process import SubprocessRunner
@@ -386,6 +387,126 @@ async def test_quota_wait_deadline_moves_to_a_different_agent(
     assert [run.agent for run in runs] == [FAKE_AGENT_ALIAS, FAKE_AGENT_NAME]
     assert runs[0].session_id != runs[1].session_id
     assert quota.block_for(FAKE_AGENT_NAME) is not None
+
+
+_KNOWN_RESET = TASK_CREATED_AT + timedelta(minutes=40)
+_EXPLICIT_RESET = TASK_CREATED_AT + timedelta(minutes=2)
+_PROBE_UNTIL = TASK_CREATED_AT + QUOTA_PROBE
+_NO_RESET_FAILURE: list[dict[str, object]] = [{"kind": "fail", "failure_kind": "quota"}]
+
+
+def _stored_window(resets_at: datetime | None) -> QuotaWindow:
+    return QuotaWindow(name="5h", used_pct=100.0, resets_at=resets_at, observed_at=TASK_CREATED_AT)
+
+
+@pytest.mark.parametrize(
+    ("window_agent", "window", "script", "expected_reset", "expected_until"),
+    [
+        (
+            FAKE_AGENT_NAME,
+            _stored_window(_KNOWN_RESET),
+            _NO_RESET_FAILURE,
+            _KNOWN_RESET,
+            _KNOWN_RESET + QUOTA_MARGIN,
+        ),
+        (
+            FAKE_AGENT_ALIAS,
+            _stored_window(_KNOWN_RESET),
+            _NO_RESET_FAILURE,
+            None,
+            _PROBE_UNTIL,
+        ),
+        (
+            FAKE_AGENT_NAME,
+            _stored_window(TASK_CREATED_AT - timedelta(minutes=1)),
+            _NO_RESET_FAILURE,
+            None,
+            _PROBE_UNTIL,
+        ),
+        (
+            FAKE_AGENT_NAME,
+            _stored_window(None),
+            _NO_RESET_FAILURE,
+            None,
+            _PROBE_UNTIL,
+        ),
+        (
+            FAKE_AGENT_NAME,
+            _stored_window(_KNOWN_RESET),
+            [
+                {
+                    "kind": "fail",
+                    "failure_kind": "quota",
+                    "resets_at": _EXPLICIT_RESET.isoformat(),
+                }
+            ],
+            _EXPLICIT_RESET,
+            _EXPLICIT_RESET + QUOTA_MARGIN,
+        ),
+    ],
+    ids=[
+        "stored-window-reset",
+        "other-agent-window-ignored",
+        "expired-window-ignored",
+        "null-window-ignored",
+        "explicit-reset-wins",
+    ],
+)
+async def test_quota_failure_without_reset_uses_the_stored_window(
+    engine_env: EngineEnv,
+    tmux_server: TmuxServer,
+    *,
+    window_agent: str,
+    window: QuotaWindow,
+    script: list[dict[str, object]],
+    expected_reset: datetime | None,
+    expected_until: datetime,
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = flow_settings()
+    QuotaStore(engine_env.connection).record(window_agent, window)
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=script,
+    )
+
+    await _drive(flow_task, clock)
+
+    events = build_flow(engine_env, settings, clock=clock).events
+    [failed] = events.since(0, task_id=task_id, kinds=[EventKind.TURN_FAILED])
+    [blocked] = events.since(0, task_id=task_id, kinds=[EventKind.QUOTA_BLOCKED])
+    failed_reset = failed.data["resets_at"]
+    reset = None if failed_reset is None else datetime.fromisoformat(failed_reset)
+    assert reset == expected_reset
+    assert datetime.fromisoformat(blocked.data["until"]) == expected_until
+
+
+async def test_stored_quota_reset_beyond_max_quota_wait_escalates(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = flow_settings()
+    QuotaStore(engine_env.connection).record(
+        FAKE_AGENT_NAME, _stored_window(TASK_CREATED_AT + timedelta(hours=9))
+    )
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=_NO_RESET_FAILURE,
+    )
+
+    await _drive(flow_task, clock)
+
+    final = engine_env.tasks.get(task_id)
+    assert final is not None
+    assert final.status is Status.ESCALATED
+    escalation = fetch_open_escalations(engine_env.connection)
+    assert escalation[0].reason is EscalationReason.QUOTA_EXHAUSTED
 
 
 async def test_unavailable_failure_uses_backoff_then_resumes_the_session(

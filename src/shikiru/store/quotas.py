@@ -119,3 +119,7 @@ class QuotaStore:
     def block_for(self, agent: str) -> AgentBlock | None:
         """Read `agent`'s current block, whether or not it is still active."""
         return fetch_agent_block(self._connection, agent)
+
+    def windows_for(self, agent: str) -> list[QuotaWindow]:
+        """Read every quota window recorded for `agent`."""
+        return fetch_quotas(self._connection, agent)
