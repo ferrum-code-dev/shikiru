@@ -79,7 +79,12 @@ from shikiru.workspace.git import Git
 from tests.support.cells import rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import WidgetHostApp, open_project_diagnostics, widget_context
+from tests.support.dashboard import (
+    WidgetHostApp,
+    live_work_service,
+    open_project_diagnostics,
+    widget_context,
+)
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT
 from tests.support.render import plain_text
 from tests.support.store import seed_task
@@ -216,6 +221,7 @@ def _dashboard_views(
         motion=DashboardMotion(
             reader, project_dir, settings, RoleViewTail(settings.dashboard.last_words_chars)
         ),
+        work=live_work_service(clock, settings),
     )
 
 

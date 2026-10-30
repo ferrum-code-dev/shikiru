@@ -6,6 +6,7 @@ configured interval so a dashboard refresh never spawns a git process on every t
 
 from __future__ import annotations
 
+import asyncio
 import os
 import shlex
 from dataclasses import dataclass, replace
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import RepoConfig
     from shikiru.domain.docker import DockerSummary
+    from shikiru.domain.results import LiveWork
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
     from shikiru.operator.queries import OperatorQueries
@@ -63,6 +65,7 @@ if TYPE_CHECKING:
     from shikiru.telemetry.docker import DockerSampler
     from shikiru.telemetry.resources import ResourceSampler, ResourceSnapshot
     from shikiru.tmux.client import Tmux
+    from shikiru.workspace.facts import TaskWorkObserver
     from shikiru.workspace.git import Git
 
 _PANE_RESOURCE_FIELD_SEPARATOR = "\t"
@@ -199,6 +202,61 @@ class GitRepoStatusService:
             return cached.status
         age = (self._clock.now() - cached.sampled_at).total_seconds()
         return replace(cached.status, sampled_ago=format_age(age))
+
+
+TASK_WORKTREE_MISSING = "task worktree is missing"
+
+
+@dataclass(frozen=True)
+class TaskWorkSample:
+    """A task's live work, or the error that stopped it being read."""
+
+    work: LiveWork | None
+    error: str | None
+
+
+@dataclass(frozen=True)
+class _CachedTaskWork:
+    checked_at: datetime
+    sample: TaskWorkSample
+
+
+class TaskWorkService:
+    """Report a task's live work, reading its worktree at most once per configured interval."""
+
+    def __init__(
+        self,
+        observer: TaskWorkObserver,
+        clock: Clock,
+        *,
+        cache_ttl_seconds: float,
+    ) -> None:
+        """Read worktrees through `observer`, and time the cache with `clock`."""
+        self._observer = observer
+        self._clock = clock
+        self._cache_ttl_seconds = cache_ttl_seconds
+        self._cache: dict[str, _CachedTaskWork] = {}
+
+    async def sample(self, task_id: str, task_root: Path, base_ref: str) -> TaskWorkSample:
+        """Return the live work of `task_id`, reading `task_root` unless a fresh sample exists."""
+        now = self._clock.now()
+        cached = self._cache.get(task_id)
+        if cached is not None:
+            age = (now - cached.checked_at).total_seconds()
+            if age < self._cache_ttl_seconds:
+                return cached.sample
+        sample = await self._read(task_root, base_ref)
+        self._cache[task_id] = _CachedTaskWork(checked_at=now, sample=sample)
+        return sample
+
+    async def _read(self, task_root: Path, base_ref: str) -> TaskWorkSample:
+        if not await asyncio.to_thread(task_root.is_dir):
+            return TaskWorkSample(work=None, error=f"{TASK_WORKTREE_MISSING}: {task_root}")
+        try:
+            work = await self._observer.observe(task_root, base_ref)
+        except (OSError, ShikiruError) as error:
+            return TaskWorkSample(work=None, error=str(error))
+        return TaskWorkSample(work=work, error=None)
 
 
 class DashboardServices:

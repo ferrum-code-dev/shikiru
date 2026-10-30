@@ -27,10 +27,14 @@ from shikiru.dashboard.detail import (
 )
 from shikiru.dashboard.detail_fold import DetailFold, DetailFolds, FoldHeader
 from shikiru.dashboard.motion import DashboardMotion
+from shikiru.dashboard.services import TaskWorkService
 from shikiru.dashboard.views import StateDashboardViews
 from shikiru.operator.queries import OperatorQueries
+from shikiru.process import SubprocessRunner
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.theme import install_theme
+from shikiru.workspace.facts import TaskWorkObserver
+from shikiru.workspace.git import Git
 from tests.support.render import plain_text
 from tests.support.waiting import UI_WAIT_SECONDS, WaitTimeoutError, wait_until
 
@@ -247,6 +251,16 @@ def list_rows(root: DOMNode, list_id: str) -> list[str]:
     ]
 
 
+def live_work_service(clock: Clock, settings: Settings) -> TaskWorkService:
+    """Return the live-work service the dashboard builds, reading real worktrees through git."""
+    git = Git(SubprocessRunner(), command_timeout=settings.orchestration.timeouts.git_command)
+    return TaskWorkService(
+        TaskWorkObserver(git),
+        clock,
+        cache_ttl_seconds=settings.dashboard.task_work_cache_seconds,
+    )
+
+
 def state_views(
     reader: StateReader,
     project_dir: Path,
@@ -274,6 +288,7 @@ def state_views(
         motion=DashboardMotion(
             reader, project_dir, settings, RoleViewTail(settings.dashboard.last_words_chars)
         ),
+        work=live_work_service(clock, settings),
     )
 
 

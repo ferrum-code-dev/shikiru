@@ -77,7 +77,7 @@ from shikiru.domain.reports import (
     TriageReport,
     Verdict,
 )
-from shikiru.domain.results import derive_task_results, new_task_ids
+from shikiru.domain.results import derive_task_results, new_task_ids, tracks_live_work
 from shikiru.domain.runs import RunStatus, has_positive_token_evidence
 from shikiru.domain.scheduling import WaitReason, dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
@@ -105,6 +105,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.dashboard.motion import DashboardMotion
+    from shikiru.dashboard.services import TaskWorkSample, TaskWorkService
     from shikiru.domain.briefing import PullRequestLine, ReportedTests
     from shikiru.domain.decisions import TaskDecisions
     from shikiru.domain.events import Event
@@ -282,6 +283,7 @@ class StateDashboardViews:
         queries: OperatorQueries,
         clock: Clock,
         motion: DashboardMotion,
+        work: TaskWorkService,
     ) -> None:
         """Use `state`, shared operator queries, sources and `clock` for widget data."""
         self._state = state
@@ -291,6 +293,7 @@ class StateDashboardViews:
         self._queries = queries
         self._clock = clock
         self._motion = motion
+        self._work = work
         self._usage_version = -1
         self._resource_listeners: list[Callable[[], None]] = []
         self._project_usage_cache: tuple[list[UsageView], dict[str, list[QuotaWindow]]] | None = (
@@ -937,6 +940,15 @@ class StateDashboardViews:
             for fault in self._cached_faults()
         )
 
+    async def live_work(self, task_id: str) -> TaskWorkSample | None:
+        """Sample the live work of a task whose Results still change, or None when there is none."""
+        task = self._state.get_task(task_id)
+        if task is None or task.repo is None or not tracks_live_work(task.status):
+            return None
+        return await self._work.sample(
+            task.id, self._queries.task_worktree_path(task.id), task.repo.base_ref
+        )
+
     async def task_detail(
         self,
         task_id: str,
@@ -947,6 +959,7 @@ class StateDashboardViews:
         detail = await self._queries.get_task_detail(task_id)
         if detail is None:
             return None
+        live = await self.live_work(task_id)
         try:
             signal_page = await self.task_timeline(
                 task_id,
@@ -1083,6 +1096,7 @@ class StateDashboardViews:
                 reported,
                 pull_request,
                 verdict_risks=_current_verdict_risks(task, detail.reports),
+                live=live,
             ),
             decisions=self._task_decisions(task.id),
             can_take_over=self._can_take_over(task),
@@ -1392,6 +1406,7 @@ class StateDashboardViews:
         pull_request: PullRequestLine | None,
         *,
         verdict_risks: tuple[str, ...],
+        live: TaskWorkSample | None,
     ) -> TaskResults:
         done = self._state.latest_events(1, kinds=(EventKind.TASK_DONE,), task_id=task.id)
         scope = self._state.latest_events(
@@ -1411,6 +1426,8 @@ class StateDashboardViews:
             verdict_risks=verdict_risks,
             plan_summary=_latest_plan_summary(detail.reports),
             commit_cap=self._settings.dashboard.results_commits,
+            live=live.work if live is not None else None,
+            live_error=live.error if live is not None else None,
         )
 
     def _task_workflow(

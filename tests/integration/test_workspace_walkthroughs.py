@@ -53,7 +53,7 @@ from shikiru.tmux.session import SessionView
 from tests.support.actions import actions_screen, open_action, open_row, popup_screen
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices, open_command_history
+from tests.support.dashboard import StubServices, live_work_service, open_command_history
 from tests.support.engine import (
     build_registry,
     build_tmux,
@@ -196,6 +196,7 @@ class WorkspaceRuntime:
                 self.settings,
                 RoleViewTail(self.settings.dashboard.last_words_chars),
             ),
+            work=live_work_service(self.clock, self.settings),
         )
         app_ref: list[DashboardApp] = []
         resolution_screen = resolution_factory(self.commands, self.queries, self.clock, self.reader)

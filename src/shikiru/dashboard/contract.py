@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import BillingMode, BillingSource, CostBasis
     from shikiru.clock import Clock
+    from shikiru.dashboard.services import TaskWorkSample
     from shikiru.domain.briefing import (
         VerdictCounts,
     )
@@ -878,6 +879,10 @@ class DashboardViews(Protocol):
         relationship_offset: int = 0,
     ) -> TaskDetailView | None:
         """Return task state, recorded workspace evidence and and relationships."""
+        ...
+
+    async def live_work(self, task_id: str) -> TaskWorkSample | None:
+        """Return the live work of a task whose Results still change, or None."""
         ...
 
     async def task_timeline(
