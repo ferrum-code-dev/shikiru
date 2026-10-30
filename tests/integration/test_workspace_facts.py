@@ -148,3 +148,28 @@ async def test_untracked_and_binary_files_count_as_files_without_line_counts(
     work = await _observer(runner).observe(repo_dir, "main")
 
     assert work.produced == ProducedNumbers(commits=1, files=3, insertions=0, deletions=0)
+
+
+async def test_a_staged_deletion_with_an_untracked_file_at_the_same_path_is_one_file(
+    tmp_path: Path,
+) -> None:
+    repo_dir, _ = await _repo_at_base(tmp_path)
+    runner = SubprocessRunner()
+    await run_git(runner, repo_dir, "rm", "--cached", "tasks/todo.md")
+
+    work = await _observer(runner).observe(repo_dir, "main")
+
+    assert work.produced == ProducedNumbers(commits=0, files=1, insertions=0, deletions=1)
+
+
+async def test_a_rename_is_one_file_and_a_new_file_at_its_old_path_is_another(
+    tmp_path: Path,
+) -> None:
+    repo_dir, _ = await _repo_at_base(tmp_path)
+    runner = SubprocessRunner()
+    await run_git(runner, repo_dir, "mv", "tasks/todo.md", "tasks/done.md")
+    (repo_dir / "tasks" / "todo.md").write_text("fresh\n")
+
+    work = await _observer(runner).observe(repo_dir, "main")
+
+    assert work.produced == ProducedNumbers(commits=0, files=2, insertions=0, deletions=0)

@@ -112,7 +112,7 @@ class TaskWorkObserver:
         changes = await self._git.working_tree_line_changes(task_root, against=merge_base)
         return LiveWork.from_oneline(
             commits,
-            files=changes.tracked_paths + changes.untracked_paths,
+            files=changes.changed_paths,
             insertions=changes.added_lines,
             deletions=changes.deleted_lines,
         )
