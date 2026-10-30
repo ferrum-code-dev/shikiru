@@ -519,7 +519,8 @@ class QueuePanel(Vertical):
         await self._refresh(motion=True)
         if not self._render_targets_are_attached():
             return
-        animated = self._widget_context.animations and self._widget_context.views.engine_up()
+        animations = self._widget_context.settings.current().dashboard.animations
+        animated = animations and self._widget_context.views.engine_up()
         status_bright = not self._status_bright if animated else False
         if animated or self._status_bright:
             self._apply_status_motion(status_bright)

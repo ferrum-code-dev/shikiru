@@ -503,7 +503,8 @@ class TaskDetailPanel(Vertical):
 
     async def _watch_timeline(self) -> None:
         while True:
-            await self._widget_context.clock.sleep(self._widget_context.timeline_refresh_seconds)
+            seconds = self._widget_context.settings.current().dashboard.timeline_refresh_seconds
+            await self._widget_context.clock.sleep(seconds)
             if self._task_id is None or not self._screen_is_active():
                 continue
             await self._refresh_activity()
@@ -586,9 +587,9 @@ class TaskDetailPanel(Vertical):
         compact = self.size.width <= _TASK_DETAIL_COMPACT_MAX_COLUMNS or self.has_class(
             COMPACT_INSPECTOR_CLASS
         )
-        context = self._widget_context
+        dashboard = self._widget_context.settings.current().dashboard
         return BriefingLayout(
-            now_lines=context.now_compact_lines if compact else context.now_max_lines,
+            now_lines=dashboard.now_compact_lines if compact else dashboard.now_max_lines,
             compact=compact,
             tiny=self.screen.size.height <= TASK_DETAIL_TINY_MAX_ROWS,
         )

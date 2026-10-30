@@ -193,7 +193,8 @@ class DockerPanel(GatedStatic):
     async def on_mount(self) -> None:
         """Render and refresh Docker state at the configured cadence."""
         await self._refresh()
-        self.set_interval(self._widget_context.docker_refresh_seconds, self._refresh)
+        refresh_seconds = self._widget_context.settings.current().dashboard.docker_refresh_seconds
+        self.set_interval(refresh_seconds, self._refresh)
 
     async def _refresh(self) -> None:
         if not widget_is_attached(self):

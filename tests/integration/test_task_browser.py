@@ -44,6 +44,7 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
+    fixed_settings,
     ignore_palette_action,
     state_views,
     widget_context,
@@ -892,11 +893,7 @@ async def test_dashboard_slash_and_m_keys_act_on_home_and_are_text_inside_search
         on_change=reader.watch,
         clock=clock,
         motion_interval_seconds=None,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
+        settings=fixed_settings(reader, settings),
         open_palette=ignore_palette_action,
         widget_names=["queue", "usage"],
     )

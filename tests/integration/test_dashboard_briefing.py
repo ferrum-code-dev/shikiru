@@ -59,7 +59,12 @@ from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME
 from tests.support.cells import foregrounds
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices, ignore_palette_action, state_views
+from tests.support.dashboard import (
+    StubServices,
+    fixed_settings,
+    ignore_palette_action,
+    state_views,
+)
 from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG
 from tests.support.render import plain_text, rendered_lines
 from tests.support.store import seed_task
@@ -470,13 +475,7 @@ def _app(
         on_change=reader.watch,
         clock=clock,
         motion_interval_seconds=None,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
-        now_max_lines=settings.dashboard.now_max_lines,
-        now_compact_lines=settings.dashboard.now_compact_lines,
+        settings=fixed_settings(reader, settings),
         open_palette=ignore_palette_action,
         widget_names=["queue"],
     )

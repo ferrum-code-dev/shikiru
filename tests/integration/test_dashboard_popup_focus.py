@@ -31,9 +31,11 @@ from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
+    fixed_settings,
     open_command_history,
     open_usage_details,
     state_views,
+    with_dashboard,
 )
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
@@ -160,16 +162,10 @@ def _dashboard(
         on_change=reader.watch,
         clock=clock,
         motion_interval_seconds=None,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
-        animations=False,
+        settings=fixed_settings(reader, with_dashboard(settings, animations=False)),
         open_palette=open_palette,
         widget_names=settings.dashboard.widgets,
         open_palette_context=None,
-        timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
         tmux_detach_hint=None,
         detach_tmux_client=None,
     )

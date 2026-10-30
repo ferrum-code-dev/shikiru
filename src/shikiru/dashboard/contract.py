@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import BillingMode, BillingSource, CostBasis
     from shikiru.clock import Clock
-    from shikiru.config.settings import ComplexityName
+    from shikiru.config.settings import ComplexityName, Settings
     from shikiru.dashboard.services import TaskWorkSample
     from shikiru.domain.briefing import (
         VerdictCounts,
@@ -76,9 +76,6 @@ class TaskTimelineSource(StrEnum):
     ENGINE = TIMELINE_SOURCE_ENGINE
 
 
-DEFAULT_TASK_TIMELINE_REFRESH_SECONDS = 1
-DEFAULT_NOW_MAX_LINES = 6
-DEFAULT_NOW_COMPACT_LINES = 2
 OnChange = Callable[[], Awaitable[None]]
 OnChangeRegistration = Callable[[OnChange], Awaitable[None]]
 MotionRegistration = Callable[[OnChange], Callable[[], None]]
@@ -953,20 +950,21 @@ class DashboardWidget(Protocol):
         ...
 
 
+class SettingsSource(Protocol):
+    """The project settings a dashboard applies, read where each consumer uses them."""
+
+    def current(self) -> Settings:
+        """Return the settings applied now."""
+        ...
+
+
 @dataclass(frozen=True)
 class WidgetContext:
     """Data and update subscription supplied to a `DashboardWidget`."""
 
     views: DashboardViews
     focus_task: str | None
-    resources_refresh_seconds: float
-    docker_refresh_seconds: float
-    disk_refresh_seconds: float
-    timeline_refresh_seconds: float
-    now_max_lines: int
-    now_compact_lines: int
-    quota_warn_pct: int
-    quota_alert_pct: int
+    settings: SettingsSource
     clock: Clock
     on_change: OnChangeRegistration
     on_motion: MotionRegistration
@@ -982,5 +980,4 @@ class WidgetContext:
     placement: WidgetPlacement = WidgetPlacement.EXTENSIONS
     home_attention_present: bool = False
     open_contextual_view: OpenContextualView | None = None
-    animations: bool = True
     activate_attention_decision: ActivateAttentionDecision | None = None

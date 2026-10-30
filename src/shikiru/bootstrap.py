@@ -325,6 +325,12 @@ def build_project_starter(project_root: Path, overrides: Sequence[str]) -> Start
     return start_engine
 
 
+def _open_migrated_state_reader(project_root: Path, clock: Clock) -> StateReader:
+    database = Database(state_db_path(project_root))
+    database.connect().close()
+    return StateReader(database, clock)
+
+
 async def run_dashboard(
     project_root: Path,
     overrides: Sequence[str],
@@ -342,14 +348,14 @@ async def run_dashboard(
     dashboard_activity_module = import_module("shikiru.dashboard.activity")
     clock = build_clock()
     runner = SubprocessRunner()
-    settings = load_settings(project_root, overrides)
+    state = _open_migrated_state_reader(project_root, clock)
+    live_settings = import_module("shikiru.dashboard.live_settings").LiveSettings(
+        state,
+        lambda: load_settings(project_root, overrides),
+    )
+    settings = live_settings.current()
     git = Git(runner, command_timeout=settings.orchestration.timeouts.git_command)
     services = build_operator(project_root, settings, clock=clock)
-    live_settings = import_module("shikiru.dashboard.live_settings").LiveSettings(
-        services.reader,
-        lambda: load_settings(project_root, overrides),
-        settings,
-    )
     try:
         evidence_exporter = TaskEvidenceExporter(
             services.queries,
@@ -447,7 +453,9 @@ async def run_dashboard(
                     services.queries,
                     tmux.select_pane,
                     on_change=services.reader.watch,
-                    action_confirmation_seconds=settings.dashboard.action_confirmation_seconds,
+                    action_confirmation_seconds=(
+                        live_settings.current().dashboard.action_confirmation_seconds
+                    ),
                     initial_context=dashboard.attach_palette_drafts(popup_request),
                     start_engine=(
                         build_project_starter(project_root, overrides)
@@ -471,8 +479,10 @@ async def run_dashboard(
                 popup,
                 request,
                 on_change=services.reader.watch,
-                action_confirmation_seconds=settings.dashboard.action_confirmation_seconds,
-                engine_state_refresh_hz=settings.dashboard.motion.refresh_hz,
+                action_confirmation_seconds=(
+                    live_settings.current().dashboard.action_confirmation_seconds
+                ),
+                engine_state_refresh_hz=live_settings.current().dashboard.motion.refresh_hz,
                 task_routes_available=True,
                 project_diagnostics_available=(
                     DASHBOARD_RESOURCES_WIDGET in settings.dashboard.widgets
@@ -485,27 +495,16 @@ async def run_dashboard(
         async def open_palette(action: str) -> None:
             await push_palette(dashboard_contract_module.PaletteRequest(action=action or None))
 
-        async def open_palette_context(request: _PaletteContext) -> None:
-            await push_palette(request)
-
         app_instance = dashboard_app_module.DashboardApp(
             focus_task=focus_task,
             views=views,
             on_change=services.reader.watch,
             clock=clock,
             motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
-            resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-            docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-            disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-            quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-            quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
-            animations=settings.dashboard.animations,
-            timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
-            now_max_lines=settings.dashboard.now_max_lines,
-            now_compact_lines=settings.dashboard.now_compact_lines,
+            settings=live_settings,
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
-            open_palette_context=open_palette_context,
+            open_palette_context=push_palette,
             resolution_screen=resolution_screen,
             navigate_task_window=navigation.task_window,
             navigate_home=navigation.home,
@@ -515,6 +514,7 @@ async def run_dashboard(
         await app_instance.run_async()
     finally:
         services.close()
+        state.close()
 
 
 async def run_palette(

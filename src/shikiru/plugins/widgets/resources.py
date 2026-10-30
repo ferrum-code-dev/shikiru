@@ -36,7 +36,8 @@ class ResourcesPanel(GatedStatic):
         """Render and resample resources at the configured cadence."""
         await self._refresh()
         if self._widget_context.placement is WidgetPlacement.RESOURCES:
-            self.set_interval(self._widget_context.resources_refresh_seconds, self._refresh)
+            resources = self._widget_context.settings.current().orchestration.resources
+            self.set_interval(resources.sample_seconds, self._refresh)
 
     async def on_click(self, event: events.Click) -> None:
         if self._widget_context.placement is not WidgetPlacement.RESOURCES:

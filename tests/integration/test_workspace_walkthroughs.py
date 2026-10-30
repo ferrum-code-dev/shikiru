@@ -20,7 +20,6 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_OWNERSHIP,
     TaskDetailScreen,
 )
-from shikiru.dashboard.live_settings import LiveSettings
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.resolution import ResolutionScreen
@@ -54,7 +53,12 @@ from shikiru.tmux.session import SessionView
 from tests.support.actions import actions_screen, open_action, open_row, popup_screen
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import StubServices, live_work_service, open_command_history
+from tests.support.dashboard import (
+    StubServices,
+    fixed_settings,
+    live_work_service,
+    open_command_history,
+)
 from tests.support.engine import (
     build_registry,
     build_tmux,
@@ -184,7 +188,7 @@ class WorkspaceRuntime:
 
     def app(self, *, focus_task: str | None = None) -> DashboardApp:
         source = StubServices(engine_running=self.engine_is_up)
-        live_settings = LiveSettings(self.reader, lambda: self.settings, self.settings)
+        live_settings = fixed_settings(self.reader, self.settings)
         views = StateDashboardViews(
             self.reader,
             focus_task=focus_task,
@@ -237,12 +241,7 @@ class WorkspaceRuntime:
             on_change=self.reader.watch,
             clock=self.clock,
             motion_interval_seconds=None,
-            resources_refresh_seconds=self.settings.orchestration.resources.sample_seconds,
-            docker_refresh_seconds=self.settings.dashboard.docker_refresh_seconds,
-            disk_refresh_seconds=self.settings.dashboard.disk_refresh_seconds,
-            quota_warn_pct=self.settings.dashboard.gauges.quota_warn_pct,
-            quota_alert_pct=self.settings.dashboard.gauges.quota_alert_pct,
-            timeline_refresh_seconds=self.settings.dashboard.timeline_refresh_seconds,
+            settings=fixed_settings(self.reader, self.settings),
             open_palette=open_palette,
             open_palette_context=open_palette_context,
             resolution_screen=resolution_screen,

@@ -16,9 +16,6 @@ from textual.widgets import Button, Label, ListView, Rule, Select, Static
 
 from shikiru.agents.registry import load_unique_entry_point
 from shikiru.dashboard.contract import (
-    DEFAULT_NOW_COMPACT_LINES,
-    DEFAULT_NOW_MAX_LINES,
-    DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
     FOCUS_FAULTS_VIEW,
     FOCUS_PROJECT_DIAGNOSTICS_VIEW,
     WIDGET_ENTRY_POINT_GROUP,
@@ -113,6 +110,7 @@ if TYPE_CHECKING:
         OpenPalette,
         OpenPaletteContext,
         ResolutionScreenFactory,
+        SettingsSource,
     )
 
 _WIDGET_PLUGIN_KIND = "dashboard widget plugin"
@@ -966,21 +964,13 @@ class DashboardApp(CoveredScreens):
         on_change: OnChangeRegistration,
         clock: Clock,
         motion_interval_seconds: float | None,
-        resources_refresh_seconds: float,
-        docker_refresh_seconds: float,
-        disk_refresh_seconds: float,
-        quota_warn_pct: int,
-        quota_alert_pct: int,
-        animations: bool = True,
+        settings: SettingsSource,
         open_palette: OpenPalette,
         widget_names: Sequence[str],
         open_palette_context: OpenPaletteContext | None = None,
         resolution_screen: ResolutionScreenFactory | None = None,
         navigate_task_window: NavigateTaskWindow | None = None,
         navigate_home: NavigateHome | None = None,
-        timeline_refresh_seconds: float = DEFAULT_TASK_TIMELINE_REFRESH_SECONDS,
-        now_max_lines: int = DEFAULT_NOW_MAX_LINES,
-        now_compact_lines: int = DEFAULT_NOW_COMPACT_LINES,
         tmux_detach_hint: str | None = None,
         detach_tmux_client: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
@@ -992,15 +982,7 @@ class DashboardApp(CoveredScreens):
         self._on_change = on_change
         self._clock = clock
         self._motion_interval_seconds = motion_interval_seconds
-        self._animations = animations
-        self._resources_refresh_seconds = resources_refresh_seconds
-        self._docker_refresh_seconds = docker_refresh_seconds
-        self._disk_refresh_seconds = disk_refresh_seconds
-        self._timeline_refresh_seconds = timeline_refresh_seconds
-        self._now_max_lines = now_max_lines
-        self._now_compact_lines = now_compact_lines
-        self._quota_warn_pct = quota_warn_pct
-        self._quota_alert_pct = quota_alert_pct
+        self._settings = settings
         self._open_palette = open_palette
         self._open_palette_context = open_palette_context
         self._resolution_screen = resolution_screen
@@ -1128,16 +1110,8 @@ class DashboardApp(CoveredScreens):
         return WidgetContext(
             views=self._views,
             focus_task=self._focus_task,
-            resources_refresh_seconds=self._resources_refresh_seconds,
-            docker_refresh_seconds=self._docker_refresh_seconds,
-            disk_refresh_seconds=self._disk_refresh_seconds,
-            timeline_refresh_seconds=self._timeline_refresh_seconds,
-            now_max_lines=self._now_max_lines,
-            now_compact_lines=self._now_compact_lines,
-            quota_warn_pct=self._quota_warn_pct,
-            quota_alert_pct=self._quota_alert_pct,
+            settings=self._settings,
             clock=self._clock,
-            animations=self._animations,
             on_change=self._on_change,
             on_motion=self.register_motion_callback,
             open_palette=self._open_palette,

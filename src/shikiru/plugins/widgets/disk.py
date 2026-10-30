@@ -90,7 +90,8 @@ class DiskPanel(GatedStatic):
     async def on_mount(self) -> None:
         """Render and refresh disk state at the configured cadence."""
         await self._refresh()
-        self.set_interval(self._widget_context.disk_refresh_seconds, self._refresh)
+        refresh_seconds = self._widget_context.settings.current().dashboard.disk_refresh_seconds
+        self.set_interval(refresh_seconds, self._refresh)
 
     async def _refresh(self) -> None:
         if not widget_is_attached(self):
@@ -99,7 +100,8 @@ class DiskPanel(GatedStatic):
         if not widget_is_attached(self):
             return
         if view.shikiru_bytes is None and view.state is DiagnosticSampleState.AVAILABLE:
-            self.set_timer(self._widget_context.resources_refresh_seconds, self._refresh)
+            resources = self._widget_context.settings.current().orchestration.resources
+            self.set_timer(resources.sample_seconds, self._refresh)
         ruled = not is_first_child(self)
         self.update_if_changed(disk_section(view).with_ruled(ruled=ruled), key=(view, ruled))
 

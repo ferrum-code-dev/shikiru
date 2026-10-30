@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from shikiru.config.loader import load_settings
 from shikiru.dashboard.contract import (
     ContainerProblemView,
     ContainerView,
@@ -307,10 +308,11 @@ async def test_a_new_sample_replaces_the_rendering_at_the_refresh_interval(
     reader: StateReader, tmp_path: Path
 ) -> None:
     services = _Services(_view(_QUIET, DiagnosticSampleState.AVAILABLE))
-    base = widget_context(
-        reader, write_minimal_project(tmp_path), FakeClock(_START), services=services
+    project_dir = write_minimal_project(tmp_path)
+    settings = load_settings(project_dir, [f"dashboard.docker_refresh_seconds={_REFRESH_SECONDS}"])
+    panel = DockerPanel(
+        widget_context(reader, project_dir, FakeClock(_START), services=services, settings=settings)
     )
-    panel = DockerPanel(replace(base, docker_refresh_seconds=_REFRESH_SECONDS))
     async with WidgetHostApp(panel).run_test(size=_WIDE):
         await wait_until(lambda: "3 of 5" in "\n".join(_plain(panel)), timeout=_WAIT_SECONDS)
         services.view = _view(replace(_QUIET, running=4), DiagnosticSampleState.AVAILABLE)

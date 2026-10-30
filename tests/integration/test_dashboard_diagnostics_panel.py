@@ -12,6 +12,7 @@ import pytest
 from textual.containers import VerticalScroll
 from textual.widgets import Button
 
+from shikiru.config.loader import load_settings
 from shikiru.dashboard.contract import DiagnosticSampleState, ResourceView
 from shikiru.dashboard.diagnostics import (
     ENGINE_SECTION_ID,
@@ -462,13 +463,17 @@ async def test_the_faults_section_takes_no_room_until_a_fault_is_open(
 ) -> None:
     clock = FakeClock(_START)
     task = seed_task(connection, clock, title="Faulty")
+    project_dir = write_minimal_project(tmp_path)
+    settings = load_settings(
+        project_dir, [f"orchestration.resources.sample_seconds={_REFRESH_SECONDS}"]
+    )
     app = dashboard_app(
         reader,
-        write_minimal_project(tmp_path),
+        project_dir,
         clock,
         widget_names=["queue", "resources", "faults"],
         services=_Services(_SAMPLE),
-        resources_refresh_seconds=_REFRESH_SECONDS,
+        settings=settings,
     )
     async with app.run_test(size=_POPUP) as pilot:
         await _open_popup(app, pilot)

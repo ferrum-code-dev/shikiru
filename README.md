@@ -200,9 +200,11 @@ the agent; missing data stays unknown, and quota observations may be stale.
 Settings merge in this order: packaged defaults → `.shikiru/config.toml` → repeated global
 `--set key.path=value` overrides for that invocation. Use the wizard for project choices and edit
 the config for additional controls. An already-running engine keeps the settings it started with;
-stop/start it to apply engine policy changes. The dashboard re-reads the config when a new engine
-run starts, so slot counts and other dashboard values follow it; an invalid config keeps the last
-valid values and shows an alert in the header.
+stop/start it to apply engine policy changes. When a new engine run starts, the dashboard re-reads
+the config for slot counts, gauge thresholds, briefing and timeline display, animations and the
+palette confirmation delay; sampling and refresh intervals, timeouts and the widget list apply when
+the dashboard starts. An invalid config keeps the last valid values and shows an alert in the
+header.
 
 | Configuration area | Controls |
 | --- | --- |

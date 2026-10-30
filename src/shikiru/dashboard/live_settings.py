@@ -14,17 +14,18 @@ if TYPE_CHECKING:
     from shikiru.store.reader import StateReader
 
 LATEST_ENGINE_START_LIMIT = 1
+NO_ENGINE_START = 0
 
 
 class LiveSettings:
     """Hold the settings a dashboard reads, reloading them after each new engine start."""
 
-    def __init__(self, state: StateReader, load: Callable[[], Settings], initial: Settings) -> None:
-        """Apply `initial`, then reload through `load` once an engine run starts after it."""
+    def __init__(self, state: StateReader, load: Callable[[], Settings]) -> None:
+        """Record the latest engine start before loading, so a start during the load reloads."""
         self._state = state
         self._load = load
-        self._settings = initial
         self._run_id = self._latest_run_id()
+        self._settings = load()
         self._checked_version: int | None = None
         self._reload_error: str | None = None
 
@@ -44,7 +45,7 @@ class LiveSettings:
             return
         self._checked_version = version
         run_id = self._latest_run_id()
-        if run_id == self._run_id:
+        if run_id in (NO_ENGINE_START, self._run_id):
             return
         self._run_id = run_id
         try:
@@ -54,8 +55,8 @@ class LiveSettings:
         else:
             self._reload_error = None
 
-    def _latest_run_id(self) -> int | None:
+    def _latest_run_id(self) -> int:
         started = self._state.latest_events(
             LATEST_ENGINE_START_LIMIT, kinds=(EventKind.ENGINE_STARTED,)
         )
-        return started[0].id if started else None
+        return started[0].id if started else NO_ENGINE_START

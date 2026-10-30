@@ -25,8 +25,10 @@ from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
+    fixed_settings,
     ignore_palette_action,
     state_views,
+    with_dashboard,
 )
 from tests.support.escalations import (
     operator_services,
@@ -152,16 +154,10 @@ def home(connection: Connection, reader: StateReader, tmp_path: Path) -> _Home:
         on_change=reader.watch,
         clock=clock,
         motion_interval_seconds=None,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
-        animations=False,
+        settings=fixed_settings(reader, with_dashboard(settings, animations=False)),
         open_palette=ignore_palette_action,
         widget_names=settings.dashboard.widgets,
         resolution_screen=resolution_factory(commands, queries, clock, reader),
-        timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
         tmux_detach_hint=None,
         detach_tmux_client=None,
     )

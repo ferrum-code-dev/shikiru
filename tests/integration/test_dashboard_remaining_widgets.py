@@ -36,7 +36,6 @@ from shikiru.config.settings import RepoConfig
 from shikiru.dashboard.activity import RoleViewTail
 from shikiru.dashboard.app import DashboardApp
 from shikiru.dashboard.contract import DiagnosticSampleState
-from shikiru.dashboard.live_settings import LiveSettings
 from shikiru.dashboard.motion import DashboardMotion
 from shikiru.dashboard.services import DashboardServices, GitRepoStatusService
 from shikiru.dashboard.views import StateDashboardViews
@@ -82,6 +81,7 @@ from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     WidgetHostApp,
+    fixed_settings,
     live_work_service,
     open_project_diagnostics,
     widget_context,
@@ -212,7 +212,7 @@ def _dashboard_views(
         max_parallel=settings.orchestration.max_parallel,
         clock=clock,
     )
-    live_settings = LiveSettings(reader, lambda: settings, settings)
+    live_settings = fixed_settings(reader, settings)
     return StateDashboardViews(
         reader,
         focus_task=None,
@@ -1016,11 +1016,7 @@ async def test_resource_sampling_failure_is_stale_and_task_navigation_still_work
         on_change=reader.watch,
         clock=clock,
         motion_interval_seconds=None,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
+        settings=fixed_settings(reader, settings),
         open_palette=open_palette,
         widget_names=["queue", "resources", "faults"],
     )
@@ -1246,11 +1242,7 @@ async def test_docker_unavailable_and_failed_samples_remain_diagnostic_and_navig
         on_change=reader.watch,
         clock=clock,
         motion_interval_seconds=None,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
+        settings=fixed_settings(reader, settings),
         open_palette=open_palette,
         widget_names=["queue", "resources", "docker", "faults"],
     )

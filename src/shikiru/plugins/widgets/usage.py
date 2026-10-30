@@ -48,7 +48,8 @@ def _usage_body(
     if with_runs:
         parts.append(Section(USAGE_BY_AGENT_LABEL, AgentUsageRows(with_runs)))
     if with_quotas:
-        limits = AgentQuotaLimits(with_quotas, context.quota_warn_pct, context.quota_alert_pct)
+        gauges = context.settings.current().dashboard.gauges
+        limits = AgentQuotaLimits(with_quotas, gauges.quota_warn_pct, gauges.quota_alert_pct)
         parts.append(Section(USAGE_LIMITS_LABEL, limits))
     if not agents:
         parts.append(Text(NO_USAGE_RECORDED))

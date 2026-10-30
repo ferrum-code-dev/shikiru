@@ -133,6 +133,7 @@ from tests.support.dashboard import (
     StubServices,
     choose_details_entry,
     choose_inspector_details_entry,
+    fixed_settings,
     focus_inspector_details,
     fold_headline,
     ignore_palette_action,
@@ -531,17 +532,11 @@ def _app(
         motion_interval_seconds=(
             _motion_interval(project_dir) if settings.dashboard.animations else None
         ),
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
-        animations=settings.dashboard.animations,
+        settings=fixed_settings(reader, settings),
         open_palette=open_palette,
         widget_names=widget_names,
         open_palette_context=open_palette_context,
         resolution_screen=resolution_screen,
-        timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
         tmux_detach_hint=tmux_detach_hint,
         detach_tmux_client=detach_tmux_client,
     )

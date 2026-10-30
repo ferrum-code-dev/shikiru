@@ -297,10 +297,20 @@ def state_views(
     )
 
 
+def fixed_settings(reader: StateReader, settings: Settings) -> LiveSettings:
+    """Return a settings source that applies `settings` and never reloads."""
+    return LiveSettings(reader, lambda: settings)
+
+
+def with_dashboard(settings: Settings, **values: object) -> Settings:
+    """Return `settings` with the dashboard section's `values` replaced."""
+    return settings.model_copy(update={"dashboard": settings.dashboard.model_copy(update=values)})
+
+
 def _live_settings(reader: StateReader, project_dir: Path, fixed: Settings | None) -> LiveSettings:
     if fixed is not None:
-        return LiveSettings(reader, lambda: fixed, fixed)
-    return LiveSettings(reader, lambda: load_settings(project_dir), load_settings(project_dir))
+        return fixed_settings(reader, fixed)
+    return LiveSettings(reader, lambda: load_settings(project_dir))
 
 
 def widget_context(
@@ -312,8 +322,8 @@ def widget_context(
     open_palette: OpenPalette | None = None,
     open_resolution: OpenResolution | None = None,
     focus_task: str | None = None,
+    settings: Settings | None = None,
 ) -> WidgetContext:
-    settings = load_settings(project_dir)
     return WidgetContext(
         views=state_views(
             reader,
@@ -321,18 +331,11 @@ def widget_context(
             clock,
             services or StubServices(),
             focus_task=focus_task,
+            settings=settings,
         ),
         focus_task=focus_task,
-        resources_refresh_seconds=settings.orchestration.resources.sample_seconds,
-        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-        timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
-        now_max_lines=settings.dashboard.now_max_lines,
-        now_compact_lines=settings.dashboard.now_compact_lines,
-        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
+        settings=_live_settings(reader, project_dir, settings),
         clock=clock,
-        animations=settings.dashboard.animations,
         on_change=reader.watch,
         on_motion=lambda _: lambda: None,
         open_palette=open_palette or ignore_palette_action,
@@ -348,7 +351,6 @@ def dashboard_app(
     widget_names: list[str],
     settings: Settings | None = None,
     services: StubServices | None = None,
-    resources_refresh_seconds: float | None = None,
     open_palette_context: OpenPaletteContext | None = None,
     resolution_screen: ResolutionScreenFactory | None = None,
     focus_task: str | None = None,
@@ -369,20 +371,10 @@ def dashboard_app(
         on_change=reader.watch,
         clock=clock,
         motion_interval_seconds=None,
-        resources_refresh_seconds=(
-            resources_refresh_seconds or settings.orchestration.resources.sample_seconds
-        ),
-        docker_refresh_seconds=settings.dashboard.docker_refresh_seconds,
-        disk_refresh_seconds=settings.dashboard.disk_refresh_seconds,
-        quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
-        quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
-        animations=False,
+        settings=fixed_settings(reader, with_dashboard(settings, animations=False)),
         open_palette=ignore_palette_action,
         widget_names=widget_names,
         open_palette_context=open_palette_context,
         resolution_screen=resolution_screen,
         navigate_home=navigate_home,
-        timeline_refresh_seconds=settings.dashboard.timeline_refresh_seconds,
-        now_max_lines=settings.dashboard.now_max_lines,
-        now_compact_lines=settings.dashboard.now_compact_lines,
     )

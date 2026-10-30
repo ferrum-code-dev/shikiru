@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from shikiru.config.loader import load_settings
 from shikiru.dashboard.contract import DiagnosticSampleState, DiskView
 from shikiru.domain.levels import UsageLevel
 from shikiru.plugins.widgets.disk import DiskPanel
@@ -199,10 +200,11 @@ async def test_a_new_sample_replaces_the_rendering_at_the_refresh_interval(
     reader: StateReader, tmp_path: Path
 ) -> None:
     services = _Services(_view(120 * _GIB))
-    base = widget_context(
-        reader, write_minimal_project(tmp_path), FakeClock(_START), services=services
+    project_dir = write_minimal_project(tmp_path)
+    settings = load_settings(project_dir, [f"dashboard.disk_refresh_seconds={_REFRESH_SECONDS}"])
+    panel = DiskPanel(
+        widget_context(reader, project_dir, FakeClock(_START), services=services, settings=settings)
     )
-    panel = DiskPanel(replace(base, disk_refresh_seconds=_REFRESH_SECONDS))
     async with WidgetHostApp(panel).run_test(size=_WIDE):
         await wait_until(lambda: "120.0 GiB" in "\n".join(_plain(panel)), timeout=_WAIT_SECONDS)
         services.view = _view(45 * _GIB)
@@ -213,13 +215,16 @@ async def test_an_unmeasured_size_is_re_read_on_the_short_cadence_not_the_disk_o
     reader: StateReader, tmp_path: Path
 ) -> None:
     services = _Services(replace(_view(120 * _GIB), shikiru_bytes=None))
-    base = widget_context(
-        reader, write_minimal_project(tmp_path), FakeClock(_START), services=services
+    project_dir = write_minimal_project(tmp_path)
+    settings = load_settings(
+        project_dir,
+        [
+            f"dashboard.disk_refresh_seconds={_SLOW_SECONDS}",
+            f"orchestration.resources.sample_seconds={_REFRESH_SECONDS}",
+        ],
     )
     panel = DiskPanel(
-        replace(
-            base, disk_refresh_seconds=_SLOW_SECONDS, resources_refresh_seconds=_REFRESH_SECONDS
-        )
+        widget_context(reader, project_dir, FakeClock(_START), services=services, settings=settings)
     )
     async with WidgetHostApp(panel).run_test(size=_WIDE):
         await wait_until(lambda: "measuring" in "\n".join(_plain(panel)), timeout=_WAIT_SECONDS)
