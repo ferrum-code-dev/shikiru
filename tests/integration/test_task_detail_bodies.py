@@ -24,11 +24,11 @@ from shikiru.dashboard.detail import (
 from shikiru.dashboard.detail_fold import DetailFold
 from shikiru.dashboard.detail_hint import HintTarget, hint_for
 from shikiru.dashboard.details_list_view import DetailsSection, section_headline
-from shikiru.dashboard.fold_bodies import CRITERIA_LABEL
+from shikiru.dashboard.fold_bodies import CRITERIA_LABEL, CRITERION_LEAD, NO_CRITERIA
 from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, TriageReport
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import Mode, Status
+from shikiru.domain.tasks import Mode, Status, Task
 from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.gated_static import GatedStatic
@@ -94,13 +94,7 @@ def _criteria_heading(body: Static) -> list[Cell]:
     )
 
 
-@pytest.mark.usefixtures("colour_terminal")
-async def test_task_description_comes_first_with_criteria_as_a_list_and_no_project_folds(
-    connection: Connection, database: Database, tmp_path: Path
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    task = seed_task(connection, clock, title="Described", request="Make the parser strict")
+def _write_triage(project_root: Path, task: Task, criteria: list[str]) -> None:
     triage_dir = project_root / ".shikiru" / "runs" / task.id / "turns" / "01-triage-i0"
     triage_dir.mkdir(parents=True)
     (triage_dir / REPORT_KIND_FILENAME).write_text("triage")
@@ -108,10 +102,56 @@ async def test_task_description_comes_first_with_criteria_as_a_list_and_no_proje
         title=task.title,
         mode=Mode.IMPLEMENT,
         complexity="normal",
-        acceptance_criteria=["rejects bad input", "keeps good input"],
+        acceptance_criteria=criteria,
         references=[],
     )
     (triage_dir / REPORT_FILENAME).write_text(triage.model_dump_json())
+
+
+_HEADED_REQUEST = "Make the parser strict\n\n## Acceptance criteria\n- from the request\n"
+_PLAIN_REQUEST = "Make the parser strict\n\n- a list that is not criteria\n"
+DESCRIPTION_CRITERIA_CASES = [
+    pytest.param(
+        ["from triage"],
+        _HEADED_REQUEST,
+        ("from triage",),
+        id="triage-criteria-without-duplicating-the-request-heading",
+    ),
+    pytest.param(
+        ["from triage"],
+        _PLAIN_REQUEST,
+        ("from triage",),
+        id="triage-criteria-without-a-request-heading",
+    ),
+    pytest.param(
+        [],
+        _HEADED_REQUEST,
+        ("from the request",),
+        id="empty-triage-criteria-fall-back-to-the-request-heading",
+    ),
+    pytest.param(
+        None,
+        _HEADED_REQUEST,
+        ("from the request",),
+        id="skipped-triage-reads-the-request-heading",
+    ),
+    pytest.param(
+        None,
+        _PLAIN_REQUEST,
+        (),
+        id="skipped-triage-without-a-heading-keeps-the-notice",
+    ),
+]
+
+
+@pytest.mark.usefixtures("colour_terminal")
+async def test_task_description_comes_first_with_criteria_as_a_list_and_no_project_folds(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Described", request="Make the parser strict")
+    _write_triage(project_root, task, ["rejects bad input", "keeps good input"])
     reader = StateReader(database, SystemClock())
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
@@ -143,6 +183,58 @@ async def test_task_description_comes_first_with_criteria_as_a_list_and_no_proje
             request = panel.query_one("#task-detail-request", Static)
             await wait_until(lambda: bool(_criteria_heading(request)), timeout=UI_WAIT_SECONDS)
             assert {style for _, style in _criteria_heading(request)} == {CYAN_BOLD}
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize(
+    ("triage_criteria", "request_text", "expected"), DESCRIPTION_CRITERIA_CASES
+)
+async def test_description_lists_triage_criteria_else_the_request_heading_else_the_notice(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    *,
+    triage_criteria: list[str] | None,
+    request_text: str,
+    expected: tuple[str, ...],
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(
+        connection,
+        clock,
+        title="Described",
+        request=request_text,
+        mode=None if triage_criteria is not None else Mode.IMPLEMENT,
+    )
+    if triage_criteria is not None:
+        _write_triage(project_root, task, triage_criteria)
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        task.id,
+        fixed=True,
+        initial_view=TASK_VIEW_REQUEST,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, task.id)
+            await wait_until(
+                lambda: any(
+                    line.startswith(CRITERIA_LABEL)
+                    for line in _body_lines(panel, "task-detail-request")
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
+            lines = _body_lines(panel, "task-detail-request")
+            criteria = tuple(
+                line.removeprefix(CRITERION_LEAD)
+                for line in lines
+                if line.startswith(CRITERION_LEAD)
+            )
+            assert criteria == expected
+            assert (NO_CRITERIA in lines) == (not expected)
     finally:
         reader.close()
 

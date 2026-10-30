@@ -56,6 +56,7 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.dashboard.session_history import project_task_sessions
 from shikiru.dashboard.tick import TickMemo, tick_now
+from shikiru.domain.acceptance import acceptance_criteria_from_request
 from shikiru.domain.briefing import (
     escalation_remaining,
     pull_request_line,
@@ -1049,7 +1050,7 @@ class StateDashboardViews:
             wait_reason=task.wait_reason,
             ownership=ownership,
             request=task.request,
-            acceptance_criteria=tuple(triage.acceptance_criteria) if triage is not None else (),
+            acceptance_criteria=_acceptance_criteria(triage, task.request),
             progress=self._strip_with_motion(task, task_frame, self._motion.current_cost(task)),
             latest_report=latest_report,
             latest_verdict=verdict,
@@ -1851,6 +1852,12 @@ def _latest_plan_summary(reports: Sequence[ReportRow]) -> str | None:
         ),
         None,
     )
+
+
+def _acceptance_criteria(triage: TriageReport | None, request: str) -> tuple[str, ...]:
+    if triage is not None and triage.acceptance_criteria:
+        return tuple(triage.acceptance_criteria)
+    return acceptance_criteria_from_request(request)
 
 
 def _current_verdict_risks(task: Task, reports: Sequence[ReportRow]) -> tuple[str, ...]:
