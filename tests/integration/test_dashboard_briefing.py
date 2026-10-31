@@ -4,6 +4,7 @@ import dataclasses
 import itertools
 import json
 import re
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -71,7 +72,7 @@ from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
     from pathlib import Path
 
     from shikiru.domain.tasks import Task
@@ -81,6 +82,7 @@ if TYPE_CHECKING:
 LONG_WORDS = " ".join(f"w{index:03d}" for index in range(120))
 NOW_WORD = re.compile(r"\bw\d{3}\b")
 START = datetime(2026, 1, 1, tzinfo=UTC)
+OPERATOR_ZONE = "Asia/Tokyo"
 WIDE_SIZE = (100, 40)
 COMPACT_SIZE = (40, 40)
 TINY_SIZE = (40, 8)
@@ -388,6 +390,7 @@ CASES = {
             "Impl $1.10 billed",
         ),
         TAKE_OVER_VERBS,
+        ("finished",),
     ),
     "waiting-on-dependency": _Case(
         _seed_waiting_on_dependency,
@@ -494,6 +497,15 @@ def _shown_verbs(app: DashboardApp) -> frozenset[BriefingAction]:
     )
 
 
+@pytest.fixture
+def operator_zone() -> Iterator[None]:
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("TZ", OPERATOR_ZONE)
+        time.tzset()
+        yield
+    time.tzset()
+
+
 async def test_briefing_shows_only_the_rows_the_task_has_data_for(
     connection: Connection,
     reader: StateReader,
@@ -526,6 +538,30 @@ async def test_briefing_shows_only_the_rows_the_task_has_data_for(
                 assert expected in text, (name, expected)
             for never in (*NEVER_SHOWN, *case.missing):
                 assert never not in text, (name, never)
+
+
+@pytest.mark.usefixtures("operator_zone")
+async def test_a_finished_task_shows_its_total_and_finish_time_in_the_operator_zone(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = _running(connection, clock, iteration=1)
+    clock.advance(ELAPSED_MINUTES * 60)
+    TaskStore(connection, clock).finish(
+        task.id,
+        Transition.stay(task, step=None, status=Status.DONE),
+        EventKind.TASK_DONE,
+        message="done",
+        data={"summary": "done"},
+    )
+    app = _app(reader, project_root, clock, focus_task=task.id)
+    async with app.run_test(size=WIDE_SIZE):
+        identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
+        expected = f"{ELAPSED_MINUTES}m total \N{MIDDLE DOT} finished 2026-01-01 09:31"
+        await wait_until(lambda: expected in plain_text(identity.content), timeout=UI_WAIT_SECONDS)
 
 
 async def test_every_briefing_stays_inside_its_width(

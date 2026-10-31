@@ -114,6 +114,8 @@ ACTIVE_WORD = "active"
 STALLED_WORD = "stalled"
 IN_STEP_WORD = "in step"
 TOTAL_WORD = "total"
+FINISHED_WORD = "finished"
+FINISHED_FORMAT = "%Y-%m-%d %H:%M"
 REWORK_WORD = "rework"
 ADDED_WORD = "added"
 COMPLEXITY_WORD = "complexity"
@@ -741,6 +743,9 @@ def _time_line(view: TaskDetailView, now: datetime) -> Text | None:
     if view.status in TERMINAL_STATUSES:
         if view.started_at is not None and view.stage_ended_at is not None:
             parts.append(f"{duration_text(view.stage_ended_at - view.started_at)} {TOTAL_WORD}")
+        if view.stage_ended_at is not None:
+            finished = view.stage_ended_at.astimezone().strftime(FINISHED_FORMAT)
+            parts.append(f"{FINISHED_WORD} {finished}")
     else:
         in_step = _in_step_time(view, now)
         if in_step is not None:
