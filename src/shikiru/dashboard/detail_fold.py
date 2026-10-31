@@ -11,6 +11,7 @@ from textual.widgets import Static
 
 from shikiru.dashboard.details_list_view import DetailsEntry, entry_renderable
 from shikiru.dashboard.row_list import RowList
+from shikiru.ui.tokens import STEEL_BLUE
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -95,12 +96,14 @@ class DetailFold(Vertical):
         body: Sequence[Widget],
         *,
         is_open: bool = False,
+        name_color: str = STEEL_BLUE,
     ) -> None:
-        """Hold the section's view id, name and body."""
+        """Hold the section's view id, name in its colour, and body."""
         super().__init__()
         self.view_id = view_id
         self.title = title
         self.headline: str | None = None
+        self.name_color = name_color
         self.header = FoldHeader(self)
         self._body = Vertical(*body, classes="fold-body")
         self._open = is_open
@@ -175,7 +178,9 @@ class DetailFold(Vertical):
         if not self.header.is_mounted:
             return
         mark = OPEN_MARK if self._open else CLOSED_MARK
-        entry = DetailsEntry(self.view_id, f"{mark} {self.title}", self.headline)
+        entry = DetailsEntry(
+            self.view_id, f"{mark} {self.title}", self.headline, name_color=self.name_color
+        )
         self.header.update(entry_renderable(entry, selected=self._focused))
 
 
@@ -207,8 +212,8 @@ class DetailFolds(Vertical):
         return visible[0]
 
     def is_current(self, fold: DetailFold) -> bool:
-        """Whether `fold` holds the roving Tab stop."""
-        return self.current_fold is fold
+        """Whether `fold` holds the roving Tab stop; a hidden fold never does."""
+        return fold.styles.display != _DISPLAY_NONE and self.current_fold is fold
 
     def make_current(self, fold: DetailFold) -> None:
         """Move the Tab stop to `fold`."""

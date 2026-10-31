@@ -221,10 +221,15 @@ _MOTION_FILTERS = frozenset(
 )
 _RECORDED_REASON = "Recorded scheduler reason"
 _UNRECORDED_REASON = "Waiting on"
+_RECORDED_HOLD = "Recorded hold"
+_RECORDED_TAKEOVER = "Recorded takeover"
 _PAUSED_HEADLINE = "Paused by operator"
 _INTERVENTION_HEADLINE = "Held by operator"
 _PAUSE_HOLD_DETAIL = "Pause hold · Resume clears this hold when submitted."
+_PAUSE_HOLD_EVIDENCE = f"{_RECORDED_HOLD}{GROUP_SEPARATOR}{Hold.PAUSED.value}"
+_INTERVENTION_HOLD_EVIDENCE = f"{_RECORDED_HOLD}{GROUP_SEPARATOR}{Hold.INTERVENTION.value}"
 _OWNERSHIP_HOLD_LABEL = "Ownership hold · taken-over roles"
+_NO_OWNER_RECORDED = "not recorded"
 _HAND_BACK_DETAIL = "Hand back each taken-over role to return it to automation."
 _DEPENDENCY_HEADLINE = "Waiting on dependency"
 _DEPENDENCY_UNAVAILABLE = "Dependency relationship evidence is unavailable."
@@ -1324,9 +1329,11 @@ class StateDashboardViews:
                 )
             )
         if Hold.PAUSED in task.holds or wait_reason == WaitReason.PAUSED.value:
+            evidence = (_PAUSE_HOLD_EVIDENCE,) if Hold.PAUSED in task.holds else ()
             found.append(
                 _FoundBlocker(
-                    Hold.PAUSED.value, _BlockerParts(_PAUSED_HEADLINE, (_PAUSE_HOLD_DETAIL,))
+                    Hold.PAUSED.value,
+                    _BlockerParts(_PAUSED_HEADLINE, (_PAUSE_HOLD_DETAIL,), evidence=evidence),
                 )
             )
         if Hold.INTERVENTION in task.holds:
@@ -1939,10 +1946,15 @@ def _task_reference_view(task: Task) -> TaskReferenceView:
 
 
 def _intervention_parts(ownership: tuple[str, ...]) -> _BlockerParts:
-    owners = ", ".join(ownership) if ownership else "not recorded"
+    owners = ", ".join(ownership)
+    takeover = (f"{_RECORDED_TAKEOVER}{GROUP_SEPARATOR}{owners}",) if ownership else ()
     return _BlockerParts(
         _INTERVENTION_HEADLINE,
-        (f"{_OWNERSHIP_HOLD_LABEL}{GROUP_SEPARATOR}{owners}", _HAND_BACK_DETAIL),
+        (
+            f"{_OWNERSHIP_HOLD_LABEL}{GROUP_SEPARATOR}{owners or _NO_OWNER_RECORDED}",
+            _HAND_BACK_DETAIL,
+        ),
+        evidence=(_INTERVENTION_HOLD_EVIDENCE, *takeover),
     )
 
 

@@ -9,7 +9,7 @@ import pytest
 from textual.widgets import Static
 
 from shikiru.config.loader import load_settings
-from shikiru.dashboard.briefing_view import LIVE_LABEL, Briefing, BriefingLayout
+from shikiru.dashboard.briefing_view import LIVE_LABEL, Briefing, BriefingHalf, BriefingLayout
 from shikiru.dashboard.detail import (
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_IDENTITY,
@@ -225,7 +225,11 @@ async def test_an_unreadable_worktree_is_labelled_in_both_briefing_layouts(
         compact=compact,
     )
 
-    lines = rendered_lines(Briefing(detail, clock.now(), layout), width=RENDER_WIDTH)
+    lines = [
+        line
+        for half in BriefingHalf
+        for line in rendered_lines(Briefing(detail, clock.now(), layout, half), width=RENDER_WIDTH)
+    ]
 
     assert any(line.lstrip().startswith(LIVE_LABEL) for line in lines)
 

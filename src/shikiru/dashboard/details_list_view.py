@@ -13,8 +13,8 @@ from shikiru.dashboard.briefing_view import total_cost_text
 from shikiru.dashboard.fold_bodies import priority_word
 from shikiru.domain.results import ResultOutcome
 from shikiru.domain.tasks import Status
-from shikiru.ui.section import BOLD_STEEL, GROUP_SEPARATOR, grey
-from shikiru.ui.tokens import STEEL_BLUE
+from shikiru.ui.section import GROUP_SEPARATOR, grey
+from shikiru.ui.tokens import STEEL_BLUE, STYLE_BOLD
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,11 +52,12 @@ class DetailsSection(StrEnum):
 
 @dataclass(frozen=True)
 class DetailsEntry:
-    """One fold header row: what it opens, its name and its optional grey headline."""
+    """One fold header row: what it opens, its name in its colour and its optional grey headline."""
 
     entry_id: str
     name: str
     headline: str | None = None
+    name_color: str = STEEL_BLUE
 
 
 def section_headline(section: DetailsSection, view: TaskDetailView | None) -> str | None:
@@ -77,7 +78,7 @@ class _EntryLine:
         headline = entry.headline or ""
         if headline and cell_len(entry.name) + cell_len(_HEADLINE_GAP) + cell_len(headline) > room:
             headline = ""
-        name = Text(entry.name, style=BOLD_STEEL if self.selected else STEEL_BLUE)
+        name = Text(entry.name, style=_name_style(entry, selected=self.selected))
         name.truncate(room - cell_len(headline), overflow="ellipsis", pad=True)
         line = Text(ROW_LEAD)
         line.append_text(name)
@@ -86,8 +87,12 @@ class _EntryLine:
 
 
 def entry_renderable(entry: DetailsEntry, *, selected: bool) -> RenderableType:
-    """Return one row: steel-blue name (bold when selected), grey headline at the right."""
+    """Return one row: the name in its colour (bold when selected), grey headline at the right."""
     return _EntryLine(entry, selected)
+
+
+def _name_style(entry: DetailsEntry, *, selected: bool) -> str:
+    return f"{STYLE_BOLD} {entry.name_color}" if selected else entry.name_color
 
 
 def _usage_headline(view: TaskDetailView) -> str | None:

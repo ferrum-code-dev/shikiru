@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum, auto
 from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
+from rich.console import Group
 from rich.padding import Padding
 from rich.text import Text
 
@@ -236,40 +238,56 @@ def header_text(view: TaskDetailView, now: datetime, *, compact: bool) -> Text:
     return header
 
 
+class BriefingHalf(StrEnum):
+    """The part of the briefing a widget draws: what sits above the Evidence fold or below it."""
+
+    ABOVE = auto()
+    BELOW = auto()
+
+
+@dataclass(frozen=True)
+class _Halves:
+    above: list[RenderableType]
+    below: list[RenderableType]
+
+
 @dataclass(frozen=True)
 class Briefing:
-    """Render a task's Progress, Result and Problems groups for the width they are drawn at."""
+    """Render one half of a task's briefing for the width it is drawn at."""
 
     view: TaskDetailView
     now: datetime
     layout: BriefingLayout
+    half: BriefingHalf
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        """Yield the milestones and the groups, laid out wide or compact."""
+        """Yield this half's blocks, laid out wide or compact."""
         width = options.max_width
-        blocks = (
-            self._compact_blocks(console, width)
+        halves = (
+            self._compact_halves(console, width)
             if self.layout.compact
-            else self._wide_blocks(console, width)
+            else self._wide_halves(console, width)
         )
-        yield from blocks
+        yield from halves.above if self.half is BriefingHalf.ABOVE else halves.below
 
     def _milestones(self) -> list[RenderableType]:
         if not self.view.milestones:
             return []
         return [StageActivity(self.view).render(glyphs_only=self.layout.compact)]
 
-    def _wide_blocks(self, console: Console, width: int) -> list[RenderableType]:
+    def _wide_halves(self, console: Console, width: int) -> _Halves:
         view = self.view
         value_width = width - GROUP_INDENT - LABEL_WIDTH - LABEL_GAP
-        return [
-            *self._milestones(),
-            *_group(PROGRESS_TITLE, self._progress_rows(console, value_width), width),
-            *_labelled(self._summary_rows(console, width - LABEL_WIDTH - LABEL_GAP), width),
-            *_group(_result_title(view), _result_rows(view), width),
-            *_group(PROBLEMS_TITLE, _problem_rows(view, self.now), width),
-            *_group(COST_LABEL, _cost_rows(view), width),
-        ]
+        return _Halves(
+            above=[
+                *self._milestones(),
+                *_group(PROGRESS_TITLE, self._progress_rows(console, value_width), width),
+                *_labelled(self._summary_rows(console, width - LABEL_WIDTH - LABEL_GAP), width),
+                *_group(_result_title(view), _result_rows(view), width),
+                *_problems_group(view, self.now, width),
+            ],
+            below=_group(COST_LABEL, _cost_rows(view), width),
+        )
 
     def _progress_rows(self, console: Console, value_width: int) -> list[Row]:
         view = self.view
@@ -299,7 +317,7 @@ class Briefing:
             for index, line in enumerate(lines)
         ]
 
-    def _compact_blocks(self, console: Console, width: int) -> list[RenderableType]:
+    def _compact_halves(self, console: Console, width: int) -> _Halves:
         view = self.view
         problems = _compact_problems(view, self.now, width)
         body = [
@@ -310,9 +328,9 @@ class Briefing:
             *_compact_cost(view),
         ]
         milestones = self._milestones()
-        return (
-            [*problems, *body, *milestones] if self.layout.tiny else [*milestones, *problems, *body]
-        )
+        if self.layout.tiny:
+            return _Halves(above=problems, below=[*body, *milestones])
+        return _Halves(above=[*milestones, *problems], below=body)
 
     def _compact_progress(self, console: Console, width: int) -> list[RenderableType]:
         view = self.view
@@ -327,11 +345,21 @@ class Briefing:
         return lines
 
 
+def blockers_value_indent(*, compact: bool) -> int:
+    """Return the cell column the Blockers values start at, where the Evidence fold lines up."""
+    return (0 if compact else GROUP_INDENT) + LABEL_WIDTH + LABEL_GAP
+
+
 def _group(title: str, rows: list[Row], width: int) -> list[RenderableType]:
     if not rows:
         return []
-    body = Padding(labelled_rows(rows, width - GROUP_INDENT, LABEL_WIDTH), (0, 0, 0, GROUP_INDENT))
-    return [Section(title, body, ruled=False, title_style=STEEL_BLUE)]
+    return [Section(title, _indented(rows, width), ruled=False, title_style=STEEL_BLUE)]
+
+
+def _indented(rows: list[Row], width: int) -> RenderableType:
+    if not rows:
+        return Group()
+    return Padding(labelled_rows(rows, width - GROUP_INDENT, LABEL_WIDTH), (0, 0, 0, GROUP_INDENT))
 
 
 def _labelled(rows: list[Row], width: int) -> list[RenderableType]:
@@ -432,16 +460,28 @@ def branch_row(results: TaskResults) -> list[Row]:
     return [(grey(label), (Text(target),))]
 
 
+def _problems_group(view: TaskDetailView, now: datetime, width: int) -> list[RenderableType]:
+    rows = _problem_rows(view, now)
+    if not rows:
+        return []
+    return [Section(PROBLEMS_TITLE, _indented(rows, width), ruled=False, title_style=STEEL_BLUE)]
+
+
 def _problem_rows(view: TaskDetailView, now: datetime) -> list[Row]:
     rows: list[Row | None] = []
     counts = view.verdict_counts
     if counts is not None and counts.has_problems:
         rows.append(_row(VERDICT_LABEL, _verdict_groups(counts)))
     rows.extend(decision_rows(view, DECISION_LABEL))
+    rows.extend(_risk_rows(view))
     rows.extend(blocker_rows(view, now))
-    risks = view.results.residual_risks if view.results is not None else ()
-    rows.append(_row(RISKS_LABEL, tuple(Text(risk, style=AMBER) for risk in risks)))
     return [row for row in rows if row is not None]
+
+
+def _risk_rows(view: TaskDetailView) -> list[Row]:
+    risks = view.results.residual_risks if view.results is not None else ()
+    row = _row(RISKS_LABEL, tuple(Text(risk, style=AMBER) for risk in risks))
+    return [] if row is None else [row]
 
 
 def _cost_rows(view: TaskDetailView) -> list[Row]:

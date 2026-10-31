@@ -42,6 +42,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_CONTEXT_INFO,
     TASK_DETAIL_EVIDENCE,
+    TASK_DETAIL_FOLDS,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
     TASK_DETAIL_SESSIONS,
@@ -2619,10 +2620,14 @@ async def test_each_fold_opens_by_key_or_click_without_creating_commands(
         reader.close()
 
 
+def _fold_of_view(panel: TaskDetailPanel, view_id: str) -> DetailFold:
+    return next(fold for fold in panel.query(DetailFold) if fold.view_id == view_id)
+
+
 async def _open_fold(
     app: DashboardApp, pilot: Pilot[None], panel: TaskDetailPanel, case: _SectionCase
 ) -> None:
-    fold = panel.query_one(DetailFolds).all_folds[list(DetailsSection).index(case.section)]
+    fold = _fold_of_view(panel, case.view)
     click_offset: tuple[int, int] | None = None
     click_succeeded: bool | None = None
     if case.by_click:
@@ -2670,7 +2675,7 @@ async def _open_fold(
         focus_state = (type(focused).__name__, focused.id) if focused is not None else None
         target = fold.focus_target
         target_state = (type(target).__name__, target.id)
-        current_fold = panel.query_one(DetailFolds).current_fold
+        current_fold = panel.query_one(f"#{TASK_DETAIL_FOLDS}", DetailFolds).current_fold
         message = (
             f"fold did not open and focus its target: section={case.section.value!r} "
             f"view={case.view!r} by_click={case.by_click} "
@@ -2682,7 +2687,7 @@ async def _open_fold(
         raise AssertionError(message) from error
 
 
-async def test_blocker_evidence_fold_is_closed_by_default_and_opens_closes_like_other_folds(
+async def test_blocker_evidence_fold_is_closed_by_default_and_opens_closes_by_keys_and_click(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -2694,10 +2699,9 @@ async def test_blocker_evidence_fold_is_closed_by_default_and_opens_closes_like_
     TaskStore(connection, clock).set_wait_reason(blocked.id, WaitReason.DEPENDENCY)
     reader = StateReader(database, SystemClock())
     queue = CommandQueue(connection, clock)
-    by_key = _SectionCase(
-        DetailsSection.BLOCKER_EVIDENCE, TASK_VIEW_BLOCKER_EVIDENCE, by_click=False
+    by_click = _SectionCase(
+        DetailsSection.BLOCKER_EVIDENCE, TASK_VIEW_BLOCKER_EVIDENCE, by_click=True
     )
-    by_click = replace(by_key, by_click=True)
 
     try:
         app = _operator_task_app(reader, project_root, blocked.id, queue, clock)
@@ -2711,12 +2715,17 @@ async def test_blocker_evidence_fold_is_closed_by_default_and_opens_closes_like_
             panel = app.query_one("#task-detail-panel", TaskDetailPanel)
             assert TASK_VIEW_BLOCKER_EVIDENCE not in panel.open_views
 
-            await _open_fold(app, pilot, panel, by_key)
+            evidence = _fold_of_view(panel, TASK_VIEW_BLOCKER_EVIDENCE)
+            evidence.folds.focus_header(evidence)
+            await pilot.press("enter")
+            await wait_until(
+                lambda: TASK_VIEW_BLOCKER_EVIDENCE in panel.open_views,
+                timeout=UI_WAIT_SECONDS,
+            )
             assert fold_headline(panel, TASK_VIEW_BLOCKER_EVIDENCE) == "2 lines"
-            evidence = _text(panel.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static))
-            assert "Recorded scheduler reason" in evidence
+            evidence_text = _text(panel.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static))
+            assert "Recorded scheduler reason" in evidence_text
 
-            panel.focus_folds()
             await pilot.press("space")
             await wait_until(
                 lambda: TASK_VIEW_BLOCKER_EVIDENCE not in panel.open_views,

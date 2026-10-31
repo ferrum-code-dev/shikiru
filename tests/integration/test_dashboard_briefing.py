@@ -19,6 +19,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_ACTION_PREFIX,
     TASK_DETAIL_ACTIONS,
     TASK_DETAIL_BRIEFING,
+    TASK_DETAIL_BRIEFING_BELOW,
     TASK_DETAIL_DETAILS_HINT,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_VERBS,
@@ -489,6 +490,13 @@ def _is_loaded(identity: Static, task: Task) -> bool:
     return text.startswith(task.id) and "loading" not in text
 
 
+def _briefing_halves(app: DashboardApp) -> tuple[Static, Static]:
+    return (
+        app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static),
+        app.query_one(f"#{TASK_DETAIL_BRIEFING_BELOW}", Static),
+    )
+
+
 def _shown_verbs(app: DashboardApp) -> frozenset[BriefingAction]:
     return frozenset(
         action
@@ -516,7 +524,7 @@ async def test_briefing_shows_only_the_rows_the_task_has_data_for(
     tasks = {name: case.seed(connection, clock, project_root) for name, case in CASES.items()}
     app = _app(reader, project_root, clock)
     async with app.run_test(size=WIDE_SIZE):
-        briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
+        halves = _briefing_halves(app)
         identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         for name, case in CASES.items():
             task = tasks[name]
@@ -525,9 +533,13 @@ async def test_briefing_shows_only_the_rows_the_task_has_data_for(
             await wait_until(
                 lambda case=case: _shown_verbs(app) == case.verbs, timeout=UI_WAIT_SECONDS
             )
-            text = f"{plain_text(identity.content)} {plain_text(briefing.content)}"
+            text = " ".join(
+                [plain_text(identity.content), *(plain_text(half.content) for half in halves)]
+            )
             lines = [
-                line.strip() for line in rendered_lines(briefing.content, width=briefing.size.width)
+                line.strip()
+                for half in halves
+                for line in rendered_lines(half.content, width=half.size.width)
             ]
             for title in TITLES:
                 assert (title in lines) is (title in case.titles), (name, title)
@@ -575,7 +587,7 @@ async def test_every_briefing_stays_inside_its_width(
     for size in BRIEFING_SIZES:
         app = _app(reader, project_root, clock)
         async with app.run_test(size=size):
-            briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
+            halves = _briefing_halves(app)
             identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
             for name in CASES:
                 task = tasks[name]
@@ -584,8 +596,9 @@ async def test_every_briefing_stays_inside_its_width(
                     lambda task=task, identity=identity: _is_loaded(identity, task),
                     timeout=UI_WAIT_SECONDS,
                 )
-                lines = rendered_lines(briefing.content, width=briefing.size.width)
-                assert all(len(line) <= briefing.size.width for line in lines), (size, name)
+                for half in halves:
+                    lines = rendered_lines(half.content, width=half.size.width)
+                    assert all(len(line) <= half.size.width for line in lines), (size, name)
 
 
 @pytest.mark.parametrize(
@@ -606,17 +619,19 @@ async def test_a_long_last_message_wraps_within_the_width_up_to_the_configured_l
     cap = dashboard.now_compact_lines if compact else dashboard.now_max_lines
     app = _app(reader, project_root, clock, focus_task=task.id)
     async with app.run_test(size=size):
-        briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
+        halves = _briefing_halves(app)
         await wait_until(
-            lambda: "w000" in plain_text(briefing.content, width=size[0]), timeout=UI_WAIT_SECONDS
+            lambda: any("w000" in plain_text(half.content, width=size[0]) for half in halves),
+            timeout=UI_WAIT_SECONDS,
         )
-        lines = rendered_lines(briefing.content, width=briefing.size.width)
+        width = halves[0].size.width
+        lines = [line for half in halves for line in rendered_lines(half.content, width=width)]
         quoted = [line for line in lines if NOW_WORD.search(line)]
         assert len(quoted) == cap
         assert "…" in quoted[-1]
         assert not any("…" in line for line in quoted[:-1])
-        assert all(len(line) <= briefing.size.width for line in lines)
-        assert briefing.region.bottom <= app.screen.size.height
+        assert all(len(line) <= width for line in lines)
+        assert max(half.region.bottom for half in halves) <= app.screen.size.height
 
 
 async def test_every_offered_verb_stays_inside_the_actions_row_at_compact_width(
@@ -684,10 +699,10 @@ async def test_cost_heading_is_cyan_and_its_role_labels_are_grey_beside_their_am
     task = _seed_running(connection, clock, project_root)
     app = _app(reader, project_root, clock, focus_task=task.id)
     async with app.run_test(size=WIDE_SIZE):
-        briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
+        cost = _briefing_halves(app)[1]
         await wait_until(
-            lambda: "Leader $0.42" in plain_text(briefing.content), timeout=UI_WAIT_SECONDS
+            lambda: "Leader $0.42" in plain_text(cost.content), timeout=UI_WAIT_SECONDS
         )
-        assert foregrounds(briefing, "Cost") == [STEEL_BLUE] * len("Cost")
-        assert foregrounds(briefing, "Leader") == [SECONDARY_TEXT_COLOR] * len("Leader")
-        assert foregrounds(briefing, "$0.42") == [SAGE] * len("$0.42")
+        assert foregrounds(cost, "Cost") == [STEEL_BLUE] * len("Cost")
+        assert foregrounds(cost, "Leader") == [SECONDARY_TEXT_COLOR] * len("Leader")
+        assert foregrounds(cost, "$0.42") == [SAGE] * len("$0.42")

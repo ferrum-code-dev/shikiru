@@ -4,15 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from rich.cells import cell_len
 from rich.text import Text
 
-from shikiru.domain.quota_waits import (
-    QUOTA_AGENT_LABEL,
-    QUOTA_CLEARS_LABEL,
-    quota_remaining,
-    quota_reset_clock,
-    quota_wait_description,
-)
+from shikiru.domain.quota_waits import QUOTA_AGENT_LABEL, quota_clock_text
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.tasks import Status
 from shikiru.ui.glyphs import GLYPH_WARNING
@@ -42,7 +37,7 @@ def blocker_rows(view: TaskDetailView, now: datetime) -> list[Row]:
         alert = _waits_on_cancelled(view, blocker)
         label = grey(BLOCKERS_LABEL) if index == 0 else Text()
         rows.append((label, (_headline(blocker, now, alert),)))
-        rows.extend((Text(), (grey(line),)) for line in _detail_lines(blocker, now))
+        rows.extend((Text(), (grey(line),)) for line in _detail_lines(blocker))
         rows.extend((Text(), (line,)) for line in _occupant_lines(blocker.related_tasks))
     return rows
 
@@ -58,39 +53,35 @@ def _headline(blocker: TaskBlockerView, now: datetime, alert: bool) -> Text:
     cause = blocker.headline
     if blocker.quota_wait is not None:
         quota = blocker.quota_wait
-        cause = GROUP_SEPARATOR.join((cause, quota_wait_description(quota.agent, quota.until, now)))
+        description, remaining = quota_clock_text(quota.agent, quota.until, now)
+        cause = f"{GROUP_SEPARATOR.join((cause, description))} (in {remaining})"
     return Text.assemble(
         (GLYPH_WARNING, _BOLD_ALERT if alert else _BOLD_AMBER),
         (f" {cause}", ALERT_COLOR if alert else ""),
     )
 
 
-def _detail_lines(blocker: TaskBlockerView, now: datetime) -> list[str]:
+def _detail_lines(blocker: TaskBlockerView) -> list[str]:
     if blocker.quota_wait is None:
         return list(blocker.details)
-    quota = blocker.quota_wait
-    clears = (
-        f"{QUOTA_CLEARS_LABEL} {quota_reset_clock(quota.until, now)}"
-        f"{GROUP_SEPARATOR}in {quota_remaining(quota.until, now)}"
-    )
-    return [
-        f"{QUOTA_AGENT_LABEL}{GROUP_SEPARATOR}{quota.agent}",
-        clears,
-        *blocker.details,
-    ]
+    return [f"{QUOTA_AGENT_LABEL}{GROUP_SEPARATOR}{blocker.quota_wait.agent}", *blocker.details]
 
 
 def _occupant_lines(tasks: tuple[TaskReferenceView, ...]) -> list[Text]:
-    id_width = max((len(task.task_id) for task in tasks), default=0)
-    title_width = max((len(task.title) for task in tasks), default=0)
+    id_width = max((cell_len(task.task_id) for task in tasks), default=0)
+    title_width = max((cell_len(task.title) for task in tasks), default=0)
     return [
         Text(
-            f"{task.task_id.ljust(id_width)}{_COLUMN_GAP}"
-            f"{task.title.ljust(title_width)}{_COLUMN_GAP}{task.status}",
+            f"{_pad_cells(task.task_id, id_width)}{_COLUMN_GAP}"
+            f"{_pad_cells(task.title, title_width)}{_COLUMN_GAP}{task.status}",
             style=ALERT_COLOR if task.status == Status.CANCELLED.value else SECONDARY_TEXT_COLOR,
         )
         for task in tasks
     ]
+
+
+def _pad_cells(text: str, width: int) -> str:
+    return f"{text}{' ' * (width - cell_len(text))}"
 
 
 def _waits_on_cancelled(view: TaskDetailView, blocker: TaskBlockerView) -> bool:

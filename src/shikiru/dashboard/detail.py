@@ -22,7 +22,9 @@ from shikiru.dashboard.briefing_view import (
     ACTION_LABELS,
     TERMINAL_STATUSES,
     Briefing,
+    BriefingHalf,
     BriefingLayout,
+    blockers_value_indent,
     briefing_verbs,
     header_text,
 )
@@ -32,7 +34,7 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.dashboard.detail_fold import DetailFold, DetailFolds
 from shikiru.dashboard.detail_hint import DetailHintBar, HintTarget, hint_for
-from shikiru.dashboard.details_list_view import DetailsSection, section_headline
+from shikiru.dashboard.details_list_view import ROW_LEAD, DetailsSection, section_headline
 from shikiru.dashboard.fold_bodies import (
     DecisionsBody,
     DescriptionBody,
@@ -69,6 +71,7 @@ from shikiru.ui.popup import (
 )
 from shikiru.ui.screen import widget_is_attached
 from shikiru.ui.section import BOLD_PRIMARY, grey, key_label
+from shikiru.ui.tokens import SECONDARY_TEXT_COLOR, STEEL_BLUE
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -95,6 +98,8 @@ SESSION_STATE_USED = "Used"
 TASK_DETAIL_IDENTITY = "task-detail-identity"
 TASK_DETAIL_OWNERSHIP = "task-detail-ownership"
 TASK_DETAIL_BRIEFING = "task-detail-briefing"
+TASK_DETAIL_BRIEFING_BELOW = "task-detail-briefing-below"
+TASK_DETAIL_PROBLEM_FOLDS = "task-detail-problem-folds"
 TASK_DETAIL_ACTIONS = "task-detail-actions"
 TASK_DETAIL_VERBS = "task-detail-verbs"
 TASK_DETAIL_ACTION_PREFIX = "task-detail-action-"
@@ -161,6 +166,8 @@ TIMELINE_SECTIONS = {
     DetailsSection.EVENTS: (EVENTS_TIMELINE_IDS, TaskTimelineCategory.ACTIVITY, False),
     DetailsSection.AGENT_ACTIVITY: (AGENT_TIMELINE_IDS, TaskTimelineCategory.AGENT, True),
 }
+PROBLEM_SECTION = DetailsSection.BLOCKER_EVIDENCE
+MAIN_SECTIONS = tuple(section for section in DetailsSection if section is not PROBLEM_SECTION)
 FOLD_STATICS = {
     TASK_VIEW_USAGE: (TASK_DETAIL_SESSIONS,),
     TASK_VIEW_CONTEXT: (TASK_DETAIL_CONTEXT_INFO,),
@@ -240,7 +247,8 @@ class TaskDetailPanel(Vertical):
     #task-detail-body {
         height: auto; max-height: 32; padding: 0 1; scrollbar-size-vertical: $scrollbar-width;
     }
-    #task-detail-briefing { height: auto; padding: 0; }
+    #task-detail-briefing, #task-detail-briefing-below { height: auto; padding: 0; }
+    #task-detail-problem-folds { border-top: none; }
     #task-detail-actions {
         width: 100%; height: auto; border-top: solid $neutral-border;
     }
@@ -312,6 +320,9 @@ class TaskDetailPanel(Vertical):
             yield Static("", id=TASK_DETAIL_OWNERSHIP, markup=False)
             yield Static("", id=TASK_DETAIL_FEEDBACK, markup=False)
             yield GatedStatic("", id=TASK_DETAIL_BRIEFING, markup=False)
+            with DetailFolds(widget_id=TASK_DETAIL_PROBLEM_FOLDS):
+                yield self._new_fold(PROBLEM_SECTION, name_color=SECONDARY_TEXT_COLOR)
+            yield GatedStatic("", id=TASK_DETAIL_BRIEFING_BELOW, markup=False)
             with Horizontal(id=TASK_DETAIL_ACTIONS):
                 with Horizontal(id=TASK_DETAIL_VERBS):
                     for action in BriefingAction:
@@ -320,17 +331,21 @@ class TaskDetailPanel(Vertical):
                         )
                 yield TaskDetailHint(key_label(TASK_DETAIL_VIEWS_KEY, DETAILS_HINT_LABEL))
             with DetailFolds(widget_id=TASK_DETAIL_FOLDS):
-                for section in DetailsSection:
-                    view_id = DETAILS_SECTION_VIEWS[section]
-                    fold = DetailFold(
-                        view_id,
-                        section.value,
-                        self._section_widgets(view_id),
-                        is_open=view_id == self._initial_view,
-                    )
-                    self._folds[view_id] = fold
-                    yield fold
+                for section in MAIN_SECTIONS:
+                    yield self._new_fold(section)
         yield DetailHintBar(widget_id=TASK_DETAIL_HINT)
+
+    def _new_fold(self, section: DetailsSection, *, name_color: str = STEEL_BLUE) -> DetailFold:
+        view_id = DETAILS_SECTION_VIEWS[section]
+        fold = DetailFold(
+            view_id,
+            section.value,
+            self._section_widgets(view_id),
+            is_open=view_id == self._initial_view,
+            name_color=name_color,
+        )
+        self._folds[view_id] = fold
+        return fold
 
     def _section_widgets(self, view_id: str) -> list[Widget]:
         timeline = self._timelines.get(view_id)
@@ -380,7 +395,7 @@ class TaskDetailPanel(Vertical):
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         fold = self._fold_of(event.widget)
         if fold is not None:
-            self._folds_list().make_current(fold)
+            fold.folds.make_current(fold)
         self._paint_hint()
         body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         if body in event.widget.ancestors:
@@ -481,6 +496,7 @@ class TaskDetailPanel(Vertical):
         ):
             self.query_one(f"#{section_id}", Static).update("")
         self.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).update("")
+        self.query_one(f"#{TASK_DETAIL_BRIEFING_BELOW}", GatedStatic).update("")
         self._render_blocker_evidence(None)
         self._set_feedback(None)
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update("")
@@ -700,7 +716,7 @@ class TaskDetailPanel(Vertical):
         if fold is None:
             return
         fold.set_open(True)
-        self.call_after_refresh(self._folds_list().focus_fold, fold)
+        self.call_after_refresh(fold.folds.focus_fold, fold)
 
     def step_out(self) -> bool:
         """Move focus from inside a fold body to its header; False when it is not in a body."""
@@ -711,7 +727,7 @@ class TaskDetailPanel(Vertical):
         if isinstance(focused, TimelineFilterBar):
             focused.action_close()
             return True
-        self._folds_list().focus_header(fold)
+        fold.folds.focus_header(fold)
         return True
 
     def _fold_of(self, widget: Widget | None) -> DetailFold | None:
@@ -845,7 +861,16 @@ class TaskDetailPanel(Vertical):
             None if quota is None else quota_clock_text(quota.agent, quota.until, now)
         )
         self.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).update_if_changed(
-            Briefing(view, now, layout)
+            Briefing(view, now, layout, BriefingHalf.ABOVE)
+        )
+        self.query_one(f"#{TASK_DETAIL_BRIEFING_BELOW}", GatedStatic).update_if_changed(
+            Briefing(view, now, layout, BriefingHalf.BELOW)
+        )
+        self.query_one(f"#{TASK_DETAIL_PROBLEM_FOLDS}", DetailFolds).styles.margin = (
+            0,
+            0,
+            0,
+            blockers_value_indent(compact=layout.compact) - cell_len(ROW_LEAD),
         )
 
     def _render_blocker_evidence(self, evidence: Text | None) -> None:
