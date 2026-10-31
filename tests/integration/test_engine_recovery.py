@@ -64,7 +64,7 @@ async def _drive(flow_task: asyncio.Task[None], clock: FakeClock) -> None:
     def done() -> bool:
         return flow_task.done()
 
-    await wait_until_advancing(clock, done, _FLOW_TIMEOUT_SECONDS)
+    await wait_until_advancing(clock, done, _FLOW_TIMEOUT_SECONDS, jump_to_next_sleeper=True)
     await flow_task
 
 
@@ -239,7 +239,9 @@ async def test_live_fake_agent_quota_wait_is_shown_for_its_running_task(
             )
             return len(started) > 1
 
-        await wait_until_advancing(clock, continued_turn_started, _FLOW_TIMEOUT_SECONDS)
+        await wait_until_advancing(
+            clock, continued_turn_started, _FLOW_TIMEOUT_SECONDS, jump_to_next_sleeper=True
+        )
         await _assert_task_is_not_quota_waiting(
             views,
             task_id,
@@ -894,7 +896,7 @@ async def test_a_rung_set_during_a_failing_turn_survives_the_recovery_move(
         started = flow_env.events.since(0, kinds=[EventKind.TURN_STARTED], task_id=task_id)
         return len(started) == len(failures)
 
-    await wait_until_advancing(clock, gated_turn_running, 20)
+    await wait_until_advancing(clock, gated_turn_running, 20, jump_to_next_sleeper=True)
     await apply_set_rung(
         engine_env,
         flow_env,
