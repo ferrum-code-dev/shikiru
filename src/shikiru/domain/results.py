@@ -121,7 +121,8 @@ def new_task_ids(scope_events: Sequence[Mapping[str, object]]) -> tuple[str, ...
     )
 
 
-def _landed_changes(done: Mapping[str, object]) -> tuple[int, int, int] | None:
+def landed_changes(done: Mapping[str, object]) -> tuple[int, int, int] | None:
+    """Return the recorded (files, insertions, deletions) of `done`, or `None` when absent."""
     changes = done.get(DONE_CHANGES_KEY)
     if not isinstance(changes, dict):
         return None
@@ -164,7 +165,7 @@ def derive_task_results(
     A live observation of the task's worktree (`live`) is authoritative for its commits and
     produced numbers, even when it finds none, so a report or facts snapshot that predates a
     commit or revert never shows. Without one, a `TASK_DONE` that recorded the landed changes of
-    a squash is authoritative for the commits (even none) and the numbers, so neither report
+    its integration is authoritative for the commits (even none) and the numbers, so neither report
     commits nor the facts of the pre-integration branch show. Otherwise commits come from
     `TASK_DONE` for a Done task,
     else the latest report, else the facts; the first source with commits wins, and the numbers
@@ -173,7 +174,7 @@ def derive_task_results(
     task missing from `titles` keeps its id with no title.
     """
     done_data = done or {}
-    landed = _landed_changes(done_data) if live is None else None
+    landed = landed_changes(done_data) if live is None else None
     if live is not None:
         commits, produced = live.commits, live.produced
     elif landed is not None:

@@ -137,10 +137,13 @@ current base tip, titled with the task ID and title and carrying `Shikiru-Task` 
 `Shikiru-Squashed-Tip` trailers, then fast-forwards a checked-out base or updates its ref with the
 same expected-old-value check; a task whose tree equals the base's lands nothing. The original
 branch is no longer an ancestor of the base, so a restart before completion is recording finds the
-already landed commit by the branch-tip trailer instead of squashing again. `TASK_DONE` persists the
-landed commit list and the integrated file, insertion and deletion totals before cleanup; Result and
-Results derive from them, so an empty integration shows zero commits rather than falling back to
-earlier reports. Records without these fields keep their previous derivation.
+already landed commit by the branch-tip trailer instead of squashing again.
+
+Every integration mode (merge, squash, pull request) persists in `TASK_DONE`, before cleanup, the
+landed commit list, the integration label and the integrated file, insertion and deletion totals; a
+pull request takes them from its branch when it is opened. Result and Results derive from that
+evidence, so an empty integration shows zero commits rather than falling back to earlier reports or
+facts. Only records without these fields keep the previous derivation.
 
 **Pull-request** mode pushes the rebased task branch and creates or adopts a GitHub PR through
 `gh`. The engine polls its state, requires the merge to land, fetches and verifies the resulting

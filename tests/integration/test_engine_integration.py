@@ -428,6 +428,8 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     assert done_events[-1].data == {
         "summary": "accepted summary",
         "commits": list(result.commits),
+        "integration": "merge",
+        "changes": {"files": 1, "insertions": 1, "deletions": 1},
         "residual_risks": ["residual risk"],
     }
 

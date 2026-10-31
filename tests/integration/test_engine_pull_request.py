@@ -225,6 +225,9 @@ async def _assert_landed(
     [done] = events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
     assert len(opened) == pr_count
     assert done.data["commits"] == opened[-1].data["commits"] != []
+    assert done.data["integration"] == "pr"
+    assert done.data["changes"] == opened[-1].data["changes"]
+    assert done.data["changes"]["files"] > 0
     assert await _git(remote_dir, "rev-parse", task.repo.branch)
     assert not await _local_branch_exists(env.project_root, task.repo.branch)
 

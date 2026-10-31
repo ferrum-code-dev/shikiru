@@ -9,7 +9,11 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
-from shikiru.config.settings import SQUASH_INTEGRATION
+from shikiru.config.settings import (
+    MERGE_INTEGRATION,
+    PULL_REQUEST_INTEGRATION,
+    SQUASH_INTEGRATION,
+)
 from shikiru.domain.events import EventKind
 from shikiru.domain.faults import next_backoff
 from shikiru.domain.results import (
@@ -18,6 +22,7 @@ from shikiru.domain.results import (
     CHANGES_INSERTIONS_KEY,
     DONE_CHANGES_KEY,
     DONE_INTEGRATION_KEY,
+    landed_changes,
 )
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
@@ -161,10 +166,21 @@ class LandedChanges:
     insertions: int
     deletions: int
 
+    def as_data(self) -> dict[str, int]:
+        """Return the totals as recorded in event data."""
+        return {
+            CHANGES_FILES_KEY: self.files,
+            CHANGES_INSERTIONS_KEY: self.insertions,
+            CHANGES_DELETIONS_KEY: self.deletions,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class Landing:
-    """The commits an integration put in its base; `changes` is recorded for a squash."""
+    """The commits an integration put in its base and the final totals of what they changed.
+
+    A landing without `changes` is one whose totals are not known.
+    """
 
     commits: tuple[str, ...] = ()
     integration: str | None = None
@@ -175,11 +191,7 @@ class Landing:
         data: dict[str, object] = {"commits": list(self.commits)}
         if self.changes is not None:
             data[DONE_INTEGRATION_KEY] = self.integration
-            data[DONE_CHANGES_KEY] = {
-                CHANGES_FILES_KEY: self.changes.files,
-                CHANGES_INSERTIONS_KEY: self.changes.insertions,
-                CHANGES_DELETIONS_KEY: self.changes.deletions,
-            }
+            data[DONE_CHANGES_KEY] = self.changes.as_data()
         return data
 
 
@@ -242,14 +254,14 @@ type TaskFinisher = Callable[[Task], Awaitable[Path | None]]
 @dataclass(frozen=True, slots=True)
 class _OpenPullRequest:
     url: str
-    commits: tuple[str, ...]
+    landing: Landing
 
 
 class IntegrationStrategy(Protocol):
     """A strategy that applies an already rebased task branch to its base."""
 
-    def started(self, task_id: str) -> tuple[str, ...] | None:
-        """Return the commits of `task_id`'s started, unsettled integration, if there is one."""
+    def started(self, task_id: str) -> Landing | None:
+        """Return what `task_id`'s started, unsettled integration holds, if there is one."""
         ...
 
     async def merge(self, request: MergeRequest) -> Landing:
@@ -316,7 +328,7 @@ class LocalMerge:
         self._project_root = project_root
         self._integration_wait = integration_wait
 
-    def started(self, task_id: str) -> tuple[str, ...] | None:
+    def started(self, task_id: str) -> Landing | None:
         """Return `None`: a local merge lands within `merge`, so none is ever left unsettled."""
         del task_id
 
@@ -372,8 +384,10 @@ class LocalMerge:
                 project_root, repo.base, candidate.landing_sha, candidate.base_sha
             )
 
+    _integration = MERGE_INTEGRATION
+
     def _nothing_landed(self) -> Landing:
-        return Landing()
+        return Landing(integration=self._integration, changes=LandedChanges(0, 0, 0))
 
     async def _is_empty(self, project_root: Path, base_sha: str, branch_sha: str) -> bool:
         del project_root
@@ -383,7 +397,8 @@ class LocalMerge:
         self, request: MergeRequest, base_sha: str, branch_sha: str
     ) -> tuple[str, Landing]:
         commits = tuple(await self._git.log_oneline(request.task_root, f"{base_sha}..{branch_sha}"))
-        return branch_sha, Landing(commits)
+        changes = await _landed_changes(self._git, request.task_root, base_sha, branch_sha)
+        return branch_sha, Landing(commits, integration=self._integration, changes=changes)
 
     async def _precheck(self, project_root: Path, request: MergeRequest) -> _MergeCandidate | None:
         task_root_path = request.task_root
@@ -430,8 +445,7 @@ class SquashMerge(LocalMerge):
         )
         return await self._landing_of(landed) if landed is not None else None
 
-    def _nothing_landed(self) -> Landing:
-        return Landing(integration=SQUASH_INTEGRATION, changes=LandedChanges(0, 0, 0))
+    _integration = SQUASH_INTEGRATION
 
     async def _is_empty(self, project_root: Path, base_sha: str, branch_sha: str) -> bool:
         base_tree = await self._git.rev_parse(project_root, f"{base_sha}^{{tree}}")
@@ -448,12 +462,13 @@ class SquashMerge(LocalMerge):
     async def _landing_of(self, squash_sha: str, *, parent: str | None = None) -> Landing:
         before = parent if parent is not None else f"{squash_sha}^"
         commits = await self._git.log_oneline(self._project_root, f"{before}..{squash_sha}")
-        stats = await self._git.committed_line_changes(self._project_root, before, squash_sha)
-        return Landing(
-            tuple(commits),
-            integration=SQUASH_INTEGRATION,
-            changes=LandedChanges(stats.changed_paths, stats.added_lines, stats.deleted_lines),
-        )
+        changes = await _landed_changes(self._git, self._project_root, before, squash_sha)
+        return Landing(tuple(commits), integration=SQUASH_INTEGRATION, changes=changes)
+
+
+async def _landed_changes(git: Git, repo_dir: Path, before: str, after: str) -> LandedChanges:
+    stats = await git.committed_line_changes(repo_dir, before, after)
+    return LandedChanges(stats.changed_paths, stats.added_lines, stats.deleted_lines)
 
 
 def _tip_trailer(branch_sha: str) -> str:
@@ -513,10 +528,10 @@ class PullRequest:
         self._faults = faults
         self._settings = settings
 
-    def started(self, task_id: str) -> tuple[str, ...] | None:
-        """Return the commits of `task_id`'s open pull request, if it has one."""
+    def started(self, task_id: str) -> Landing | None:
+        """Return what `task_id`'s open pull request holds, if it has one."""
         opened = self._open_pull_request(task_id)
-        return opened.commits if opened is not None else None
+        return opened.landing if opened is not None else None
 
     async def applied(self, repo: RepoState, task_root: Path) -> Landing | None:
         """Return `None`: only a pull request merged on the remote lands, and `settle` waits."""
@@ -532,8 +547,11 @@ class PullRequest:
         commits = tuple(
             await self._git.log_oneline(request.task_root, f"{repo.base_ref}..{repo.branch}")
         )
+        base_sha = await self._git.rev_parse(request.task_root, repo.base_ref)
+        branch_sha = await self._git.rev_parse(request.task_root, repo.branch)
+        changes = await _landed_changes(self._git, request.task_root, base_sha, branch_sha)
         if not commits:
-            return Landing()
+            return Landing(integration=PULL_REQUEST_INTEGRATION, changes=changes)
         lease = await self._git.remote_branch_sha(self._project_root, self._remote, repo.branch)
         await self._git.push(self._project_root, self._remote, repo.branch, lease=lease)
         url = await self._github.open_pull_request(
@@ -549,9 +567,14 @@ class PullRequest:
             EventKind.PR_OPENED,
             task_id=request.task_id,
             message=f"{request.task_id} opened {url}",
-            data={"url": url, "branch": repo.branch, "commits": list(commits)},
+            data={
+                "url": url,
+                "branch": repo.branch,
+                "commits": list(commits),
+                DONE_CHANGES_KEY: changes.as_data(),
+            },
         )
-        return Landing(commits)
+        return Landing(commits, integration=PULL_REQUEST_INTEGRATION, changes=changes)
 
     async def settle(self, task_id: str, repo: RepoState, held: Callable[[], bool]) -> None:
         """Poll the open pull request until it is merged or closed, then verify the merged base.
@@ -632,7 +655,15 @@ def _open_pull_request(
     kinds = [EventKind.PR_OPENED, EventKind.PR_WITHDRAWN, EventKind.ESCALATION]
     for event in events.since(0, kinds=kinds, task_id=task_id):
         if event.kind is EventKind.PR_OPENED:
-            opened = _OpenPullRequest(event.data["url"], tuple(event.data["commits"]))
+            found = landed_changes(event.data)
+            opened = _OpenPullRequest(
+                event.data["url"],
+                Landing(
+                    tuple(event.data["commits"]),
+                    integration=PULL_REQUEST_INTEGRATION if found is not None else None,
+                    changes=LandedChanges(*found) if found is not None else None,
+                ),
+            )
         elif event.kind is EventKind.PR_WITHDRAWN or event.data["reason"] in ended_by:
             opened = None
     return opened
@@ -730,7 +761,7 @@ class Integrator:
                 task, repo, resolve_conflicts, metadata, conflict_recovery
             )
         else:
-            landing = Landing(started)
+            landing = started
         await self._strategy.settle(current.id, repo, lambda: self._is_held(current.id))
         summary = IntegrationSummary(
             summary=current_metadata.summary,

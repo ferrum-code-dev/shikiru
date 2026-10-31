@@ -11,7 +11,8 @@ import pytest
 
 from shikiru.config.settings import RepoConfig
 from shikiru.domain.events import EventKind
-from shikiru.domain.results import derive_task_results
+from shikiru.domain.reports import Commit
+from shikiru.domain.results import ResultCommit, derive_task_results
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Mode, Status, Step
 from shikiru.engine.fault_reporter import FaultReporter
@@ -19,6 +20,7 @@ from shikiru.engine.integration import (
     IntegrationBlocked,
     IntegrationMetadata,
     Integrator,
+    LocalMerge,
     MergeRequest,
     OffTaskBranch,
     SquashMerge,
@@ -45,6 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
+    from shikiru.domain.results import TaskResults
     from shikiru.domain.tasks import Task
     from tests.support.store import Connection
 
@@ -66,7 +69,7 @@ class Rig:
     git: Git
     service: PushService
     integrator: Integrator
-    strategy: SquashMerge
+    strategy: LocalMerge
 
     async def start_task(self, name: str, *, base: str = "main") -> tuple[Task, Path]:
         task = seed_task(self.connection, self.clock, title=name, mode=Mode.IMPLEMENT)
@@ -115,7 +118,13 @@ async def _resolve_nothing(
     return task, IntegrationMetadata("resolved")
 
 
-async def _rig(connection: Connection, tmp_path: Path, *, interval: int = 0) -> Rig:
+async def _rig(
+    connection: Connection,
+    tmp_path: Path,
+    *,
+    interval: int = 0,
+    local: type[LocalMerge] = SquashMerge,
+) -> Rig:
     project_root = tmp_path / "project"
     await init_repo(_RUNNER, project_root)
     (project_root / "README.md").write_text("base\n")
@@ -149,7 +158,7 @@ async def _rig(connection: Connection, tmp_path: Path, *, interval: int = 0) -> 
     async def finish_task(task: Task) -> None:
         await builder.cleanup(task.id, task.repo, integrated=task.status is Status.DONE)
 
-    strategy = SquashMerge(git, clock, events=events, project_root=project_root, integration_wait=0)
+    strategy = local(git, clock, events=events, project_root=project_root, integration_wait=0)
     integrator = Integrator(
         git=git,
         strategy=strategy,
@@ -399,3 +408,59 @@ async def test_a_squash_is_published_in_zero_mode_and_a_failed_push_keeps_it_pen
     assert final is not None
     assert final.status is Status.DONE
     assert PushTargets(connection).pending()
+
+
+def _results_of(rig: Rig, task: Task, report: list[Commit]) -> TaskResults:
+    finished = rig.tasks.get(task.id)
+    assert finished is not None
+    return derive_task_results(
+        finished.status,
+        branch=task.repo.branch if task.repo else None,
+        base="main",
+        done=rig.done_data(task),
+        report_commits=report,
+        facts="stale facts",
+        tests=None,
+        pull_request=None,
+        scope_events=[],
+        titles={},
+        verdict_risks=[],
+        plan_summary=None,
+        commit_cap=_COMMIT_CAP,
+    )
+
+
+async def test_a_merged_task_keeps_its_landed_commits_and_totals_after_cleanup(
+    connection: Connection, tmp_path: Path
+) -> None:
+    rig = await _rig(connection, tmp_path, local=LocalMerge)
+    task, root = await rig.start_task("plain")
+    await rig.commit(root, "a.txt", "a\n")
+    await rig.commit(root, "b.txt", "b\nc\n")
+    await rig.integrate(task)
+    stale = [Commit(sha="f" * 40, subject="stale report commit")]
+
+    results = _results_of(rig, task, stale)
+
+    assert len(results.commits) == 2
+    assert ResultCommit("f" * 7, "stale report commit") not in results.commits
+    assert results.produced is not None
+    assert (results.produced.commits, results.produced.files) == (2, 2)
+    assert (results.produced.insertions, results.produced.deletions) == (3, 0)
+    assert not results.squashed
+    assert not root.exists()
+
+
+async def test_an_empty_merged_task_stays_empty_despite_older_report_commits(
+    connection: Connection, tmp_path: Path
+) -> None:
+    rig = await _rig(connection, tmp_path, local=LocalMerge)
+    task, _ = await rig.start_task("nothing")
+
+    await rig.integrate(task)
+    results = _results_of(rig, task, [Commit(sha="e" * 40, subject="old report commit")])
+
+    assert results.commits == ()
+    assert results.produced is not None
+    assert (results.produced.commits, results.produced.files) == (0, 0)
+    assert not results.squashed
