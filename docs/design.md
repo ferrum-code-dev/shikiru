@@ -131,12 +131,23 @@ with an expected-old-value check. Dirty paths overlapping the incoming changes b
 blocked prerequisites are retried within a limit and then escalated. Task worktrees are checked
 before integration so off-branch or uncommitted work is not silently discarded.
 
+Local **squash** shares those preconditions, the serialized integration boundary and conflict
+consultation. After the rebase it creates one commit of the task branch's complete tree on the
+current base tip, titled with the task ID and title and carrying `Shikiru-Task` and
+`Shikiru-Squashed-Tip` trailers, then fast-forwards a checked-out base or updates its ref with the
+same expected-old-value check; a task whose tree equals the base's lands nothing. The original
+branch is no longer an ancestor of the base, so a restart before completion is recording finds the
+already landed commit by the branch-tip trailer instead of squashing again. `TASK_DONE` persists the
+landed commit list and the integrated file, insertion and deletion totals before cleanup; Result and
+Results derive from them, so an empty integration shows zero commits rather than falling back to
+earlier reports. Records without these fields keep their previous derivation.
+
 **Pull-request** mode pushes the rebased task branch and creates or adopts a GitHub PR through
 `gh`. The engine polls its state, requires the merge to land, fetches and verifies the resulting
 base, and handles conflicts, failed checks, closure and timeout explicitly. Repository review and
 merge policy remain in force. Integration progress is recorded for restart reconciliation.
 
-In merge mode a push service publishes locally integrated bases to `repo.remote`. Each completed
+In merge and squash modes a push service publishes locally integrated bases to `repo.remote`. Each completed
 integration is registered with the base's durable pending state in the same transaction that
 completes the task, so a crash cannot lose it. The first pending integration fixes the deadline
 (`orchestration.push_interval_seconds`, default four hours); later ones do not postpone it, and zero

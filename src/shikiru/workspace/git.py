@@ -293,6 +293,48 @@ class Git:
             mutating=True,
         )
 
+    async def commit_tree(self, repo_dir: Path, tree_rev: str, parent: str, message: str) -> str:
+        """Create, as the engine's own identity, a commit of `tree_rev`'s tree on `parent`.
+
+        No ref or working tree moves; the new commit's sha is returned.
+        """
+        result = await self._run(
+            repo_dir,
+            "-c",
+            f"user.name={_ENGINE_NAME}",
+            "-c",
+            f"user.email={_ENGINE_EMAIL}",
+            "commit-tree",
+            f"{tree_rev}^{{tree}}",
+            "-p",
+            parent,
+            "-m",
+            message,
+            mutating=True,
+        )
+        return result.stdout.strip()
+
+    async def find_commit(self, repo_dir: Path, commit_range: str, text: str) -> str | None:
+        """Return the newest commit in `commit_range` whose message contains `text`, if any."""
+        result = await self._run(
+            repo_dir, "log", "--format=%H", "--fixed-strings", f"--grep={text}", "-n1", commit_range
+        )
+        return result.stdout.strip() or None
+
+    async def committed_line_changes(
+        self, repo_dir: Path, before: str, after: str
+    ) -> LineChangeStats:
+        """Count the paths and lines changed between the commits `before` and `after`."""
+        result = await self._run(repo_dir, "diff", "--numstat", "-z", before, after)
+        paths, added_lines, deleted_lines, binary_entries = _parse_numstat(result.stdout)
+        return LineChangeStats(
+            changed_paths=len(paths),
+            added_lines=added_lines,
+            deleted_lines=deleted_lines,
+            binary_entries=binary_entries,
+            untracked_paths=0,
+        )
+
     async def remote_branch_sha(self, repo_dir: Path, remote: str, branch: str) -> str | None:
         """Return the sha `branch` had when last pushed to or fetched from `remote`, if ever."""
         result = await self._run(

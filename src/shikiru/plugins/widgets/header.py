@@ -38,6 +38,7 @@ RUNTIME_SEPARATOR_WIDTH = 3
 ENGINE_RUNNING_MARKER = "●"
 ENGINE_STOPPED_MARKER = "○"
 MERGE_INTEGRATION = "merge"
+SQUASH_INTEGRATION = "squash"
 PULL_REQUEST_INTEGRATION = "pr"
 
 
@@ -220,6 +221,8 @@ def _checkout_text(view: HeaderView) -> Text:
 def _integration_label(value: str) -> str:
     if value == MERGE_INTEGRATION:
         return "Local merge"
+    if value == SQUASH_INTEGRATION:
+        return "Local squash and merge"
     if value == PULL_REQUEST_INTEGRATION:
         return "Pull request"
     return value

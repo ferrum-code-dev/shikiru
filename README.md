@@ -214,7 +214,7 @@ invalid config keeps the last valid values and shows an alert in the header.
 | --- | --- |
 | `project`, `repo` | Project name, tracker files agents read/update, integration base/remote, ignored cache paths. |
 | `roles`, `agents` | Role and complexity ladders, review escalation policy; plugin CLI arguments, compaction threshold and optional billing declaration. |
-| `orchestration` | Parallel task slots, review iterations and local merge versus pull-request integration; `push_interval_seconds` (seconds between pushes of locally integrated bases, default 14400); the init wizard also sets the stall and tool timeouts, the quota, CPU and free-RAM limits below. |
+| `orchestration` | Parallel task slots, review iterations and local merge, local squash or pull-request integration; `push_interval_seconds` (seconds between pushes of locally integrated bases, default 14400); the init wizard also sets the stall and tool timeouts, the quota, CPU and free-RAM limits below. |
 | `orchestration.resources` | CPU/free-RAM gates for dispatch; these do not impose CPU/RAM limits on already-running agents. |
 | `orchestration.quota_refresh` | `interval_seconds` between quota block revalidations (default 300) and `timeout_seconds` bounding each probe (default 30). |
 | `orchestration.timeouts`, `.network`, `.faults`, `.retries` | Stall/tool/Helper/quota/integration/PR limits, remote polling, engine-fault retries, and configurable provider-unavailable retries. |
@@ -224,12 +224,16 @@ invalid config keeps the last valid values and shows an alert in the header.
 | `logging`, `retention` | Engine log rotation and pruning horizons for finished run files, events and completed commands. |
 
 **Integration:** `orchestration.integration = "merge"` rebases and applies accepted work to the
-local base. `"pr"` pushes the task branch, opens/adopts a GitHub PR and waits for it to merge;
+local base. `"squash"` ("Local squash and merge") lands the rebased task as a single commit parented
+by the current base and carrying the task's complete tree; an empty task adds no commit. It shares
+every local-merge guard, and the Result and Results of the completed task show that commit's SHA and
+subject, its destination and the integrated file and line totals, which stay accurate after the task
+branch and worktree are cleaned up. `"pr"` pushes the task branch, opens/adopts a GitHub PR and waits for it to merge;
 conflicting/closed/failed or overdue PRs require recovery or a decision. Shikiru does not bypass
 repository review policy. Dirty overlapping changes in the main checkout block local integration;
 commit, move or otherwise resolve them before retrying.
 
-**Pushes (merge mode):** `orchestration.push_interval_seconds` (default `14400`, four hours; a
+**Pushes (merge and squash modes):** `orchestration.push_interval_seconds` (default `14400`, four hours; a
 nonnegative whole number of seconds) controls when locally integrated work reaches `repo.remote`.
 Integrations within an interval accumulate and the first one sets the deadline, so later ones do
 not postpone it. `0` pushes after each successful local integration. Only the base branch is pushed,

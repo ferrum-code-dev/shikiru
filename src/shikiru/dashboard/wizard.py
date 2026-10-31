@@ -12,7 +12,11 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Button, Input, Label, Rule, Select, Static
 
-from shikiru.config.settings import MERGE_INTEGRATION, PULL_REQUEST_INTEGRATION
+from shikiru.config.settings import (
+    MERGE_INTEGRATION,
+    PULL_REQUEST_INTEGRATION,
+    SQUASH_INTEGRATION,
+)
 from shikiru.dashboard.ladder_editor import LADDER_ACTION_CSS, LadderConfiguration, LadderEditor
 from shikiru.dashboard.orchestration_fields import (
     MAX_CPU,
@@ -105,6 +109,7 @@ INTEGRATION_STEP_INDEX = WIZARD_STEPS.index(STEP_INTEGRATION)
 FINISH_STEP_INDEX = WIZARD_STEPS.index(STEP_FINISH)
 INTEGRATION_OPTIONS = (
     ("Local merge", MERGE_INTEGRATION),
+    ("Local squash and merge", SQUASH_INTEGRATION),
     ("Pull request", PULL_REQUEST_INTEGRATION),
 )
 INTEGRATION_LABELS = {value: label for label, value in INTEGRATION_OPTIONS}
@@ -1018,10 +1023,7 @@ class InitWizardApp(App[InitWizardResult | None]):
 
     def _read_integration(self) -> str:
         value = cast("Select[str]", self.query_one(f"#{INTEGRATION_SELECT_ID}", Select)).value
-        if not isinstance(value, str) or value not in {
-            MERGE_INTEGRATION,
-            PULL_REQUEST_INTEGRATION,
-        }:
+        if not isinstance(value, str) or value not in INTEGRATION_LABELS:
             message = "choose an integration mode"
             raise ConfigError(message)
         return value
@@ -1212,6 +1214,9 @@ class InitWizardApp(App[InitWizardResult | None]):
                     id=INTEGRATION_SELECT_ID,
                 )
             yield _detail_row("Local merge", "merge a finished task branch locally")
+            yield _detail_row(
+                "Local squash and merge", "land a finished task as one commit on the base"
+            )
             yield _detail_row("Pull request", "open a pull request for review")
 
     def _finish_page(self) -> ComposeResult:

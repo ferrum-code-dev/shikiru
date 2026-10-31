@@ -12,7 +12,11 @@ from shikiru.agents.registry import AgentRegistry
 from shikiru.cli.session_prompt import prompt_for_session
 from shikiru.clock import Clock, SystemClock
 from shikiru.config.loader import load_default_orchestration, load_session_settings, load_settings
-from shikiru.config.settings import DOCKER_SCOPE_ALL, PULL_REQUEST_INTEGRATION
+from shikiru.config.settings import (
+    DOCKER_SCOPE_ALL,
+    MERGE_INTEGRATION,
+    PULL_REQUEST_INTEGRATION,
+)
 from shikiru.engine.acceptance import AcceptanceGuard
 from shikiru.engine.agents import AgentPool
 from shikiru.engine.cosmetic_decorator import CosmeticDecorator
@@ -51,6 +55,7 @@ from shikiru.engine.integration import (
     LocalMerge,
     PullRequest,
     PullRequestCloser,
+    SquashMerge,
 )
 from shikiru.engine.integration_turns import IntegrationTurns
 from shikiru.engine.layout_guard import LayoutGuard
@@ -1122,9 +1127,10 @@ def _build_integrator(
     strategy: IntegrationStrategy
     base_refs: BaseRefs
     match settings.orchestration.integration:
-        case "merge":
+        case "merge" | "squash" as mode:
             base_refs = LocalBaseRefs()
-            strategy = LocalMerge(
+            local = LocalMerge if mode == MERGE_INTEGRATION else SquashMerge
+            strategy = local(
                 git,
                 clock,
                 events=events,

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
+from shikiru.config.settings import SQUASH_INTEGRATION
 from shikiru.domain.briefing import ProducedNumbers, facts_commit_lines, parse_produced
 from shikiru.domain.tasks import Status
 
@@ -18,6 +19,11 @@ if TYPE_CHECKING:
 SHORT_SHA_LENGTH = 7
 DONE_COMMITS_KEY = "commits"
 DONE_RISKS_KEY = "residual_risks"
+DONE_INTEGRATION_KEY = "integration"
+DONE_CHANGES_KEY = "changes"
+CHANGES_FILES_KEY = "files"
+CHANGES_INSERTIONS_KEY = "insertions"
+CHANGES_DELETIONS_KEY = "deletions"
 SCOPE_CHANGES_KEY = "scope_changes"
 NEW_TASK_IDS_KEY = "new_task_ids"
 
@@ -82,6 +88,7 @@ class TaskResults:
     plan_summary: str | None
     residual_risks: tuple[str, ...]
     live_error: str | None
+    squashed: bool = False
 
 
 def _strings(value: object) -> tuple[str, ...]:
@@ -114,6 +121,20 @@ def new_task_ids(scope_events: Sequence[Mapping[str, object]]) -> tuple[str, ...
     )
 
 
+def _landed_changes(done: Mapping[str, object]) -> tuple[int, int, int] | None:
+    changes = done.get(DONE_CHANGES_KEY)
+    if not isinstance(changes, dict):
+        return None
+    found = cast("dict[str, object]", changes)
+    counts = tuple(
+        found.get(key) for key in (CHANGES_FILES_KEY, CHANGES_INSERTIONS_KEY, CHANGES_DELETIONS_KEY)
+    )
+    if not all(isinstance(count, int) for count in counts):
+        return None
+    files, insertions, deletions = cast("tuple[int, int, int]", counts)
+    return files, insertions, deletions
+
+
 def _residual_risks(done: Mapping[str, object], verdict_risks: Sequence[str]) -> tuple[str, ...]:
     if DONE_RISKS_KEY in done:
         return _strings(done[DONE_RISKS_KEY])
@@ -142,15 +163,22 @@ def derive_task_results(
 
     A live observation of the task's worktree (`live`) is authoritative for its commits and
     produced numbers, even when it finds none, so a report or facts snapshot that predates a
-    commit or revert never shows. Without one, commits come from `TASK_DONE` for a Done task,
+    commit or revert never shows. Without one, a `TASK_DONE` that recorded the landed changes of
+    a squash is authoritative for the commits (even none) and the numbers, so neither report
+    commits nor the facts of the pre-integration branch show. Otherwise commits come from
+    `TASK_DONE` for a Done task,
     else the latest report, else the facts; the first source with commits wins, and the numbers
     come from the facts. Residual risks come from `TASK_DONE` when it recorded a risk list, even
     an empty one, else from `verdict_risks`: the verdict of the task's current iteration. A new
     task missing from `titles` keeps its id with no title.
     """
     done_data = done or {}
+    landed = _landed_changes(done_data) if live is None else None
     if live is not None:
         commits, produced = live.commits, live.produced
+    elif landed is not None:
+        commits = tuple(_from_oneline(line) for line in _strings(done_data.get(DONE_COMMITS_KEY)))
+        produced = ProducedNumbers(len(commits), *landed)
     else:
         candidates = (
             tuple(_from_oneline(line) for line in _strings(done_data.get(DONE_COMMITS_KEY))),
@@ -184,4 +212,5 @@ def derive_task_results(
         plan_summary=plan_summary,
         residual_risks=_residual_risks(done_data, verdict_risks),
         live_error=live_error,
+        squashed=landed is not None and done_data.get(DONE_INTEGRATION_KEY) == SQUASH_INTEGRATION,
     )

@@ -68,7 +68,7 @@ SELECTOR_OPTIONS = {
         "compact-visible",
         MODEL_WITH_LITERAL_BRACKETS,
     ),
-    "#integration": ("merge", "pr"),
+    "#integration": ("merge", "squash", "pr"),
 }
 LADDER_SCOPES = (
     "Leader",
@@ -522,8 +522,10 @@ async def _verify_back_navigation_and_fill_project_fields(
     await _replace_input(pilot, "#max-cpu", "90")
     await _replace_input(pilot, "#min-free-ram", "2.5")
     await _click_next(pilot, "#wizard-page-5")
-    await _choose(pilot, "#integration", "pr")
+    await _choose(pilot, "#integration", "squash")
     await _click_next(pilot, "#wizard-page-6")
+    summary = str(pilot.app.query_one("#wizard-summary .wizard-detail-value", Static).render())
+    assert summary.endswith("Local squash and merge")
 
 
 async def _wait_for_orchestration_error(
@@ -586,7 +588,7 @@ def _assert_written_mixed_config(tmp_path: Path, result: InitWizardResult) -> No
     assert settings.repo.caches == ["build-cache", "node_modules", LONG_CACHE_CANDIDATE]
     assert settings.orchestration.max_parallel == 3
     assert settings.orchestration.max_iterations == 7
-    assert settings.orchestration.integration == "pr"
+    assert settings.orchestration.integration == "squash"
     assert settings.orchestration.push_interval_seconds == 900
     assert settings.orchestration.timeouts.max_quota_wait == 600
     assert settings.orchestration.resources.max_cpu_pct == 90

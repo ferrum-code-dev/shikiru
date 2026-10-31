@@ -169,7 +169,7 @@ async def test_local_merge_fast_forwards_base_and_reports_commits(
     ).merge(_request(task, state, task_root))
 
     assert (project_root / "README.md").read_text() == "task\n"
-    assert result
+    assert result.commits
     assert (
         await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).current_branch(project_root)
         == "main"
@@ -190,7 +190,7 @@ async def test_local_merge_updates_a_base_branch_that_is_not_checked_out(
         project_root, SystemClock(), 1, EventLog(connection, SystemClock())
     ).merge(_request(task, state, task_root))
 
-    assert result
+    assert result.commits
     assert await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(
         project_root, "release"
     ) == await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(task_root, state.branch)
@@ -221,7 +221,7 @@ async def test_local_merge_retries_dirty_overlap_until_checkout_is_clean(
 
     result = await merge_task
 
-    assert result
+    assert result.commits
     assert (project_root / "README.md").read_text() == "task\n"
 
 
@@ -331,7 +331,7 @@ async def test_local_merge_waits_for_a_dirty_directory_ancestor(
 
     result = await merge_task
 
-    assert result
+    assert result.commits
     assert (project_root / "nested" / "task.txt").read_text() == "task\n"
 
 

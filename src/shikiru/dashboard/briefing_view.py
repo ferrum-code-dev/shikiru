@@ -76,6 +76,7 @@ NOW_LABEL = "Now"
 SUMMARY_LABEL = "Summary"
 BRANCH_LABEL = "Branch"
 MERGED_LABEL = "Merged"
+SQUASHED_LABEL = "Squashed"
 COMMITS_LABEL = "Commits"
 TESTS_LABEL = "Tests"
 PR_LABEL = "PR"
@@ -95,6 +96,7 @@ LABEL_WIDTH = max(
         SUMMARY_LABEL,
         BRANCH_LABEL,
         MERGED_LABEL,
+        SQUASHED_LABEL,
         COMMITS_LABEL,
         TESTS_LABEL,
         PR_LABEL,
@@ -459,7 +461,8 @@ def branch_row(results: TaskResults) -> list[Row]:
         if results.base is None
         else f"{results.branch} {BRANCH_ARROW} {results.base}"
     )
-    label = MERGED_LABEL if results.outcome is ResultOutcome.MERGED else BRANCH_LABEL
+    merged = SQUASHED_LABEL if results.squashed else MERGED_LABEL
+    label = merged if results.outcome is ResultOutcome.MERGED else BRANCH_LABEL
     return [(grey(label), (Text(target),))]
 
 

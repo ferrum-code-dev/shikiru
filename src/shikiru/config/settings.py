@@ -12,8 +12,9 @@ from shikiru.errors import ConfigError
 
 ComplexityName = Literal["low", "normal", "high"]
 MERGE_INTEGRATION = "merge"
+SQUASH_INTEGRATION = "squash"
 PULL_REQUEST_INTEGRATION = "pr"
-IntegrationStrategy = Literal["merge", "pr"]
+IntegrationStrategy = Literal["merge", "squash", "pr"]
 LayoutSplitAxis = Literal["h", "v"]
 DOCKER_SCOPE_ALL = "all"
 DockerScope = Literal["project", "all"]

@@ -89,7 +89,7 @@ Relevant tests: `tests/integration/test_dashboard_wizard.py`,
 
 ## P2 — Squash local integration and show the landed result
 
-- [ ] Add local squash integration, installation step #6 and accurate retained task results.
+- [x] Add local squash integration, installation step #6 and accurate retained task results.
 
 Depends on P1. Extend the strategy choice and wire local base resolution for `squash`. Share the
 existing preconditions and serialized integration boundary where practical, preserving conflict

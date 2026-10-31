@@ -103,6 +103,7 @@ LABELS = (
     "Summary",
     "Branch",
     "Merged",
+    "Squashed",
     "Commits",
     "Tests",
     "PR",
@@ -279,6 +280,26 @@ def _seed_done(connection: Connection, clock: FakeClock, project_root: Path) -> 
     return task
 
 
+def _seed_done_squashed(connection: Connection, clock: FakeClock, project_root: Path) -> Task:
+    task = _running(connection, clock, iteration=1)
+    turn = _turn_dir(project_root, task, 1)
+    _facts(turn)
+    _report(turn, _implementation(REPORT_SUMMARY))
+    TaskStore(connection, clock).finish(
+        task.id,
+        Transition.stay(task, step=None, status=Status.DONE),
+        EventKind.TASK_DONE,
+        message="done",
+        data={
+            "summary": "done",
+            "commits": ["feed123 T-1: squashed"],
+            "integration": "squash",
+            "changes": {"files": 5, "insertions": 40, "deletions": 2},
+        },
+    )
+    return task
+
+
 def _seed_done_planning(connection: Connection, clock: FakeClock, project_root: Path) -> Task:
     del project_root
     task = _running(connection, clock, iteration=1)
@@ -433,6 +454,14 @@ CASES = {
         (REPORT_SUMMARY, f"{BRANCH} \N{RIGHTWARDS ARROW} main", "3 commits"),
         frozenset(),
         ("rework", "Progress", "Problems"),
+    ),
+    "done-squashed": _Case(
+        _seed_done_squashed,
+        frozenset({"Result"}),
+        frozenset({"Summary", "Squashed", "Commits", "Tests"}),
+        (REPORT_SUMMARY, f"{BRANCH} \N{RIGHTWARDS ARROW} main", "1 commit"),
+        frozenset(),
+        ("rework", "Progress", "Problems", "3 commits"),
     ),
     "done-planning-with-added-tasks": _Case(
         _seed_done_planning,

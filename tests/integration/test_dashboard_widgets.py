@@ -52,6 +52,20 @@ def _submit_task(
     return task.id
 
 
+@pytest.mark.usefixtures("connection")
+async def test_header_labels_the_squash_integration_mode(
+    reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path, '\n[orchestration]\nintegration = "squash"\n')
+    context = widget_context(
+        reader, project_dir, FakeClock(START), services=StubServices(engine_running=True)
+    )
+    widget = cast("HeaderPanel", HeaderWidget().create(context))
+    async with WidgetHostApp(widget).run_test() as pilot:
+        await pilot.pause()
+        assert "Local squash and merge" in _plain(widget.content)
+
+
 async def test_header_shows_project_name_engine_state_and_slots(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:

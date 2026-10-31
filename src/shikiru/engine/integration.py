@@ -9,8 +9,16 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
+from shikiru.config.settings import SQUASH_INTEGRATION
 from shikiru.domain.events import EventKind
 from shikiru.domain.faults import next_backoff
+from shikiru.domain.results import (
+    CHANGES_DELETIONS_KEY,
+    CHANGES_FILES_KEY,
+    CHANGES_INSERTIONS_KEY,
+    DONE_CHANGES_KEY,
+    DONE_INTEGRATION_KEY,
+)
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, RepoState, Status, Task
@@ -40,6 +48,8 @@ INTEGRATION_RETRY = timedelta(minutes=2)
 POLL_FAULT_SCOPE = "pull request poll"
 GIT_FAILURE_DETAIL_LIMIT = 4000
 GIT_FAILURE_TRUNCATION = " [truncated]"
+SQUASH_TASK_TRAILER = "Shikiru-Task"
+SQUASH_TIP_TRAILER = "Shikiru-Squashed-Tip"
 
 _PR_ENDED_BY = frozenset((EscalationReason.PR_CLOSED,))
 _INTEGRATION_RESTARTED_BY = _PR_ENDED_BY | {EscalationReason.INTEGRATION_CONFLICT}
@@ -144,6 +154,36 @@ class IntegrationSummary:
 
 
 @dataclass(frozen=True, slots=True)
+class LandedChanges:
+    """Final change totals of work as it landed in its base."""
+
+    files: int
+    insertions: int
+    deletions: int
+
+
+@dataclass(frozen=True, slots=True)
+class Landing:
+    """The commits an integration put in its base; `changes` is recorded for a squash."""
+
+    commits: tuple[str, ...] = ()
+    integration: str | None = None
+    changes: LandedChanges | None = None
+
+    def done_data(self) -> dict[str, object]:
+        """Return the evidence `TASK_DONE` records about what landed."""
+        data: dict[str, object] = {"commits": list(self.commits)}
+        if self.changes is not None:
+            data[DONE_INTEGRATION_KEY] = self.integration
+            data[DONE_CHANGES_KEY] = {
+                CHANGES_FILES_KEY: self.changes.files,
+                CHANGES_INSERTIONS_KEY: self.changes.insertions,
+                CHANGES_DELETIONS_KEY: self.changes.deletions,
+            }
+        return data
+
+
+@dataclass(frozen=True, slots=True)
 class IntegrationMetadata:
     """Accepted Leader context carried into the terminal task event."""
 
@@ -167,8 +207,9 @@ class MergeRequest:
 class _MergeCandidate:
     base_sha: str
     branch_sha: str
+    landing_sha: str
     base_checked_out: bool
-    commits: tuple[str, ...]
+    landing: Landing
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,8 +252,12 @@ class IntegrationStrategy(Protocol):
         """Return the commits of `task_id`'s started, unsettled integration, if there is one."""
         ...
 
-    async def merge(self, request: MergeRequest) -> tuple[str, ...]:
-        """Merge the task branch into its base, or start doing so, and return its commits."""
+    async def merge(self, request: MergeRequest) -> Landing:
+        """Merge the task branch into its base, or start doing so, and return what landed."""
+        ...
+
+    async def applied(self, repo: RepoState, task_root: Path) -> Landing | None:
+        """Return what an earlier, interrupted integration of `repo` landed in its base, if any."""
         ...
 
     async def settle(self, task_id: str, repo: RepoState, held: Callable[[], bool]) -> None:
@@ -275,16 +320,19 @@ class LocalMerge:
         """Return `None`: a local merge lands within `merge`, so none is ever left unsettled."""
         del task_id
 
-    async def merge(self, request: MergeRequest) -> tuple[str, ...]:
+    async def applied(self, repo: RepoState, task_root: Path) -> Landing | None:
+        """Return `None`: a rebased branch fast-forwards, so its ancestry shows it landed."""
+        del repo, task_root
+
+    async def merge(self, request: MergeRequest) -> Landing:
         """Pre-check the local base, then apply the merge, retrying while it is blocked."""
         project_root = self._project_root
-        task_root_path = request.task_root
         repo = request.repo
         deadline = self._clock.now() + timedelta(seconds=self._integration_wait)
         announced = False
         while True:
             try:
-                candidate = await self._precheck(project_root, task_root_path, repo)
+                candidate = await self._precheck(project_root, request)
                 if candidate is not None:
                     if request.held():
                         raise IntegrationHeld
@@ -301,7 +349,7 @@ class LocalMerge:
                 await self._clock.sleep(min(INTEGRATION_RETRY.total_seconds(), remaining))
                 continue
             break
-        return candidate.commits if candidate is not None else ()
+        return candidate.landing if candidate is not None else self._nothing_landed()
 
     def _announce_wait(self, task_id: str, paths: tuple[str, ...]) -> None:
         self._events.append(
@@ -318,18 +366,31 @@ class LocalMerge:
 
     async def _apply(self, project_root: Path, repo: RepoState, candidate: _MergeCandidate) -> None:
         if candidate.base_checked_out:
-            await self._git.merge_ff_only(project_root, repo.branch)
+            await self._git.merge_ff_only(project_root, candidate.landing_sha)
         else:
             await self._git.update_ref(
-                project_root, repo.base, candidate.branch_sha, candidate.base_sha
+                project_root, repo.base, candidate.landing_sha, candidate.base_sha
             )
 
-    async def _precheck(
-        self, project_root: Path, task_root_path: Path, repo: RepoState
-    ) -> _MergeCandidate | None:
+    def _nothing_landed(self) -> Landing:
+        return Landing()
+
+    async def _is_empty(self, project_root: Path, base_sha: str, branch_sha: str) -> bool:
+        del project_root
+        return branch_sha == base_sha
+
+    async def _landing_for(
+        self, request: MergeRequest, base_sha: str, branch_sha: str
+    ) -> tuple[str, Landing]:
+        commits = tuple(await self._git.log_oneline(request.task_root, f"{base_sha}..{branch_sha}"))
+        return branch_sha, Landing(commits)
+
+    async def _precheck(self, project_root: Path, request: MergeRequest) -> _MergeCandidate | None:
+        task_root_path = request.task_root
+        repo = request.repo
         base_sha = await self._git.rev_parse(project_root, repo.base)
         branch_sha = await self._git.rev_parse(task_root_path, repo.branch)
-        if branch_sha == base_sha:
+        if await self._is_empty(project_root, base_sha, branch_sha):
             return None
         if not await self._git.merge_base_is_ancestor(project_root, repo.base, repo.branch):
             raise _PrecheckFailed
@@ -342,13 +403,68 @@ class LocalMerge:
             blocking = _blocking_paths(changed, dirty)
             if blocking:
                 raise _CheckoutDirty(blocking)
-        commits = tuple(await self._git.log_oneline(task_root_path, f"{base_sha}..{branch_sha}"))
+        landing_sha, landing = await self._landing_for(request, base_sha, branch_sha)
         return _MergeCandidate(
             base_sha=base_sha,
             branch_sha=branch_sha,
+            landing_sha=landing_sha,
             base_checked_out=base_checked_out,
-            commits=commits,
+            landing=landing,
         )
+
+
+class SquashMerge(LocalMerge):
+    """Land a rebased branch as one commit on its base, sharing every local-merge guard.
+
+    The commit carries the branch's complete tree on top of the current base and trailers naming
+    the task and the branch tip it squashed, which is how an interrupted integration is
+    recognised afterwards: the original branch is no longer an ancestor of the base.
+    """
+
+    async def applied(self, repo: RepoState, task_root: Path) -> Landing | None:
+        """Return the squash commit already on the base for the branch's current tip, if any."""
+        branch_sha = await self._git.rev_parse(task_root, repo.branch)
+        origin = await self._git.merge_base(self._project_root, repo.base, branch_sha)
+        landed = await self._git.find_commit(
+            self._project_root, f"{origin}..{repo.base}", _tip_trailer(branch_sha)
+        )
+        return await self._landing_of(landed) if landed is not None else None
+
+    def _nothing_landed(self) -> Landing:
+        return Landing(integration=SQUASH_INTEGRATION, changes=LandedChanges(0, 0, 0))
+
+    async def _is_empty(self, project_root: Path, base_sha: str, branch_sha: str) -> bool:
+        base_tree = await self._git.rev_parse(project_root, f"{base_sha}^{{tree}}")
+        return base_tree == await self._git.rev_parse(project_root, f"{branch_sha}^{{tree}}")
+
+    async def _landing_for(
+        self, request: MergeRequest, base_sha: str, branch_sha: str
+    ) -> tuple[str, Landing]:
+        squash_sha = await self._git.commit_tree(
+            self._project_root, branch_sha, base_sha, _squash_message(request, branch_sha)
+        )
+        return squash_sha, await self._landing_of(squash_sha, parent=base_sha)
+
+    async def _landing_of(self, squash_sha: str, *, parent: str | None = None) -> Landing:
+        before = parent if parent is not None else f"{squash_sha}^"
+        commits = await self._git.log_oneline(self._project_root, f"{before}..{squash_sha}")
+        stats = await self._git.committed_line_changes(self._project_root, before, squash_sha)
+        return Landing(
+            tuple(commits),
+            integration=SQUASH_INTEGRATION,
+            changes=LandedChanges(stats.changed_paths, stats.added_lines, stats.deleted_lines),
+        )
+
+
+def _tip_trailer(branch_sha: str) -> str:
+    return f"{SQUASH_TIP_TRAILER}: {branch_sha}"
+
+
+def _squash_message(request: MergeRequest, branch_sha: str) -> str:
+    subject = f"{request.task_id}: {' '.join(request.title.split())}"
+    trailers = f"{SQUASH_TASK_TRAILER}: {request.task_id}\n{_tip_trailer(branch_sha)}"
+    body = request.summary.strip()
+    return "\n\n".join(part for part in (subject, body, trailers) if part)
 
 
 def _blocking_paths(changed: set[str], dirty: set[str]) -> tuple[str, ...]:
@@ -402,7 +518,11 @@ class PullRequest:
         opened = self._open_pull_request(task_id)
         return opened.commits if opened is not None else None
 
-    async def merge(self, request: MergeRequest) -> tuple[str, ...]:
+    async def applied(self, repo: RepoState, task_root: Path) -> Landing | None:
+        """Return `None`: only a pull request merged on the remote lands, and `settle` waits."""
+        del repo, task_root
+
+    async def merge(self, request: MergeRequest) -> Landing:
         """Push the branch and open its pull request, recorded as `pr_opened`.
 
         An open pull request of the branch that was never recorded (the engine died between
@@ -413,7 +533,7 @@ class PullRequest:
             await self._git.log_oneline(request.task_root, f"{repo.base_ref}..{repo.branch}")
         )
         if not commits:
-            return ()
+            return Landing()
         lease = await self._git.remote_branch_sha(self._project_root, self._remote, repo.branch)
         await self._git.push(self._project_root, self._remote, repo.branch, lease=lease)
         url = await self._github.open_pull_request(
@@ -431,7 +551,7 @@ class PullRequest:
             message=f"{request.task_id} opened {url}",
             data={"url": url, "branch": repo.branch, "commits": list(commits)},
         )
-        return commits
+        return Landing(commits)
 
     async def settle(self, task_id: str, repo: RepoState, held: Callable[[], bool]) -> None:
         """Poll the open pull request until it is merged or closed, then verify the merged base.
@@ -604,15 +724,17 @@ class Integrator:
             message = f"{task.id} has no task root to integrate"
             raise InvariantError(message)
         current, current_metadata = task, metadata
-        commits = self._strategy.started(task.id)
-        if commits is None:
-            current, current_metadata, commits = await self._apply(
+        started = self._strategy.started(task.id)
+        if started is None:
+            current, current_metadata, landing = await self._apply(
                 task, repo, resolve_conflicts, metadata, conflict_recovery
             )
+        else:
+            landing = Landing(started)
         await self._strategy.settle(current.id, repo, lambda: self._is_held(current.id))
         summary = IntegrationSummary(
             summary=current_metadata.summary,
-            commits=commits,
+            commits=landing.commits,
             residual_risks=current_metadata.residual_risks,
         )
         self._tasks.set_summary(current.id, summary.summary)
@@ -628,7 +750,7 @@ class Integrator:
                 message=summary.summary,
                 data={
                     "summary": summary.summary,
-                    "commits": list(summary.commits),
+                    **landing.done_data(),
                     "residual_risks": list(summary.residual_risks),
                 },
             )
@@ -648,15 +770,19 @@ class Integrator:
         resolve_conflicts: ConflictResolver,
         metadata: IntegrationMetadata,
         conflict_recovery: ConflictRecoveryLoader | None,
-    ) -> tuple[Task, IntegrationMetadata, tuple[str, ...]]:
+    ) -> tuple[Task, IntegrationMetadata, Landing]:
         async with self._lock:
             self._require_not_held(task.id)
+            task_dir = task_root(self._project_root, task.id)
+            if not await self._git.is_rebase_in_progress(task_dir):
+                landed = await self._strategy.applied(repo, task_dir)
+                if landed is not None:
+                    return task, metadata, landed
             recovery_state = (
                 conflict_recovery(task) if conflict_recovery is not None else ConflictRecovery()
             )
             current = task
             current_metadata = metadata
-            task_dir = task_root(self._project_root, current.id)
             in_progress = await self._git.is_rebase_in_progress(task_dir)
             if not in_progress and not recovery_state.resumed_report:
                 self._events.append(
@@ -696,7 +822,7 @@ class Integrator:
                 await self._continue_rebase(current.id, task_dir)
             await self._require_integrable(current, repo, task_dir)
             self._require_not_held(current.id)
-            commits = await self._strategy.merge(
+            landing = await self._strategy.merge(
                 MergeRequest(
                     task_id=current.id,
                     title=current.title,
@@ -706,7 +832,7 @@ class Integrator:
                     held=lambda: self._is_held(current.id),
                 )
             )
-            return current, current_metadata, commits
+            return current, current_metadata, landing
 
     async def _resolve_base(self, repo: RepoState) -> str:
         try:

@@ -351,3 +351,38 @@ async def test_a_done_record_with_no_risks_does_not_fall_back_to_the_verdict_ris
     views = state_views(reader, project_root, clock, StubServices())
 
     assert (await _results(views, task_id)).residual_risks == ()
+
+
+async def test_results_of_a_squashed_task_list_its_landed_commit_and_totals(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    squashed = _running(connection, clock, project_root)
+    current = TaskStore(connection, clock).get(squashed)
+    assert current is not None
+    TaskStore(connection, clock).finish(
+        squashed,
+        Transition.stay(current, step=None, status=Status.DONE),
+        EventKind.TASK_DONE,
+        message="done",
+        data={
+            "summary": "done",
+            "commits": ["feed123abc T-1: squashed work"],
+            "integration": "squash",
+            "changes": {"files": 5, "insertions": 40, "deletions": 2},
+            "residual_risks": [],
+        },
+    )
+    views = state_views(reader, project_root, clock, StubServices())
+
+    results = await _results(views, squashed)
+    detail = await views.task_detail(squashed)
+
+    assert detail is not None
+    assert results.squashed
+    assert [commit.sha for commit in results.commits] == ["feed123"]
+    text = plain_text(ResultsBody(detail.results))
+    assert "feed123 T-1: squashed work" in text
+    assert "5 files +40 \N{MINUS SIGN}2" in text
+    assert "abc1234" not in text

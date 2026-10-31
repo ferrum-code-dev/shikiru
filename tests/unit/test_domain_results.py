@@ -173,3 +173,54 @@ def test_only_unfinished_tasks_keep_tracking_their_live_work() -> None:
     )
     for status, tracked in cases:
         assert tracks_live_work(status) is tracked
+
+
+LANDED_DONE = {
+    "commits": ["abcdef0123 T-12: squashed task"],
+    "integration": "squash",
+    "changes": {"files": 4, "insertions": 21, "deletions": 6},
+}
+
+
+def test_landed_squash_evidence_outranks_reports_and_stale_facts() -> None:
+    results = _derive(
+        Status.DONE,
+        done=LANDED_DONE,
+        report=[Commit(sha="9999999999", subject="old report commit")],
+        facts=FACTS,
+    )
+
+    assert results.commits == (ResultCommit("abcdef0", "T-12: squashed task"),)
+    assert results.produced == ProducedNumbers(1, 4, 21, 6)
+    assert results.squashed
+
+
+def test_a_landed_empty_integration_does_not_fall_back_to_other_commits() -> None:
+    done: dict[str, object] = {
+        "commits": [],
+        "integration": "squash",
+        "changes": {"files": 0, "insertions": 0, "deletions": 0},
+    }
+
+    results = _derive(
+        Status.DONE,
+        done=done,
+        report=[Commit(sha="9999999999", subject="old report commit")],
+        facts=FACTS,
+    )
+
+    assert results.commits == ()
+    assert results.produced == ProducedNumbers(0, 0, 0, 0)
+
+
+def test_a_legacy_done_record_without_landed_changes_keeps_falling_back() -> None:
+    results = _derive(
+        Status.DONE,
+        done={"commits": [], "residual_risks": []},
+        report=[Commit(sha="9999999999", subject="old report commit")],
+        facts=FACTS,
+    )
+
+    assert results.commits == (ResultCommit("9999999", "old report commit"),)
+    assert results.produced == ProducedNumbers(2, 2, 10, 4)
+    assert not results.squashed
