@@ -74,7 +74,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import move_up, pick_rung
 from shikiru.domain.levels import free_space_level, usage_level
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
-from shikiru.domain.quota_waits import next_quota_change, quota_banner, quota_wait_description
+from shikiru.domain.quota_waits import next_quota_reload, quota_banner, quota_wait_description
 from shikiru.domain.reports import (
     ConsultAnswer,
     ImplementationReport,
@@ -1338,7 +1338,7 @@ class StateDashboardViews:
         return QuotaWaitView(
             agent=quota_block.agent,
             until=quota_block.until,
-            refresh_at=next_quota_change(now, changes),
+            refresh_at=next_quota_reload(now, changes),
         )
 
     def _reason_parts(

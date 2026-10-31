@@ -56,7 +56,7 @@ from shikiru.dashboard.timeline_section import (
 )
 from shikiru.dashboard.usage_body import UsageBody
 from shikiru.domain.briefing import BriefingAction
-from shikiru.domain.quota_waits import quota_remaining
+from shikiru.domain.quota_waits import quota_clock_text
 from shikiru.domain.tasks import Role, Status, StatusReason
 from shikiru.errors import ShikiruError
 from shikiru.ui.gated_static import GatedStatic
@@ -307,7 +307,7 @@ class TaskDetailPanel(Vertical):
         self._rendered_task_id: str | None = None
         self._view: TaskDetailView | None = None
         self._observed_work: tuple[str, TaskWorkSample | None] | None = None
-        self._shown_quota_remaining: str | None = None
+        self._shown_quota_wording: tuple[str, str] | None = None
         self._on_initial_content = on_initial_content
         self._initial_content_reported = False
 
@@ -546,8 +546,8 @@ class TaskDetailPanel(Vertical):
         now = tick_now(self._widget_context.clock)
         if now >= quota.refresh_at:
             await self._load_view()
-        elif quota_remaining(quota.until, now) != self._shown_quota_remaining:
-            self._render_blocker(view, now)
+        elif quota_clock_text(quota.agent, quota.until, now) != self._shown_quota_wording:
+            self._render_quota_clock(view, now)
 
     async def _refresh_activity(self) -> None:
         if (
@@ -857,7 +857,15 @@ class TaskDetailPanel(Vertical):
         blocker.update(summary or "")
         blocker.display = summary is not None
         quota = None if view.blocker is None else view.blocker.quota_wait
-        self._shown_quota_remaining = None if quota is None else quota_remaining(quota.until, now)
+        self._shown_quota_wording = (
+            None if quota is None else quota_clock_text(quota.agent, quota.until, now)
+        )
+
+    def _render_quota_clock(self, view: TaskDetailView, now: datetime) -> None:
+        self._render_blocker(view, now)
+        self.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).update_if_changed(
+            Briefing(view, now, self._briefing_layout())
+        )
 
     def _render_blocker_evidence(self, evidence: Text | None) -> None:
         fold = self._folds[TASK_VIEW_BLOCKER_EVIDENCE]

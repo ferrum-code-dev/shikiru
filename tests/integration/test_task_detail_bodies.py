@@ -30,6 +30,7 @@ from shikiru.dashboard.detail_fold import DetailFold
 from shikiru.dashboard.detail_hint import HintTarget, hint_for
 from shikiru.dashboard.details_list_view import DetailsSection, section_headline
 from shikiru.dashboard.fold_bodies import CRITERIA_LABEL, CRITERION_LEAD, NO_CRITERIA
+from shikiru.domain.quota_waits import quota_reset_clock
 from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, TriageReport
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition, first_step
@@ -52,7 +53,10 @@ from tests.support.waiting import UI_WAIT_SECONDS, WaitTimeoutError, wait_until
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from textual.widget import Widget
+
     from shikiru.config.settings import ComplexityName
+    from shikiru.dashboard.contract import DashboardViews
     from tests.support.store import Connection, Database
 
 pytestmark = pytest.mark.asyncio
@@ -69,6 +73,11 @@ QUOTA_REMAINING = "in 1h 20m"
 QUOTA_REMAINING_LATER = "in 1h 9m"
 QUOTA_REMAINING_79_MINUTES = "in 1h 19m"
 QUOTA_REMAINING_78_MINUTES = "in 1h 18m"
+MIDNIGHT_EVE = datetime(2026, 1, 1, 23, 59, tzinfo=UTC)
+MIDNIGHT_RESET = datetime(2026, 1, 2, 1, 0, tzinfo=UTC)
+MIDNIGHT_RESET_DATED = "Jan 02 01:00Z"
+MIDNIGHT_RESET_CLOCK = "01:00Z"
+MIDNIGHT_REMAINING = "in 1h 0m"
 TIMELINE_REFRESH_SECONDS = 1
 COUNTDOWN_SECONDS = 10 * 60
 ONE_MINUTE_SECONDS = 60
@@ -369,7 +378,11 @@ def _start_on_slot(connection: Connection, clock: FakeClock, task_id: str, slot:
 
 
 def _seed_blocked_task(
-    connection: Connection, clock: FakeClock, blocker: _Blocker
+    connection: Connection,
+    clock: FakeClock,
+    blocker: _Blocker,
+    *,
+    until: datetime = QUOTA_BLOCK_UNTIL,
 ) -> tuple[str, str]:
     store = TaskStore(connection, clock)
     match blocker:
@@ -385,10 +398,9 @@ def _seed_blocked_task(
         case _Blocker.QUOTA:
             waiter = seed_task(connection, clock, title="Quota waiter")
             store.set_wait_reason(waiter.id, WaitReason.QUOTA)
-            QuotaStore(connection).block(LEADER_AGENT, QUOTA_BLOCK_UNTIL, "quota")
-            return waiter.id, (
-                f"Waiting on quota · {LEADER_AGENT} quota blocked until {QUOTA_RESET}"
-            )
+            QuotaStore(connection).block(LEADER_AGENT, until, "quota")
+            reset = quota_reset_clock(until, clock.now())
+            return waiter.id, f"Waiting on quota · {LEADER_AGENT} quota blocked until {reset}"
         case _Blocker.DEPENDENCY:
             dependency = seed_task(connection, clock, title="Add database")
             waiter = seed_task(
@@ -398,9 +410,32 @@ def _seed_blocked_task(
             return waiter.id, f"Waiting on dependency · {dependency.id} queued"
 
 
+def _widget_text(widget: Widget) -> str:
+    return "\n".join("".join(char for char, _ in row) for row in painted_lines(widget))
+
+
 def _blocker_text(panel: TaskDetailPanel) -> str:
-    blocker = panel.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
-    return "\n".join("".join(char for char, _ in row) for row in painted_lines(blocker))
+    return _widget_text(panel.query_one(f"#{TASK_DETAIL_BLOCKER}", Static))
+
+
+def _briefing_text(panel: TaskDetailPanel) -> str:
+    return _widget_text(panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic))
+
+
+def _trace_statements(reader: StateReader) -> list[str]:
+    statements: list[str] = []
+    reader._connection.set_trace_callback(statements.append)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    return statements
+
+
+def _reads(statements: list[str]) -> list[str]:
+    return [statement for statement in statements if not statement.startswith("PRAGMA")]
+
+
+async def _live_work_reads(views: DashboardViews, task_id: str, statements: list[str]) -> list[str]:
+    statements.clear()
+    await views.live_work(task_id)
+    return _reads(statements)
 
 
 @pytest.mark.usefixtures("colour_terminal")
@@ -551,19 +586,16 @@ async def test_a_quota_wait_reset_duration_counts_down_with_the_clock_and_no_dat
 
 
 @pytest.mark.usefixtures("colour_terminal")
-async def test_a_quota_countdown_tick_repaints_only_the_blocker_when_its_minute_changes(
+async def test_a_quota_countdown_tick_reads_only_the_live_work_and_repaints_only_the_blocker(
     connection: Connection, database: Database, tmp_path: Path
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task_id, _ = _seed_blocked_task(connection, clock, _Blocker.QUOTA)
     reader = StateReader(database, SystemClock())
-    panel = TaskDetailPanel(
-        widget_context(reader, project_root, clock),
-        task_id,
-        fixed=True,
-        initial_view=TASK_VIEW_RELATIONSHIPS,
-    )
+    context = widget_context(reader, project_root, clock)
+    panel = TaskDetailPanel(context, task_id, fixed=True, initial_view=TASK_VIEW_RELATIONSHIPS)
+    statements = _trace_statements(reader)
     try:
         async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
             await _loaded(panel, task_id)
@@ -584,8 +616,51 @@ async def test_a_quota_countdown_tick_repaints_only_the_blocker_when_its_minute_
                 lambda: QUOTA_REMAINING_78_MINUTES in _blocker_text(panel), timeout=UI_WAIT_SECONDS
             )
             blocker_shown = blocker.content
+            statements.clear()
             await _elapse(clock, TIMELINE_REFRESH_SECONDS)
+            tick_reads = _reads(statements)
+            assert tick_reads == await _live_work_reads(context.views, task_id, statements)
             assert blocker.content is blocker_shown
+            assert settings.content is settings_shown
+    finally:
+        reader.close()
+
+
+@pytest.mark.usefixtures("colour_terminal")
+async def test_a_quota_wait_crossing_utc_midnight_rewords_the_blocker_without_a_task_reload(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(MIDNIGHT_EVE)
+    task_id, _ = _seed_blocked_task(connection, clock, _Blocker.QUOTA, until=MIDNIGHT_RESET)
+    reader = StateReader(database, SystemClock())
+    context = widget_context(reader, project_root, clock)
+    panel = TaskDetailPanel(context, task_id, fixed=True, initial_view=TASK_VIEW_RELATIONSHIPS)
+    statements = _trace_statements(reader)
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, task_id)
+            await wait_until(
+                lambda: MIDNIGHT_RESET_DATED in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+            )
+            settings = panel.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)
+            settings_shown = settings.content
+            await _elapse(clock, ONE_MINUTE_SECONDS - TIMELINE_REFRESH_SECONDS)
+            await wait_until(
+                lambda: MIDNIGHT_REMAINING in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+            )
+            assert MIDNIGHT_RESET_DATED in _briefing_text(panel)
+            statements.clear()
+            await _elapse(clock, TIMELINE_REFRESH_SECONDS)
+            midnight_reads = _reads(statements)
+            await wait_until(
+                lambda: f"Clears at {MIDNIGHT_RESET_CLOCK}" in _blocker_text(panel),
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert MIDNIGHT_RESET_DATED not in _blocker_text(panel)
+            assert MIDNIGHT_RESET_CLOCK in _briefing_text(panel)
+            assert MIDNIGHT_RESET_DATED not in _briefing_text(panel)
+            assert midnight_reads == await _live_work_reads(context.views, task_id, statements)
             assert settings.content is settings_shown
     finally:
         reader.close()

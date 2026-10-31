@@ -610,10 +610,10 @@ class TaskRelationshipsView:
 
 @dataclass(frozen=True)
 class QuotaWaitView:
-    """The quota block a task waits behind, with the instant its wording next changes unwritten.
+    """The quota block a task waits behind and when its stored data next changes.
 
-    Its reset text is worded for the tick it is shown at, so the blocker and briefing count down
-    with the clock; `refresh_at` is when the detail must be read again.
+    Its wording is built for the tick it is shown at, so the blocker and briefing count down and
+    take a new date with the clock; `refresh_at` is when the stored data must be read again.
     """
 
     agent: str

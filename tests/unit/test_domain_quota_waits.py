@@ -5,19 +5,21 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 
 from shikiru.domain.quota_waits import (
-    next_quota_change,
+    next_quota_reload,
     quota_banner,
+    quota_clock_text,
     quota_remaining,
     quota_wait_description,
 )
 
 NOW = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
-NEXT_MIDNIGHT = datetime(2026, 1, 2, tzinfo=UTC)
-MIDNIGHT_AFTER_NEXT = datetime(2026, 1, 3, tzinfo=UTC)
+BEFORE_MIDNIGHT = datetime(2026, 1, 1, 23, 59, 30, tzinfo=UTC)
+AFTER_MIDNIGHT = datetime(2026, 1, 2, 0, 0, tzinfo=UTC)
 AHEAD_OF_UTC = timezone(timedelta(hours=2))
 BEHIND_UTC = timezone(timedelta(hours=-5))
 SAME_DAY_RESET = datetime(2026, 1, 1, 14, 20, tzinfo=UTC)
 NEXT_DAY_RESET = datetime(2026, 1, 2, 0, 5, tzinfo=UTC)
+RESET_AFTER_MIDNIGHT = datetime(2026, 1, 2, 1, 0, tzinfo=UTC)
 DESCRIPTION = "claude quota blocked until 14:20Z"
 SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 60 * SECONDS_PER_MINUTE
@@ -45,6 +47,29 @@ def test_quota_wait_description_shows_the_reset_in_utc_and_the_date_only_off_tod
     expected: str,
 ) -> None:
     assert quota_wait_description("claude", until, NOW) == expected
+
+
+@pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        pytest.param(
+            BEFORE_MIDNIGHT,
+            "claude quota blocked until Jan 02 01:00Z",
+            id="before-utc-midnight",
+        ),
+        pytest.param(AFTER_MIDNIGHT, "claude quota blocked until 01:00Z", id="after-utc-midnight"),
+        pytest.param(
+            datetime(2026, 1, 2, 0, 30, tzinfo=BEHIND_UTC),
+            "claude quota blocked until 01:00Z",
+            id="utc-date-decides-in-another-zone",
+        ),
+    ],
+)
+def test_quota_wait_description_drops_the_date_when_the_clock_reaches_the_reset_day(
+    now: datetime,
+    expected: str,
+) -> None:
+    assert quota_wait_description("claude", RESET_AFTER_MIDNIGHT, now) == expected
 
 
 @pytest.mark.parametrize(
@@ -87,21 +112,44 @@ def test_quota_remaining_counts_the_whole_minutes_left_until_the_block_lifts(
 
 
 @pytest.mark.parametrize(
+    ("now", "expected"),
+    [
+        pytest.param(
+            BEFORE_MIDNIGHT,
+            ("claude quota blocked until Jan 02 01:00Z", "1h 0m"),
+            id="before-utc-midnight",
+        ),
+        pytest.param(
+            AFTER_MIDNIGHT,
+            ("claude quota blocked until 01:00Z", "1h 0m"),
+            id="after-utc-midnight-with-the-same-minutes",
+        ),
+    ],
+)
+def test_quota_clock_text_changes_at_utc_midnight_even_when_the_minutes_stay_the_same(
+    now: datetime,
+    expected: tuple[str, str],
+) -> None:
+    assert quota_clock_text("claude", RESET_AFTER_MIDNIGHT, now) == expected
+
+
+@pytest.mark.parametrize(
     ("now", "instants", "expected"),
     [
         pytest.param(
             NOW,
             (NOW + timedelta(hours=1),),
             NOW + timedelta(hours=1),
-            id="block-lifts-before-midnight",
+            id="block-lifts",
         ),
-        pytest.param(NOW, (NOW - timedelta(hours=1),), NEXT_MIDNIGHT, id="past-instant-ignored"),
-        pytest.param(NOW, (NOW,), NEXT_MIDNIGHT, id="instant-now-ignored"),
         pytest.param(
             NOW,
-            (NOW + timedelta(hours=20),),
-            NEXT_MIDNIGHT,
-            id="midnight-before-a-later-instant",
+            (NOW - timedelta(hours=1), NOW + timedelta(hours=2)),
+            NOW + timedelta(hours=2),
+            id="past-instant-ignored",
+        ),
+        pytest.param(
+            NOW, (NOW, NOW + timedelta(hours=2)), NOW + timedelta(hours=2), id="now-ignored"
         ),
         pytest.param(
             NOW,
@@ -109,18 +157,17 @@ def test_quota_remaining_counts_the_whole_minutes_left_until_the_block_lifts(
             NOW + timedelta(hours=1),
             id="earliest-instant-wins",
         ),
-        pytest.param(NOW, (), NEXT_MIDNIGHT, id="no-blocks-only-midnight"),
         pytest.param(
-            datetime(2026, 1, 1, 20, 0, tzinfo=BEHIND_UTC),
-            (),
-            MIDNIGHT_AFTER_NEXT,
-            id="midnight-is-utc-even-when-now-is-given-in-another-zone",
+            BEFORE_MIDNIGHT,
+            (RESET_AFTER_MIDNIGHT,),
+            RESET_AFTER_MIDNIGHT,
+            id="utc-midnight-is-not-a-reload-instant",
         ),
     ],
 )
-def test_next_quota_change_is_the_first_instant_after_now_when_the_wording_can_move(
+def test_next_quota_reload_is_the_first_instant_after_now(
     now: datetime,
     instants: tuple[datetime, ...],
     expected: datetime,
 ) -> None:
-    assert next_quota_change(now, instants) == expected
+    assert next_quota_reload(now, instants) == expected

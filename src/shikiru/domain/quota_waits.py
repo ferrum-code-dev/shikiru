@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -61,13 +61,15 @@ def quota_remaining(until: datetime, now: datetime) -> str:
     return f"{minutes}m"
 
 
-def next_quota_change(now: datetime, instants: Iterable[datetime]) -> datetime:
-    """Return the first instant after `now` at which a quota wait's wording can change unwritten.
+def quota_clock_text(agent: str, until: datetime, now: datetime) -> tuple[str, str]:
+    """Return the clock-driven wording of a quota wait: its description and its time left."""
+    return quota_wait_description(agent, until, now), quota_remaining(until, now)
+
+
+def next_quota_reload(now: datetime, instants: Iterable[datetime]) -> datetime:
+    """Return the first of `instants` after `now`, the next moment a quota wait's data changes.
 
     `instants` are the moments the block lifts, its reroute window closes and other blocks lift.
-    The date a reset shows rolls over at the next UTC midnight, which always counts too.
+    The wording moves with the clock on its own and never needs this reload.
     """
-    next_midnight = datetime.combine(
-        now.astimezone(UTC).date() + timedelta(days=1), time(), tzinfo=UTC
-    )
-    return min(instant for instant in (*instants, next_midnight) if instant > now)
+    return min(instant for instant in instants if instant > now)
