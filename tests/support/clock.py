@@ -7,14 +7,17 @@ from datetime import datetime, timedelta
 
 
 class FakeClock:
-    """A `Clock` whose time only ever moves when `advance()` is called.
+    """A `Clock` whose time only ever moves when `advance()` or `advance_to_next_sleeper()` runs.
 
     `sleep(seconds)` registers a deadline of `now + seconds` and suspends the
     caller on a future private to that call; it never advances time itself.
     `advance(seconds)` moves `now` forward by `seconds` and resolves every
     pending sleeper whose deadline is now due, in deadline order, so
     concurrent sleepers with different deadlines wake in that order rather
-    than all at once. A deadline that is already due when `sleep()` is
+    than all at once. `advance_to_next_sleeper()` moves `now` straight to the
+    earliest pending sleeper's deadline and resolves the sleepers due then; a
+    sleeper whose caller was cancelled is not pending, and with no pending
+    sleeper it does nothing. A deadline that is already due when `sleep()` is
     called (including `sleep(0)`) resolves immediately, but the caller still
     yields control once, exactly as a real `await` would.
     """
@@ -46,7 +49,15 @@ class FakeClock:
         return bool(self._sleepers)
 
     def advance(self, seconds: float) -> None:
-        self._now += timedelta(seconds=seconds)
+        self._move_to(self._now + timedelta(seconds=seconds))
+
+    def advance_to_next_sleeper(self) -> None:
+        deadlines = [deadline for deadline, future in self._sleepers if not future.done()]
+        if deadlines:
+            self._move_to(min(deadlines))
+
+    def _move_to(self, moment: datetime) -> None:
+        self._now = moment
         due = sorted(
             (sleeper for sleeper in self._sleepers if sleeper[0] <= self._now),
             key=lambda sleeper: sleeper[0],
