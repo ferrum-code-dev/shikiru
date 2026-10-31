@@ -10,7 +10,7 @@ import pytest
 from textual.widgets import Static
 
 from shikiru.config.loader import load_settings
-from shikiru.dashboard.briefing_view import needed_from_you
+from shikiru.dashboard.detail import TASK_DETAIL_BRIEFING
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition
 from shikiru.domain.tasks import Mode, Role
@@ -395,12 +395,12 @@ async def test_banner_counts_each_task_once_for_every_blocked_agent_it_needs(
         UNRELATED_AGENT: _block_description(UNRELATED_AGENT, UNRELATED_RESET),
     }
     assert detail is not None
-    assert needed_from_you(detail, clock.now()) == (
-        f"Waiting on {_block_description(implementer, IMPLEMENTER_RESET)}."
-    )
+    assert [blocker.kind for blocker in detail.blockers] == [WaitReason.QUOTA.value]
+    assert detail.quota_wait is not None
+    assert detail.quota_wait.agent == implementer
 
 
-async def test_task_details_name_the_blocked_agent_and_reset_time(
+async def test_task_details_name_the_blocked_agent_and_reset_time_under_the_blockers_label(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -410,14 +410,17 @@ async def test_task_details_name_the_blocked_agent_and_reset_time(
     task_id = _seed_queued_task(connection, clock, "Detail under quota", WaitReason.QUOTA)
     agent = _leader_agent(project_dir)
     QuotaStore(connection).block(agent, LEADER_BLOCK_UNTIL, "quota")
-    views = state_views(reader, project_dir, clock, StubServices())
+    app = dashboard_app(reader, project_dir, clock, widget_names=["usage"], focus_task=task_id)
 
-    detail = await views.task_detail(task_id)
+    async with app.run_test(size=(180, 40)) as pilot:
+        briefing = pilot.app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
+        await wait_until(
+            lambda: "Blockers" in plain_text(briefing.content), timeout=UI_WAIT_SECONDS
+        )
 
-    assert detail is not None
-    assert needed_from_you(detail, clock.now()) == (
-        f"Waiting on {_block_description(agent, LEADER_RESET)}."
-    )
+        assert f"Waiting on quota · {_block_description(agent, LEADER_RESET)}" in plain_text(
+            briefing.content
+        )
 
 
 @pytest.mark.parametrize(
@@ -450,8 +453,8 @@ async def test_task_details_say_whether_a_quota_wait_moves_the_task_to_another_a
     detail = await views.task_detail(task_id)
 
     assert detail is not None
-    assert detail.blocker is not None
-    assert any(MOVES_FIRST in line for line in detail.blocker.details) is moves_first
+    assert detail.blockers
+    assert any(MOVES_FIRST in line for line in detail.blockers[0].details) is moves_first
 
 
 @pytest.mark.parametrize(
@@ -498,5 +501,5 @@ async def test_a_block_extended_during_a_running_wait_is_judged_against_the_wait
     detail = await views.task_detail(task_id)
 
     assert detail is not None
-    assert detail.blocker is not None
-    assert any(guidance in line for line in detail.blocker.details)
+    assert detail.blockers
+    assert any(guidance in line for line in detail.blockers[0].details)

@@ -11,10 +11,11 @@ import pytest
 from textual.widgets import Static
 
 from shikiru.clock import SystemClock
+from shikiru.dashboard.blocker_rows import BLOCKERS_LABEL
 from shikiru.dashboard.detail import (
-    TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_CONTEXT_INFO,
+    TASK_DETAIL_EVIDENCE,
     TASK_DETAIL_HINT,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_RELATED_LIST,
@@ -34,12 +35,12 @@ from shikiru.domain.quota_waits import quota_reset_clock
 from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, TriageReport
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition, first_step
-from shikiru.domain.tasks import Mode, Status, Task
+from shikiru.domain.tasks import Hold, Mode, Status, Task
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.gated_static import GatedStatic
-from shikiru.ui.glyphs import GLYPH_BLOCKED, GLYPH_QUOTA, GLYPH_SLOT
+from shikiru.ui.glyphs import GLYPH_WARNING
 from shikiru.ui.tokens import ALERT_COLOR, AMBER, SECONDARY_TEXT_COLOR
 from tests.support.cells import CYAN_BOLD, GREY, GREY_BOLD, Cell, foregrounds, styles
 from tests.support.cells import rendered_lines as painted_lines
@@ -414,10 +415,6 @@ def _widget_text(widget: Widget) -> str:
     return "\n".join("".join(char for char, _ in row) for row in painted_lines(widget))
 
 
-def _blocker_text(panel: TaskDetailPanel) -> str:
-    return _widget_text(panel.query_one(f"#{TASK_DETAIL_BLOCKER}", Static))
-
-
 def _briefing_text(panel: TaskDetailPanel) -> str:
     return _widget_text(panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic))
 
@@ -440,15 +437,14 @@ async def _live_work_reads(views: DashboardViews, task_id: str, statements: list
 
 @pytest.mark.usefixtures("colour_terminal")
 @pytest.mark.parametrize(
-    ("blocker", "glyph", "details"),
+    ("blocker", "details"),
     [
-        (_Blocker.SLOT, GLYPH_SLOT, ("Starts when a slot frees.",)),
+        (_Blocker.SLOT, ("Starts when a slot frees.",)),
         (
             _Blocker.QUOTA,
-            GLYPH_QUOTA,
             (f"Blocked agent · {LEADER_AGENT}", f"Clears at {QUOTA_RESET} · {QUOTA_REMAINING}"),
         ),
-        (_Blocker.DEPENDENCY, GLYPH_BLOCKED, ()),
+        (_Blocker.DEPENDENCY, ()),
     ],
 )
 async def test_blocker_headline_has_an_amber_glyph_and_normal_cause_with_grey_details(
@@ -457,7 +453,6 @@ async def test_blocker_headline_has_an_amber_glyph_and_normal_cause_with_grey_de
     tmp_path: Path,
     *,
     blocker: _Blocker,
-    glyph: str,
     details: tuple[str, ...],
 ) -> None:
     project_root = write_minimal_project(tmp_path)
@@ -473,15 +468,14 @@ async def test_blocker_headline_has_an_amber_glyph_and_normal_cause_with_grey_de
     try:
         async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
             await _loaded(panel, task_id)
-            await wait_until(lambda: cause in _blocker_text(panel), timeout=UI_WAIT_SECONDS)
-            blocker_widget = panel.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
-            assert styles(blocker_widget, glyph) == [(True, AMBER)]
-            assert AMBER not in foregrounds(blocker_widget, cause)
+            await wait_until(lambda: cause in _briefing_text(panel), timeout=UI_WAIT_SECONDS)
+            briefing = panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic)
+            assert set(styles(briefing, GLYPH_WARNING)) == {(True, AMBER)}
+            assert AMBER not in foregrounds(briefing, cause)
+            assert set(foregrounds(briefing, BLOCKERS_LABEL)) == {SECONDARY_TEXT_COLOR}
             for detail in details:
-                assert set(foregrounds(blocker_widget, detail)) == {SECONDARY_TEXT_COLOR}
-            detail_rows = painted_lines(blocker_widget)[1:]
-            assert AMBER not in {colour for row in detail_rows for _, colour in row}
-            assert ISO_TIMESTAMP.search(_blocker_text(panel)) is None
+                assert set(foregrounds(briefing, detail)) == {SECONDARY_TEXT_COLOR}
+            assert ISO_TIMESTAMP.search(_briefing_text(panel)) is None
     finally:
         reader.close()
 
@@ -512,15 +506,15 @@ async def test_a_cancelled_blocker_paints_the_blocker_glyph_and_headline_in_aler
     try:
         async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
             await _loaded(panel, blocked.id)
-            await wait_until(lambda: cause in _blocker_text(panel), timeout=UI_WAIT_SECONDS)
-            blocker_widget = panel.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
-            assert styles(blocker_widget, GLYPH_BLOCKED) == [(True, ALERT_COLOR)]
-            assert set(foregrounds(blocker_widget, cause)) == {ALERT_COLOR}
+            await wait_until(lambda: cause in _briefing_text(panel), timeout=UI_WAIT_SECONDS)
+            briefing = panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic)
+            assert set(styles(briefing, GLYPH_WARNING)) == {(True, ALERT_COLOR)}
+            assert set(foregrounds(briefing, cause)) == {ALERT_COLOR}
     finally:
         reader.close()
 
 
-async def test_a_task_without_a_blocker_shows_no_blocker_text_and_no_evidence_fold(
+async def test_a_task_without_a_blocker_shows_no_blockers_label_and_no_evidence_fold(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -538,14 +532,53 @@ async def test_a_task_without_a_blocker_shows_no_blocker_text_and_no_evidence_fo
     try:
         async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
             await _loaded(panel, task.id)
-            blocker_widget = panel.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
             evidence = next(
                 fold
                 for fold in panel.query(DetailFold)
                 if fold.view_id == TASK_VIEW_BLOCKER_EVIDENCE
             )
-            assert blocker_widget.styles.display == "none"
+            assert BLOCKERS_LABEL not in _briefing_text(panel)
             assert evidence.styles.display == "none"
+    finally:
+        reader.close()
+
+
+@pytest.mark.usefixtures("colour_terminal")
+async def test_simultaneous_blockers_share_one_blockers_label_and_one_evidence_fold(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    dependency = seed_task(connection, clock, title="Add database")
+    blocked = seed_task(connection, clock, title="Add admin page", depends_on=(dependency.id,))
+    store = TaskStore(connection, clock)
+    store.set_wait_reason(blocked.id, WaitReason.DEPENDENCY)
+    store.set_holds(blocked.id, frozenset({Hold.PAUSED}))
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        blocked.id,
+        fixed=True,
+        initial_view=TASK_VIEW_RELATIONSHIPS,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, blocked.id)
+            await wait_until(
+                lambda: "Paused by operator" in _briefing_text(panel), timeout=UI_WAIT_SECONDS
+            )
+            briefing = _briefing_text(panel)
+            assert briefing.count(BLOCKERS_LABEL) == 1
+            assert f"Waiting on dependency · {dependency.id}" in briefing
+            evidence = plain_text(panel.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static).content)
+            assert "Recorded scheduler reason" in evidence
+            assert dependency.id in evidence
+            assert "Paused by operator" not in "\n".join(
+                _painted_rows(panel, TASK_DETAIL_RELATED_LIST)
+            )
+            assert dependency.id in "\n".join(_painted_rows(panel, TASK_DETAIL_RELATED_LIST))
     finally:
         reader.close()
 
@@ -574,12 +607,12 @@ async def test_a_quota_wait_reset_duration_counts_down_with_the_clock_and_no_dat
         async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
             await _loaded(panel, task_id)
             await wait_until(
-                lambda: QUOTA_REMAINING in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+                lambda: QUOTA_REMAINING in _briefing_text(panel), timeout=UI_WAIT_SECONDS
             )
             await _elapse(clock, TIMELINE_REFRESH_SECONDS)
             await _elapse(clock, COUNTDOWN_SECONDS)
             await wait_until(
-                lambda: QUOTA_REMAINING_LATER in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+                lambda: QUOTA_REMAINING_LATER in _briefing_text(panel), timeout=UI_WAIT_SECONDS
             )
     finally:
         reader.close()
@@ -600,27 +633,27 @@ async def test_a_quota_countdown_tick_reads_only_the_live_work_and_repaints_only
         async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
             await _loaded(panel, task_id)
             await wait_until(
-                lambda: QUOTA_REMAINING in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+                lambda: QUOTA_REMAINING in _briefing_text(panel), timeout=UI_WAIT_SECONDS
             )
             settings = panel.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)
-            blocker = panel.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
+            briefing = panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic)
             settings_shown = settings.content
             await _elapse(clock, ONE_MINUTE_SECONDS)
             await wait_until(
-                lambda: QUOTA_REMAINING_79_MINUTES in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+                lambda: QUOTA_REMAINING_79_MINUTES in _briefing_text(panel), timeout=UI_WAIT_SECONDS
             )
             assert settings.content is settings_shown
-            assert QUOTA_RESET in _blocker_text(panel)
+            assert QUOTA_RESET in _briefing_text(panel)
             await _elapse(clock, TIMELINE_REFRESH_SECONDS)
             await wait_until(
-                lambda: QUOTA_REMAINING_78_MINUTES in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+                lambda: QUOTA_REMAINING_78_MINUTES in _briefing_text(panel), timeout=UI_WAIT_SECONDS
             )
-            blocker_shown = blocker.content
+            briefing_shown = briefing.content
             statements.clear()
             await _elapse(clock, TIMELINE_REFRESH_SECONDS)
             tick_reads = _reads(statements)
             assert tick_reads == await _live_work_reads(context.views, task_id, statements)
-            assert blocker.content is blocker_shown
+            assert briefing.content is briefing_shown
             assert settings.content is settings_shown
     finally:
         reader.close()
@@ -641,23 +674,23 @@ async def test_a_quota_wait_crossing_utc_midnight_rewords_the_blocker_without_a_
         async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
             await _loaded(panel, task_id)
             await wait_until(
-                lambda: MIDNIGHT_RESET_DATED in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+                lambda: MIDNIGHT_RESET_DATED in _briefing_text(panel), timeout=UI_WAIT_SECONDS
             )
             settings = panel.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)
             settings_shown = settings.content
             await _elapse(clock, ONE_MINUTE_SECONDS - TIMELINE_REFRESH_SECONDS)
             await wait_until(
-                lambda: MIDNIGHT_REMAINING in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+                lambda: MIDNIGHT_REMAINING in _briefing_text(panel), timeout=UI_WAIT_SECONDS
             )
             assert MIDNIGHT_RESET_DATED in _briefing_text(panel)
             statements.clear()
             await _elapse(clock, TIMELINE_REFRESH_SECONDS)
             midnight_reads = _reads(statements)
             await wait_until(
-                lambda: f"Clears at {MIDNIGHT_RESET_CLOCK}" in _blocker_text(panel),
+                lambda: f"Clears at {MIDNIGHT_RESET_CLOCK}" in _briefing_text(panel),
                 timeout=UI_WAIT_SECONDS,
             )
-            assert MIDNIGHT_RESET_DATED not in _blocker_text(panel)
+            assert MIDNIGHT_RESET_DATED not in _briefing_text(panel)
             assert MIDNIGHT_RESET_CLOCK in _briefing_text(panel)
             assert MIDNIGHT_RESET_DATED not in _briefing_text(panel)
             assert midnight_reads == await _live_work_reads(context.views, task_id, statements)
@@ -683,11 +716,11 @@ async def test_a_quota_block_that_lifts_reloads_the_task_and_drops_the_quota_hea
     try:
         async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
             await _loaded(panel, task_id)
-            await wait_until(lambda: cause in _blocker_text(panel), timeout=UI_WAIT_SECONDS)
+            await wait_until(lambda: cause in _briefing_text(panel), timeout=UI_WAIT_SECONDS)
             await _elapse(clock, (QUOTA_BLOCK_UNTIL - START).total_seconds())
-            await wait_until(lambda: cause not in _blocker_text(panel), timeout=UI_WAIT_SECONDS)
-            assert QUOTA_RESET not in _blocker_text(panel)
-            assert "Clears at" not in _blocker_text(panel)
+            await wait_until(lambda: cause not in _briefing_text(panel), timeout=UI_WAIT_SECONDS)
+            assert QUOTA_RESET not in _briefing_text(panel)
+            assert "Clears at" not in _briefing_text(panel)
     finally:
         reader.close()
 

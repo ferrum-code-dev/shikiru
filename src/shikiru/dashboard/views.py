@@ -108,17 +108,7 @@ from shikiru.operator.queries import (
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import SECONDS_PER_DAY, format_age, format_duration
 from shikiru.ui.age import format_short_age as _age
-from shikiru.ui.glyphs import (
-    GLYPH_BLOCKED,
-    GLYPH_OPERATOR,
-    GLYPH_PAUSED,
-    GLYPH_PENDING,
-    GLYPH_QUOTA,
-    GLYPH_SLOT,
-    GLYPH_STALLED,
-    SPINNER_FRAMES,
-    STAGE_PR,
-)
+from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.section import GROUP_SEPARATOR
 from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
 from shikiru.view_log import turn_iteration
@@ -231,16 +221,7 @@ _MOTION_FILTERS = frozenset(
 )
 _RECORDED_REASON = "Recorded scheduler reason"
 _UNRECORDED_REASON = "Waiting on"
-_BLOCKER_GLYPHS = {
-    WaitReason.DEPENDENCY.value: GLYPH_BLOCKED,
-    WaitReason.SLOT.value: GLYPH_SLOT,
-    WaitReason.RESOURCES.value: GLYPH_STALLED,
-    WaitReason.QUOTA.value: GLYPH_QUOTA,
-    WaitReason.PR_OPEN.value: STAGE_PR,
-    WaitReason.PAUSED.value: GLYPH_PAUSED,
-    Hold.INTERVENTION.value: GLYPH_OPERATOR,
-}
-_PAUSED_HEADLINE = "Paused"
+_PAUSED_HEADLINE = "Paused by operator"
 _INTERVENTION_HEADLINE = "Held by operator"
 _PAUSE_HOLD_DETAIL = "Pause hold · Resume clears this hold when submitted."
 _OWNERSHIP_HOLD_LABEL = "Ownership hold · taken-over roles"
@@ -296,6 +277,13 @@ class _BlockerParts:
     details: tuple[str, ...] = ()
     evidence: tuple[str, ...] = ()
     related: tuple[TaskReferenceView, ...] = ()
+
+
+@dataclass(frozen=True)
+class _FoundBlocker:
+    kind: str
+    parts: _BlockerParts
+    block: AgentBlock | None = None
 
 
 @dataclass(frozen=True)
@@ -1157,6 +1145,7 @@ class StateDashboardViews:
         workflow = self._task_workflow(task, detail.events, detail.reports)
         pull_request = self._pull_request_line(task.id, task_done=task.status is Status.DONE)
         reported = reported_tests(implementation.tests) if implementation is not None else None
+        blockers, blocker_evidence = self._task_blockers(task, relationships, ownership, now)
         return TaskDetailView(
             task_id=task.id,
             title=task.title,
@@ -1187,7 +1176,8 @@ class StateDashboardViews:
                 )
             ),
             relationships=relationships,
-            blocker=self._task_blocker(task, relationships, ownership, now),
+            blockers=blockers,
+            blocker_evidence=blocker_evidence,
             submitted_age=_age(now - task.created_at),
             requeued_age=_age(now - task.requeued_at) if task.requeued_at is not None else None,
             usage=_recorded_usage(detail.sessions),
@@ -1291,42 +1281,72 @@ class StateDashboardViews:
             for session in sessions
         )
 
-    def _task_blocker(
+    def _task_blockers(
         self,
         task: Task,
         relationships: TaskRelationshipsView | None,
         ownership: tuple[str, ...],
         now: datetime,
-    ) -> TaskBlockerView | None:
+    ) -> tuple[tuple[TaskBlockerView, ...], tuple[str, ...]]:
+        found = self._found_blockers(task, relationships, ownership, now)
+        recorded = (
+            (f"{_RECORDED_REASON}{GROUP_SEPARATOR}{task.wait_reason}",) if task.wait_reason else ()
+        )
+        blockers = tuple(
+            TaskBlockerView(
+                kind=item.kind,
+                headline=item.parts.headline,
+                details=item.parts.details,
+                related_tasks=item.parts.related,
+                quota_wait=None if item.block is None else self._quota_wait_view(item.block, now),
+            )
+            for item in found
+        )
+        evidence = (*recorded, *(line for item in found for line in item.parts.evidence))
+        return blockers, evidence
+
+    def _found_blockers(
+        self,
+        task: Task,
+        relationships: TaskRelationshipsView | None,
+        ownership: tuple[str, ...],
+        now: datetime,
+    ) -> tuple[_FoundBlocker, ...]:
         wait_reason = task.wait_reason
-        running_wait = self._running_quota_wait(task, now)
-        if wait_reason is None and not task.holds and running_wait is None:
-            return None
-        quota_block = (
-            running_wait.block if running_wait is not None else self._queued_quota_block(task, now)
-        )
-        hold_reason = Hold.PAUSED.value if Hold.PAUSED in task.holds else Hold.INTERVENTION.value
-        reason = wait_reason or (
-            WaitReason.QUOTA.value if running_wait is not None else hold_reason
-        )
-        if wait_reason == WaitReason.QUOTA.value:
+        found: list[_FoundBlocker] = []
+        quota = self._quota_blocker(task, now)
+        if quota is not None:
+            found.append(quota)
+        elif wait_reason not in (None, WaitReason.PAUSED.value):
+            found.append(
+                _FoundBlocker(
+                    wait_reason, self._reason_parts(task, wait_reason, relationships, now)
+                )
+            )
+        if Hold.PAUSED in task.holds or wait_reason == WaitReason.PAUSED.value:
+            found.append(
+                _FoundBlocker(
+                    Hold.PAUSED.value, _BlockerParts(_PAUSED_HEADLINE, (_PAUSE_HOLD_DETAIL,))
+                )
+            )
+        if Hold.INTERVENTION in task.holds:
+            found.append(_FoundBlocker(Hold.INTERVENTION.value, _intervention_parts(ownership)))
+        return tuple(found)
+
+    def _quota_blocker(self, task: Task, now: datetime) -> _FoundBlocker | None:
+        if task.wait_reason == WaitReason.QUOTA.value:
+            quota_block = self._queued_quota_block(task, now)
             parts = self._queued_quota_parts(
                 task, quota_block, now, self._quota_evidence(task, now)
             )
-        elif wait_reason is None and running_wait is not None:
-            parts = self._running_quota_parts(task, running_wait)
-        else:
-            parts = self._reason_parts(task, wait_reason, relationships, now)
-        recorded = (f"{_RECORDED_REASON}{GROUP_SEPARATOR}{wait_reason}",) if wait_reason else ()
-        return TaskBlockerView(
-            kind=reason,
-            glyph=_BLOCKER_GLYPHS.get(reason, GLYPH_PENDING),
-            headline=parts.headline,
-            details=(*parts.details, *_hold_details(task, ownership)),
-            evidence=(*recorded, *parts.evidence),
-            related_tasks=parts.related,
-            quota_wait=None if quota_block is None else self._quota_wait_view(quota_block, now),
-        )
+            return _FoundBlocker(WaitReason.QUOTA.value, parts, quota_block)
+        if task.wait_reason is not None:
+            return None
+        running_wait = self._running_quota_wait(task, now)
+        if running_wait is None:
+            return None
+        parts = self._running_quota_parts(task, running_wait)
+        return _FoundBlocker(WaitReason.QUOTA.value, parts, running_wait.block)
 
     def _quota_wait_view(self, quota_block: AgentBlock, now: datetime) -> QuotaWaitView:
         max_wait = timedelta(seconds=self._settings.current().orchestration.timeouts.max_quota_wait)
@@ -1344,7 +1364,7 @@ class StateDashboardViews:
     def _reason_parts(
         self,
         task: Task,
-        wait_reason: str | None,
+        wait_reason: str,
         relationships: TaskRelationshipsView | None,
         now: datetime,
     ) -> _BlockerParts:
@@ -1357,8 +1377,6 @@ class StateDashboardViews:
                 return self._resource_parts(now)
             case WaitReason.PR_OPEN.value:
                 return self._pull_request_parts(task.id)
-            case WaitReason.PAUSED.value | None:
-                return _BlockerParts(_hold_headline(task))
             case _:
                 return _BlockerParts(f"{_UNRECORDED_REASON}{GROUP_SEPARATOR}{wait_reason}")
 
@@ -1385,7 +1403,7 @@ class StateDashboardViews:
             "Blocking dependencies · "
             + "; ".join(f"{item.task_id} {item.title} ({item.status})" for item in related),
         )
-        return _BlockerParts(headline, details, evidence, related)
+        return _BlockerParts(headline, details, evidence)
 
     def _queued_quota_parts(
         self,
@@ -1920,21 +1938,12 @@ def _task_reference_view(task: Task) -> TaskReferenceView:
     )
 
 
-def _hold_details(task: Task, ownership: tuple[str, ...]) -> tuple[str, ...]:
-    lines: list[str] = []
-    if Hold.PAUSED in task.holds:
-        lines.append(_PAUSE_HOLD_DETAIL)
-    if Hold.INTERVENTION in task.holds:
-        lines.append(
-            f"{_OWNERSHIP_HOLD_LABEL}{GROUP_SEPARATOR}"
-            + (", ".join(ownership) if ownership else "not recorded")
-        )
-        lines.append(_HAND_BACK_DETAIL)
-    return tuple(lines)
-
-
-def _hold_headline(task: Task) -> str:
-    return _PAUSED_HEADLINE if Hold.PAUSED in task.holds else _INTERVENTION_HEADLINE
+def _intervention_parts(ownership: tuple[str, ...]) -> _BlockerParts:
+    owners = ", ".join(ownership) if ownership else "not recorded"
+    return _BlockerParts(
+        _INTERVENTION_HEADLINE,
+        (f"{_OWNERSHIP_HOLD_LABEL}{GROUP_SEPARATOR}{owners}", _HAND_BACK_DETAIL),
+    )
 
 
 def _quota_parts(

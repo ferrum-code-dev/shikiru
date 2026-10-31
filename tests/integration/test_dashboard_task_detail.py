@@ -38,7 +38,6 @@ from shikiru.dashboard.detail import (
     AGENT_TIMELINE_IDS,
     TASK_DETAIL_ACTION_PREFIX,
     TASK_DETAIL_AGENT_LIST,
-    TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BODY,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_CONTEXT_INFO,
@@ -104,6 +103,7 @@ from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.session import HOME_WINDOW_NAME
+from shikiru.ui.gated_static import GatedStatic
 from shikiru.view_log import view_log_path
 from shikiru.workspace.facts import WorkspaceFacts, render_facts
 from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME
@@ -2311,16 +2311,15 @@ async def test_task_detail_refreshes_durable_ownership_after_palette_closes(
             )
             await pilot.press("escape")
             await wait_until(lambda: app.screen is dashboard_screen, timeout=UI_WAIT_SECONDS)
-            await _open_task_view(app, pilot, TASK_VIEW_RELATIONSHIPS)
             detail_screen = app.screen
             body = detail_screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
-            blocker = detail_screen.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
-            body.scroll_to_widget(blocker, animate=False)
+            briefing = detail_screen.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic)
+            body.scroll_to_widget(briefing, animate=False)
             await pilot.pause()
-            assert blocker.display
-            assert "Pause hold" in _text(blocker)
-            assert blocker.region.y >= body.region.y
-            assert blocker.region.bottom <= body.region.bottom
+            assert briefing.display
+            assert "Paused by operator" in _text(briefing)
+            assert "Pause hold" in _text(briefing)
+            assert briefing.region.y >= body.region.y
     finally:
         reader.close()
 

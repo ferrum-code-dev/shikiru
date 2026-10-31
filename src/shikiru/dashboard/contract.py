@@ -555,7 +555,8 @@ class TaskDetailView:
     sessions: tuple[TaskSessionView, ...]
     complexity: ComplexityName | None = None
     relationships: TaskRelationshipsView | None = None
-    blocker: TaskBlockerView | None = None
+    blockers: tuple[TaskBlockerView, ...] = ()
+    blocker_evidence: tuple[str, ...] = ()
     submitted_age: str = ""
     requeued_age: str | None = None
     usage: RecordedUsageView | None = None
@@ -576,6 +577,11 @@ class TaskDetailView:
     results: TaskResults | None = None
     decisions: TaskDecisions | None = None
     can_take_over: bool = False
+
+    @property
+    def quota_wait(self) -> QuotaWaitView | None:
+        """The quota wait among the blockers, when the task waits behind a quota block."""
+        return next((item.quota_wait for item in self.blockers if item.quota_wait), None)
 
 
 @dataclass(frozen=True)
@@ -623,13 +629,11 @@ class QuotaWaitView:
 
 @dataclass(frozen=True)
 class TaskBlockerView:
-    """A blocker's headline with its glyph, visible detail lines, collapsed evidence and tasks."""
+    """One active blocker of a task: its cause, the detail lines under it and the tasks it lists."""
 
     kind: str
-    glyph: str
     headline: str
-    details: tuple[str, ...]
-    evidence: tuple[str, ...] = ()
+    details: tuple[str, ...] = ()
     related_tasks: tuple[TaskReferenceView, ...] = ()
     quota_wait: QuotaWaitView | None = None
 

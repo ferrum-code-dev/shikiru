@@ -59,7 +59,6 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.dashboard.detail import (
     TASK_DETAIL_AGENT_LIST,
-    TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_DECISIONS,
     TASK_DETAIL_IDENTITY,
@@ -284,7 +283,6 @@ def _rendered_widget_lines(widget: Static) -> tuple[str, ...]:
 
 _TASK_DETAIL_SECTION_IDS = (
     TASK_DETAIL_OWNERSHIP,
-    TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_REQUEST,
     TASK_DETAIL_RESULTS,

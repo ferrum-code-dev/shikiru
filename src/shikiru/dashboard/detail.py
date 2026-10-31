@@ -17,6 +17,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Rule, Static
 
+from shikiru.dashboard.blocker_rows import blocker_evidence_text
 from shikiru.dashboard.briefing_view import (
     ACTION_LABELS,
     TERMINAL_STATUSES,
@@ -40,12 +41,7 @@ from shikiru.dashboard.fold_bodies import (
     WorkspaceBody,
 )
 from shikiru.dashboard.row_list import RowList
-from shikiru.dashboard.section_rows import (
-    RelatedRow,
-    blocker_evidence,
-    blocker_summary,
-    relation_rows,
-)
+from shikiru.dashboard.section_rows import RelatedRow, relation_rows
 from shikiru.dashboard.tick import tick_now
 from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.dashboard.timeline_section import (
@@ -129,7 +125,6 @@ TASK_DETAIL_HELP_KEY = "question_mark"
 TASK_DETAIL_HINT = "task-detail-hint"
 TASK_WINDOW_KEY = "t"
 TASK_WINDOW_ACTION = "task_window"
-TASK_DETAIL_BLOCKER = "task-detail-blocker"
 TASK_DETAIL_EVIDENCE = "task-detail-evidence"
 TASK_DETAIL_RELATIONSHIPS = "task-detail-relationships"
 TASK_DETAIL_RELATED_LIST = "task-detail-related-list"
@@ -172,7 +167,7 @@ FOLD_STATICS = {
     TASK_VIEW_RESULTS: (TASK_DETAIL_RESULTS,),
     TASK_VIEW_DECISIONS: (TASK_DETAIL_DECISIONS,),
     TASK_VIEW_REQUEST: (TASK_DETAIL_REQUEST,),
-    TASK_VIEW_RELATIONSHIPS: (TASK_DETAIL_BLOCKER, TASK_DETAIL_RELATIONSHIPS),
+    TASK_VIEW_RELATIONSHIPS: (TASK_DETAIL_RELATIONSHIPS,),
     TASK_VIEW_BLOCKER_EVIDENCE: (TASK_DETAIL_EVIDENCE,),
     TASK_VIEW_WORKSPACE: (TASK_DETAIL_WORKSPACE,),
 }
@@ -352,7 +347,6 @@ class TaskDetailPanel(Vertical):
     async def on_mount(self) -> None:
         self.disabled = self._task_id is None
         self._folds_list().display = self._task_id is not None
-        self.query_one(f"#{TASK_DETAIL_BLOCKER}").display = False
         self._render_blocker_evidence(None)
         self._sync_timelines()
         identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
@@ -479,8 +473,6 @@ class TaskDetailPanel(Vertical):
             return
         for section_id in (
             TASK_DETAIL_OWNERSHIP,
-            TASK_DETAIL_BLOCKER,
-            TASK_DETAIL_BRIEFING,
             TASK_DETAIL_REQUEST,
             TASK_DETAIL_RESULTS,
             TASK_DETAIL_DECISIONS,
@@ -488,7 +480,7 @@ class TaskDetailPanel(Vertical):
             TASK_DETAIL_SESSIONS,
         ):
             self.query_one(f"#{section_id}", Static).update("")
-        self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static).display = False
+        self.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).update("")
         self._render_blocker_evidence(None)
         self._set_feedback(None)
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update("")
@@ -540,14 +532,14 @@ class TaskDetailPanel(Vertical):
 
     async def _refresh_quota_countdown(self) -> None:
         view = self._view
-        if view is None or view.blocker is None or view.blocker.quota_wait is None:
+        if view is None or view.quota_wait is None:
             return
-        quota = view.blocker.quota_wait
+        quota = view.quota_wait
         now = tick_now(self._widget_context.clock)
         if now >= quota.refresh_at:
             await self._load_view()
         elif quota_clock_text(quota.agent, quota.until, now) != self._shown_quota_wording:
-            self._render_quota_clock(view, now)
+            self._render_briefing(view, now, self._briefing_layout())
 
     async def _refresh_activity(self) -> None:
         if (
@@ -604,9 +596,7 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_IDENTITY}", GatedStatic).update_if_changed(
             header_text(view, now, compact=layout.compact)
         )
-        self.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).update_if_changed(
-            Briefing(view, now, layout)
-        )
+        self._render_briefing(view, now, layout)
         self._render_verbs(view)
 
     def _briefing_layout(self) -> BriefingLayout:
@@ -818,7 +808,6 @@ class TaskDetailPanel(Vertical):
 
     def _render_view(self, view: TaskDetailView) -> None:
         self._view = view
-        now = tick_now(self._widget_context.clock)
         body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         scroll_y = body.scroll_target_y
         focus_generation = self._body_focus_generation
@@ -827,13 +816,12 @@ class TaskDetailPanel(Vertical):
         self._rendered_task_id = view.task_id
         self._render_ownership(view)
         self.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static).update(SettingsBody(view))
-        self._render_blocker(view, now)
-        self._render_blocker_evidence(blocker_evidence(view))
+        self._render_blocker_evidence(blocker_evidence_text(view))
         self._render_relationships(view)
         self._render_activity(view)
         self.query_one(f"#{TASK_DETAIL_REQUEST}", Static).update(DescriptionBody(view))
         self.query_one(f"#{TASK_DETAIL_RESULTS}", Static).update(ResultsBody(view.results))
-        self.query_one(f"#{TASK_DETAIL_DECISIONS}", Static).update(DecisionsBody(view, now))
+        self.query_one(f"#{TASK_DETAIL_DECISIONS}", Static).update(DecisionsBody(view))
         self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(WorkspaceBody(view, Path.home()))
         if self._folds[TASK_VIEW_USAGE].is_open:
             self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(self._usage_body(view))
@@ -851,20 +839,13 @@ class TaskDetailPanel(Vertical):
                 focused,
             )
 
-    def _render_blocker(self, view: TaskDetailView, now: datetime) -> None:
-        summary = blocker_summary(view, now)
-        blocker = self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
-        blocker.update(summary or "")
-        blocker.display = summary is not None
-        quota = None if view.blocker is None else view.blocker.quota_wait
+    def _render_briefing(self, view: TaskDetailView, now: datetime, layout: BriefingLayout) -> None:
+        quota = view.quota_wait
         self._shown_quota_wording = (
             None if quota is None else quota_clock_text(quota.agent, quota.until, now)
         )
-
-    def _render_quota_clock(self, view: TaskDetailView, now: datetime) -> None:
-        self._render_blocker(view, now)
         self.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).update_if_changed(
-            Briefing(view, now, self._briefing_layout())
+            Briefing(view, now, layout)
         )
 
     def _render_blocker_evidence(self, evidence: Text | None) -> None:

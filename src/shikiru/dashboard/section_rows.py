@@ -6,21 +6,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from rich.console import Group
 from rich.text import Text
 
 from shikiru.dashboard.contract import TaskTimelineSource
 from shikiru.dashboard.row_list import RowCells
-from shikiru.domain.quota_waits import (
-    QUOTA_AGENT_LABEL,
-    QUOTA_CLEARS_LABEL,
-    quota_remaining,
-    quota_reset_clock,
-    quota_wait_description,
-)
 from shikiru.domain.tasks import Role, Status
 from shikiru.domain.timeline_phrases import Tone
-from shikiru.ui.section import GROUP_SEPARATOR, grey
+from shikiru.ui.section import grey
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
@@ -134,8 +126,6 @@ def relation_rows(view: TaskDetailView) -> tuple[RelatedRow, ...]:
     """Return one aligned row per distinct related task, labelled by its first relation."""
     relationships = view.relationships
     labelled: list[tuple[str, TaskReferenceView]] = []
-    if view.blocker is not None:
-        labelled.extend((_RELATION_BLOCKER, item) for item in view.blocker.related_tasks)
     if relationships is not None:
         labelled.extend(
             [
@@ -181,47 +171,3 @@ def relation_rows(view: TaskDetailView) -> tuple[RelatedRow, ...]:
 
 def _state_label(status: str) -> str:
     return f"{_STATE_GLYPHS.get(status, _STATE_GLYPHS[Status.QUEUED.value])} {status}"
-
-
-def blocker_summary(view: TaskDetailView, now: datetime) -> Group | None:
-    """Return the blocker headline with its glyph in bold amber and its detail lines in grey.
-
-    A quota wait's reset text is worded for `now`, so the countdown moves with the clock.
-    The glyph and headline turn dusty rose once a blocking task is cancelled.
-    """
-    blocker = view.blocker
-    if blocker is None:
-        return None
-    headline_text = blocker.headline
-    details = blocker.details
-    quota = blocker.quota_wait
-    if quota is not None:
-        headline_text = GROUP_SEPARATOR.join(
-            (headline_text, quota_wait_description(quota.agent, quota.until, now))
-        )
-        clears = (
-            f"{QUOTA_CLEARS_LABEL} {quota_reset_clock(quota.until, now)}"
-            f"{GROUP_SEPARATOR}in {quota_remaining(quota.until, now)}"
-        )
-        details = (f"{QUOTA_AGENT_LABEL}{GROUP_SEPARATOR}{quota.agent}", clears, *details)
-    cancelled = _blocked_by_cancelled(view)
-    colour = ALERT_COLOR if cancelled else AMBER
-    headline = Text.assemble(
-        (blocker.glyph, f"{STYLE_BOLD} {colour}"),
-        (f" {headline_text}", ALERT_COLOR if cancelled else ""),
-    )
-    return Group(headline, *(grey(line) for line in details))
-
-
-def blocker_evidence(view: TaskDetailView) -> Text | None:
-    """Return the raw blocker evidence in grey, or nothing when there is none."""
-    if view.blocker is None or not view.blocker.evidence:
-        return None
-    return grey("\n".join(view.blocker.evidence))
-
-
-def _blocked_by_cancelled(view: TaskDetailView) -> bool:
-    blockers = list(view.blocker.related_tasks) if view.blocker is not None else []
-    if view.relationships is not None:
-        blockers.extend(view.relationships.blocking_dependencies)
-    return any(item.status == Status.CANCELLED.value for item in blockers)

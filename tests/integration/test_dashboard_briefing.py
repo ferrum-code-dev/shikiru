@@ -106,8 +106,8 @@ LABELS = (
     "Tests",
     "PR",
     "Verdict",
-    "Blocker",
-    "Pending",
+    "Blockers",
+    "Decision",
     "Added",
     "Risks",
 )
@@ -395,14 +395,14 @@ CASES = {
     "waiting-on-dependency": _Case(
         _seed_waiting_on_dependency,
         frozenset({"Problems"}),
-        frozenset({"Pending"}),
+        frozenset({"Blockers"}),
         ("Waiting on dependency",),
         frozenset({BriefingAction.PAUSE, BriefingAction.CANCEL}),
     ),
     "waiting-on-decision": _Case(
         _seed_decision,
         frozenset({"Progress", "Result so far", "Problems"}),
-        frozenset({"Step", "Branch", "Tests", "Blocker"}),
+        frozenset({"Step", "Branch", "Tests", "Decision"}),
         (QUESTION,),
         frozenset(
             {

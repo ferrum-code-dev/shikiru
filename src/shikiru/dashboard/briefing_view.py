@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
 from rich.padding import Padding
-from rich.table import Table
 from rich.text import Text
 
 from shikiru.agents.contracts import (
@@ -15,6 +14,7 @@ from shikiru.agents.contracts import (
     COST_BASIS_API_EQUIVALENT,
     COST_BASIS_BILLED,
 )
+from shikiru.dashboard.blocker_rows import BLOCKERS_LABEL, blocker_rows
 from shikiru.domain.briefing import (
     LAST_WORDS_ELLIPSIS,
     BriefingAction,
@@ -25,9 +25,7 @@ from shikiru.domain.briefing import (
     rework_progress,
     squashed,
 )
-from shikiru.domain.quota_waits import quota_wait_description
 from shikiru.domain.results import ResultOutcome
-from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.tasks import Hold, Role, Status
 from shikiru.ui.compact import ROLE_LABELS, StageActivity, duration_text, recorded_age
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_STALLED, ROLE_GLYPHS
@@ -69,8 +67,6 @@ PROGRESS_TITLE = "Progress"
 RESULT_SO_FAR_TITLE = "Result so far"
 RESULT_TITLE = "Result"
 PROBLEMS_TITLE = "Problems"
-NEEDS_YOU_PREFIX = "Needs you: "
-PENDING_PREFIX = "Pending: "
 STEP_LABEL = "Step"
 REWORK_LABEL = "Rework"
 NOW_LABEL = "Now"
@@ -81,8 +77,7 @@ COMMITS_LABEL = "Commits"
 TESTS_LABEL = "Tests"
 PR_LABEL = "PR"
 VERDICT_LABEL = "Verdict"
-BLOCKER_LABEL = "Blocker"
-PENDING_LABEL = "Pending"
+DECISION_LABEL = "Decision"
 ADDED_LABEL = "Added"
 LIVE_LABEL = "Live"
 LIVE_UNAVAILABLE = "unavailable ({error}); showing recorded results"
@@ -101,8 +96,8 @@ LABEL_WIDTH = max(
         TESTS_LABEL,
         PR_LABEL,
         VERDICT_LABEL,
-        BLOCKER_LABEL,
-        PENDING_LABEL,
+        DECISION_LABEL,
+        BLOCKERS_LABEL,
         ADDED_LABEL,
         RISKS_LABEL,
     )
@@ -124,7 +119,6 @@ MINUS = "\N{MINUS SIGN}"
 PASSED_MARK = "\N{CHECK MARK}"
 FAILED_MARK = "\N{BALLOT X}"
 REPORTED_BY_IMPLEMENTER = "reported by the Implementer"
-WAITING_ON = "Waiting on"
 NO_QUESTION = "Escalation open; no validated decision question is recorded."
 ESCALATION_NEAR = "escalates after {count} more {noun}"
 REJECTION_NOUNS = ("rejection", "rejections")
@@ -204,26 +198,20 @@ def briefing_verbs(view: TaskDetailView) -> tuple[BriefingAction, ...]:
     )
 
 
-def needed_from_you(view: TaskDetailView, now: datetime) -> str | None:
-    """Return what the operator must act on: a decision question first, else a wait reason."""
-    if _escalated(view):
-        question = next(
-            (
-                report.question
-                for report in (view.latest_report, view.latest_verdict)
-                if report is not None and report.question
-            ),
-            None,
-        )
-        return _sentence(question) if question is not None else NO_QUESTION
-    if view.blocker is not None and view.blocker.quota_wait is not None:
-        quota = view.blocker.quota_wait
-        return _sentence(f"{WAITING_ON} {quota_wait_description(quota.agent, quota.until, now)}")
-    blocker_quota = view.blocker is not None and view.blocker.kind == WaitReason.QUOTA.value
-    reason = view.wait_reason or (WaitReason.QUOTA.value if blocker_quota else None)
-    if reason is None or reason == WaitReason.PAUSED.value:
-        return None
-    return _sentence(f"{WAITING_ON} {reason.replace('_', ' ')}")
+def decision_rows(view: TaskDetailView, label: str) -> list[Row]:
+    """Return the question row an escalated task waits on, or nothing when it is not escalated."""
+    if not _escalated(view):
+        return []
+    question = next(
+        (
+            report.question
+            for report in (view.latest_report, view.latest_verdict)
+            if report is not None and report.question
+        ),
+        None,
+    )
+    text = _sentence(question) if question is not None else NO_QUESTION
+    return [(Text(label, style=_BOLD_AMBER), (Text(text, style=AMBER),))]
 
 
 def _escalated(view: TaskDetailView) -> bool:
@@ -313,7 +301,7 @@ class Briefing:
 
     def _compact_blocks(self, console: Console, width: int) -> list[RenderableType]:
         view = self.view
-        needed = _compact_needed(view, self.now, width)
+        problems = _compact_problems(view, self.now, width)
         body = [
             *self._compact_progress(console, width),
             *_compact_summary(view, width),
@@ -322,7 +310,9 @@ class Briefing:
             *_compact_cost(view),
         ]
         milestones = self._milestones()
-        return [*needed, *body, *milestones] if self.layout.tiny else [*milestones, *needed, *body]
+        return (
+            [*problems, *body, *milestones] if self.layout.tiny else [*milestones, *problems, *body]
+        )
 
     def _compact_progress(self, console: Console, width: int) -> list[RenderableType]:
         view = self.view
@@ -447,10 +437,8 @@ def _problem_rows(view: TaskDetailView, now: datetime) -> list[Row]:
     counts = view.verdict_counts
     if counts is not None and counts.has_problems:
         rows.append(_row(VERDICT_LABEL, _verdict_groups(counts)))
-    needed = needed_from_you(view, now)
-    if needed is not None:
-        label = BLOCKER_LABEL if _escalated(view) else PENDING_LABEL
-        rows.append((Text(label, style=_BOLD_AMBER), (Text(needed),)))
+    rows.extend(decision_rows(view, DECISION_LABEL))
+    rows.extend(blocker_rows(view, now))
     risks = view.results.residual_risks if view.results is not None else ()
     rows.append(_row(RISKS_LABEL, tuple(Text(risk, style=AMBER) for risk in risks)))
     return [row for row in rows if row is not None]
@@ -472,10 +460,8 @@ def _cost_rows(view: TaskDetailView) -> list[Row]:
     ]
 
 
-def _compact_needed(view: TaskDetailView, now: datetime, width: int) -> list[RenderableType]:
-    text = needed_from_you(view, now)
-    prefix = NEEDS_YOU_PREFIX if _escalated(view) else PENDING_PREFIX
-    return [] if text is None else [_hanging(prefix, text, width)]
+def _compact_problems(view: TaskDetailView, now: datetime, width: int) -> list[RenderableType]:
+    return _labelled([*decision_rows(view, DECISION_LABEL), *blocker_rows(view, now)], width)
 
 
 def _compact_summary(view: TaskDetailView, width: int) -> list[RenderableType]:
@@ -532,14 +518,6 @@ def _compact_cost(view: TaskDetailView) -> list[RenderableType]:
 def _sentence(value: str) -> str:
     sentence = value.strip().splitlines()[0].strip()
     return sentence if sentence.endswith((".", "!", "?")) else f"{sentence}."
-
-
-def _hanging(prefix: str, text: str, width: int) -> RenderableType:
-    grid = Table.grid()
-    grid.add_column(width=cell_len(prefix), no_wrap=True)
-    grid.add_column(width=max(width - cell_len(prefix), 1))
-    grid.add_row(Text(prefix, style=_BOLD_AMBER), Text(text, style=AMBER))
-    return grid
 
 
 def _joined(groups: Sequence[Text]) -> Text:

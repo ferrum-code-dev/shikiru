@@ -19,27 +19,23 @@ from shikiru.dashboard.briefing_view import (
     SUMMARY_LABEL,
     TESTS_LABEL,
     branch_row,
+    decision_rows,
     live_unavailable_rows,
-    needed_from_you,
     pull_request_groups,
     tests_groups,
 )
 from shikiru.domain.acceptance import request_without_criteria_section
 from shikiru.domain.decisions import Decider
 from shikiru.domain.results import ResultOutcome
-from shikiru.domain.tasks import Status
 from shikiru.ui.section import BOLD_STEEL, Row, grey, labelled_rows
 from shikiru.ui.tokens import (
     ALERT_COLOR,
     AMBER,
     STEEL_BLUE,
-    STYLE_BOLD,
     SUCCESS_COLOR,
 )
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 
     from shikiru.dashboard.contract import TaskDetailView
@@ -66,7 +62,6 @@ MORE_COMMITS = "+{count} more"
 ADDED_TASK = "added {id}"
 CLOCK_FORMAT = "%H:%M"
 TIME_GAP = "  "
-_BOLD_AMBER = f"{STYLE_BOLD} {AMBER}"
 DECIDER_WIDTH = max(len(decider.value) for decider in Decider)
 
 
@@ -169,12 +164,8 @@ def _decision_row(entry: DecisionEntry) -> Row:
     )
 
 
-def _decision_rows(view: TaskDetailView, now: datetime) -> list[Row]:
-    rows: list[Row] = []
-    if view.status == Status.ESCALATED.value:
-        question = needed_from_you(view, now)
-        if question is not None:
-            rows.append((Text(OPEN_LABEL, style=_BOLD_AMBER), (Text(question, style=AMBER),)))
+def _decision_rows(view: TaskDetailView) -> list[Row]:
+    rows = decision_rows(view, OPEN_LABEL)
     if view.decisions is not None:
         rows.extend(_decision_row(entry) for entry in view.decisions.entries)
     return rows
@@ -185,12 +176,11 @@ class DecisionsBody:
     """The Decisions fold body: the open question, then every decision oldest first."""
 
     view: TaskDetailView
-    now: datetime
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         """Yield the labelled rows in order, or the nothing-recorded note."""
         del console
-        yield _body(options.max_width, _decision_rows(self.view, self.now), [])
+        yield _body(options.max_width, _decision_rows(self.view), [])
 
 
 @dataclass(frozen=True)
