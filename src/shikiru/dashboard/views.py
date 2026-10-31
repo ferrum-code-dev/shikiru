@@ -90,6 +90,7 @@ from shikiru.domain.scheduling import (
     quota_blocked_agents,
     quota_blocking_agent,
     quota_wait_reroutes,
+    running_quota_wait_moves,
     task_agents,
 )
 from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
@@ -259,6 +260,7 @@ _QUOTA_AGENT_LABEL = "Blocked agent"
 _QUOTA_CLEARS_LABEL = "Clears at"
 _QUOTA_REROUTED = "Moves to another agent first, as the wait exceeds max_quota_wait."
 _QUOTA_WAITS_NO_OTHER_AGENT = "Waits for reset; no other agent is free to take it."
+_QUOTA_ESCALATES_AT_LIMIT = "Escalates at max_quota_wait; no other agent is free to take it."
 _QUOTA_WAITS_WITHIN_LIMIT = "Waits for reset; the block lifts within max_quota_wait."
 _PR_HEADLINE = "Waiting on pull request"
 _PR_NO_EVENT = "No recorded pull-request event is available."
@@ -285,6 +287,7 @@ class _StructuredEscalationCache:
 @dataclass(frozen=True)
 class _RunningQuotaWait:
     block: AgentBlock
+    budget_ends: datetime
     evidence: tuple[str, ...]
 
 
@@ -1308,9 +1311,11 @@ class StateDashboardViews:
             WaitReason.QUOTA.value if running_wait is not None else hold_reason
         )
         if wait_reason == WaitReason.QUOTA.value:
-            parts = self._quota_parts(task, quota_block, now, self._quota_evidence(task, now))
+            parts = self._queued_quota_parts(
+                task, quota_block, now, self._quota_evidence(task, now)
+            )
         elif wait_reason is None and running_wait is not None:
-            parts = self._quota_parts(task, quota_block, now, running_wait.evidence)
+            parts = self._running_quota_parts(task, running_wait, now)
         else:
             parts = self._reason_parts(task, wait_reason, relationships, now)
         recorded = (f"{_RECORDED_REASON}{GROUP_SEPARATOR}{wait_reason}",) if wait_reason else ()
@@ -1374,7 +1379,7 @@ class StateDashboardViews:
         )
         return _BlockerParts(headline, details, evidence, related)
 
-    def _quota_parts(
+    def _queued_quota_parts(
         self,
         task: Task,
         quota_block: AgentBlock | None,
@@ -1385,31 +1390,36 @@ class StateDashboardViews:
             return _BlockerParts(_QUOTA_HEADLINE, evidence=evidence)
         settings = self._settings.current()
         wait_limit = now + timedelta(seconds=settings.orchestration.timeouts.max_quota_wait)
-        exceeds = quota_block.until > wait_limit
         blocked = {block.agent: block.until for block in self._active_blocks(now)}
-        rerouted = exceeds and quota_wait_reroutes(task, settings, blocked, wait_limit)
-        clears = quota_reset_clock(quota_block.until, now)
-        remaining = format_duration((quota_block.until - now).total_seconds())
-        return _BlockerParts(
-            headline=GROUP_SEPARATOR.join(
-                (
-                    _QUOTA_HEADLINE,
-                    quota_wait_description(quota_block.agent, quota_block.until, now),
-                )
-            ),
-            details=(
-                f"{_QUOTA_AGENT_LABEL}{GROUP_SEPARATOR}{quota_block.agent}",
-                f"{_QUOTA_CLEARS_LABEL} {clears}{GROUP_SEPARATOR}in {remaining}",
-                _quota_reroute_text(rerouted=rerouted, exceeds=exceeds),
-            ),
-            evidence=evidence,
+        return _quota_parts(
+            quota_block,
+            now,
+            evidence,
+            budget_ends=wait_limit,
+            moves=quota_wait_reroutes(task, settings, blocked, wait_limit),
+            exhausted_text=_QUOTA_WAITS_NO_OTHER_AGENT,
+        )
+
+    def _running_quota_parts(
+        self, task: Task, running_wait: _RunningQuotaWait, now: datetime
+    ) -> _BlockerParts:
+        settings = self._settings.current()
+        block = running_wait.block
+        return _quota_parts(
+            block,
+            now,
+            running_wait.evidence,
+            budget_ends=running_wait.budget_ends,
+            moves=running_quota_wait_moves(task, settings, block.until, running_wait.budget_ends),
+            exhausted_text=_QUOTA_ESCALATES_AT_LIMIT,
         )
 
     def _running_quota_wait(self, task: Task, now: datetime) -> _RunningQuotaWait | None:
         if task.status not in _ACTIVE_TURN_STATUSES or task.step is None:
             return None
         role = task_acting_role(task)
-        agent = pick_rung(task, role, self._settings.current()).agent
+        settings = self._settings.current()
+        agent = pick_rung(task, role, settings).agent
         quota_events = self._current_quota_wait_events(task, role, agent)
         if quota_events is None:
             return None
@@ -1443,7 +1453,12 @@ class StateDashboardViews:
                 )
         else:
             lines.append(f"Provider quota observation · {agent} · unavailable")
-        return _RunningQuotaWait(block=block, evidence=tuple(lines))
+        budget = timedelta(seconds=settings.orchestration.timeouts.max_quota_wait)
+        return _RunningQuotaWait(
+            block=block,
+            budget_ends=quota_block.ts + budget,
+            evidence=tuple(lines),
+        )
 
     def _current_quota_wait_events(
         self,
@@ -1918,10 +1933,38 @@ def _hold_headline(task: Task) -> str:
     return _PAUSED_HEADLINE if Hold.PAUSED in task.holds else _INTERVENTION_HEADLINE
 
 
-def _quota_reroute_text(*, rerouted: bool, exceeds: bool) -> str:
-    if rerouted:
+def _quota_parts(
+    quota_block: AgentBlock,
+    now: datetime,
+    evidence: tuple[str, ...],
+    *,
+    budget_ends: datetime,
+    moves: bool,
+    exhausted_text: str,
+) -> _BlockerParts:
+    clears = quota_reset_clock(quota_block.until, now)
+    remaining = format_duration((quota_block.until - now).total_seconds())
+    return _BlockerParts(
+        headline=GROUP_SEPARATOR.join(
+            (_QUOTA_HEADLINE, quota_wait_description(quota_block.agent, quota_block.until, now))
+        ),
+        details=(
+            f"{_QUOTA_AGENT_LABEL}{GROUP_SEPARATOR}{quota_block.agent}",
+            f"{_QUOTA_CLEARS_LABEL} {clears}{GROUP_SEPARATOR}in {remaining}",
+            _quota_reroute_text(
+                moves=moves,
+                exceeds=quota_block.until > budget_ends,
+                exhausted_text=exhausted_text,
+            ),
+        ),
+        evidence=evidence,
+    )
+
+
+def _quota_reroute_text(*, moves: bool, exceeds: bool, exhausted_text: str) -> str:
+    if moves:
         return _QUOTA_REROUTED
-    return _QUOTA_WAITS_NO_OTHER_AGENT if exceeds else _QUOTA_WAITS_WITHIN_LIMIT
+    return exhausted_text if exceeds else _QUOTA_WAITS_WITHIN_LIMIT
 
 
 def _dependency_absence(relationships: TaskRelationshipsView) -> str:

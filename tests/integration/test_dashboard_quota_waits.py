@@ -55,6 +55,11 @@ UNRELATED_AGENT = "gemini"
 EXPIRED_UNTIL = START + timedelta(minutes=1)
 EXPIRED_WAIT_SECONDS = 120
 AFTER_ALL_BLOCKS_SECONDS = 41 * 60
+RUNNING_WAIT_ELAPSED_SECONDS = 60 * 60
+EXTENDED_PAST_BUDGET_UNTIL = START + timedelta(hours=8, minutes=30)
+EXTENDED_WITHIN_BUDGET_UNTIL = START + timedelta(hours=2)
+ESCALATES_AT_LIMIT = "Escalates at max_quota_wait"
+WITHIN_LIMIT = "the block lifts within max_quota_wait"
 QUOTA_MARKER = f"{GLYPH_QUOTA} quota"
 REROUTING_CONFIG = """
 [project]
@@ -445,3 +450,51 @@ async def test_task_details_say_whether_a_quota_wait_moves_the_task_to_another_a
     assert detail is not None
     assert detail.blocker is not None
     assert any(MOVES_FIRST in line for line in detail.blocker.details) is moves_first
+
+
+@pytest.mark.parametrize(
+    ("reroutes", "extended_until", "guidance"),
+    [
+        pytest.param(
+            True,
+            EXTENDED_PAST_BUDGET_UNTIL,
+            MOVES_FIRST,
+            id="past-budget-another-agent",
+        ),
+        pytest.param(
+            False,
+            EXTENDED_PAST_BUDGET_UNTIL,
+            ESCALATES_AT_LIMIT,
+            id="past-budget-no-other-agent",
+        ),
+        pytest.param(
+            True,
+            EXTENDED_WITHIN_BUDGET_UNTIL,
+            WITHIN_LIMIT,
+            id="within-budget",
+        ),
+    ],
+)
+async def test_a_block_extended_during_a_running_wait_is_judged_against_the_waits_own_budget(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    *,
+    reroutes: bool,
+    extended_until: datetime,
+    guidance: str,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    if reroutes:
+        (project_dir / ".shikiru" / "config.toml").write_text(REROUTING_CONFIG)
+    clock = FakeClock(START)
+    task_id = _seed_running_quota_wait(connection, clock, project_dir)
+    QuotaStore(connection).block(_leader_agent(project_dir), extended_until, "quota")
+    clock.advance(RUNNING_WAIT_ELAPSED_SECONDS)
+    views = state_views(reader, project_dir, clock, StubServices())
+
+    detail = await views.task_detail(task_id)
+
+    assert detail is not None
+    assert detail.blocker is not None
+    assert any(guidance in line for line in detail.blocker.details)

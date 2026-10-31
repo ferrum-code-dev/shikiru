@@ -64,6 +64,10 @@ LEADER_AGENT = "claude"
 MAX_PARALLEL = 2
 QUOTA_BLOCK_UNTIL = START + timedelta(minutes=80)
 QUOTA_RESET = "01:20Z"
+QUOTA_REMAINING = "in 1h 20m"
+QUOTA_REMAINING_LATER = "in 1h 9m"
+TIMELINE_REFRESH_SECONDS = 1
+COUNTDOWN_SECONDS = 10 * 60
 ISO_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T")
 
 
@@ -499,6 +503,41 @@ async def test_a_task_without_a_blocker_shows_no_blocker_text_and_no_evidence_fo
             )
             assert blocker_widget.styles.display == "none"
             assert evidence.styles.display == "none"
+    finally:
+        reader.close()
+
+
+async def _elapse(clock: FakeClock, seconds: float) -> None:
+    await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+    clock.advance(seconds)
+    await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+
+
+@pytest.mark.usefixtures("colour_terminal")
+async def test_a_quota_wait_reset_duration_counts_down_with_the_clock_and_no_database_write(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task_id, _ = _seed_blocked_task(connection, clock, _Blocker.QUOTA)
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        task_id,
+        fixed=True,
+        initial_view=TASK_VIEW_RELATIONSHIPS,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, task_id)
+            await wait_until(
+                lambda: QUOTA_REMAINING in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+            )
+            await _elapse(clock, TIMELINE_REFRESH_SECONDS)
+            await _elapse(clock, COUNTDOWN_SECONDS)
+            await wait_until(
+                lambda: QUOTA_REMAINING_LATER in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+            )
     finally:
         reader.close()
 

@@ -8,6 +8,7 @@ from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING
 
 from shikiru.domain.ladder import move_up, pick_rung
+from shikiru.domain.steps import task_acting_role
 from shikiru.domain.tasks import Role, Status
 
 if TYPE_CHECKING:
@@ -130,6 +131,23 @@ def quota_wait_reroutes(
         if moved is not None:
             return True
     return False
+
+
+def running_quota_wait_moves(
+    task: Task,
+    settings: Settings,
+    block_until: datetime,
+    budget_ends: datetime,
+) -> bool:
+    """Return whether a running turn's quota wait moves `task` to another agent when it gives up.
+
+    The engine fixes the wait's deadline at `budget_ends` when the wait starts. It gives up only
+    if the block still outlasts that deadline, and then moves the acting role to a different agent
+    when one exists. Unlike `quota_wait_reroutes`, it does not skip blocked agents.
+    """
+    if block_until <= budget_ends:
+        return False
+    return move_up(task, task_acting_role(task), settings, different_agent=True) is not None
 
 
 def _group_queued_tasks(

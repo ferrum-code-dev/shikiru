@@ -529,10 +529,17 @@ class TaskDetailPanel(Vertical):
             return
         sample = await self._widget_context.views.live_work(task_id)
         observed = (task_id, sample)
-        if observed == self._observed_work:
+        if observed == self._observed_work and not self._shows_quota_wait():
             return
         self._observed_work = observed
         await self._load_view()
+
+    def _shows_quota_wait(self) -> bool:
+        return (
+            self._view is not None
+            and self._view.blocker is not None
+            and self._view.blocker.quota_wait is not None
+        )
 
     async def _refresh_activity(self) -> None:
         if (
