@@ -25,6 +25,7 @@ from shikiru.domain.briefing import (
     rework_progress,
     squashed,
 )
+from shikiru.domain.quota_waits import quota_wait_description
 from shikiru.domain.results import ResultOutcome
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.tasks import Hold, Role, Status
@@ -201,7 +202,7 @@ def briefing_verbs(view: TaskDetailView) -> tuple[BriefingAction, ...]:
     )
 
 
-def needed_from_you(view: TaskDetailView) -> str | None:
+def needed_from_you(view: TaskDetailView, now: datetime) -> str | None:
     """Return what the operator must act on: a decision question first, else a wait reason."""
     if _escalated(view):
         question = next(
@@ -214,7 +215,8 @@ def needed_from_you(view: TaskDetailView) -> str | None:
         )
         return _sentence(question) if question is not None else NO_QUESTION
     if view.blocker is not None and view.blocker.quota_wait is not None:
-        return _sentence(f"{WAITING_ON} {view.blocker.quota_wait}")
+        quota = view.blocker.quota_wait
+        return _sentence(f"{WAITING_ON} {quota_wait_description(quota.agent, quota.until, now)}")
     blocker_quota = view.blocker is not None and view.blocker.kind == WaitReason.QUOTA.value
     reason = view.wait_reason or (WaitReason.QUOTA.value if blocker_quota else None)
     if reason is None or reason == WaitReason.PAUSED.value:
@@ -275,7 +277,7 @@ class Briefing:
             *_group(PROGRESS_TITLE, self._progress_rows(console, value_width), width),
             *_labelled(self._summary_rows(console, width - LABEL_WIDTH - LABEL_GAP), width),
             *_group(_result_title(view), _result_rows(view), width),
-            *_group(PROBLEMS_TITLE, _problem_rows(view), width),
+            *_group(PROBLEMS_TITLE, _problem_rows(view, self.now), width),
             *_group(COST_LABEL, _cost_rows(view), width),
         ]
 
@@ -309,7 +311,7 @@ class Briefing:
 
     def _compact_blocks(self, console: Console, width: int) -> list[RenderableType]:
         view = self.view
-        needed = _compact_needed(view, width)
+        needed = _compact_needed(view, self.now, width)
         body = [
             *self._compact_progress(console, width),
             *_compact_summary(view, width),
@@ -438,12 +440,12 @@ def branch_row(results: TaskResults) -> list[Row]:
     return [(grey(label), (Text(target),))]
 
 
-def _problem_rows(view: TaskDetailView) -> list[Row]:
+def _problem_rows(view: TaskDetailView, now: datetime) -> list[Row]:
     rows: list[Row | None] = []
     counts = view.verdict_counts
     if counts is not None and counts.has_problems:
         rows.append(_row(VERDICT_LABEL, _verdict_groups(counts)))
-    needed = needed_from_you(view)
+    needed = needed_from_you(view, now)
     if needed is not None:
         label = BLOCKER_LABEL if _escalated(view) else PENDING_LABEL
         rows.append((Text(label, style=_BOLD_AMBER), (Text(needed),)))
@@ -468,8 +470,8 @@ def _cost_rows(view: TaskDetailView) -> list[Row]:
     ]
 
 
-def _compact_needed(view: TaskDetailView, width: int) -> list[RenderableType]:
-    text = needed_from_you(view)
+def _compact_needed(view: TaskDetailView, now: datetime, width: int) -> list[RenderableType]:
+    text = needed_from_you(view, now)
     prefix = NEEDS_YOU_PREFIX if _escalated(view) else PENDING_PREFIX
     return [] if text is None else [_hanging(prefix, text, width)]
 

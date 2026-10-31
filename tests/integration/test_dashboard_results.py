@@ -248,7 +248,7 @@ async def test_results_show_what_exists_so_far_and_what_a_done_task_merged(
     detail = await views.task_detail(finished)
     assert detail is not None
     results_text = plain_text(ResultsBody(detail.results))
-    decisions_text = plain_text(DecisionsBody(detail))
+    decisions_text = plain_text(DecisionsBody(detail, clock.now()))
     assert "2 files +12 \N{MINUS SIGN}3" in results_text
     assert "fedcba9 merged work" in results_text
     assert "added t-99" in results_text
@@ -259,7 +259,8 @@ async def test_results_show_what_exists_so_far_and_what_a_done_task_merged(
     assert colours["fedcba9"] == STEEL_BLUE
     assert colours["added t-99"] == SAGE
     deciders = ("Leader", "You", "Engine")
-    assert _foregrounds(DecisionsBody(detail), deciders) == dict.fromkeys(deciders, STEEL_BLUE)
+    decisions = DecisionsBody(detail, clock.now())
+    assert _foregrounds(decisions, deciders) == dict.fromkeys(deciders, STEEL_BLUE)
     assert decisions_text.index("changes requested") < decisions_text.index("accepted")
     assert '00:00 You answered "Use mocked QA"' in decisions_text
     assert "so far" in plain_text(ResultsBody(await _results(views, running)))

@@ -14,6 +14,7 @@ from shikiru.clock import SystemClock
 from shikiru.dashboard.detail import (
     TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BRIEFING,
+    TASK_DETAIL_CONTEXT_INFO,
     TASK_DETAIL_HINT,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_RELATED_LIST,
@@ -66,8 +67,11 @@ QUOTA_BLOCK_UNTIL = START + timedelta(minutes=80)
 QUOTA_RESET = "01:20Z"
 QUOTA_REMAINING = "in 1h 20m"
 QUOTA_REMAINING_LATER = "in 1h 9m"
+QUOTA_REMAINING_79_MINUTES = "in 1h 19m"
+QUOTA_REMAINING_78_MINUTES = "in 1h 18m"
 TIMELINE_REFRESH_SECONDS = 1
 COUNTDOWN_SECONDS = 10 * 60
+ONE_MINUTE_SECONDS = 60
 ISO_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T")
 
 
@@ -404,7 +408,11 @@ def _blocker_text(panel: TaskDetailPanel) -> str:
     ("blocker", "glyph", "details"),
     [
         (_Blocker.SLOT, GLYPH_SLOT, ("Starts when a slot frees.",)),
-        (_Blocker.QUOTA, GLYPH_QUOTA, (f"Blocked agent · {LEADER_AGENT}", "Clears at 01:20Z")),
+        (
+            _Blocker.QUOTA,
+            GLYPH_QUOTA,
+            (f"Blocked agent · {LEADER_AGENT}", f"Clears at {QUOTA_RESET} · {QUOTA_REMAINING}"),
+        ),
         (_Blocker.DEPENDENCY, GLYPH_BLOCKED, ()),
     ],
 )
@@ -538,6 +546,73 @@ async def test_a_quota_wait_reset_duration_counts_down_with_the_clock_and_no_dat
             await wait_until(
                 lambda: QUOTA_REMAINING_LATER in _blocker_text(panel), timeout=UI_WAIT_SECONDS
             )
+    finally:
+        reader.close()
+
+
+@pytest.mark.usefixtures("colour_terminal")
+async def test_a_quota_countdown_tick_repaints_only_the_blocker_when_its_minute_changes(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task_id, _ = _seed_blocked_task(connection, clock, _Blocker.QUOTA)
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        task_id,
+        fixed=True,
+        initial_view=TASK_VIEW_RELATIONSHIPS,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, task_id)
+            await wait_until(
+                lambda: QUOTA_REMAINING in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+            )
+            settings = panel.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static)
+            blocker = panel.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
+            settings_shown = settings.content
+            await _elapse(clock, ONE_MINUTE_SECONDS)
+            await wait_until(
+                lambda: QUOTA_REMAINING_79_MINUTES in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+            )
+            assert settings.content is settings_shown
+            assert QUOTA_RESET in _blocker_text(panel)
+            await _elapse(clock, TIMELINE_REFRESH_SECONDS)
+            await wait_until(
+                lambda: QUOTA_REMAINING_78_MINUTES in _blocker_text(panel), timeout=UI_WAIT_SECONDS
+            )
+            blocker_shown = blocker.content
+            await _elapse(clock, TIMELINE_REFRESH_SECONDS)
+            assert blocker.content is blocker_shown
+            assert settings.content is settings_shown
+    finally:
+        reader.close()
+
+
+@pytest.mark.usefixtures("colour_terminal")
+async def test_a_quota_block_that_lifts_reloads_the_task_and_drops_the_quota_headline(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task_id, cause = _seed_blocked_task(connection, clock, _Blocker.QUOTA)
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        task_id,
+        fixed=True,
+        initial_view=TASK_VIEW_RELATIONSHIPS,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, task_id)
+            await wait_until(lambda: cause in _blocker_text(panel), timeout=UI_WAIT_SECONDS)
+            await _elapse(clock, (QUOTA_BLOCK_UNTIL - START).total_seconds())
+            await wait_until(lambda: cause not in _blocker_text(panel), timeout=UI_WAIT_SECONDS)
+            assert QUOTA_RESET not in _blocker_text(panel)
+            assert "Clears at" not in _blocker_text(panel)
     finally:
         reader.close()
 

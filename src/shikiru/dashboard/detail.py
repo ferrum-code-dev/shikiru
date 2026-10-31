@@ -46,6 +46,7 @@ from shikiru.dashboard.section_rows import (
     blocker_summary,
     relation_rows,
 )
+from shikiru.dashboard.tick import tick_now
 from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.dashboard.timeline_section import (
     TimelineHost,
@@ -55,6 +56,7 @@ from shikiru.dashboard.timeline_section import (
 )
 from shikiru.dashboard.usage_body import UsageBody
 from shikiru.domain.briefing import BriefingAction
+from shikiru.domain.quota_waits import quota_remaining
 from shikiru.domain.tasks import Role, Status, StatusReason
 from shikiru.errors import ShikiruError
 from shikiru.ui.gated_static import GatedStatic
@@ -73,6 +75,8 @@ from shikiru.ui.screen import widget_is_attached
 from shikiru.ui.section import BOLD_PRIMARY, grey, key_label
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from textual import events
     from textual.app import ComposeResult
     from textual.binding import BindingType
@@ -303,6 +307,7 @@ class TaskDetailPanel(Vertical):
         self._rendered_task_id: str | None = None
         self._view: TaskDetailView | None = None
         self._observed_work: tuple[str, TaskWorkSample | None] | None = None
+        self._shown_quota_remaining: str | None = None
         self._on_initial_content = on_initial_content
         self._initial_content_reported = False
 
@@ -520,6 +525,7 @@ class TaskDetailPanel(Vertical):
                 continue
             await self._refresh_activity()
             await self._refresh_live_work()
+            await self._refresh_quota_countdown()
             for timeline in self._timelines.values():
                 await timeline.refresh_when_due()
 
@@ -528,18 +534,20 @@ class TaskDetailPanel(Vertical):
         if task_id is None or not self._screen_is_active():
             return
         sample = await self._widget_context.views.live_work(task_id)
-        observed = (task_id, sample)
-        if observed == self._observed_work and not self._shows_quota_wait():
+        if (task_id, sample) == self._observed_work:
             return
-        self._observed_work = observed
         await self._load_view()
 
-    def _shows_quota_wait(self) -> bool:
-        return (
-            self._view is not None
-            and self._view.blocker is not None
-            and self._view.blocker.quota_wait is not None
-        )
+    async def _refresh_quota_countdown(self) -> None:
+        view = self._view
+        if view is None or view.blocker is None or view.blocker.quota_wait is None:
+            return
+        quota = view.blocker.quota_wait
+        now = tick_now(self._widget_context.clock)
+        if now >= quota.refresh_at:
+            await self._load_view()
+        elif quota_remaining(quota.until, now) != self._shown_quota_remaining:
+            self._render_blocker(view, now)
 
     async def _refresh_activity(self) -> None:
         if (
@@ -770,6 +778,7 @@ class TaskDetailPanel(Vertical):
                 )
                 return
             try:
+                sample = await self._widget_context.views.live_work(task_id)
                 view = await self._widget_context.views.task_detail(
                     task_id,
                     relationship_offset=self._relationship_offset,
@@ -788,6 +797,7 @@ class TaskDetailPanel(Vertical):
                 )
                 self._set_feedback("Task state could not be read.")
                 return
+            self._observed_work = (task_id, sample)
             self._render_view(view)
 
     def _usage_body(self, view: TaskDetailView) -> UsageBody:
@@ -808,6 +818,7 @@ class TaskDetailPanel(Vertical):
 
     def _render_view(self, view: TaskDetailView) -> None:
         self._view = view
+        now = tick_now(self._widget_context.clock)
         body = self.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         scroll_y = body.scroll_target_y
         focus_generation = self._body_focus_generation
@@ -816,19 +827,16 @@ class TaskDetailPanel(Vertical):
         self._rendered_task_id = view.task_id
         self._render_ownership(view)
         self.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static).update(SettingsBody(view))
-        summary = blocker_summary(view)
-        blocker = self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
-        blocker.update(summary or "")
+        self._render_blocker(view, now)
         self._render_blocker_evidence(blocker_evidence(view))
         self._render_relationships(view)
         self._render_activity(view)
         self.query_one(f"#{TASK_DETAIL_REQUEST}", Static).update(DescriptionBody(view))
         self.query_one(f"#{TASK_DETAIL_RESULTS}", Static).update(ResultsBody(view.results))
-        self.query_one(f"#{TASK_DETAIL_DECISIONS}", Static).update(DecisionsBody(view))
+        self.query_one(f"#{TASK_DETAIL_DECISIONS}", Static).update(DecisionsBody(view, now))
         self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(WorkspaceBody(view, Path.home()))
         if self._folds[TASK_VIEW_USAGE].is_open:
             self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(self._usage_body(view))
-        blocker.display = summary is not None
         self._paint_headlines(view)
         self._paint_hint()
         if self._on_initial_content is not None and not self._initial_content_reported:
@@ -842,6 +850,14 @@ class TaskDetailPanel(Vertical):
                 focus_generation,
                 focused,
             )
+
+    def _render_blocker(self, view: TaskDetailView, now: datetime) -> None:
+        summary = blocker_summary(view, now)
+        blocker = self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
+        blocker.update(summary or "")
+        blocker.display = summary is not None
+        quota = None if view.blocker is None else view.blocker.quota_wait
+        self._shown_quota_remaining = None if quota is None else quota_remaining(quota.until, now)
 
     def _render_blocker_evidence(self, evidence: Text | None) -> None:
         fold = self._folds[TASK_VIEW_BLOCKER_EVIDENCE]

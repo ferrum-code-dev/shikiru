@@ -395,7 +395,7 @@ async def test_banner_counts_each_task_once_for_every_blocked_agent_it_needs(
         UNRELATED_AGENT: _block_description(UNRELATED_AGENT, UNRELATED_RESET),
     }
     assert detail is not None
-    assert needed_from_you(detail) == (
+    assert needed_from_you(detail, clock.now()) == (
         f"Waiting on {_block_description(implementer, IMPLEMENTER_RESET)}."
     )
 
@@ -415,7 +415,9 @@ async def test_task_details_name_the_blocked_agent_and_reset_time(
     detail = await views.task_detail(task_id)
 
     assert detail is not None
-    assert needed_from_you(detail) == f"Waiting on {_block_description(agent, LEADER_RESET)}."
+    assert needed_from_you(detail, clock.now()) == (
+        f"Waiting on {_block_description(agent, LEADER_RESET)}."
+    )
 
 
 @pytest.mark.parametrize(

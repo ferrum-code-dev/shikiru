@@ -35,6 +35,7 @@ from shikiru.dashboard.contract import (
     QueueRow,
     QuotaBlockView,
     QuotaGaugeView,
+    QuotaWaitView,
     RecordedUsageView,
     RepoStatus,
     ResourceView,
@@ -73,7 +74,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import move_up, pick_rung
 from shikiru.domain.levels import free_space_level, usage_level
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
-from shikiru.domain.quota_waits import quota_banner, quota_reset_clock, quota_wait_description
+from shikiru.domain.quota_waits import next_quota_change, quota_banner, quota_wait_description
 from shikiru.domain.reports import (
     ConsultAnswer,
     ImplementationReport,
@@ -256,8 +257,6 @@ _RESOURCES_HEADLINE = "Waiting on resources"
 _RESOURCES_DETAIL = "Starts when the scheduler's resource gate admits it."
 _RESOURCE_SAMPLE_DISCLAIMER = "The dashboard sample is separate from the scheduler's gate decision."
 _QUOTA_HEADLINE = "Waiting on quota"
-_QUOTA_AGENT_LABEL = "Blocked agent"
-_QUOTA_CLEARS_LABEL = "Clears at"
 _QUOTA_REROUTED = "Moves to another agent first, as the wait exceeds max_quota_wait."
 _QUOTA_WAITS_NO_OTHER_AGENT = "Waits for reset; no other agent is free to take it."
 _QUOTA_ESCALATES_AT_LIMIT = "Escalates at max_quota_wait; no other agent is free to take it."
@@ -1315,7 +1314,7 @@ class StateDashboardViews:
                 task, quota_block, now, self._quota_evidence(task, now)
             )
         elif wait_reason is None and running_wait is not None:
-            parts = self._running_quota_parts(task, running_wait, now)
+            parts = self._running_quota_parts(task, running_wait)
         else:
             parts = self._reason_parts(task, wait_reason, relationships, now)
         recorded = (f"{_RECORDED_REASON}{GROUP_SEPARATOR}{wait_reason}",) if wait_reason else ()
@@ -1326,11 +1325,20 @@ class StateDashboardViews:
             details=(*parts.details, *_hold_details(task, ownership)),
             evidence=(*recorded, *parts.evidence),
             related_tasks=parts.related,
-            quota_wait=(
-                None
-                if quota_block is None
-                else quota_wait_description(quota_block.agent, quota_block.until, now)
-            ),
+            quota_wait=None if quota_block is None else self._quota_wait_view(quota_block, now),
+        )
+
+    def _quota_wait_view(self, quota_block: AgentBlock, now: datetime) -> QuotaWaitView:
+        max_wait = timedelta(seconds=self._settings.current().orchestration.timeouts.max_quota_wait)
+        changes = (
+            quota_block.until,
+            quota_block.until - max_wait,
+            *(block.until for block in self._active_blocks(now)),
+        )
+        return QuotaWaitView(
+            agent=quota_block.agent,
+            until=quota_block.until,
+            refresh_at=next_quota_change(now, changes),
         )
 
     def _reason_parts(
@@ -1393,21 +1401,17 @@ class StateDashboardViews:
         blocked = {block.agent: block.until for block in self._active_blocks(now)}
         return _quota_parts(
             quota_block,
-            now,
             evidence,
             budget_ends=wait_limit,
             moves=quota_wait_reroutes(task, settings, blocked, wait_limit),
             exhausted_text=_QUOTA_WAITS_NO_OTHER_AGENT,
         )
 
-    def _running_quota_parts(
-        self, task: Task, running_wait: _RunningQuotaWait, now: datetime
-    ) -> _BlockerParts:
+    def _running_quota_parts(self, task: Task, running_wait: _RunningQuotaWait) -> _BlockerParts:
         settings = self._settings.current()
         block = running_wait.block
         return _quota_parts(
             block,
-            now,
             running_wait.evidence,
             budget_ends=running_wait.budget_ends,
             moves=running_quota_wait_moves(task, settings, block.until, running_wait.budget_ends),
@@ -1935,22 +1939,15 @@ def _hold_headline(task: Task) -> str:
 
 def _quota_parts(
     quota_block: AgentBlock,
-    now: datetime,
     evidence: tuple[str, ...],
     *,
     budget_ends: datetime,
     moves: bool,
     exhausted_text: str,
 ) -> _BlockerParts:
-    clears = quota_reset_clock(quota_block.until, now)
-    remaining = format_duration((quota_block.until - now).total_seconds())
     return _BlockerParts(
-        headline=GROUP_SEPARATOR.join(
-            (_QUOTA_HEADLINE, quota_wait_description(quota_block.agent, quota_block.until, now))
-        ),
+        headline=_QUOTA_HEADLINE,
         details=(
-            f"{_QUOTA_AGENT_LABEL}{GROUP_SEPARATOR}{quota_block.agent}",
-            f"{_QUOTA_CLEARS_LABEL} {clears}{GROUP_SEPARATOR}in {remaining}",
             _quota_reroute_text(
                 moves=moves,
                 exceeds=quota_block.until > budget_ends,

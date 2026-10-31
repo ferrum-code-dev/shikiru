@@ -609,6 +609,19 @@ class TaskRelationshipsView:
 
 
 @dataclass(frozen=True)
+class QuotaWaitView:
+    """The quota block a task waits behind, with the instant its wording next changes unwritten.
+
+    Its reset text is worded for the tick it is shown at, so the blocker and briefing count down
+    with the clock; `refresh_at` is when the detail must be read again.
+    """
+
+    agent: str
+    until: datetime
+    refresh_at: datetime
+
+
+@dataclass(frozen=True)
 class TaskBlockerView:
     """A blocker's headline with its glyph, visible detail lines, collapsed evidence and tasks."""
 
@@ -618,7 +631,7 @@ class TaskBlockerView:
     details: tuple[str, ...]
     evidence: tuple[str, ...] = ()
     related_tasks: tuple[TaskReferenceView, ...] = ()
-    quota_wait: str | None = None
+    quota_wait: QuotaWaitView | None = None
 
 
 @dataclass(frozen=True)
