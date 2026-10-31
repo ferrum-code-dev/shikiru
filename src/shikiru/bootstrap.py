@@ -1062,12 +1062,12 @@ def _build_push_service(
     return PushService(
         targets=targets,
         git=git,
-        guard=TickGuard(
+        guard_for=lambda base: TickGuard(
             reporter=faults,
             clock=clock,
             settings=settings.orchestration.faults,
             logger=logger,
-            scope=PUSH_FAULT_SCOPE,
+            scope=f"{PUSH_FAULT_SCOPE} {base}",
         ),
         clock=clock,
         project_root=project_root,

@@ -131,12 +131,12 @@ def _service(
     return PushService(
         targets=PushTargets(connection),
         git=Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT),
-        guard=TickGuard(
+        guard_for=lambda base: TickGuard(
             reporter=reporter,
             clock=clock,
             settings=settings,
             logger=_LOGGER,
-            scope=PUSH_FAULT_SCOPE,
+            scope=f"{PUSH_FAULT_SCOPE} {base}",
         ),
         clock=clock,
         project_root=project_root,
@@ -310,23 +310,37 @@ async def test_an_integration_applied_before_a_crash_is_still_published_when_rec
     assert await rig.remote_sha("main") == await rig.local_sha("main")
 
 
-async def test_an_integration_registered_during_a_push_stays_pending(
-    connection: Connection, tmp_path: Path
+async def test_an_integration_registered_during_a_push_stays_pending_across_a_restart(
+    connection: Connection, tmp_path: Path, tmp_path_factory: pytest.TempPathFactory
 ) -> None:
     rig = await _rig(connection, tmp_path, interval=_FOUR_HOURS)
-    targets = PushTargets(connection)
-    now = rig.clock.now()
-    targets.register("main", now=now, interval=_FOUR_HOURS)
-    sent = targets.pending()[0]
+    hang_dir = tmp_path_factory.mktemp("hang")
+    calls, release = hang_dir / "calls", hang_dir / "go"
+    hook = rig.remote_dir / "hooks" / "pre-receive"
+    hook.write_text(_HANGING_PRE_RECEIVE.format(calls=calls, release=release))
+    hook.chmod(EXECUTABLE_MODE)
+    await rig.integrate("sent")
+    sent = await rig.local_sha("main")
 
-    targets.register("main", now=now + timedelta(hours=1), interval=_FOUR_HOURS)
-    acknowledged_at = now + timedelta(hours=4)
-    targets.acknowledge(
-        "main", registered=sent.registered, now=acknowledged_at, interval=_FOUR_HOURS
-    )
+    rig.clock.advance(_FOUR_HOURS)
+    rig.service.poll(_LOGGER)
+    await wait_until(calls.exists, _WAIT_SECONDS)
+    await rig.integrate("during")
+    release.touch()
+    await rig.service.finish_outstanding()
 
-    (remaining,) = targets.pending()
-    assert remaining.due_at == acknowledged_at + timedelta(hours=4)
+    assert await rig.remote_sha("main") == sent
+    assert PushTargets(connection).pending()
+    rig.restart()
+    rig.clock.advance(_HOUR)
+    await rig.push_due()
+    assert await rig.remote_sha("main") == sent
+
+    rig.clock.advance(_FOUR_HOURS)
+    await rig.push_due()
+    assert await rig.remote_sha("main") == await rig.local_sha("main")
+    assert await rig.remote_branches() == ["refs/heads/main"]
+    assert not PushTargets(connection).pending()
 
 
 async def test_a_missing_remote_keeps_the_work_pending_and_recovers_when_it_appears(
@@ -347,6 +361,27 @@ async def test_a_missing_remote_keeps_the_work_pending_and_recovers_when_it_appe
     assert await rig.remote_sha("main") == await rig.local_sha("main")
     assert not PushTargets(connection).pending()
     assert EventKind.ENGINE_RECOVERED in rig.kinds()
+
+
+async def test_a_rejected_base_does_not_hold_back_another_due_base(
+    connection: Connection, tmp_path: Path
+) -> None:
+    rig = await _rig(connection, tmp_path, interval=0, branches=("release",))
+    clone = tmp_path / "clone"
+    await run_git(_RUNNER, None, "clone", "--branch", "main", str(rig.remote_dir), str(clone))
+    (clone / "elsewhere.txt").write_text("remote work\n")
+    await commit_all(_RUNNER, clone, "remote work")
+    await run_git(_RUNNER, clone, "push", _REMOTE, "main")
+    diverged = await rig.remote_sha("main")
+    await rig.integrate("local")
+    await rig.integrate("hotfix", base="release")
+
+    await rig.push_due()
+
+    assert await rig.remote_sha("release") == await rig.local_sha("release")
+    assert await rig.remote_sha("main") == diverged
+    assert [target.base for target in PushTargets(connection).pending()] == ["main"]
+    assert EventKind.ENGINE_FAULT in rig.kinds()
 
 
 async def test_a_diverged_remote_is_never_overwritten(

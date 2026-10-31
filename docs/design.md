@@ -126,8 +126,8 @@ completes the task, so a crash cannot lose it. The first pending integration fix
 pushes right after each integration. Pushes run off the engine loop with a timeout, send only
 `refs/heads/<base>` without force, tags or task branches, and are acknowledged up to the registered
 count, so an integration arriving during a push stays pending. Failures use the engine-fault
-backoff and recovery events and keep the work pending; shutdown awaits or cancels an outstanding
-push. Pull-request mode does not create the service. Changed values load on engine restart.
+backoff and recovery events per base, so a rejected base keeps its work pending without holding
+back the others; shutdown awaits or cancels an outstanding push. Pull-request mode does not create the service. Changed values load on engine restart.
 
 Successful tasks release their active sessions/worktrees. Cancellation retains the branch and
 preserves a worktree when it contains unintegrated work. Terminal detach leaves engine and agents

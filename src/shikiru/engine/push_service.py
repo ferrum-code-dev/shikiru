@@ -9,10 +9,12 @@ from typing import TYPE_CHECKING
 from shikiru.domain.pushes import is_due
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from logging import Logger
     from pathlib import Path
 
     from shikiru.clock import Clock
+    from shikiru.domain.pushes import PushTarget
     from shikiru.engine.tick_guard import TickGuard
     from shikiru.store.pushes import PushTargets
     from shikiru.workspace.git import Git
@@ -23,10 +25,10 @@ PUSH_FAULT_SCOPE = "base push"
 class PushService:
     """Registers integrated bases and pushes each when its deadline comes, on its own task.
 
-    The push runs behind a `TickGuard`, so a missing remote, a rejected push or a timeout is
-    recorded as a fault, keeps the work pending and is retried on the fault backoff, while the
-    engine loop and task dispatch carry on. A push acknowledges only the integrations that were
-    registered when it started.
+    Each base pushes behind its own `TickGuard`, so a missing remote, a rejected push or a timeout
+    is recorded as a fault, keeps that base pending and is retried on the fault backoff without
+    holding back the other bases, the engine loop or task dispatch. A push acknowledges only the
+    integrations that were registered when it started.
     """
 
     def __init__(
@@ -34,7 +36,7 @@ class PushService:
         *,
         targets: PushTargets,
         git: Git,
-        guard: TickGuard,
+        guard_for: Callable[[str], TickGuard],
         clock: Clock,
         project_root: Path,
         remote: str,
@@ -43,7 +45,8 @@ class PushService:
         """Push from `project_root` to `remote`, an interval of `interval_seconds` apart."""
         self._targets = targets
         self._git = git
-        self._guard = guard
+        self._guard_for = guard_for
+        self._guards: dict[str, TickGuard] = {}
         self._clock = clock
         self._project_root = project_root
         self._remote = remote
@@ -88,17 +91,21 @@ class PushService:
         )
 
     async def _push_due(self) -> None:
-        await self._guard.attempt(self._push_all)
-
-    async def _push_all(self) -> bool:
         for target in self._targets.pending():
-            if not is_due(target, now=self._clock.now(), interval=self._interval):
-                continue
-            await self._git.push_base(self._project_root, self._remote, target.base)
-            self._targets.acknowledge(
-                target.base,
-                registered=target.registered,
-                now=self._clock.now(),
-                interval=self._interval,
-            )
+            if is_due(target, now=self._clock.now(), interval=self._interval):
+                await self._guard(target.base).attempt(lambda target=target: self._push(target))
+
+    def _guard(self, base: str) -> TickGuard:
+        if base not in self._guards:
+            self._guards[base] = self._guard_for(base)
+        return self._guards[base]
+
+    async def _push(self, target: PushTarget) -> bool:
+        await self._git.push_base(self._project_root, self._remote, target.base)
+        self._targets.acknowledge(
+            target.base,
+            registered=target.registered,
+            now=self._clock.now(),
+            interval=self._interval,
+        )
         return True
