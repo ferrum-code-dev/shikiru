@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections import Counter
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from functools import partial
 from operator import attrgetter
 from typing import TYPE_CHECKING, Protocol
@@ -73,7 +73,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import move_up, pick_rung
 from shikiru.domain.levels import free_space_level, usage_level
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
-from shikiru.domain.quota_waits import quota_banner, quota_wait_description
+from shikiru.domain.quota_waits import quota_banner, quota_reset_clock, quota_wait_description
 from shikiru.domain.reports import (
     ConsultAnswer,
     ImplementationReport,
@@ -89,6 +89,7 @@ from shikiru.domain.scheduling import (
     occupied_slot_ids,
     quota_blocked_agents,
     quota_blocking_agent,
+    quota_wait_reroutes,
     task_agents,
 )
 from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
@@ -105,7 +106,18 @@ from shikiru.operator.queries import (
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import SECONDS_PER_DAY, format_age, format_duration
 from shikiru.ui.age import format_short_age as _age
-from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
+from shikiru.ui.glyphs import (
+    GLYPH_BLOCKED,
+    GLYPH_OPERATOR,
+    GLYPH_PAUSED,
+    GLYPH_PENDING,
+    GLYPH_QUOTA,
+    GLYPH_SLOT,
+    GLYPH_STALLED,
+    SPINNER_FRAMES,
+    STAGE_PR,
+)
+from shikiru.ui.section import GROUP_SEPARATOR
 from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
 from shikiru.view_log import turn_iteration
 
@@ -215,6 +227,42 @@ _MOTION_FILTERS = frozenset(
         TaskBrowserFilter.ESCALATED,
     }
 )
+_RECORDED_REASON = "Recorded scheduler reason"
+_UNRECORDED_REASON = "Waiting on"
+_BLOCKER_GLYPHS = {
+    WaitReason.DEPENDENCY.value: GLYPH_BLOCKED,
+    WaitReason.SLOT.value: GLYPH_SLOT,
+    WaitReason.RESOURCES.value: GLYPH_STALLED,
+    WaitReason.QUOTA.value: GLYPH_QUOTA,
+    WaitReason.PR_OPEN.value: STAGE_PR,
+    WaitReason.PAUSED.value: GLYPH_PAUSED,
+    Hold.INTERVENTION.value: GLYPH_OPERATOR,
+}
+_PAUSED_HEADLINE = "Paused"
+_INTERVENTION_HEADLINE = "Held by operator"
+_PAUSE_HOLD_DETAIL = "Pause hold · Resume clears this hold when submitted."
+_OWNERSHIP_HOLD_LABEL = "Ownership hold · taken-over roles"
+_HAND_BACK_DETAIL = "Hand back each taken-over role to return it to automation."
+_DEPENDENCY_HEADLINE = "Waiting on dependency"
+_DEPENDENCY_UNAVAILABLE = "Dependency relationship evidence is unavailable."
+_NO_UNFINISHED_DEPENDENCY = "No unfinished dependency is present in the current stored state."
+_DEPENDENCIES_BEYOND_PAGE = (
+    "Additional blocking dependencies exist beyond the current bounded page."
+)
+_SLOT_HEADLINE = "Waiting for a slot"
+_SLOT_DETAIL = "Starts when a slot frees."
+_RESOURCES_HEADLINE = "Waiting on resources"
+_RESOURCES_DETAIL = "Starts when the scheduler's resource gate admits it."
+_RESOURCE_SAMPLE_DISCLAIMER = "The dashboard sample is separate from the scheduler's gate decision."
+_QUOTA_HEADLINE = "Waiting on quota"
+_QUOTA_AGENT_LABEL = "Blocked agent"
+_QUOTA_CLEARS_LABEL = "Clears at"
+_QUOTA_REROUTED = "Moves to another agent first, as the wait exceeds max_quota_wait."
+_QUOTA_WAITS_NO_OTHER_AGENT = "Waits for reset; no other agent is free to take it."
+_QUOTA_WAITS_WITHIN_LIMIT = "Waits for reset; the block lifts within max_quota_wait."
+_PR_HEADLINE = "Waiting on pull request"
+_PR_NO_EVENT = "No recorded pull-request event is available."
+_PR_CI_NOTE = "CI state is shown only when an engine observation recorded it."
 _RESET_AT_FIELD = "resets_at"
 _QUOTA_TURN_LIFECYCLE = (
     EventKind.STEP_STARTED,
@@ -237,7 +285,15 @@ class _StructuredEscalationCache:
 @dataclass(frozen=True)
 class _RunningQuotaWait:
     block: AgentBlock
-    lines: tuple[str, ...]
+    evidence: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _BlockerParts:
+    headline: str
+    details: tuple[str, ...] = ()
+    evidence: tuple[str, ...] = ()
+    related: tuple[TaskReferenceView, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1251,32 +1307,20 @@ class StateDashboardViews:
         reason = wait_reason or (
             WaitReason.QUOTA.value if running_wait is not None else hold_reason
         )
-        lines = _hold_evidence(task, ownership)
-        if wait_reason is not None:
-            lines.insert(0, f"Recorded scheduler reason · {wait_reason}")
-        related: tuple[TaskReferenceView, ...] = ()
-        match wait_reason:
-            case WaitReason.DEPENDENCY.value:
-                extra_lines, related = self._dependency_evidence(relationships)
-            case WaitReason.SLOT.value:
-                extra_lines, related = self._slot_evidence()
-            case WaitReason.RESOURCES.value:
-                extra_lines = self._resource_evidence(now)
-            case WaitReason.QUOTA.value:
-                extra_lines = self._quota_evidence(task, now)
-            case WaitReason.PR_OPEN.value:
-                extra_lines = self._pull_request_evidence(task.id)
-            case WaitReason.PAUSED.value:
-                extra_lines = ["Resume clears the scheduler pause wait when submitted."]
-            case None:
-                extra_lines = list(running_wait.lines) if running_wait is not None else []
-            case _:
-                extra_lines = ["No additional blocker evidence is recorded."]
-        lines.extend(extra_lines)
+        if wait_reason == WaitReason.QUOTA.value:
+            parts = self._quota_parts(task, quota_block, now, self._quota_evidence(task, now))
+        elif wait_reason is None and running_wait is not None:
+            parts = self._quota_parts(task, quota_block, now, running_wait.evidence)
+        else:
+            parts = self._reason_parts(task, wait_reason, relationships, now)
+        recorded = (f"{_RECORDED_REASON}{GROUP_SEPARATOR}{wait_reason}",) if wait_reason else ()
         return TaskBlockerView(
             kind=reason,
-            lines=tuple(lines),
-            related_tasks=related,
+            glyph=_BLOCKER_GLYPHS.get(reason, GLYPH_PENDING),
+            headline=parts.headline,
+            details=(*parts.details, *_hold_details(task, ownership)),
+            evidence=(*recorded, *parts.evidence),
+            related_tasks=parts.related,
             quota_wait=(
                 None
                 if quota_block is None
@@ -1284,38 +1328,82 @@ class StateDashboardViews:
             ),
         )
 
-    def _dependency_evidence(
+    def _reason_parts(
         self,
+        task: Task,
+        wait_reason: str | None,
         relationships: TaskRelationshipsView | None,
-    ) -> tuple[list[str], tuple[TaskReferenceView, ...]]:
+        now: datetime,
+    ) -> _BlockerParts:
+        match wait_reason:
+            case WaitReason.DEPENDENCY.value:
+                return self._dependency_parts(relationships)
+            case WaitReason.SLOT.value:
+                return self._slot_parts()
+            case WaitReason.RESOURCES.value:
+                return self._resource_parts(now)
+            case WaitReason.PR_OPEN.value:
+                return self._pull_request_parts(task.id)
+            case WaitReason.PAUSED.value | None:
+                return _BlockerParts(_hold_headline(task))
+            case _:
+                return _BlockerParts(f"{_UNRECORDED_REASON}{GROUP_SEPARATOR}{wait_reason}")
+
+    def _dependency_parts(self, relationships: TaskRelationshipsView | None) -> _BlockerParts:
         if relationships is None:
-            return ["Dependency relationship evidence is unavailable."], ()
+            return _BlockerParts(_DEPENDENCY_HEADLINE, (_DEPENDENCY_UNAVAILABLE,))
         related = relationships.blocking_dependencies
-        if related:
-            lines = [
-                "Blocking dependencies · "
-                + "; ".join(f"{item.task_id} {item.title} ({item.status})" for item in related)
-            ]
-        elif relationships.blocking_dependency_count == 0:
-            lines = ["No unfinished dependency is present in the current stored state."]
-        elif relationships.page_offset >= relationships.blocking_dependency_count:
-            lines = [
+        count = relationships.blocking_dependency_count
+        if not related:
+            return _BlockerParts(_DEPENDENCY_HEADLINE, (_dependency_absence(relationships),))
+        headline = GROUP_SEPARATOR.join(
+            (_DEPENDENCY_HEADLINE, f"{related[0].task_id} {related[0].status}")
+        )
+        if count > 1:
+            headline = GROUP_SEPARATOR.join((headline, f"{count} unfinished"))
+        shown_from = relationships.page_offset + 1
+        shown_to = relationships.page_offset + len(related)
+        details = (
+            (f"Showing {shown_from} to {shown_to} of {count} unfinished dependencies.",)
+            if count > shown_to
+            else ()
+        )
+        evidence = (
+            "Blocking dependencies · "
+            + "; ".join(f"{item.task_id} {item.title} ({item.status})" for item in related),
+        )
+        return _BlockerParts(headline, details, evidence, related)
+
+    def _quota_parts(
+        self,
+        task: Task,
+        quota_block: AgentBlock | None,
+        now: datetime,
+        evidence: tuple[str, ...],
+    ) -> _BlockerParts:
+        if quota_block is None:
+            return _BlockerParts(_QUOTA_HEADLINE, evidence=evidence)
+        settings = self._settings.current()
+        wait_limit = now + timedelta(seconds=settings.orchestration.timeouts.max_quota_wait)
+        exceeds = quota_block.until > wait_limit
+        blocked = {block.agent: block.until for block in self._active_blocks(now)}
+        rerouted = exceeds and quota_wait_reroutes(task, settings, blocked, wait_limit)
+        clears = quota_reset_clock(quota_block.until, now)
+        remaining = format_duration((quota_block.until - now).total_seconds())
+        return _BlockerParts(
+            headline=GROUP_SEPARATOR.join(
                 (
-                    f"Unfinished dependency evidence is on an earlier relationship page "
-                    f"({relationships.blocking_dependency_count} recorded)."
+                    _QUOTA_HEADLINE,
+                    quota_wait_description(quota_block.agent, quota_block.until, now),
                 )
-            ]
-        else:
-            lines = ["Additional blocking dependencies exist beyond the current bounded page."]
-        if relationships.page_offset < relationships.blocking_dependency_count and (
-            relationships.blocking_dependency_count > relationships.page_offset + len(related)
-        ):
-            lines.append(
-                f"Showing {relationships.page_offset + 1} to "
-                f"{relationships.page_offset + len(related)} of "
-                f"{relationships.blocking_dependency_count} unfinished dependencies."
-            )
-        return lines, related
+            ),
+            details=(
+                f"{_QUOTA_AGENT_LABEL}{GROUP_SEPARATOR}{quota_block.agent}",
+                f"{_QUOTA_CLEARS_LABEL} {clears}{GROUP_SEPARATOR}in {remaining}",
+                _quota_reroute_text(rerouted=rerouted, exceeds=exceeds),
+            ),
+            evidence=evidence,
+        )
 
     def _running_quota_wait(self, task: Task, now: datetime) -> _RunningQuotaWait | None:
         if task.status not in _ACTIVE_TURN_STATUSES or task.step is None:
@@ -1355,7 +1443,7 @@ class StateDashboardViews:
                 )
         else:
             lines.append(f"Provider quota observation · {agent} · unavailable")
-        return _RunningQuotaWait(block=block, lines=tuple(lines))
+        return _RunningQuotaWait(block=block, evidence=tuple(lines))
 
     def _current_quota_wait_events(
         self,
@@ -1407,38 +1495,47 @@ class StateDashboardViews:
             return None
         return failure, quota_events[0]
 
-    def _slot_evidence(self) -> tuple[list[str], tuple[TaskReferenceView, ...]]:
+    def _slot_parts(self) -> _BlockerParts:
         occupied = [
             task
             for task in self._cached_tasks(statuses=(Status.RUNNING, Status.INTEGRATING))
             if task.slot is not None
         ]
         maximum = self._settings.current().orchestration.max_parallel
-        lines = [f"Current occupancy · {len(occupied)}/{maximum} slots"]
-        if occupied:
-            lines.append(
+        headline = GROUP_SEPARATOR.join((_SLOT_HEADLINE, f"{len(occupied)}/{maximum} busy"))
+        evidence = (
+            (
                 "Occupying tasks · "
-                + "; ".join(f"{item.id} {item.title} (slot {item.slot})" for item in occupied)
+                + "; ".join(f"{item.id} {item.title} (slot {item.slot})" for item in occupied),
             )
-        return lines, tuple(_task_reference_view(item) for item in occupied)
+            if occupied
+            else ()
+        )
+        return _BlockerParts(
+            headline,
+            (_SLOT_DETAIL,),
+            evidence,
+            tuple(_task_reference_view(item) for item in occupied),
+        )
 
-    def _resource_evidence(self, now: datetime) -> list[str]:
+    def _resource_parts(self, now: datetime) -> _BlockerParts:
         sample = self._sources.resource_sample()
         if sample is None or sample.sampled_at is None:
-            lines = ["Dashboard resource sample · unavailable"]
+            sample_line = "Dashboard resource sample · unavailable"
         else:
-            lines = [
-                (
-                    "Dashboard resource sample · "
-                    f"host CPU {sample.host_cpu_pct:.1f}% · "
-                    f"free RAM {sample.free_ram_gb:.1f} GiB · "
-                    f"sample age {_age(now - sample.sampled_at)}"
-                )
-            ]
-        lines.append("The dashboard sample is separate from the scheduler's gate decision.")
-        return lines
+            sample_line = (
+                "Dashboard resource sample · "
+                f"host CPU {sample.host_cpu_pct:.1f}% · "
+                f"free RAM {sample.free_ram_gb:.1f} GiB · "
+                f"sample age {_age(now - sample.sampled_at)}"
+            )
+        return _BlockerParts(
+            _RESOURCES_HEADLINE,
+            (_RESOURCES_DETAIL,),
+            (sample_line, _RESOURCE_SAMPLE_DISCLAIMER),
+        )
 
-    def _quota_evidence(self, task: Task, now: datetime) -> list[str]:
+    def _quota_evidence(self, task: Task, now: datetime) -> tuple[str, ...]:
         lines: list[str] = []
         required_agents = tuple(
             dict.fromkeys(
@@ -1467,7 +1564,7 @@ class StateDashboardViews:
                     f"Provider quota · {agent} {window.name} · reset {reset} · "
                     f"observed {_age(now - window.observed_at)} ago"
                 )
-        return lines
+        return tuple(lines)
 
     def _new_task_titles(self, scope: Sequence[Event]) -> dict[str, str]:
         found = {
@@ -1545,29 +1642,29 @@ class StateDashboardViews:
         )
         return pull_request_line(events[0].data, task_done=task_done) if events else None
 
-    def _pull_request_evidence(self, task_id: str) -> list[str]:
+    def _pull_request_parts(self, task_id: str) -> _BlockerParts:
         events = self._state.latest_events(
             1,
             kinds=(EventKind.PR_OPENED, EventKind.PR_WITHDRAWN),
             task_id=task_id,
         )
         if not events:
-            return [
-                "No recorded pull-request event is available.",
-                "CI state is shown only when an engine observation recorded it.",
-            ]
+            return _BlockerParts(_PR_HEADLINE, (_PR_NO_EVENT, _PR_CI_NOTE))
         event = events[0]
-        lines: list[str] = []
+        evidence: list[str] = []
         url = event.data.get("url")
         state = event.data.get("state")
         if isinstance(url, str):
-            lines.append(f"Recorded PR URL · {url}")
+            evidence.append(f"Recorded PR URL · {url}")
         if isinstance(state, str):
-            lines.append(f"Latest recorded PR state · {state} · {event.ts.isoformat()}")
+            evidence.append(f"Latest recorded PR state · {state} · {event.ts.isoformat()}")
+            details = (f"Pull request state · {state}", _PR_CI_NOTE)
         else:
-            lines.append(f"Latest recorded PR event · {event.kind.value} · {event.ts.isoformat()}")
-        lines.append("CI state is shown only when an engine observation recorded it.")
-        return lines
+            evidence.append(
+                f"Latest recorded PR event · {event.kind.value} · {event.ts.isoformat()}"
+            )
+            details = (_PR_CI_NOTE,)
+        return _BlockerParts(_PR_HEADLINE, details, tuple(evidence))
 
     def dialogue(self, task_id: str | None = None) -> list[DialogueBubbleView]:
         """Build recent project or task decisions and activity in event order."""
@@ -1804,17 +1901,38 @@ def _task_reference_view(task: Task) -> TaskReferenceView:
     )
 
 
-def _hold_evidence(task: Task, ownership: tuple[str, ...]) -> list[str]:
+def _hold_details(task: Task, ownership: tuple[str, ...]) -> tuple[str, ...]:
     lines: list[str] = []
     if Hold.PAUSED in task.holds:
-        lines.append("Pause hold · Resume clears this hold when submitted.")
+        lines.append(_PAUSE_HOLD_DETAIL)
     if Hold.INTERVENTION in task.holds:
         lines.append(
-            "Ownership hold · taken-over roles · "
+            f"{_OWNERSHIP_HOLD_LABEL}{GROUP_SEPARATOR}"
             + (", ".join(ownership) if ownership else "not recorded")
         )
-        lines.append("Hand back each taken-over role to return it to automation.")
-    return lines
+        lines.append(_HAND_BACK_DETAIL)
+    return tuple(lines)
+
+
+def _hold_headline(task: Task) -> str:
+    return _PAUSED_HEADLINE if Hold.PAUSED in task.holds else _INTERVENTION_HEADLINE
+
+
+def _quota_reroute_text(*, rerouted: bool, exceeds: bool) -> str:
+    if rerouted:
+        return _QUOTA_REROUTED
+    return _QUOTA_WAITS_NO_OTHER_AGENT if exceeds else _QUOTA_WAITS_WITHIN_LIMIT
+
+
+def _dependency_absence(relationships: TaskRelationshipsView) -> str:
+    count = relationships.blocking_dependency_count
+    if count == 0:
+        return _NO_UNFINISHED_DEPENDENCY
+    if relationships.page_offset >= count:
+        return (
+            f"Unfinished dependency evidence is on an earlier relationship page ({count} recorded)."
+        )
+    return _DEPENDENCIES_BEYOND_PAGE
 
 
 def _task_relationships_view(relationships: TaskRelationships) -> TaskRelationshipsView:

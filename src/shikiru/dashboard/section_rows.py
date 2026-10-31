@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+from rich.console import Group
 from rich.text import Text
 
 from shikiru.dashboard.contract import TaskTimelineSource
@@ -175,12 +176,32 @@ def _state_label(status: str) -> str:
     return f"{_STATE_GLYPHS.get(status, _STATE_GLYPHS[Status.QUEUED.value])} {status}"
 
 
-def blocker_evidence(view: TaskDetailView) -> Text | None:
-    """Return the recorded blocker lines in amber, or dusty rose once a blocker is cancelled."""
-    if view.blocker is None or not view.blocker.lines:
+def blocker_summary(view: TaskDetailView) -> Group | None:
+    """Return the blocker headline with its glyph in bold amber and its detail lines in grey.
+
+    The glyph and headline turn dusty rose once a blocking task is cancelled.
+    """
+    blocker = view.blocker
+    if blocker is None:
         return None
-    blockers = list(view.blocker.related_tasks)
+    cancelled = _blocked_by_cancelled(view)
+    colour = ALERT_COLOR if cancelled else AMBER
+    headline = Text.assemble(
+        (blocker.glyph, f"{STYLE_BOLD} {colour}"),
+        (f" {blocker.headline}", ALERT_COLOR if cancelled else ""),
+    )
+    return Group(headline, *(grey(line) for line in blocker.details))
+
+
+def blocker_evidence(view: TaskDetailView) -> Text | None:
+    """Return the raw blocker evidence in grey, or nothing when there is none."""
+    if view.blocker is None or not view.blocker.evidence:
+        return None
+    return grey("\n".join(view.blocker.evidence))
+
+
+def _blocked_by_cancelled(view: TaskDetailView) -> bool:
+    blockers = list(view.blocker.related_tasks) if view.blocker is not None else []
     if view.relationships is not None:
         blockers.extend(view.relationships.blocking_dependencies)
-    cancelled = any(item.status == Status.CANCELLED.value for item in blockers)
-    return Text("\n".join(view.blocker.lines), style=ALERT_COLOR if cancelled else AMBER)
+    return any(item.status == Status.CANCELLED.value for item in blockers)

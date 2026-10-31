@@ -7,7 +7,7 @@ from enum import StrEnum, auto
 from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING
 
-from shikiru.domain.ladder import pick_rung
+from shikiru.domain.ladder import move_up, pick_rung
 from shikiru.domain.tasks import Role, Status
 
 if TYPE_CHECKING:
@@ -108,6 +108,28 @@ def quota_blocking_agent(agents: TaskAgents, blocked_until: Mapping[str, datetim
     """Return the blocked agent of `agents` with the latest deadline; Leader wins ties."""
     blocked = quota_blocked_agents(agents, blocked_until)
     return max(blocked, key=blocked_until.__getitem__, default=None)
+
+
+def quota_wait_reroutes(
+    task: Task,
+    settings: Settings,
+    blocked_until: Mapping[str, datetime],
+    wait_limit: datetime,
+) -> bool:
+    """Return whether the scheduler moves `task` to another agent: its block outlasts `wait_limit`.
+
+    A role moves when its resolved agent is blocked beyond `wait_limit` and a higher rung on a
+    different, unblocked agent exists; this is the rule the scheduler applies to queued tasks.
+    """
+    blocked_agents = frozenset(blocked_until)
+    for role in (Role.LEADER, Role.IMPLEMENTER):
+        until = blocked_until.get(pick_rung(task, role, settings).agent)
+        if until is None or until <= wait_limit:
+            continue
+        moved = move_up(task, role, settings, different_agent=True, blocked_agents=blocked_agents)
+        if moved is not None:
+            return True
+    return False
 
 
 def _group_queued_tasks(

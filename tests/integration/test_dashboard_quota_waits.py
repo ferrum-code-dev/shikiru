@@ -56,6 +56,27 @@ EXPIRED_UNTIL = START + timedelta(minutes=1)
 EXPIRED_WAIT_SECONDS = 120
 AFTER_ALL_BLOCKS_SECONDS = 41 * 60
 QUOTA_MARKER = f"{GLYPH_QUOTA} quota"
+REROUTING_CONFIG = """
+[project]
+name = "demo"
+
+[agents.claude]
+
+[agents.codex]
+
+[roles.leader]
+ladder = [
+  { agent = "claude", model = "opus", effort = "high" },
+  { agent = "codex", model = "sol", effort = "high" },
+]
+
+[roles.implementer]
+ladder = [ { agent = "codex", model = "sol", effort = "high" } ]
+
+[roles.helper]
+ladder = [ { agent = "claude", model = "haiku", effort = "low" } ]
+"""
+MOVES_FIRST = "Moves to another agent first"
 
 
 class _BlockState(StrEnum):
@@ -390,3 +411,37 @@ async def test_task_details_name_the_blocked_agent_and_reset_time(
 
     assert detail is not None
     assert needed_from_you(detail) == f"Waiting on {_block_description(agent, LEADER_RESET)}."
+
+
+@pytest.mark.parametrize(
+    ("reset_at", "other_agent_blocked", "moves_first"),
+    [
+        pytest.param(START + timedelta(hours=9), False, True, id="beyond-limit-another-agent-free"),
+        pytest.param(START + timedelta(hours=9), True, False, id="beyond-limit-no-agent-free"),
+        pytest.param(LEADER_BLOCK_UNTIL, False, False, id="within-limit"),
+    ],
+)
+async def test_task_details_say_whether_a_quota_wait_moves_the_task_to_another_agent_first(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    *,
+    reset_at: datetime,
+    other_agent_blocked: bool,
+    moves_first: bool,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    (project_dir / ".shikiru" / "config.toml").write_text(REROUTING_CONFIG)
+    clock = FakeClock(START)
+    task_id = _seed_queued_task(connection, clock, "Reroute candidate", WaitReason.QUOTA)
+    quotas = QuotaStore(connection)
+    quotas.block("claude", reset_at, "quota")
+    if other_agent_blocked:
+        quotas.block("codex", reset_at, "quota")
+    views = state_views(reader, project_dir, clock, StubServices())
+
+    detail = await views.task_detail(task_id)
+
+    assert detail is not None
+    assert detail.blocker is not None
+    assert any(MOVES_FIRST in line for line in detail.blocker.details) is moves_first

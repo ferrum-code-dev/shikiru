@@ -18,13 +18,18 @@ QUOTA_TASK_NOUN = "task"
 QUOTA_TASKS_NOUN = "tasks"
 
 
-def quota_wait_description(agent: str, until: datetime, now: datetime) -> str:
-    """Name the blocked `agent` and when its block lifts, in UTC; the date is shown off today."""
+def quota_reset_clock(until: datetime, now: datetime) -> str:
+    """Return when a block lifts, in UTC; the date is shown when it is not today."""
     deadline = until.astimezone(UTC)
     clock = deadline.strftime(QUOTA_WAIT_CLOCK_FORMAT)
     if deadline.date() != now.astimezone(UTC).date():
         clock = f"{deadline.strftime(QUOTA_WAIT_DATE_FORMAT)} {clock}"
-    return f"{agent} {QUOTA_BLOCKED_PHRASE} {clock}{QUOTA_WAIT_UTC_SUFFIX}"
+    return f"{clock}{QUOTA_WAIT_UTC_SUFFIX}"
+
+
+def quota_wait_description(agent: str, until: datetime, now: datetime) -> str:
+    """Name the blocked `agent` and when its block lifts, in UTC; the date is shown off today."""
+    return f"{agent} {QUOTA_BLOCKED_PHRASE} {quota_reset_clock(until, now)}"
 
 
 def quota_banner(description: str, waiting_tasks: int) -> str:

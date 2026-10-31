@@ -208,7 +208,7 @@ async def pick_details_entry(pilot: Pilot[None], entry_id: str) -> None:
     await wait_until(lambda: _focused_fold(pilot) is not None, timeout=UI_WAIT_SECONDS)
     fold = cast("DetailFold", _focused_fold(pilot))
     folds = fold.folds
-    ids = [item.view_id for item in fold.folds.all_folds]
+    ids = [item.view_id for item in fold.folds.visible_folds]
     step = 1 if ids.index(entry_id) > ids.index(fold.view_id) else -1
     current, target = ids.index(fold.view_id), ids.index(entry_id)
     for expected in (ids[index] for index in range(current + step, target + step, step)):

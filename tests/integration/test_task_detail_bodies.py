@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum, auto
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
@@ -10,11 +12,13 @@ from textual.widgets import Static
 
 from shikiru.clock import SystemClock
 from shikiru.dashboard.detail import (
+    TASK_DETAIL_BLOCKER,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_HINT,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_RELATED_LIST,
     TASK_VIEW_AGENT,
+    TASK_VIEW_BLOCKER_EVIDENCE,
     TASK_VIEW_EVIDENCE,
     TASK_VIEW_RELATIONSHIPS,
     TASK_VIEW_REQUEST,
@@ -27,12 +31,14 @@ from shikiru.dashboard.details_list_view import DetailsSection, section_headline
 from shikiru.dashboard.fold_bodies import CRITERIA_LABEL, CRITERION_LEAD, NO_CRITERIA
 from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, TriageReport
 from shikiru.domain.scheduling import WaitReason
-from shikiru.domain.steps import Transition
+from shikiru.domain.steps import Transition, first_step
 from shikiru.domain.tasks import Mode, Status, Task
+from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.tasks import TaskStore
 from shikiru.ui.gated_static import GatedStatic
-from shikiru.ui.tokens import ALERT_COLOR
+from shikiru.ui.glyphs import GLYPH_BLOCKED, GLYPH_QUOTA, GLYPH_SLOT
+from shikiru.ui.tokens import ALERT_COLOR, AMBER, SECONDARY_TEXT_COLOR
 from tests.support.cells import CYAN_BOLD, GREY, GREY_BOLD, Cell, foregrounds, styles
 from tests.support.cells import rendered_lines as painted_lines
 from tests.support.clock import FakeClock
@@ -54,6 +60,11 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 PROJECT_WIDE_TITLES = ("Command history", "Header", "Escalations", "Queue", "Diagnostics")
 PANEL_WIDTH = 100
 COMPACT_PANEL_WIDTH = 40
+LEADER_AGENT = "claude"
+MAX_PARALLEL = 2
+QUOTA_BLOCK_UNTIL = START + timedelta(minutes=80)
+QUOTA_RESET = "01:20Z"
+ISO_TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T")
 
 
 async def _loaded(panel: TaskDetailPanel, task_id: str) -> None:
@@ -332,6 +343,162 @@ async def test_dependencies_align_colour_a_cancelled_blocker_and_open_on_enter(
             panel.query_one(f"#{TASK_DETAIL_RELATED_LIST}").focus()
             await pilot.press("enter")
             await wait_until(lambda: opened == [blocker.id], timeout=UI_WAIT_SECONDS)
+    finally:
+        reader.close()
+
+
+class _Blocker(StrEnum):
+    SLOT = auto()
+    QUOTA = auto()
+    DEPENDENCY = auto()
+
+
+def _start_on_slot(connection: Connection, clock: FakeClock, task_id: str, slot: int) -> None:
+    store = TaskStore(connection, clock)
+    task = store.require(task_id)
+    store.set_slot(task_id, slot)
+    store.apply_transition(task_id, first_step(task))
+
+
+def _seed_blocked_task(
+    connection: Connection, clock: FakeClock, blocker: _Blocker
+) -> tuple[str, str]:
+    store = TaskStore(connection, clock)
+    match blocker:
+        case _Blocker.SLOT:
+            for slot in range(MAX_PARALLEL):
+                occupant = seed_task(
+                    connection, clock, title=f"Slot occupant {slot}", mode=Mode.IMPLEMENT
+                )
+                _start_on_slot(connection, clock, occupant.id, slot)
+            waiter = seed_task(connection, clock, title="Slot waiter")
+            store.set_wait_reason(waiter.id, WaitReason.SLOT)
+            return waiter.id, f"Waiting for a slot · {MAX_PARALLEL}/{MAX_PARALLEL} busy"
+        case _Blocker.QUOTA:
+            waiter = seed_task(connection, clock, title="Quota waiter")
+            store.set_wait_reason(waiter.id, WaitReason.QUOTA)
+            QuotaStore(connection).block(LEADER_AGENT, QUOTA_BLOCK_UNTIL, "quota")
+            return waiter.id, (
+                f"Waiting on quota · {LEADER_AGENT} quota blocked until {QUOTA_RESET}"
+            )
+        case _Blocker.DEPENDENCY:
+            dependency = seed_task(connection, clock, title="Add database")
+            waiter = seed_task(
+                connection, clock, title="Add admin page", depends_on=(dependency.id,)
+            )
+            store.set_wait_reason(waiter.id, WaitReason.DEPENDENCY)
+            return waiter.id, f"Waiting on dependency · {dependency.id} queued"
+
+
+def _blocker_text(panel: TaskDetailPanel) -> str:
+    blocker = panel.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
+    return "\n".join("".join(char for char, _ in row) for row in painted_lines(blocker))
+
+
+@pytest.mark.usefixtures("colour_terminal")
+@pytest.mark.parametrize(
+    ("blocker", "glyph", "details"),
+    [
+        (_Blocker.SLOT, GLYPH_SLOT, ("Starts when a slot frees.",)),
+        (_Blocker.QUOTA, GLYPH_QUOTA, (f"Blocked agent · {LEADER_AGENT}", "Clears at 01:20Z")),
+        (_Blocker.DEPENDENCY, GLYPH_BLOCKED, ()),
+    ],
+)
+async def test_blocker_headline_has_an_amber_glyph_and_normal_cause_with_grey_details(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+    *,
+    blocker: _Blocker,
+    glyph: str,
+    details: tuple[str, ...],
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task_id, cause = _seed_blocked_task(connection, clock, blocker)
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        task_id,
+        fixed=True,
+        initial_view=TASK_VIEW_RELATIONSHIPS,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, task_id)
+            await wait_until(lambda: cause in _blocker_text(panel), timeout=UI_WAIT_SECONDS)
+            blocker_widget = panel.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
+            assert styles(blocker_widget, glyph) == [(True, AMBER)]
+            assert AMBER not in foregrounds(blocker_widget, cause)
+            for detail in details:
+                assert set(foregrounds(blocker_widget, detail)) == {SECONDARY_TEXT_COLOR}
+            detail_rows = painted_lines(blocker_widget)[1:]
+            assert AMBER not in {colour for row in detail_rows for _, colour in row}
+            assert ISO_TIMESTAMP.search(_blocker_text(panel)) is None
+    finally:
+        reader.close()
+
+
+@pytest.mark.usefixtures("colour_terminal")
+async def test_a_cancelled_blocker_paints_the_blocker_glyph_and_headline_in_alert_colour(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    dependency = seed_task(connection, clock, title="Add database")
+    blocked = seed_task(connection, clock, title="Add admin page", depends_on=(dependency.id,))
+    store = TaskStore(connection, clock)
+    store.set_wait_reason(blocked.id, WaitReason.DEPENDENCY)
+    store.apply_transition(
+        dependency.id, Transition.stay(dependency, step=None, status=Status.CANCELLED)
+    )
+    cause = f"Waiting on dependency · {dependency.id} cancelled"
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        blocked.id,
+        fixed=True,
+        initial_view=TASK_VIEW_RELATIONSHIPS,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, blocked.id)
+            await wait_until(lambda: cause in _blocker_text(panel), timeout=UI_WAIT_SECONDS)
+            blocker_widget = panel.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
+            assert styles(blocker_widget, GLYPH_BLOCKED) == [(True, ALERT_COLOR)]
+            assert set(foregrounds(blocker_widget, cause)) == {ALERT_COLOR}
+    finally:
+        reader.close()
+
+
+async def test_a_task_without_a_blocker_shows_no_blocker_text_and_no_evidence_fold(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Free task")
+    reader = StateReader(database, SystemClock())
+    panel = TaskDetailPanel(
+        widget_context(reader, project_root, clock),
+        task.id,
+        fixed=True,
+        initial_view=TASK_VIEW_RELATIONSHIPS,
+    )
+    try:
+        async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
+            await _loaded(panel, task.id)
+            blocker_widget = panel.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
+            evidence = next(
+                fold
+                for fold in panel.query(DetailFold)
+                if fold.view_id == TASK_VIEW_BLOCKER_EVIDENCE
+            )
+            assert blocker_widget.styles.display == "none"
+            assert evidence.styles.display == "none"
     finally:
         reader.close()
 

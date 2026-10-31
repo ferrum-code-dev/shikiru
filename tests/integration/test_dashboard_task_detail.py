@@ -42,10 +42,12 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_BODY,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_CONTEXT_INFO,
+    TASK_DETAIL_EVIDENCE,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
     TASK_DETAIL_SESSIONS,
     TASK_VIEW_AGENT,
+    TASK_VIEW_BLOCKER_EVIDENCE,
     TASK_VIEW_CONTEXT,
     TASK_VIEW_DECISIONS,
     TASK_VIEW_EVIDENCE,
@@ -85,6 +87,7 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.reports import TestRun as AgentTestRun
+from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import ACTING_ROLE, Step, Transition
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, RepoState, Role, Status, Task
 from shikiru.engine.events import emit_turn_completed, emit_turn_started
@@ -120,6 +123,7 @@ from tests.support.dashboard import (
     choose_details_entry,
     fixed_settings,
     focus_inspector_details,
+    fold_headline,
     ignore_palette_action,
     state_views,
 )
@@ -2677,6 +2681,53 @@ async def _open_fold(
             f"click_succeeded={click_succeeded!r} click_offset={click_offset!r}"
         )
         raise AssertionError(message) from error
+
+
+async def test_blocker_evidence_fold_is_closed_by_default_and_opens_closes_like_other_folds(
+    connection: Connection,
+    database: Database,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    dependency = seed_task(connection, clock, title="Add database")
+    blocked = seed_task(connection, clock, title="Add admin page", depends_on=(dependency.id,))
+    TaskStore(connection, clock).set_wait_reason(blocked.id, WaitReason.DEPENDENCY)
+    reader = StateReader(database, SystemClock())
+    queue = CommandQueue(connection, clock)
+    by_key = _SectionCase(
+        DetailsSection.BLOCKER_EVIDENCE, TASK_VIEW_BLOCKER_EVIDENCE, by_click=False
+    )
+    by_click = replace(by_key, by_click=True)
+
+    try:
+        app = _operator_task_app(reader, project_root, blocked.id, queue, clock)
+        async with app.run_test(size=(100, 40)) as pilot:
+            await wait_until(
+                lambda: blocked.title in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
+                timeout=UI_WAIT_SECONDS,
+            )
+            await focus_inspector_details(pilot)
+            await pilot.pause()
+            panel = app.query_one("#task-detail-panel", TaskDetailPanel)
+            assert TASK_VIEW_BLOCKER_EVIDENCE not in panel.open_views
+
+            await _open_fold(app, pilot, panel, by_key)
+            assert fold_headline(panel, TASK_VIEW_BLOCKER_EVIDENCE) == "2 lines"
+            evidence = _text(panel.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static))
+            assert "Recorded scheduler reason" in evidence
+
+            panel.focus_folds()
+            await pilot.press("space")
+            await wait_until(
+                lambda: TASK_VIEW_BLOCKER_EVIDENCE not in panel.open_views,
+                timeout=UI_WAIT_SECONDS,
+            )
+
+            await _open_fold(app, pilot, panel, by_click)
+            assert TASK_VIEW_BLOCKER_EVIDENCE in panel.open_views
+    finally:
+        reader.close()
 
 
 async def test_escape_steps_from_home_inspector_fold_list_to_header_to_cleared_selection(

@@ -40,7 +40,12 @@ from shikiru.dashboard.fold_bodies import (
     WorkspaceBody,
 )
 from shikiru.dashboard.row_list import RowList
-from shikiru.dashboard.section_rows import RelatedRow, blocker_evidence, relation_rows
+from shikiru.dashboard.section_rows import (
+    RelatedRow,
+    blocker_evidence,
+    blocker_summary,
+    relation_rows,
+)
 from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.dashboard.timeline_section import (
     TimelineHost,
@@ -121,6 +126,7 @@ TASK_DETAIL_HINT = "task-detail-hint"
 TASK_WINDOW_KEY = "t"
 TASK_WINDOW_ACTION = "task_window"
 TASK_DETAIL_BLOCKER = "task-detail-blocker"
+TASK_DETAIL_EVIDENCE = "task-detail-evidence"
 TASK_DETAIL_RELATIONSHIPS = "task-detail-relationships"
 TASK_DETAIL_RELATED_LIST = "task-detail-related-list"
 EVENTS_TIMELINE_IDS = TimelineIds.with_prefix("task-detail-timeline")
@@ -137,6 +143,7 @@ TASK_VIEW_DECISIONS = "task-decisions"
 TASK_VIEW_REQUEST = "task-request"
 TASK_VIEW_EVIDENCE = "task-evidence"
 TASK_VIEW_RELATIONSHIPS = "task-relationships"
+TASK_VIEW_BLOCKER_EVIDENCE = "task-blocker-evidence"
 TASK_VIEW_WORKSPACE = "task-workspace"
 TASK_VIEW_AGENT = "task-agent"
 DETAILS_SECTION_VIEWS = {
@@ -147,6 +154,7 @@ DETAILS_SECTION_VIEWS = {
     DetailsSection.AGENT_ACTIVITY: TASK_VIEW_AGENT,
     DetailsSection.USAGE: TASK_VIEW_USAGE,
     DetailsSection.BLOCKERS: TASK_VIEW_RELATIONSHIPS,
+    DetailsSection.BLOCKER_EVIDENCE: TASK_VIEW_BLOCKER_EVIDENCE,
     DetailsSection.WORKSPACE: TASK_VIEW_WORKSPACE,
     DetailsSection.SETTINGS: TASK_VIEW_CONTEXT,
 }
@@ -161,6 +169,7 @@ FOLD_STATICS = {
     TASK_VIEW_DECISIONS: (TASK_DETAIL_DECISIONS,),
     TASK_VIEW_REQUEST: (TASK_DETAIL_REQUEST,),
     TASK_VIEW_RELATIONSHIPS: (TASK_DETAIL_BLOCKER, TASK_DETAIL_RELATIONSHIPS),
+    TASK_VIEW_BLOCKER_EVIDENCE: (TASK_DETAIL_EVIDENCE,),
     TASK_VIEW_WORKSPACE: (TASK_DETAIL_WORKSPACE,),
 }
 FOLD_HINT_TARGETS = {
@@ -339,6 +348,7 @@ class TaskDetailPanel(Vertical):
         self.disabled = self._task_id is None
         self._folds_list().display = self._task_id is not None
         self.query_one(f"#{TASK_DETAIL_BLOCKER}").display = False
+        self._render_blocker_evidence(None)
         self._sync_timelines()
         identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         identity.update(
@@ -474,6 +484,7 @@ class TaskDetailPanel(Vertical):
         ):
             self.query_one(f"#{section_id}", Static).update("")
         self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static).display = False
+        self._render_blocker_evidence(None)
         self._set_feedback(None)
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update("")
         self.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList).set_rows(
@@ -798,9 +809,10 @@ class TaskDetailPanel(Vertical):
         self._rendered_task_id = view.task_id
         self._render_ownership(view)
         self.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static).update(SettingsBody(view))
-        evidence = blocker_evidence(view)
+        summary = blocker_summary(view)
         blocker = self.query_one(f"#{TASK_DETAIL_BLOCKER}", Static)
-        blocker.update(evidence or "")
+        blocker.update(summary or "")
+        self._render_blocker_evidence(blocker_evidence(view))
         self._render_relationships(view)
         self._render_activity(view)
         self.query_one(f"#{TASK_DETAIL_REQUEST}", Static).update(DescriptionBody(view))
@@ -809,7 +821,7 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(WorkspaceBody(view, Path.home()))
         if self._folds[TASK_VIEW_USAGE].is_open:
             self.query_one(f"#{TASK_DETAIL_SESSIONS}", Static).update(self._usage_body(view))
-        blocker.display = evidence is not None
+        blocker.display = summary is not None
         self._paint_headlines(view)
         self._paint_hint()
         if self._on_initial_content is not None and not self._initial_content_reported:
@@ -823,6 +835,13 @@ class TaskDetailPanel(Vertical):
                 focus_generation,
                 focused,
             )
+
+    def _render_blocker_evidence(self, evidence: Text | None) -> None:
+        fold = self._folds[TASK_VIEW_BLOCKER_EVIDENCE]
+        self.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static).update(evidence or "")
+        fold.display = evidence is not None
+        if evidence is None:
+            fold.set_open(False)
 
     def _paint_headlines(self, view: TaskDetailView) -> None:
         for section in DetailsSection:

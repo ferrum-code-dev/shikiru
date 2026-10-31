@@ -610,10 +610,13 @@ class TaskRelationshipsView:
 
 @dataclass(frozen=True)
 class TaskBlockerView:
-    """Recorded blocker reason and evidence, with navigable related tasks."""
+    """A blocker's headline with its glyph, visible detail lines, collapsed evidence and tasks."""
 
     kind: str
-    lines: tuple[str, ...]
+    glyph: str
+    headline: str
+    details: tuple[str, ...]
+    evidence: tuple[str, ...] = ()
     related_tasks: tuple[TaskReferenceView, ...] = ()
     quota_wait: str | None = None
 

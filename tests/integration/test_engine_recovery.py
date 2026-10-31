@@ -220,7 +220,7 @@ async def test_live_fake_agent_quota_wait_is_shown_for_its_running_task(
         assert detail is not None
         assert detail.wait_reason is None
         assert detail.blocker is not None
-        evidence = "\n".join(detail.blocker.lines)
+        evidence = "\n".join(detail.blocker.evidence)
         assert "Current turn quota wait · implementer" in evidence
         assert "Provider-reported quota reset · not reported" in evidence
         assert "Engine retry/probe deadline" in evidence
@@ -325,7 +325,7 @@ async def test_quota_wait_during_integration_conflict_is_reported(
         assert engine_env.tasks.require(task.id).step is Step.INTEGRATE
         assert detail is not None
         assert detail.blocker is not None
-        assert "Current turn quota wait · implementer" in "\n".join(detail.blocker.lines)
+        assert "Current turn quota wait · implementer" in "\n".join(detail.blocker.evidence)
         assert summary.running == 0
         assert summary.waiting == 1
         assert [row.task_id for row in waiting.rows] == [task.id]

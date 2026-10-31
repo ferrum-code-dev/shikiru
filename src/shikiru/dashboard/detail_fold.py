@@ -24,6 +24,7 @@ OPEN_MARK = "\N{BLACK DOWN-POINTING SMALL TRIANGLE}"
 CLOSED_MARK = "\N{BLACK RIGHT-POINTING SMALL TRIANGLE}"
 _STEP_UP = -1
 _STEP_DOWN = 1
+_DISPLAY_NONE = "none"
 
 
 class FoldHeader(Static):
@@ -189,13 +190,21 @@ class DetailFolds(Vertical):
 
     @property
     def all_folds(self) -> list[DetailFold]:
-        """Every fold in display order."""
+        """Every fold in display order, shown or not."""
         return list(self.query(DetailFold))
 
     @property
+    def visible_folds(self) -> list[DetailFold]:
+        """The folds shown, in display order; a hidden fold has no header to focus."""
+        return [fold for fold in self.all_folds if fold.styles.display != _DISPLAY_NONE]
+
+    @property
     def current_fold(self) -> DetailFold:
-        """The fold holding the roving Tab stop: the last one focused, the first until then."""
-        return self._current or self.all_folds[0]
+        """The fold holding the roving Tab stop: the last one focused, else the first shown."""
+        visible = self.visible_folds
+        if self._current is not None and self._current in visible:
+            return self._current
+        return visible[0]
 
     def is_current(self, fold: DetailFold) -> bool:
         """Whether `fold` holds the roving Tab stop."""
@@ -207,7 +216,7 @@ class DetailFolds(Vertical):
 
     def move(self, fold: DetailFold, step: int) -> None:
         """Focus the header `step` places from `fold`, stopping at both ends."""
-        folds = self.all_folds
+        folds = self.visible_folds
         target = folds[min(max(folds.index(fold) + step, 0), len(folds) - 1)]
         self.focus_header(target)
 
