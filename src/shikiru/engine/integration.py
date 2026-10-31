@@ -7,7 +7,7 @@ import dataclasses
 from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from shikiru.config.settings import (
     MERGE_INTEGRATION,
@@ -55,6 +55,15 @@ GIT_FAILURE_DETAIL_LIMIT = 4000
 GIT_FAILURE_TRUNCATION = " [truncated]"
 SQUASH_TASK_TRAILER = "Shikiru-Task"
 SQUASH_TIP_TRAILER = "Shikiru-Squashed-Tip"
+_APPLYING_BASE_KEY = "base"
+_APPLYING_BASE_SHA_KEY = "base_sha"
+_APPLYING_BRANCH_KEY = "branch"
+_APPLYING_LANDING_SHA_KEY = "landing_sha"
+_INTEGRATION_COMMITS_KEY = "commits"
+_PR_BASE_SHA_KEY = "base_sha"
+_PR_BRANCH_SHA_KEY = "branch_sha"
+_MERGED_PR_WITHOUT_COMMIT = "merged pull request has no landing commit"
+_MERGED_PR_COMMIT_WITHOUT_PARENT = "merged pull request has no parent commit"
 
 _PR_ENDED_BY = frozenset((EscalationReason.PR_CLOSED,))
 _INTEGRATION_RESTARTED_BY = _PR_ENDED_BY | {EscalationReason.INTEGRATION_CONFLICT}
@@ -255,6 +264,8 @@ type TaskFinisher = Callable[[Task], Awaitable[Path | None]]
 class _OpenPullRequest:
     url: str
     landing: Landing
+    base_sha: str | None = None
+    branch_sha: str | None = None
 
 
 class IntegrationStrategy(Protocol):
@@ -268,14 +279,17 @@ class IntegrationStrategy(Protocol):
         """Merge the task branch into its base, or start doing so, and return what landed."""
         ...
 
-    async def applied(self, repo: RepoState, task_root: Path) -> Landing | None:
+    async def applied(self, task_id: str, repo: RepoState, task_root: Path) -> Landing | None:
         """Return what an earlier, interrupted integration of `repo` landed in its base, if any."""
         ...
 
-    async def settle(self, task_id: str, repo: RepoState, held: Callable[[], bool]) -> None:
+    async def settle(
+        self, task_id: str, repo: RepoState, held: Callable[[], bool]
+    ) -> Landing | None:
         """Wait until `task_id`'s started integration has landed in its base `repo`.
 
-        Raises `IntegrationHeld` instead of starting another wait step once `held()` is true.
+        Return final landing evidence when settlement obtains it. Raise `IntegrationHeld` instead
+        of starting another wait step once `held()` is true.
         """
         ...
 
@@ -332,9 +346,30 @@ class LocalMerge:
         """Return `None`: a local merge lands within `merge`, so none is ever left unsettled."""
         del task_id
 
-    async def applied(self, repo: RepoState, task_root: Path) -> Landing | None:
-        """Return `None`: a rebased branch fast-forwards, so its ancestry shows it landed."""
-        del repo, task_root
+    async def applied(self, task_id: str, repo: RepoState, task_root: Path) -> Landing | None:
+        """Recover the exact local landing recorded before its ref update, if it applied."""
+        del task_root
+        events = self._events.since(0, kinds=[EventKind.INTEGRATION_APPLYING], task_id=task_id)
+        if not events:
+            return None
+        data = events[-1].data
+        previous_base = data.get(_APPLYING_BASE_SHA_KEY)
+        landing_sha = data.get(_APPLYING_LANDING_SHA_KEY)
+        if (
+            data.get(_APPLYING_BASE_KEY) != repo.base
+            or data.get(_APPLYING_BRANCH_KEY) != repo.branch
+            or not isinstance(previous_base, str)
+            or not isinstance(landing_sha, str)
+        ):
+            return None
+        if not await self._git.merge_base_is_ancestor(
+            self._project_root, previous_base, landing_sha
+        ):
+            return None
+        base_sha = await self._git.rev_parse(self._project_root, repo.base)
+        if not await self._git.merge_base_is_ancestor(self._project_root, landing_sha, base_sha):
+            return None
+        return _recorded_landing(data)
 
     async def merge(self, request: MergeRequest) -> Landing:
         """Pre-check the local base, then apply the merge, retrying while it is blocked."""
@@ -348,6 +383,7 @@ class LocalMerge:
                 if candidate is not None:
                     if request.held():
                         raise IntegrationHeld
+                    self._record_applying(request, candidate)
                     await self._apply(project_root, repo, candidate)
             except (_PrecheckFailed, CommandFailed) as error:
                 if isinstance(error, _CheckoutDirty) and not announced:
@@ -372,9 +408,26 @@ class LocalMerge:
             data={"paths": list(paths)},
         )
 
-    async def settle(self, task_id: str, repo: RepoState, held: Callable[[], bool]) -> None:
+    def _record_applying(self, request: MergeRequest, candidate: _MergeCandidate) -> None:
+        self._events.append(
+            EventKind.INTEGRATION_APPLYING,
+            task_id=request.task_id,
+            message=f"{request.task_id} integration applying",
+            data={
+                _APPLYING_BASE_KEY: request.repo.base,
+                _APPLYING_BASE_SHA_KEY: candidate.base_sha,
+                _APPLYING_BRANCH_KEY: request.repo.branch,
+                _APPLYING_LANDING_SHA_KEY: candidate.landing_sha,
+                **candidate.landing.done_data(),
+            },
+        )
+
+    async def settle(
+        self, task_id: str, repo: RepoState, held: Callable[[], bool]
+    ) -> Landing | None:
         """Return at once: `merge` already landed the branch in its base."""
         del task_id, repo, held
+        return None
 
     async def _apply(self, project_root: Path, repo: RepoState, candidate: _MergeCandidate) -> None:
         if candidate.base_checked_out:
@@ -436,8 +489,11 @@ class SquashMerge(LocalMerge):
     recognised afterwards: the original branch is no longer an ancestor of the base.
     """
 
-    async def applied(self, repo: RepoState, task_root: Path) -> Landing | None:
+    async def applied(self, task_id: str, repo: RepoState, task_root: Path) -> Landing | None:
         """Return the squash commit already on the base for the branch's current tip, if any."""
+        recorded = await super().applied(task_id, repo, task_root)
+        if recorded is not None:
+            return recorded
         branch_sha = await self._git.rev_parse(task_root, repo.branch)
         origin = await self._git.merge_base(self._project_root, repo.base, branch_sha)
         landed = await self._git.find_commit(
@@ -469,6 +525,24 @@ class SquashMerge(LocalMerge):
 async def _landed_changes(git: Git, repo_dir: Path, before: str, after: str) -> LandedChanges:
     stats = await git.committed_line_changes(repo_dir, before, after)
     return LandedChanges(stats.changed_paths, stats.added_lines, stats.deleted_lines)
+
+
+def _recorded_landing(data: dict[str, object]) -> Landing | None:
+    changes = landed_changes(data)
+    recorded_commits = data.get(_INTEGRATION_COMMITS_KEY)
+    integration = data.get(DONE_INTEGRATION_KEY)
+    if (
+        changes is None
+        or not isinstance(recorded_commits, list)
+        or not isinstance(integration, str)
+    ):
+        return None
+    commits: list[str] = []
+    for commit in cast("list[object]", recorded_commits):
+        if not isinstance(commit, str):
+            return None
+        commits.append(commit)
+    return Landing(tuple(commits), integration, LandedChanges(*changes))
 
 
 def _tip_trailer(branch_sha: str) -> str:
@@ -533,9 +607,9 @@ class PullRequest:
         opened = self._open_pull_request(task_id)
         return opened.landing if opened is not None else None
 
-    async def applied(self, repo: RepoState, task_root: Path) -> Landing | None:
+    async def applied(self, task_id: str, repo: RepoState, task_root: Path) -> Landing | None:
         """Return `None`: only a pull request merged on the remote lands, and `settle` waits."""
-        del repo, task_root
+        del task_id, repo, task_root
 
     async def merge(self, request: MergeRequest) -> Landing:
         """Push the branch and open its pull request, recorded as `pr_opened`.
@@ -570,15 +644,20 @@ class PullRequest:
             data={
                 "url": url,
                 "branch": repo.branch,
-                "commits": list(commits),
+                _INTEGRATION_COMMITS_KEY: list(commits),
                 DONE_CHANGES_KEY: changes.as_data(),
+                _PR_BASE_SHA_KEY: base_sha,
+                _PR_BRANCH_SHA_KEY: branch_sha,
             },
         )
         return Landing(commits, integration=PULL_REQUEST_INTEGRATION, changes=changes)
 
-    async def settle(self, task_id: str, repo: RepoState, held: Callable[[], bool]) -> None:
+    async def settle(
+        self, task_id: str, repo: RepoState, held: Callable[[], bool]
+    ) -> Landing | None:
         """Poll the open pull request until it is merged or closed, then verify the merged base.
 
+        Return evidence read from the verified landing commit.
         Raises `PullRequestClosed` for a closed one, `PullRequestConflicting` when the open PR
         conflicts with its base, `IntegrationBlocked` when the merged commit cannot be fetched
         from and verified on the remote base, when the open PR has failing, settled checks, or
@@ -587,7 +666,7 @@ class PullRequest:
         """
         opened = self._open_pull_request(task_id)
         if opened is None:
-            return
+            return None
         self._tasks.set_slot(task_id, None)
         self._tasks.set_wait_reason(task_id, WaitReason.PR_OPEN)
         deadline = self._clock.now() + timedelta(seconds=self._settings.timeouts.pr_wait)
@@ -608,10 +687,35 @@ class PullRequest:
         self._tasks.set_wait_reason(task_id, None)
         if status.state is PullRequestState.CLOSED:
             raise PullRequestClosed(opened.url)
+        merge_commit = status.merge_commit
+        if merge_commit is None:
+            raise IntegrationBlocked(_MERGED_PR_WITHOUT_COMMIT)
+        base_sha = opened.base_sha or await self._git.rev_parse(self._project_root, repo.base_ref)
         try:
-            await self._base_refs.sync(repo.base, status.merge_commit)
+            await self._base_refs.sync(repo.base, merge_commit)
         except (BaseFetchFailed, MergedBaseUnavailable) as error:
             raise IntegrationBlocked(str(error)) from error
+        return await self._landed_pull_request(opened, merge_commit, base_sha)
+
+    async def _landed_pull_request(
+        self, opened: _OpenPullRequest, merge_commit: str, base_sha: str
+    ) -> Landing:
+        parents = list(await self._git.commit_parents(self._project_root, merge_commit))
+        if not parents:
+            raise IntegrationBlocked(_MERGED_PR_COMMIT_WITHOUT_PARENT)
+        if len(parents) > 1:
+            before = parents[0]
+        elif opened.branch_sha is not None and await self._git.merge_base_is_ancestor(
+            self._project_root, opened.branch_sha, merge_commit
+        ):
+            before = base_sha
+        else:
+            before = parents[0]
+        commits = tuple(
+            await self._git.log_oneline(self._project_root, f"{before}..{merge_commit}")
+        )
+        changes = await _landed_changes(self._git, self._project_root, before, merge_commit)
+        return Landing(commits, integration=PULL_REQUEST_INTEGRATION, changes=changes)
 
     async def _status(self, task_id: str, url: str, held: Callable[[], bool]) -> PullRequestStatus:
         attempts = self._settings.network.poll_attempts
@@ -659,10 +763,12 @@ def _open_pull_request(
             opened = _OpenPullRequest(
                 event.data["url"],
                 Landing(
-                    tuple(event.data["commits"]),
+                    tuple(event.data[_INTEGRATION_COMMITS_KEY]),
                     integration=PULL_REQUEST_INTEGRATION if found is not None else None,
                     changes=LandedChanges(*found) if found is not None else None,
                 ),
+                event.data.get(_PR_BASE_SHA_KEY),
+                event.data.get(_PR_BRANCH_SHA_KEY),
             )
         elif event.kind is EventKind.PR_WITHDRAWN or event.data["reason"] in ended_by:
             opened = None
@@ -762,7 +868,9 @@ class Integrator:
             )
         else:
             landing = started
-        await self._strategy.settle(current.id, repo, lambda: self._is_held(current.id))
+        settled = await self._strategy.settle(current.id, repo, lambda: self._is_held(current.id))
+        if settled is not None:
+            landing = settled
         summary = IntegrationSummary(
             summary=current_metadata.summary,
             commits=landing.commits,
@@ -806,7 +914,7 @@ class Integrator:
             self._require_not_held(task.id)
             task_dir = task_root(self._project_root, task.id)
             if not await self._git.is_rebase_in_progress(task_dir):
-                landed = await self._strategy.applied(repo, task_dir)
+                landed = await self._strategy.applied(task.id, repo, task_dir)
                 if landed is not None:
                     return task, metadata, landed
             recovery_state = (

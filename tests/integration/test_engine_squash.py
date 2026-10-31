@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -29,7 +30,7 @@ from shikiru.engine.integration import (
 from shikiru.engine.push_service import PUSH_FAULT_SCOPE, PushService
 from shikiru.engine.tick_guard import TickGuard
 from shikiru.process import SubprocessRunner
-from shikiru.store.database import transaction
+from shikiru.store.database import Database, transaction
 from shikiru.store.events import EventLog
 from shikiru.store.pushes import PushTargets
 from shikiru.store.tasks import TaskStore
@@ -45,7 +46,6 @@ from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
-    from pathlib import Path
 
     from shikiru.domain.results import TaskResults
     from shikiru.domain.tasks import Task
@@ -351,6 +351,76 @@ async def test_a_squash_applied_before_a_crash_is_recognised_without_another_com
     assert final is not None
     assert final.status is Status.DONE
     assert PushTargets(connection).pending()
+
+
+async def test_a_local_merge_applied_before_sqlite_reopens_keeps_its_landed_evidence(
+    connection: Connection, tmp_path: Path
+) -> None:
+    rig = await _rig(connection, tmp_path, local=LocalMerge)
+    task, root = await rig.start_task("merge recovery")
+    await rig.commit(root, "a.txt", "a\n")
+    await rig.commit(root, "b.txt", "b\n")
+    previous = await rig.sha("main")
+    assert task.repo is not None
+
+    await rig.strategy.merge(
+        MergeRequest(
+            task_id=task.id,
+            title=task.title,
+            repo=task.repo,
+            task_root=root,
+            summary="summary",
+            held=lambda: False,
+        )
+    )
+    landed = await rig.sha("main")
+    database_path = Path(connection.execute("PRAGMA database_list").fetchone()["file"])
+    reopened = Database(database_path).connect()
+    try:
+        events = EventLog(reopened, rig.clock)
+        tasks = TaskStore(reopened, rig.clock)
+        builder = task_root_builder(_RUNNER, rig.project_root, RepoConfig())
+
+        async def finish_task(finished: Task) -> None:
+            await builder.cleanup(
+                finished.id, finished.repo, integrated=finished.status is Status.DONE
+            )
+
+        strategy = LocalMerge(
+            rig.git,
+            rig.clock,
+            events=events,
+            project_root=rig.project_root,
+            integration_wait=0,
+        )
+        integrator = Integrator(
+            git=rig.git,
+            strategy=strategy,
+            base_refs=LocalBaseRefs(),
+            lock=asyncio.Lock(),
+            project_root=rig.project_root,
+            tasks=tasks,
+            events=events,
+            finish_task=finish_task,
+            atomically=lambda: transaction(reopened),
+        )
+        recovered = tasks.get(task.id)
+        assert recovered is not None
+
+        await integrator.run(recovered, _resolve_nothing, IntegrationMetadata("summary"))
+
+        [done] = events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
+        final = tasks.get(task.id)
+        assert final is not None
+        assert final.status is Status.DONE
+        assert done.data["commits"] == await rig.git.log_oneline(
+            rig.project_root, f"{previous}..{landed}"
+        )
+        assert done.data["changes"] == {"files": 2, "insertions": 2, "deletions": 0}
+        assert await rig.sha("main") == landed
+        assert not root.exists()
+    finally:
+        reopened.close()
 
 
 async def test_an_empty_task_lands_no_commit_and_records_no_landed_commits(

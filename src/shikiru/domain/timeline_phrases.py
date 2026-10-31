@@ -167,6 +167,7 @@ _EVENTS: dict[str, _EventSpec] = {
         "escalation resolved", GLYPH_OK, Tone.SUCCESS, _field("resolution")
     ),
     EventKind.INTEGRATION_STARTED: _EventSpec("integration started"),
+    EventKind.INTEGRATION_APPLYING: _EventSpec("integration applying"),
     EventKind.INTEGRATION_WAITING: _EventSpec(
         "integration waiting", GLYPH_ATTENTION, Tone.WARNING, _message
     ),

@@ -165,6 +165,11 @@ class Git:
         result = await self._run(repo_dir, "log", "--oneline", commit_range)
         return [line for line in result.stdout.splitlines() if line]
 
+    async def commit_parents(self, repo_dir: Path, commit: str) -> tuple[str, ...]:
+        """Return the parents of `commit` in their recorded order."""
+        result = await self._run(repo_dir, "rev-list", "--parents", "-n", "1", commit)
+        return tuple(result.stdout.split()[1:])
+
     async def diff_stat(self, repo_dir: Path, commit_range: str) -> str:
         """Return `git diff --stat` for `commit_range`, verbatim.
 

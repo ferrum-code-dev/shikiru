@@ -224,12 +224,84 @@ async def _assert_landed(
     opened = events.since(0, kinds=[EventKind.PR_OPENED], task_id=task.id)
     [done] = events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
     assert len(opened) == pr_count
-    assert done.data["commits"] == opened[-1].data["commits"] != []
+    merge_commit = pulls[-1]["mergeCommit"]["oid"]
+    parents = await _git(remote_dir, "rev-list", "--parents", "-n", "1", merge_commit)
+    before = parents.split()[1]
+    landed_commits = await _git(remote_dir, "log", "--oneline", f"{before}..{merge_commit}")
+    assert done.data["commits"] == landed_commits.splitlines() != []
+    stats = await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).committed_line_changes(
+        remote_dir, before, merge_commit
+    )
     assert done.data["integration"] == "pr"
-    assert done.data["changes"] == opened[-1].data["changes"]
+    assert done.data["changes"] == {
+        "files": stats.changed_paths,
+        "insertions": stats.added_lines,
+        "deletions": stats.deleted_lines,
+    }
     assert done.data["changes"]["files"] > 0
     assert await _git(remote_dir, "rev-parse", task.repo.branch)
     assert not await _local_branch_exists(env.project_root, task.repo.branch)
+
+
+@pytest.mark.parametrize(
+    "style",
+    [MergeStyle.MERGE_COMMIT, MergeStyle.SQUASH, MergeStyle.FAST_FORWARD],
+    ids=["merge-commit", "squash", "fast-forward"],
+)
+async def test_pull_request_records_the_verified_landing_after_update_and_restart(
+    style: MergeStyle,
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = flow_settings()
+    clock = engine_env.clock
+    assert isinstance(clock, FakeClock)
+    await init_project_repo(engine_env.project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    assert task.repo is not None
+    run = _Run(engine_env, settings, task.id)
+    await _await_poll(fake_github, clock, 1)
+    events = EventLog(engine_env.connection, clock)
+    [opened] = events.since(0, kinds=[EventKind.PR_OPENED], task_id=task.id)
+
+    task_root_dir = task_root(engine_env.project_root, task.id)
+    (task_root_dir / "during_review.txt").write_text("review update\n")
+    await commit_all(_RUNNER, task_root_dir, "review update")
+    await _RUNNER.run(
+        ["git", "push", settings.repo.remote, task.repo.branch],
+        timeout=GIT_COMMAND_TIMEOUT,
+        cwd=task_root_dir,
+        check=True,
+    )
+    previous_views = fake_github.views()
+    await run.restart()
+    await _await_poll(fake_github, clock, previous_views + 1)
+
+    landed = await merge_on_remote(remote_dir, task.repo.base, task.repo.branch, style)
+    fake_github.merge(1, landed)
+    await _land(clock, run.flow)
+
+    [done] = events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
+    parents = await _git(remote_dir, "rev-list", "--parents", "-n", "1", landed)
+    parent_list = parents.split()[1:]
+    before = opened.data["base_sha"] if style is MergeStyle.FAST_FORWARD else parent_list[0]
+    landed_commits = await _git(remote_dir, "log", "--oneline", f"{before}..{landed}")
+    stats = await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).committed_line_changes(
+        remote_dir, before, landed
+    )
+    assert done.data["commits"] == landed_commits.splitlines()
+    assert any(line.startswith(landed[:7]) for line in done.data["commits"])
+    assert done.data["changes"] == {
+        "files": stats.changed_paths,
+        "insertions": stats.added_lines,
+        "deletions": stats.deleted_lines,
+    }
+    assert done.data["changes"]["files"] == 2
+    assert done.data["changes"]["insertions"] >= 2
+    assert done.data["commits"] != opened.data["commits"]
 
 
 @pytest.mark.parametrize("case", _CASES.values(), ids=_CASES.keys())
