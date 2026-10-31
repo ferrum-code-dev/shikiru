@@ -355,6 +355,7 @@ def dashboard_app(
     resolution_screen: ResolutionScreenFactory | None = None,
     focus_task: str | None = None,
     navigate_home: NavigateHome | None = None,
+    motion_interval_seconds: float | None = None,
 ) -> DashboardApp:
     """Build the Home dashboard, or the fixed view of `focus_task`, over `reader`."""
     settings = settings or load_settings(project_dir)
@@ -370,7 +371,7 @@ def dashboard_app(
         ),
         on_change=reader.watch,
         clock=clock,
-        motion_interval_seconds=None,
+        motion_interval_seconds=motion_interval_seconds,
         settings=fixed_settings(reader, with_dashboard(settings, animations=False)),
         open_palette=ignore_palette_action,
         widget_names=widget_names,

@@ -87,6 +87,7 @@ from shikiru.domain.scheduling import (
     WaitReason,
     dispatch_sort_key,
     occupied_slot_ids,
+    quota_blocked_agents,
     quota_blocking_agent,
     task_agents,
 )
@@ -237,6 +238,12 @@ class _StructuredEscalationCache:
 class _RunningQuotaWait:
     block: AgentBlock
     lines: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _QuotaWaits:
+    task_ids: frozenset[str]
+    waiting_by_agent: Counter[str]
 
 
 class _VersionedCache[K, V]:
@@ -663,27 +670,31 @@ class StateDashboardViews:
             if self._running_quota_wait(task, now) is not None
         )
 
-    def _quota_waits(self, now: datetime) -> dict[str, AgentBlock]:
+    def _quota_waits(self, now: datetime) -> _QuotaWaits:
         return self._tick_memo.get("quota_waits", lambda: self._build_quota_waits(now))
 
-    def _build_quota_waits(self, now: datetime) -> dict[str, AgentBlock]:
-        waits: dict[str, AgentBlock] = {}
+    def _build_quota_waits(self, now: datetime) -> _QuotaWaits:
+        blocked_until = {block.agent: block.until for block in self._active_blocks(now)}
+        settings = self._settings.current()
+        task_ids: set[str] = set()
+        waiting: Counter[str] = Counter()
         for task in self._cached_tasks(statuses=_ACTIVE_TURN_STATUSES):
             running_wait = self._running_quota_wait(task, now)
             if running_wait is not None:
-                waits[task.id] = running_wait.block
+                task_ids.add(task.id)
+                waiting[running_wait.block.agent] += 1
         for task in self._cached_tasks(statuses=(Status.QUEUED,)):
-            queued_block = self._queued_quota_block(task, now)
-            if queued_block is not None:
-                waits[task.id] = queued_block
-        return waits
+            if task.wait_reason == WaitReason.QUOTA.value:
+                task_ids.add(task.id)
+                waiting.update(quota_blocked_agents(task_agents(task, settings), blocked_until))
+        return _QuotaWaits(task_ids=frozenset(task_ids), waiting_by_agent=waiting)
 
     def _queued_quota_block(self, task: Task, now: datetime) -> AgentBlock | None:
         if task.status is not Status.QUEUED or task.wait_reason != WaitReason.QUOTA.value:
             return None
         blocks = {block.agent: block for block in self._active_blocks(now)}
         agent = quota_blocking_agent(
-            task_agents(task, self._settings),
+            task_agents(task, self._settings.current()),
             {name: block.until for name, block in blocks.items()},
         )
         return None if agent is None else blocks[agent]
@@ -742,14 +753,14 @@ class StateDashboardViews:
                 item.task_id for item in frames.tasks if item.agent_processing
             )
         open_decision_ids = page.open_decision_task_ids
-        quota_waits = self._quota_waits(now)
+        quota_wait_ids = self._quota_waits(now).task_ids
         rows = [
             self._task_browser_row(
                 task,
                 open_decision=task.id in open_decision_ids,
                 diagnosed_stall=task.id in page_stalled_ids,
                 agent_processing_ids=page_agent_processing_ids,
-                quota_wait=task.id in quota_waits,
+                quota_wait=task.id in quota_wait_ids,
                 now=now,
                 task_filter=task_filter,
             )
@@ -767,7 +778,7 @@ class StateDashboardViews:
                 open_decision=selected_task.status is Status.ESCALATED,
                 diagnosed_stall=selected_task.id in page_stalled_ids,
                 agent_processing_ids=page_agent_processing_ids,
-                quota_wait=selected_task.id in quota_waits,
+                quota_wait=selected_task.id in quota_wait_ids,
                 now=now,
                 task_filter=task_filter,
             )
@@ -1633,7 +1644,7 @@ class StateDashboardViews:
     def quota_blocks(self) -> list[QuotaBlockView]:
         """Build one banner per agent whose quota block is still in effect."""
         now = self._now()
-        waiting = Counter(block.agent for block in self._quota_waits(now).values())
+        waiting = self._quota_waits(now).waiting_by_agent
         return [
             QuotaBlockView(
                 agent=block.agent,

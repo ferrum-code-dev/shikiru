@@ -12,6 +12,7 @@ from shikiru.domain.scheduling import (
     find_dependency_cycle,
     occupied_slot_ids,
     pick_ready,
+    quota_blocked_agents,
     quota_blocking_agent,
 )
 from shikiru.domain.tasks import Hold, Status
@@ -263,3 +264,32 @@ def test_quota_wait_is_attributed_to_the_blocked_agent_with_the_latest_deadline(
     expected: str | None,
 ) -> None:
     assert quota_blocking_agent(_LEADER_AGENTS, blocked_until) == expected
+
+
+@pytest.mark.parametrize(
+    ("agents", "blocked_until", "expected"),
+    [
+        pytest.param(_LEADER_AGENTS, {}, [], id="nothing-blocked"),
+        pytest.param(_LEADER_AGENTS, {"codex": _LATER}, ["codex"], id="only-implementer-blocked"),
+        pytest.param(_LEADER_AGENTS, {"claude": _LATER}, ["claude"], id="only-leader-blocked"),
+        pytest.param(
+            _LEADER_AGENTS,
+            {"codex": _EARLIER, "claude": _LATER},
+            ["claude", "codex"],
+            id="both-blocked-leader-first",
+        ),
+        pytest.param(
+            TaskAgents(leader="claude", implementer="claude"),
+            {"claude": _LATER},
+            ["claude"],
+            id="roles-sharing-a-blocked-agent-count-it-once",
+        ),
+        pytest.param(_LEADER_AGENTS, {"gemini": _LATER}, [], id="unrelated-agent-blocked"),
+    ],
+)
+def test_each_blocked_agent_of_a_task_is_listed_once_leader_first(
+    agents: TaskAgents,
+    blocked_until: Mapping[str, datetime],
+    expected: list[str],
+) -> None:
+    assert quota_blocked_agents(agents, blocked_until) == expected

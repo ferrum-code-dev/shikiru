@@ -41,6 +41,10 @@ NO_USAGE_RECORDED = "No runs or quota windows recorded."
 TASK_USAGE_UNAVAILABLE = "Task usage coverage unavailable"
 
 
+def _banner_texts(blocks: list[QuotaBlockView]) -> list[Text]:
+    return [Text(f"{GLYPH_QUOTA} {block.banner}", style=AMBER) for block in blocks]
+
+
 def _usage_body(
     totals: RecordedUsageView,
     agents: list[AgentUsageView],
@@ -49,7 +53,7 @@ def _usage_body(
     blocks: list[QuotaBlockView],
 ) -> Group:
     parts: list[RenderableType] = [] if scope is None else [Text(scope, style=STYLE_BOLD)]
-    parts.extend(Text(f"{GLYPH_QUOTA} {block.banner}", style=AMBER) for block in blocks)
+    parts.extend(_banner_texts(blocks))
     parts.append(ProjectUsageTotals(totals))
     with_runs = [agent for agent in agents if agent.run_count]
     with_quotas = [agent for agent in agents if agent.quotas]
@@ -76,14 +80,14 @@ class UsagePanel(GatedStatic):
             tuple[RecordedUsageView, list[AgentUsageView], list[QuotaBlockView]] | None
         ) = None
         self._home_usage: RecordedUsageView | None = None
+        self._home_blocks: list[QuotaBlockView] = []
         self._remove_motion_callback: Callable[[], None] | None = None
 
     async def on_mount(self) -> None:
         """Render current usage, subscribe to state and tick quota age/countdowns."""
         await self._refresh()
         self.run_worker(self._widget_context.on_change(self._refresh_if_attached), exclusive=True)
-        if self._widget_context.placement is not WidgetPlacement.PROJECT_USAGE:
-            self._remove_motion_callback = self._widget_context.on_motion(self._refresh_on_motion)
+        self._remove_motion_callback = self._widget_context.on_motion(self._refresh_on_motion)
 
     def on_unmount(self) -> None:
         if self._remove_motion_callback is not None:
@@ -93,7 +97,7 @@ class UsagePanel(GatedStatic):
     def on_resize(self, event: events.Resize) -> None:
         del event
         if self._home_usage is not None:
-            self._render_home_usage(self._home_usage)
+            self._render_home_usage(self._home_usage, self._home_blocks)
 
     async def on_click(self, event: events.Click) -> None:
         if self._widget_context.placement is WidgetPlacement.PROJECT_USAGE:
@@ -114,7 +118,8 @@ class UsagePanel(GatedStatic):
     async def _refresh(self, *, motion: bool = False) -> None:
         if self._widget_context.placement is WidgetPlacement.PROJECT_USAGE:
             self._home_usage = self._widget_context.views.project_usage()
-            self._render_home_usage(self._home_usage)
+            self._home_blocks = self._widget_context.views.quota_blocks()
+            self._render_home_usage(self._home_usage, self._home_blocks)
             return
         usage = self._widget_context.views.usage(self._widget_context.focus_task)
         if self._widget_context.focus_task is None:
@@ -138,8 +143,9 @@ class UsagePanel(GatedStatic):
                 body = _usage_body(detail.usage, usage, self._widget_context, scope, [])
         self.update_if_changed(body)
 
-    def _render_home_usage(self, usage: RecordedUsageView) -> None:
-        self.update_if_changed(ProjectUsageMetric(usage).render_home(width=self.size.width or None))
+    def _render_home_usage(self, usage: RecordedUsageView, blocks: list[QuotaBlockView]) -> None:
+        metric = ProjectUsageMetric(usage).render_home(width=self.size.width or None)
+        self.update_if_changed(Group(*_banner_texts(blocks), metric))
 
     async def _refresh_if_active(self, *, motion: bool = False) -> None:
         if widget_is_current(self) and cast("App[None]", self.app).is_running:
@@ -150,8 +156,13 @@ class UsagePanel(GatedStatic):
             await self._refresh()
 
     async def _refresh_on_motion(self) -> None:
-        if self._widget_context.focus_task is None:
+        if self._widget_context.focus_task is None and self._needs_motion_refresh():
             await self._refresh_if_active(motion=True)
+
+    def _needs_motion_refresh(self) -> bool:
+        if self._widget_context.placement is WidgetPlacement.PROJECT_USAGE:
+            return bool(self._home_blocks)
+        return True
 
 
 class UsageWidget:

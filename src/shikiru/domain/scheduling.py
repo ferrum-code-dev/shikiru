@@ -95,13 +95,18 @@ def task_agents(task: Task, settings: Settings) -> TaskAgents:
     )
 
 
-def quota_blocking_agent(agents: TaskAgents, blocked_until: Mapping[str, datetime]) -> str | None:
-    """Return the blocked agent of `agents` with the latest deadline; Leader wins ties."""
-    blocked = [
+def quota_blocked_agents(agents: TaskAgents, blocked_until: Mapping[str, datetime]) -> list[str]:
+    """Return each agent of `agents` that is blocked, once each, Leader first."""
+    return [
         agent
         for agent in dict.fromkeys((agents.leader, agents.implementer))
         if agent in blocked_until
     ]
+
+
+def quota_blocking_agent(agents: TaskAgents, blocked_until: Mapping[str, datetime]) -> str | None:
+    """Return the blocked agent of `agents` with the latest deadline; Leader wins ties."""
+    blocked = quota_blocked_agents(agents, blocked_until)
     return max(blocked, key=blocked_until.__getitem__, default=None)
 
 
