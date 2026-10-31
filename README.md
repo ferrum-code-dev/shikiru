@@ -71,7 +71,8 @@ tracker files and ignored cache paths, sets the orchestration limits and integra
 writes `.shikiru/config.toml` and runs Doctor. The Orchestration step sets the maximum parallel
 tasks, the maximum passes per task, the maximum quota wait in seconds, the stall and tool timeouts
 in seconds (the silence allowed before a turn is stopped as stalled, without and with a running
-tool), the host CPU percentage below which new tasks may start, and the free RAM in GB that must be
+tool), the push interval in seconds (default 14400, four hours; 0 pushes after every local
+integration), the host CPU percentage below which new tasks may start, and the free RAM in GB that must be
 available before a new task starts. Each field starts at the project default, and Finish rejects an
 out-of-range value by focusing that field before anything is written. Available model and effort
 choices come from agent plugins; where no authoritative catalog exists, Doctor cannot promise model
@@ -210,7 +211,7 @@ invalid config keeps the last valid values and shows an alert in the header.
 | --- | --- |
 | `project`, `repo` | Project name, tracker files agents read/update, integration base/remote, ignored cache paths. |
 | `roles`, `agents` | Role and complexity ladders, review escalation policy; plugin CLI arguments, compaction threshold and optional billing declaration. |
-| `orchestration` | Parallel task slots, review iterations and local merge versus pull-request integration; the init wizard also sets the stall and tool timeouts, the quota, CPU and free-RAM limits below. |
+| `orchestration` | Parallel task slots, review iterations and local merge versus pull-request integration; `push_interval_seconds` (seconds between pushes of locally integrated bases, default 14400); the init wizard also sets the stall and tool timeouts, the quota, CPU and free-RAM limits below. |
 | `orchestration.resources` | CPU/free-RAM gates for dispatch; these do not impose CPU/RAM limits on already-running agents. |
 | `orchestration.timeouts`, `.network`, `.faults`, `.retries` | Stall/tool/Helper/quota/integration/PR limits, remote polling, engine-fault retries, and configurable provider-unavailable retries. |
 | `dashboard` | Widgets, pane splits/titles, animation, display/refresh limits and resource/quota warning thresholds. |
@@ -223,6 +224,14 @@ local base. `"pr"` pushes the task branch, opens/adopts a GitHub PR and waits fo
 conflicting/closed/failed or overdue PRs require recovery or a decision. Shikiru does not bypass
 repository review policy. Dirty overlapping changes in the main checkout block local integration;
 commit, move or otherwise resolve them before retrying.
+
+**Pushes (merge mode):** `orchestration.push_interval_seconds` (default `14400`, four hours; a
+nonnegative whole number of seconds) controls when locally integrated work reaches `repo.remote`.
+Integrations within an interval accumulate and the first one sets the deadline, so later ones do
+not postpone it. `0` pushes after each successful local integration. Only the base branch is pushed,
+never forced and never task branches or tags; a rejected, timed-out or missing remote raises an
+engine fault, keeps the work pending and retries with backoff. Pending work survives restarts. PR
+mode does not use this setting. Stop and restart the engine to load a changed value.
 
 **Caches:** selected Git-ignored cache paths can be cloned into task worktrees using filesystem
 copy-on-write. If unsupported, Shikiru warns and leaves caches uncloned; it does not silently make

@@ -56,6 +56,25 @@ def test_unavailable_retry_settings_load_from_project_config(tmp_path: Path) -> 
     assert retries.unavailable_max_retries == 4
 
 
+def test_push_interval_defaults_to_four_hours_and_accepts_a_saved_override(
+    tmp_path: Path,
+) -> None:
+    assert load_settings(_project(tmp_path)).orchestration.push_interval_seconds == 14400
+
+    (tmp_path / "zero").mkdir()
+    project_dir = _project(tmp_path / "zero", "\n[orchestration]\npush_interval_seconds = 0\n")
+
+    assert load_settings(project_dir).orchestration.push_interval_seconds == 0
+
+
+@pytest.mark.parametrize("value", ["-1", "1.5", '"soon"'])
+def test_push_interval_rejects_negative_and_non_whole_values(tmp_path: Path, value: str) -> None:
+    project_dir = _project(tmp_path, f"\n[orchestration]\npush_interval_seconds = {value}\n")
+
+    with pytest.raises(ConfigError):
+        load_settings(project_dir)
+
+
 def test_deep_merge_replaces_arrays_instead_of_concatenating(tmp_path: Path) -> None:
     project_dir = _project(
         tmp_path,

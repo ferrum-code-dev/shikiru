@@ -517,6 +517,7 @@ async def _verify_back_navigation_and_fill_project_fields(
     await _click_next(pilot, "#wizard-page-4")
     await _replace_input(pilot, "#max-parallel", "0")
     await _replace_input(pilot, "#max-iterations", "7")
+    await _replace_input(pilot, "#push-interval", "900")
     await _replace_input(pilot, "#max-quota-wait", "600")
     await _replace_input(pilot, "#max-cpu", "90")
     await _replace_input(pilot, "#min-free-ram", "2.5")
@@ -586,6 +587,7 @@ def _assert_written_mixed_config(tmp_path: Path, result: InitWizardResult) -> No
     assert settings.orchestration.max_parallel == 3
     assert settings.orchestration.max_iterations == 7
     assert settings.orchestration.integration == "pr"
+    assert settings.orchestration.push_interval_seconds == 900
     assert settings.orchestration.timeouts.max_quota_wait == 600
     assert settings.orchestration.resources.max_cpu_pct == 90
     assert settings.orchestration.resources.min_free_ram_gb == 2.5
@@ -702,6 +704,7 @@ async def test_orchestration_fields_start_from_injected_defaults_and_keep_edits(
         update={
             "max_parallel": 4,
             "max_iterations": 6,
+            "push_interval_seconds": 7200,
             "timeouts": packaged.timeouts.model_copy(
                 update={"max_quota_wait": 1200, "stall": 900, "tool": 3600}
             ),
@@ -720,6 +723,7 @@ async def test_orchestration_fields_start_from_injected_defaults_and_keep_edits(
         await _advance_to_orchestration(pilot)
         assert _input_value(pilot, "#max-parallel") == "4"
         assert _input_value(pilot, "#max-iterations") == "6"
+        assert _input_value(pilot, "#push-interval") == "7200"
         assert _input_value(pilot, "#max-quota-wait") == "1200"
         assert _input_value(pilot, "#stall-timeout") == "900"
         assert _input_value(pilot, "#tool-timeout") == "3600"
@@ -738,8 +742,8 @@ async def test_orchestration_fields_start_from_injected_defaults_and_keep_edits(
         await _click_next(pilot, "#wizard-page-6")
         summary = str(pilot.app.query_one("#wizard-summary .wizard-detail-value", Static).render())
         assert summary == (
-            "Max parallel 3 tasks · Max iterations 6 passes · Max quota wait 1200 seconds · "
-            "Stall timeout 900 seconds · Tool timeout 5400 seconds · "
+            "Max parallel 3 tasks · Max iterations 6 passes · Push interval 7200 seconds · "
+            "Max quota wait 1200 seconds · Stall timeout 900 seconds · Tool timeout 5400 seconds · "
             "Max CPU 90 percent · Min free RAM 6.0 GB · Pull request"
         )
 
@@ -807,6 +811,39 @@ async def test_invalid_orchestration_values_focus_their_field_and_boundaries_rou
     assert orchestration.timeouts.max_quota_wait == 0
     assert orchestration.resources.max_cpu_pct == 100
     assert orchestration.resources.min_free_ram_gb == 0
+
+
+async def test_invalid_push_interval_focuses_its_field_and_zero_is_saved(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    _private_doctor_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    app = await _app_with_agents(tmp_path, {"fake": create_fake_agent})
+    config_path = tmp_path / ".shikiru" / "config.toml"
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await _advance_to_orchestration(pilot)
+        await _replace_input(pilot, "#push-interval", "-5")
+        await _click_next(pilot, "#wizard-page-5")
+        await _click_next(pilot, "#wizard-page-6")
+        await _click_button(pilot, "#wizard-finish")
+        await _wait_for_orchestration_error(pilot, "push-interval")
+        assert not config_path.exists()
+
+        await _replace_input(pilot, "#push-interval", "0")
+        await _click_next(pilot, "#wizard-page-5")
+        await _click_next(pilot, "#wizard-page-6")
+        await _click_button(pilot, "#wizard-finish")
+        await wait_until(config_path.is_file, timeout=3)
+        await wait_until(
+            lambda: bool(_doctor_text(app.query_one("#doctor-report", Static)).strip()),
+            timeout=60,
+        )
+        await pilot.click("#wizard-finish")
+
+    assert load_settings(tmp_path).orchestration.push_interval_seconds == 0
 
 
 async def test_transient_small_resize_preserves_drafts_and_recovers_navigation(

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 MINIMUM_PARALLEL = 1
 MINIMUM_ITERATIONS = 1
+MINIMUM_PUSH_INTERVAL = 0
 MINIMUM_QUOTA_WAIT = 0
 MINIMUM_STALL_TIMEOUT = 1
 MINIMUM_TOOL_TIMEOUT = 1
@@ -105,6 +106,20 @@ MAX_ITERATIONS = OrchestrationField(
     maximum=None,
     whole_number=True,
 )
+PUSH_INTERVAL = OrchestrationField(
+    input_id="push-interval",
+    label="Push interval",
+    summary="Push interval",
+    unit="seconds",
+    explanation=(
+        "How often locally integrated work is pushed to the remote; the default 14400 is "
+        "four hours, and 0 pushes after every integration."
+    ),
+    default=lambda config: config.push_interval_seconds,
+    minimum=MINIMUM_PUSH_INTERVAL,
+    maximum=None,
+    whole_number=True,
+)
 MAX_QUOTA_WAIT = OrchestrationField(
     input_id="max-quota-wait",
     label="Maximum quota wait",
@@ -177,6 +192,7 @@ MIN_FREE_RAM = OrchestrationField(
 ORCHESTRATION_FIELDS = (
     MAX_PARALLEL,
     MAX_ITERATIONS,
+    PUSH_INTERVAL,
     MAX_QUOTA_WAIT,
     STALL_TIMEOUT,
     TOOL_TIMEOUT,

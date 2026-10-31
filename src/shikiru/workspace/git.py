@@ -334,6 +334,22 @@ class Git:
             mutating=True,
         )
 
+    async def push_base(self, repo_dir: Path, remote: str, branch: str) -> None:
+        """Push local `branch` to the same-named branch of `remote`, never forcing or adding refs.
+
+        A remote branch that has diverged rejects the push instead of being overwritten.
+        """
+        ref = f"refs/heads/{branch}"
+        await self._run(
+            repo_dir,
+            "push",
+            "--no-follow-tags",
+            remote,
+            f"{ref}:{ref}",
+            timeout=_PUSH_TIMEOUT_SECONDS,
+            mutating=True,
+        )
+
     async def dirty_paths(self, repo_dir: Path) -> set[str]:
         """Return paths changed in the working tree, including untracked paths."""
         result = await self._run(repo_dir, "status", "--porcelain=v1", "-z")

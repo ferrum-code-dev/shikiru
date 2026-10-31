@@ -58,7 +58,7 @@ commit, review the diff and run `git diff --check`; do not run application tests
 
 ## P1 — Push locally integrated changes periodically
 
-- [ ] Implement configurable periodic and after-integration pushes, including installation step #5.
+- [x] Implement configurable periodic and after-integration pushes, including installation step #5.
 
 Add the setting through packaged defaults, settings, orchestration choices, wizard field parsing,
 review and config writing. Wire a dedicated push service into engine maintenance and local

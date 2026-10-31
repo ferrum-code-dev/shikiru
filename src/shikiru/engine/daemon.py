@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from shikiru.engine.notification_delivery import NotificationDelivery
     from shikiru.engine.notification_feed import NotificationFeed
     from shikiru.engine.pull_request_closing import PullRequestClosing
+    from shikiru.engine.push_service import PushService
     from shikiru.engine.reconcile import Reconciler
     from shikiru.engine.retention import Retention
     from shikiru.engine.scheduler import Scheduler
@@ -182,6 +183,7 @@ class Engine:
         retention: Retention,
         retention_guard: TickGuard,
         pull_request_closing: PullRequestClosing,
+        push_service: PushService | None,
         settings: Settings,
         clock: Clock,
         close_state: Callable[[], None],
@@ -210,6 +212,7 @@ class Engine:
         self._retention = retention
         self._retention_guard = retention_guard
         self._pull_request_closing = pull_request_closing
+        self._push_service = push_service
         self._settings = settings
         self._clock = clock
         self._close_state = close_state
@@ -259,6 +262,8 @@ class Engine:
                 if commands_changed or events_changed or now >= next_tick:
                     await self._tick_guard.attempt(self._tick)
                     next_tick = now + timedelta(seconds=self._settings.orchestration.poll_seconds)
+                if self._reconciled and self._push_service is not None:
+                    self._push_service.poll(self._logger)
                 if self._reconciled:
                     await self._retention_guard.attempt(self._retention.run_if_due)
                 await self._loop_guard.attempt(self._scan_notifications)
@@ -345,6 +350,7 @@ class Engine:
                 self._notifications.shutdown,
                 self._persist_notification_cursor,
                 self._pull_request_closing.shutdown,
+                self._shutdown_pushes,
                 self._deliver_stop,
                 self._scheduler.shutdown,
                 self._task_supervisor.shutdown,
@@ -376,6 +382,10 @@ class Engine:
 
     async def _persist_notification_cursor(self) -> None:
         self._notification_feed.persist()
+
+    async def _shutdown_pushes(self) -> None:
+        if self._push_service is not None:
+            await self._push_service.shutdown()
 
     async def _deliver_stop(self) -> None:
         if self._stop_reason is not None and self._stopped_event is not None:

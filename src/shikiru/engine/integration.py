@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
@@ -21,6 +22,7 @@ from shikiru.workspace.github import PullRequestState
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from shikiru.clock import Clock
@@ -218,6 +220,14 @@ class IntegrationStrategy(Protocol):
 
         Raises `IntegrationHeld` instead of starting another wait step once `held()` is true.
         """
+        ...
+
+
+class BasePublication(Protocol):
+    """Where a completed local integration registers its base branch for a later push."""
+
+    def register(self, base: str) -> None:
+        """Record an integration of `base` that must reach the remote."""
         ...
 
 
@@ -556,10 +566,15 @@ class Integrator:
         tasks: TaskStore,
         events: EventLog,
         finish_task: TaskFinisher,
+        publication: BasePublication | None = None,
+        atomically: Callable[[], AbstractContextManager[object]] = nullcontext,
     ) -> None:
         """Inject every state, cleanup and repository boundary required by integration.
 
         The rebase starts from the ref `base_refs` resolves, so a remote base is fetched afresh.
+        A completed integration registers its base with `publication` inside the same
+        `atomically` transaction that records the task as done, so a crash between the Git
+        update and that record is repaired by the integration running again.
         """
         self._git = git
         self._strategy = strategy
@@ -569,6 +584,8 @@ class Integrator:
         self._tasks = tasks
         self._events = events
         self._finish_task = finish_task
+        self._publication = publication
+        self._atomically = atomically
 
     async def run(
         self,
@@ -603,17 +620,20 @@ class Integrator:
         if updated is None:
             message = f"{current.id} vanished before integration could finish"
             raise InvariantError(message)
-        self._tasks.finish(
-            current.id,
-            _done_transition(updated),
-            EventKind.TASK_DONE,
-            message=summary.summary,
-            data={
-                "summary": summary.summary,
-                "commits": list(summary.commits),
-                "residual_risks": list(summary.residual_risks),
-            },
-        )
+        with self._atomically():
+            self._tasks.finish(
+                current.id,
+                _done_transition(updated),
+                EventKind.TASK_DONE,
+                message=summary.summary,
+                data={
+                    "summary": summary.summary,
+                    "commits": list(summary.commits),
+                    "residual_risks": list(summary.residual_risks),
+                },
+            )
+            if self._publication is not None:
+                self._publication.register(repo.base)
         done = self._tasks.get(current.id)
         if done is None:
             message = f"{current.id} vanished after integration completed"

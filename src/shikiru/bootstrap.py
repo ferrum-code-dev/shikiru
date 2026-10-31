@@ -60,6 +60,7 @@ from shikiru.engine.notification_delivery import NotificationDelivery
 from shikiru.engine.notification_feed import NotificationFeed
 from shikiru.engine.notifier import Notifier
 from shikiru.engine.pull_request_closing import PullRequestClosing
+from shikiru.engine.push_service import PUSH_FAULT_SCOPE, PushService
 from shikiru.engine.reconcile import Reconciler
 from shikiru.engine.recovery import TurnRecovery
 from shikiru.engine.retention import Retention
@@ -108,6 +109,7 @@ from shikiru.store.database import Database, transaction
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.notification_cursor import NotificationCursor
+from shikiru.store.pushes import PushTargets
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.store.retention import StateRetention
@@ -131,6 +133,7 @@ _TMUX_PANE_ENVIRONMENT_VARIABLE = "TMUX_PANE"
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
+    from contextlib import AbstractContextManager
     from pathlib import Path
 
     from mcp.server.fastmcp import FastMCP
@@ -740,7 +743,6 @@ def build_engine(
 
     target = exact_target(session_name(resolved_settings.project.name))
     logger, log_handler = _configure_engine_logging(project_root, resolved_settings.logging)
-    _tighten_state_dir(project_root, logger)
     fault_reporter = FaultReporter(
         events=events,
         clock=resolved_clock,
@@ -820,6 +822,15 @@ def build_engine(
         evidence=evidence,
         settings=resolved_settings,
     )
+    push_service = _build_push_service(
+        settings=resolved_settings,
+        targets=PushTargets(connection),
+        git=git,
+        faults=fault_reporter,
+        clock=resolved_clock,
+        project_root=project_root,
+        logger=logger,
+    )
     integrator = _build_integrator(
         project_root=project_root,
         settings=resolved_settings,
@@ -831,6 +842,8 @@ def build_engine(
         events=events,
         faults=fault_reporter,
         task_finisher=task_finisher,
+        publication=push_service,
+        atomically=lambda: transaction(connection),
     )
     contexts = TurnContextPreparer(
         history=history,
@@ -1013,6 +1026,7 @@ def build_engine(
             scope="retention",
         ),
         pull_request_closing=pull_request_closing,
+        push_service=push_service,
         settings=resolved_settings,
         clock=resolved_clock,
         close_state=connection.close,
@@ -1033,6 +1047,35 @@ def build_engine_process(project_root: Path, settings: Settings) -> SignalledEng
     )
 
 
+def _build_push_service(
+    *,
+    settings: Settings,
+    targets: PushTargets,
+    git: Git,
+    faults: FaultReporter,
+    clock: Clock,
+    project_root: Path,
+    logger: logging.Logger,
+) -> PushService | None:
+    if settings.orchestration.integration == PULL_REQUEST_INTEGRATION:
+        return None
+    return PushService(
+        targets=targets,
+        git=git,
+        guard=TickGuard(
+            reporter=faults,
+            clock=clock,
+            settings=settings.orchestration.faults,
+            logger=logger,
+            scope=PUSH_FAULT_SCOPE,
+        ),
+        clock=clock,
+        project_root=project_root,
+        remote=settings.repo.remote,
+        interval_seconds=settings.orchestration.push_interval_seconds,
+    )
+
+
 def _build_integrator(
     *,
     project_root: Path,
@@ -1045,6 +1088,8 @@ def _build_integrator(
     events: EventLog,
     faults: FaultReporter,
     task_finisher: TaskFinisher,
+    publication: PushService | None,
+    atomically: Callable[[], AbstractContextManager[object]],
 ) -> Integrator:
     strategy: IntegrationStrategy
     base_refs: BaseRefs
@@ -1081,6 +1126,8 @@ def _build_integrator(
         tasks=tasks,
         events=events,
         finish_task=task_finisher.finish_task,
+        publication=publication,
+        atomically=atomically,
     )
 
 
@@ -1105,4 +1152,5 @@ def _configure_engine_logging(
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     logger.propagate = False
+    _tighten_state_dir(project_root, logger)
     return logger, handler

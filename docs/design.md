@@ -119,6 +119,16 @@ before integration so off-branch or uncommitted work is not silently discarded.
 base, and handles conflicts, failed checks, closure and timeout explicitly. Repository review and
 merge policy remain in force. Integration progress is recorded for restart reconciliation.
 
+In merge mode a push service publishes locally integrated bases to `repo.remote`. Each completed
+integration is registered with the base's durable pending state in the same transaction that
+completes the task, so a crash cannot lose it. The first pending integration fixes the deadline
+(`orchestration.push_interval_seconds`, default four hours); later ones do not postpone it, and zero
+pushes right after each integration. Pushes run off the engine loop with a timeout, send only
+`refs/heads/<base>` without force, tags or task branches, and are acknowledged up to the registered
+count, so an integration arriving during a push stays pending. Failures use the engine-fault
+backoff and recovery events and keep the work pending; shutdown awaits or cancels an outstanding
+push. Pull-request mode does not create the service. Changed values load on engine restart.
+
 Successful tasks release their active sessions/worktrees. Cancellation retains the branch and
 preserves a worktree when it contains unintegrated work. Terminal detach leaves engine and agents
 running. Engine Stop interrupts supervised agent turns and ends orchestration while retaining the
@@ -161,7 +171,7 @@ both. The short form takes its third part as effort. `init` and the wizard write
 only when parsing that string gives back the same rung; a model or effort containing `:`, or an
 empty effort, is written as a table. The wizard configures repository,
 role ladders, trackers, caches, orchestration limits (maximum parallel tasks, iterations, quota wait,
-stall and tool timeouts, CPU percent and free RAM) and integration, and finishes with Doctor. Its
+stall and tool timeouts, push interval in seconds, CPU percent and free RAM) and integration, and finishes with Doctor. Its
 orchestration values are checked against the step's own rules at Finish, before anything is written,
 and an out-of-range value focuses its field; hand-written configs keep the settings validation alone.
 Model catalogs come from installed plugin/CLI capabilities; lack of authoritative data is visible
