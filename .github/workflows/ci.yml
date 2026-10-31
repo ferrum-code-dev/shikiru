@@ -23,7 +23,8 @@ jobs:
       matrix:
         os: [ubuntu-24.04, macos-15]
     env:
-      PYTEST_ADDOPTS: -n 2 --dist=loadfile --durations=15
+      PYTEST_ADDOPTS: --dist=loadfile --durations=15
+      SHIKIRU_TEST_CPUS_PER_WORKER: "1"
       UV_NO_PROGRESS: "true"
       NODE_OPTIONS: --max-old-space-size=1536
       TERM: xterm-256color

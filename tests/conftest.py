@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.process import SubprocessRunner
+from tests.support.xdist_workers import CPUS_PER_WORKER_ENV, worker_count
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -27,6 +28,16 @@ pytest_plugins = [
     "tests.support.process_tree",
     "tests.support.project_dir",
 ]
+
+
+def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
+    """Resolve `-n auto` to half the CPUs, or to the divisor in `SHIKIRU_TEST_CPUS_PER_WORKER`."""
+    del config
+    cpus = os.process_cpu_count()
+    if cpus is None:
+        message = "os.process_cpu_count() could not determine the CPU count for -n auto"
+        raise RuntimeError(message)
+    return worker_count(cpus, os.environ.get(CPUS_PER_WORKER_ENV))
 
 
 @pytest.fixture(autouse=True)

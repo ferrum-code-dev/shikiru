@@ -98,7 +98,7 @@ References: `src/shikiru/dashboard/usage_body.py`, `src/shikiru/dashboard/contra
 ## Verification and completion
 
 Follow `AGENTS.md` for each task: `uv sync --locked` in its fresh worktree, then
-`PYTEST_ADDOPTS='-n 2 --dist=loadfile' uv run poe check` before every commit. The full gate must
+`PYTEST_ADDOPTS='--dist=loadfile' uv run poe check` before every commit. The full gate must
 pass with coverage at least 80%. Use real SQLite/git/tmux boundaries and the fake agent where
 appropriate, `FakeClock` and `wait_until`, and behaviour-focused tests rather than mocks of
 project classes or snapshot churn. Unit tests belong to domain rules, models and parsers;
