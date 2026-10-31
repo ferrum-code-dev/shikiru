@@ -67,23 +67,28 @@ def test_criteria_are_the_bullets_and_their_continuations_under_the_heading_outs
 
 
 _WITHOUT_SECTION_CASES: list[tuple[str, str]] = [
-    ("Make it strict.\n\n## Acceptance criteria\n- one\n", "Make it strict."),
-    ("Before.\n\n## Acceptance criteria\n- a\n  b\n\nAfter.\n", "Before.\n\nAfter."),
-    ("Acceptance criteria\n- a\n\nAfter the section.\n", "After the section."),
-    ("Before.\n\n**Acceptance criteria:**\n- a\n", "Before."),
+    ("Make it strict.\n\n## Acceptance criteria\n- one\n", "Make it strict.\n"),
+    ("Before.\n\n## Acceptance criteria\n- a\n  b\n\nAfter.\n", "Before.\n\nAfter.\n"),
+    ("Acceptance criteria\n- a\n\nAfter the section.\n", "After the section.\n"),
+    ("Before.\n\n**Acceptance criteria:**\n- a\n", "Before.\n"),
     (
         "Before.\n\n```\nexample\n```\n\nAcceptance criteria:\n- a\n",
-        "Before.\n\n```\nexample\n```",
+        "Before.\n\n```\nexample\n```\n",
     ),
     ("## Acceptance criteria\n- a\n", ""),
     (
         "Before.\n\n## Acceptance criteria\n- a\n```\nexample\n```\n",
-        "Before.\n\n```\nexample\n```",
+        "Before.\n\n```\nexample\n```\n",
     ),
     (
         "```\n## Acceptance criteria\n- example\n```\n\n## Acceptance criteria\n- real\n",
-        "```\n## Acceptance criteria\n- example\n```",
+        "```\n## Acceptance criteria\n- example\n```\n",
     ),
+    (
+        "    preserve this indentation\n\nAcceptance criteria:\n- criterion\n\nAfter.  \n",
+        "    preserve this indentation\n\nAfter.  \n",
+    ),
+    ("Before.\r\n\r\n## Acceptance criteria\r\n- a\r\n\r\nAfter.\r\n", "Before.\r\n\r\nAfter.\r\n"),
     (
         "We set Acceptance criteria: to be strict.\n- not a criterion\n",
         "We set Acceptance criteria: to be strict.\n- not a criterion\n",

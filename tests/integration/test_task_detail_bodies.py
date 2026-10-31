@@ -126,7 +126,7 @@ DESCRIPTION_CRITERIA_CASES = [
         ["from triage"],
         _HEADED_REQUEST,
         ("from triage",),
-        ("Make the parser strict",),
+        ("Make the parser strict", ""),
         id="triage-criteria-without-duplicating-the-request-heading",
     ),
     pytest.param(
@@ -140,14 +140,14 @@ DESCRIPTION_CRITERIA_CASES = [
         [],
         _HEADED_REQUEST,
         ("from the request",),
-        ("Make the parser strict",),
+        ("Make the parser strict", ""),
         id="empty-triage-criteria-fall-back-to-the-request-heading",
     ),
     pytest.param(
         None,
         _HEADED_REQUEST,
         ("from the request",),
-        ("Make the parser strict",),
+        ("Make the parser strict", ""),
         id="skipped-triage-reads-the-request-heading",
     ),
     pytest.param(
@@ -161,7 +161,7 @@ DESCRIPTION_CRITERIA_CASES = [
         None,
         _WRAPPED_REQUEST,
         ("Reject invalid input and preserve the original file.", "Keep valid input."),
-        ("Make the parser strict",),
+        ("Make the parser strict", ""),
         id="skipped-triage-keeps-wrapped-criteria-whole",
     ),
     pytest.param(
@@ -183,7 +183,7 @@ DESCRIPTION_CRITERIA_CASES = [
         None,
         _BOLD_COLON_REQUEST,
         ("Reject invalid input",),
-        ("Before the section.", "", "After the section."),
+        ("Before the section.", "", "After the section.", ""),
         id="skipped-triage-reads-a-bold-colon-heading-and-keeps-the-text-around-it",
     ),
 ]

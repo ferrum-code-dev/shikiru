@@ -35,7 +35,7 @@ def acceptance_criteria_from_request(request: str) -> tuple[str, ...]:
     The section ends at the first other non-blank line: prose, a heading or a code fence. A request
     without that heading has no criteria.
     """
-    section = _section(request.splitlines())
+    section = _section(request.splitlines(keepends=True))
     return () if section is None else section.criteria
 
 
@@ -43,14 +43,35 @@ def request_without_criteria_section(request: str) -> str:
     """Return the request without its acceptance-criteria section, keeping all other text.
 
     The removed section is the one `acceptance_criteria_from_request` reads: its heading line,
-    its bullets and their continuations, and the blank lines among them. A request without
-    criteria is returned unchanged.
+    its bullets and their continuations, and the blank lines among them. Every other character
+    and line ending is kept. Blank lines left at either end of the request by the removal are
+    dropped. A request without criteria is returned unchanged.
     """
-    lines = request.splitlines()
+    lines = request.splitlines(keepends=True)
     section = _section(lines)
     if section is None:
         return request
-    return "\n".join([*lines[: section.start], *lines[section.end :]]).strip()
+    before = lines[: section.start]
+    after = lines[section.end :]
+    if not after:
+        before = _without_trailing_blank_lines(before)
+    if not before:
+        after = _without_leading_blank_lines(after)
+    return "".join([*before, *after])
+
+
+def _without_trailing_blank_lines(lines: list[str]) -> list[str]:
+    kept = list(lines)
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return kept
+
+
+def _without_leading_blank_lines(lines: list[str]) -> list[str]:
+    kept = list(lines)
+    while kept and not kept[0].strip():
+        kept.pop(0)
+    return kept
 
 
 def _section(lines: list[str]) -> _Section | None:
@@ -89,7 +110,7 @@ def _blank_code_blocks(lines: list[str]) -> list[str]:
             if _closes_fence(line, fence):
                 fence = None
             continue
-        visible.append(line)
+        visible.append(line.rstrip())
         opening = _FENCE.match(line)
         if opening is not None:
             fence = opening["marker"]
