@@ -12,6 +12,9 @@ Decide:
   raises it through consult to you and, if you cannot decide it, to the Operator.
 - `complexity`, `acceptance_criteria` and `references`.
 
-When the request has a `## {{ acceptance_criteria_heading }}` section, carry its bullets into
-`acceptance_criteria` unchanged.
+When the request has an acceptance-criteria section, carry its bullets into
+`acceptance_criteria` unchanged. The section starts at a line holding only one of
+`## {{ acceptance_criteria_heading }}`, `{{ acceptance_criteria_heading }}:`,
+`**{{ acceptance_criteria_heading }}**` or `**{{ acceptance_criteria_heading }}:**`, in any
+letter case.
 {% endblock %}

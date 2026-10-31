@@ -7,8 +7,9 @@ from typing import Final
 
 ACCEPTANCE_CRITERIA_HEADING: Final = "Acceptance criteria"
 
+_PHRASE: Final = re.escape(ACCEPTANCE_CRITERIA_HEADING)
 _HEADING: Final = re.compile(
-    rf"#{{1,6}}\s+{re.escape(ACCEPTANCE_CRITERIA_HEADING)}\s*", re.IGNORECASE
+    rf"(?:#{{1,6}}\s+)?(?:\*\*{_PHRASE}(?::\*\*|\*\*:?)|{_PHRASE}:?)\s*", re.IGNORECASE
 )
 _ANY_HEADING: Final = re.compile(r"\s*#{1,6}\s")
 _FENCE: Final = re.compile(r"\s{0,3}(?P<marker>`{3,}|~{3,})")
@@ -20,10 +21,11 @@ def acceptance_criteria_from_request(request: str) -> tuple[str, ...]:
     """Return the bullets under the request's acceptance-criteria heading, in order.
 
     Fenced code is an example, not a requirement, so its lines are never read as a heading or
-    a criterion. The section starts after the first heading line reading
-    `ACCEPTANCE_CRITERIA_HEADING`. An indented line continues the bullet above it. The section
-    ends at the first other non-blank line: prose, a heading or a code fence. A request without
-    that heading has no criteria.
+    a criterion. The section starts after the first line that is only the heading
+    `ACCEPTANCE_CRITERIA_HEADING`, written with optional `#` marks, optional bold markers and an
+    optional trailing colon, in any letter case. An indented line continues the bullet above it.
+    The section ends at the first other non-blank line: prose, a heading or a code fence. A request
+    without that heading has no criteria.
     """
     lines = _outside_code_blocks(request.splitlines())
     start = next(
