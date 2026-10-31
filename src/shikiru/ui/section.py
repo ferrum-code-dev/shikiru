@@ -118,9 +118,10 @@ def labelled_rows(
 ) -> RenderableType:
     """Lay rows out as a label column and wrapped values, stacked below `stack_below` cells."""
     value_width = width - label_width - LABEL_GAP
-    if width < stack_below and label_width <= width - LABEL_GAP:
+    value_indent = labelled_value_indent(width, label_width, stack_below)
+    if value_indent == 0 and width < stack_below and label_width <= width - LABEL_GAP:
         return Group(*_stacked_lines(rows, width))
-    if value_width < MIN_VALUE_WIDTH:
+    if value_indent == 0:
         grid = Table.grid()
         grid.add_column(width=width, overflow=VALUE_OVERFLOW)
         for label, groups in rows:
@@ -134,6 +135,18 @@ def labelled_rows(
     for label, groups in rows:
         grid.add_row(label, wrap_groups(groups, value_width))
     return grid
+
+
+def labelled_value_indent(
+    width: int, label_width: int, stack_below: int = STACKED_BELOW_WIDTH
+) -> int:
+    """Return the value cell's indent when `labelled_rows` has a value column."""
+    value_width = width - label_width - LABEL_GAP
+    if value_width < MIN_VALUE_WIDTH:
+        return 0
+    if width < stack_below and label_width <= width - LABEL_GAP:
+        return 0
+    return label_width + LABEL_GAP
 
 
 def _stacked_lines(rows: list[Row], width: int) -> list[Text]:

@@ -600,9 +600,9 @@ def _blockers_value_x(panel: TaskDetailPanel) -> int | None:
     briefing = panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic)
     for cells in painted_lines(briefing):
         text = "".join(char for char, _ in cells)
-        match = re.search(f"{BLOCKERS_LABEL} +", text)
-        if match is not None:
-            return briefing.region.x + match.end()
+        glyph = text.find(GLYPH_WARNING)
+        if glyph >= 0:
+            return briefing.region.x + cell_len(text[:glyph])
     return None
 
 
@@ -620,7 +620,7 @@ def _mark_sits_in_the_blockers_value_column(panel: TaskDetailPanel, evidence: De
 
 
 @pytest.mark.usefixtures("colour_terminal")
-@pytest.mark.parametrize("width", [PANEL_WIDTH, COMPACT_PANEL_WIDTH])
+@pytest.mark.parametrize("width", [PANEL_WIDTH, COMPACT_PANEL_WIDTH, 32])
 async def test_the_closed_evidence_fold_hangs_in_grey_from_the_blockers_value_column(
     connection: Connection,
     database: Database,
@@ -639,7 +639,7 @@ async def test_the_closed_evidence_fold_hangs_in_grey_from_the_blockers_value_co
         initial_view=TASK_VIEW_RELATIONSHIPS,
     )
     try:
-        async with ManualFocusHost(panel).run_test(size=(width, 40)):
+        async with ManualFocusHost(panel).run_test(size=(width, 40)) as pilot:
             await _loaded(panel, task_id)
             evidence = _evidence_fold(panel)
             await wait_until(
@@ -650,6 +650,22 @@ async def test_the_closed_evidence_fold_hangs_in_grey_from_the_blockers_value_co
             assert fold_headline(panel, TASK_VIEW_BLOCKER_EVIDENCE) == "2 lines"
             assert set(styles(evidence.header, "Evidence")) == {GREY}
             assert set(foregrounds(evidence.header, "2 lines")) == {SECONDARY_TEXT_COLOR}
+            if width == 32:
+                briefing = panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic)
+                stacked_value_x = _blockers_value_x(panel)
+                assert stacked_value_x is not None
+                stacked_value_indent = stacked_value_x - briefing.region.x
+                assert stacked_value_indent == 0
+                await pilot.resize_terminal(COMPACT_PANEL_WIDTH, 40)
+                await wait_until(
+                    lambda: _mark_sits_in_the_blockers_value_column(panel, evidence),
+                    timeout=UI_WAIT_SECONDS,
+                )
+                briefing = panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic)
+                column_value_x = _blockers_value_x(panel)
+                assert column_value_x is not None
+                column_value_indent = column_value_x - briefing.region.x
+                assert column_value_indent > stacked_value_indent
     finally:
         reader.close()
 

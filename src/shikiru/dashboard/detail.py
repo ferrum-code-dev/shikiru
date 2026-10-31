@@ -644,6 +644,7 @@ class TaskDetailPanel(Vertical):
         del event
         if self._view is not None and self.is_mounted:
             self._render_activity(self._view)
+            self.call_after_refresh(self._align_problem_folds)
             self._paint_hint()
 
     def _screen_is_active(self) -> bool:
@@ -866,11 +867,16 @@ class TaskDetailPanel(Vertical):
         self.query_one(f"#{TASK_DETAIL_BRIEFING_BELOW}", GatedStatic).update_if_changed(
             Briefing(view, now, layout, BriefingHalf.BELOW)
         )
+        self._align_problem_folds()
+
+    def _align_problem_folds(self) -> None:
+        layout = self._briefing_layout()
+        width = self.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).size.width
         self.query_one(f"#{TASK_DETAIL_PROBLEM_FOLDS}", DetailFolds).styles.margin = (
             0,
             0,
             0,
-            blockers_value_indent(compact=layout.compact) - cell_len(ROW_LEAD),
+            blockers_value_indent(compact=layout.compact, width=width) - cell_len(ROW_LEAD),
         )
 
     def _render_blocker_evidence(self, evidence: Text | None) -> None:

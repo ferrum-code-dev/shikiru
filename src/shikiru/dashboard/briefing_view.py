@@ -39,6 +39,7 @@ from shikiru.ui.section import (
     Section,
     grey,
     labelled_rows,
+    labelled_value_indent,
 )
 from shikiru.ui.strip import PanelState
 from shikiru.ui.tokens import (
@@ -345,9 +346,11 @@ class Briefing:
         return lines
 
 
-def blockers_value_indent(*, compact: bool) -> int:
-    """Return the cell column the Blockers values start at, where the Evidence fold lines up."""
-    return (0 if compact else GROUP_INDENT) + LABEL_WIDTH + LABEL_GAP
+def blockers_value_indent(*, compact: bool, width: int) -> int:
+    """Return the Blockers value column using the same layout decision as `labelled_rows`."""
+    if compact:
+        return labelled_value_indent(width, LABEL_WIDTH)
+    return GROUP_INDENT + labelled_value_indent(width - GROUP_INDENT, LABEL_WIDTH)
 
 
 def _group(title: str, rows: list[Row], width: int) -> list[RenderableType]:
