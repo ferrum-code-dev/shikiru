@@ -160,25 +160,29 @@ class EscalationStore:
         return fetch_escalation(self._connection, escalation_id)
 
     def latest_answer(self, task_id: str) -> str | None:
-        """Return the latest resolved Operator answer for `task_id`, if it was an answer."""
-        row = self._connection.execute(
+        """Return the Operator answer that the task's unfinished consult still acts on.
+
+        Retries of a consult that the answer started are skipped, so the answer survives
+        them; any other escalation ends the search.
+        """
+        rows = self._connection.execute(
             """
-            SELECT resolution FROM escalations
+            SELECT step, resolution FROM escalations
             WHERE task_id = ? AND status = ?
             ORDER BY resolved_at DESC, CAST(substr(id, 3) AS INTEGER) DESC
-            LIMIT 1
             """,
             (
                 task_id,
                 EscalationStatus.RESOLVED.value,
             ),
-        ).fetchone()
-        if row is None:
-            return None
-        resolution = row["resolution"]
-        if resolution is None or not resolution.startswith(ANSWER_RESOLUTION_PREFIX):
-            return None
-        return resolution[len(ANSWER_RESOLUTION_PREFIX) :]
+        )
+        for row in rows:
+            resolution = row["resolution"]
+            if resolution is not None and resolution.startswith(ANSWER_RESOLUTION_PREFIX):
+                return resolution[len(ANSWER_RESOLUTION_PREFIX) :]
+            if row["step"] != Step.CONSULT.value:
+                return None
+        return None
 
     def settle_open(self, task_id: str, resolution: str) -> None:
         """Resolve every open escalation of `task_id`, so none can act on its later state."""

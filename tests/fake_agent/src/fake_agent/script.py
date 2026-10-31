@@ -72,6 +72,13 @@ class NeedsDecisionStep(_StepModel):
     question: str = ""
 
 
+class EscalateStep(_StepModel):
+    """Submit a consult `escalate` decision that asks the Operator `question`."""
+
+    kind: Literal["escalate"] = "escalate"
+    question: str = ""
+
+
 class NoReportStep(_StepModel):
     """End the turn without ever calling `shikiru report`."""
 
@@ -115,6 +122,7 @@ type TurnStep = (
     AcceptStep
     | ChangesRequestedStep
     | NeedsDecisionStep
+    | EscalateStep
     | NoReportStep
     | FailedReportSubmissionStep
     | FailStep

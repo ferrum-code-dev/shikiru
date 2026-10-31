@@ -14,6 +14,7 @@ from typing import NoReturn, TypedDict, cast
 from fake_agent.script import (
     AcceptStep,
     ChangesRequestedStep,
+    EscalateStep,
     NeedsDecisionStep,
     NewTaskSpec,
     SupersedeStep,
@@ -26,9 +27,11 @@ from shikiru.domain.reports import (
     REPORT_KIND_FILENAME,
     Commit,
     ConsultAnswer,
+    EscalationRequest,
     ImplementationReport,
     Issue,
     NewTask,
+    Option,
     PlanReport,
     Report,
     ReportKind,
@@ -263,6 +266,14 @@ def _plan_report(step: TurnStep, prompt_text: str, commits: list[Commit]) -> Rep
 
 
 def _consult_report(step: TurnStep, prompt_text: str) -> Report:
+    if isinstance(step, EscalateStep):
+        return ConsultAnswer(
+            decision="escalate",
+            escalation=EscalationRequest(
+                question=step.question or f"question: {prompt_text}",
+                options=[Option(label="proceed", consequences="", recommended=True)],
+            ),
+        )
     if not isinstance(step, AcceptStep):
         _unsupported(ReportKind.CONSULT, step)
     return ConsultAnswer(decision="answer", answer=f"answer: {prompt_text}")

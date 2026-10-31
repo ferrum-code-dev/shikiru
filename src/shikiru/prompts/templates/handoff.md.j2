@@ -6,5 +6,9 @@ catch up before doing anything else.
 
 {{ macros.facts_section(facts) }}
 
+{% if operator_decision is defined %}
+{{ macros.consult_body(question, operator_decision) }}
+{% else %}
 Continue the task from here.
+{% endif %}
 {% endblock %}

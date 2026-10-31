@@ -34,3 +34,28 @@ Trackers: {% for path in trackers %}`{{ path }}`{% if not loop.last %}, {% endif
 {% endfor %}
 {% endif -%}
 {%- endmacro %}
+
+{% macro consult_body(question, operator_decision) -%}
+You are the Leader, consulted by the Implementer during this task.
+{% if operator_decision is not none %}
+
+## Decision from the Operator
+
+{{ operator_decision | fenced("text") }}
+
+This is the product owner's decision in answer to an escalation, and it settles the question that
+escalation asked. Use it as the basis of your `answer`, adapted into guidance for the Implementer.
+Do not escalate the same question again unless the decision is unclear or contradicts the request.
+{% endif %}
+{% if question or operator_decision is none %}
+
+## Implementer's question
+
+{{ question | fenced("text") }}
+{% endif %}
+
+Decide `answer`, with the guidance the Implementer needs to continue, or `escalate` with a
+question and options for the Operator, exactly one of them `recommended`.
+Set `needs_input` on an option that asks the Operator to provide something (a file, a result, access,
+a value): choosing it lets the Operator type the details.
+{%- endmacro %}

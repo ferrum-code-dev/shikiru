@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from shikiru.domain.reports import (
     DECISION_ACCEPT,
+    ConsultAnswer,
     ImplementationReport,
     PlanReport,
     Report,
@@ -74,11 +75,15 @@ class ReportHistory:
 
     @staticmethod
     def latest_question(history: Sequence[tuple[str, Report]]) -> str:
-        """Return the last Implementer question, if the latest report has one."""
-        if not history:
-            return ""
-        _, last = history[-1]
-        return last.question if isinstance(last, ImplementationReport) else ""
+        """Return the Implementer question behind the latest consult, if it has one.
+
+        The Leader's answers and escalations follow the question's report, so they are skipped.
+        """
+        for _, report in reversed(history):
+            if isinstance(report, ConsultAnswer):
+                continue
+            return report.question if isinstance(report, ImplementationReport) else ""
+        return ""
 
     def latest_report(self, task_id: str) -> Report | None:
         """Return the newest valid report for `task_id`."""

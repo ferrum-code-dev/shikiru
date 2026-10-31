@@ -14,9 +14,9 @@ import pytest
 from shikiru.agents.contracts import Rung, role_dir
 from shikiru.config.settings import AgentConfig, ComplexityLadder
 from shikiru.domain.commands import ResolutionKind, SetRung
-from shikiru.domain.escalation import options_for
+from shikiru.domain.escalation import options_for, transition_for_resolution
 from shikiru.domain.events import EventKind
-from shikiru.domain.steps import Transition, first_step
+from shikiru.domain.steps import CONSULT_LIMIT, Transition, first_step
 from shikiru.domain.tasks import Counters, EscalationReason, Mode, Role, Status, StatusReason, Step
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.config.settings import ComplexityName, Settings
+    from shikiru.domain.escalation import Escalation
     from tests.support.engine import EngineEnv
     from tests.support.tmux import TmuxServer
 
@@ -53,10 +54,10 @@ async def _run_flow(env: EngineEnv, task_id: str, settings: Settings) -> FlowEnv
 
 
 def _consult_prompt_text(env: EngineEnv, task_id: str) -> str:
-    consult_prompt = next(
+    consult_prompts = sorted(
         (run_dir(env.project_root, task_id) / "turns").glob("*-consult-*/prompt.md")
     )
-    return consult_prompt.read_text()
+    return consult_prompts[-1].read_text()
 
 
 def _section(prompt_text: str, heading: str) -> str:
@@ -66,6 +67,29 @@ def _section(prompt_text: str, heading: str) -> str:
     body = prompt_text[start + len(heading) :]
     end = body.find("\n## ")
     return body if end == -1 else body[:end]
+
+
+def _apply_resolution(
+    flow_env: FlowEnv, escalation: Escalation, resolution: ResolutionKind, text: str
+) -> None:
+    task = flow_env.env.tasks.require(escalation.task_id)
+    transition = transition_for_resolution(
+        task, escalation.reason, step=escalation.step, resolution=resolution
+    )
+    flow_env.escalations.resolve(escalation.id, text)
+    flow_env.env.tasks.apply_transition(
+        task.id, dataclasses.replace(transition, status=Status.RUNNING)
+    )
+
+
+def _answer_escalation(flow_env: FlowEnv, escalation: Escalation, answer: str) -> None:
+    _apply_resolution(
+        flow_env, escalation, ResolutionKind.ANSWER, f"{ResolutionKind.ANSWER.value} {answer}"
+    )
+
+
+def _retry_escalation(flow_env: FlowEnv, escalation: Escalation) -> None:
+    _apply_resolution(flow_env, escalation, ResolutionKind.RETRY, ResolutionKind.RETRY.value)
 
 
 @dataclass(frozen=True)
@@ -230,6 +254,92 @@ async def test_later_consult_uses_implementer_question_after_flow_restarts(
     prompt_text = consult_prompt.read_text()
     assert implementer_question in prompt_text
     assert operator_answer not in prompt_text
+
+
+async def test_fresh_session_consult_keeps_the_operator_decision_and_the_implementer_question(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env)
+    question = "Which retry library should I use?"
+    implementer_steps: list[dict[str, object]] = [
+        {"kind": "needs_decision", "question": question}
+    ] * (CONSULT_LIMIT + 1)
+    await set_role_script(tmux_server, Role.IMPLEMENTER, implementer_steps)
+    escalated = await _run_flow(engine_env, task.id, settings)
+    [escalation] = escalated.escalations.list_open()
+    leader_run = engine_env.runs.get_live(task.id, Role.LEADER)
+    assert leader_run is not None
+    engine_env.runs.close(leader_run.id)
+    answer = "use tenacity"
+    _answer_escalation(escalated, escalation, answer)
+
+    await _run_flow(engine_env, task.id, settings)
+
+    prompt_text = _consult_prompt_text(engine_env, task.id)
+    assert "fresh session" in prompt_text
+    assert answer in _section(prompt_text, _OPERATOR_DECISION_HEADING)
+    assert question in _section(prompt_text, _IMPLEMENTER_QUESTION_HEADING)
+
+
+async def test_retried_consult_keeps_the_operator_decision(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    before_failure = build_flow(engine_env, settings)
+    escalation = before_failure.escalations.open(
+        task.id,
+        step=Step.IMPLEMENT,
+        reason=EscalationReason.DECISION_REQUIRED,
+        headline="Operator guidance needed",
+        packet_path="operator-guidance.md",
+        options=options_for(EscalationReason.DECISION_REQUIRED),
+    )
+    answer = "keep the parser strict"
+    _answer_escalation(before_failure, escalation, answer)
+    await set_role_script(tmux_server, Role.LEADER, [{"kind": "fail", "failure_kind": "auth"}])
+    failed = await _run_flow(engine_env, task.id, settings)
+    [auth_escalation] = failed.escalations.list_open()
+    assert auth_escalation.reason is EscalationReason.AGENT_AUTH
+    _retry_escalation(failed, auth_escalation)
+
+    await _run_flow(engine_env, task.id, settings)
+
+    prompt_text = _consult_prompt_text(engine_env, task.id)
+    assert answer in _section(prompt_text, _OPERATOR_DECISION_HEADING)
+
+
+async def test_leader_escalation_keeps_the_implementer_question_beside_the_decision(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    question = "Should the retry preserve the original input?"
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "needs_decision", "question": question}],
+    )
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [{"kind": "escalate", "question": "Which retry budget does the Operator want?"}],
+    )
+    escalated = await _run_flow(engine_env, task.id, settings)
+    [escalation] = escalated.escalations.list_open()
+    assert escalation.reason is EscalationReason.DECISION_REQUIRED
+    answer = "three attempts"
+    _answer_escalation(escalated, escalation, answer)
+
+    await _run_flow(engine_env, task.id, settings)
+
+    prompt_text = _consult_prompt_text(engine_env, task.id)
+    assert answer in _section(prompt_text, _OPERATOR_DECISION_HEADING)
+    assert question in _section(prompt_text, _IMPLEMENTER_QUESTION_HEADING)
 
 
 async def test_changes_requested_persists_iteration_rung_and_counter_resets(
