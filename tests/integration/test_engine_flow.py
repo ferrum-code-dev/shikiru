@@ -42,12 +42,30 @@ if TYPE_CHECKING:
     from tests.support.tmux import TmuxServer
 
 _TIMEOUT_SECONDS = 60.0
+_OPERATOR_DECISION_HEADING = "## Decision from the Operator"
+_IMPLEMENTER_QUESTION_HEADING = "## Implementer's question"
 
 
 async def _run_flow(env: EngineEnv, task_id: str, settings: Settings) -> FlowEnv:
     flow_env = build_flow(env, settings)
     await asyncio.wait_for(flow_env.flow.run(task_id), timeout=_TIMEOUT_SECONDS)
     return flow_env
+
+
+def _consult_prompt_text(env: EngineEnv, task_id: str) -> str:
+    consult_prompt = next(
+        (run_dir(env.project_root, task_id) / "turns").glob("*-consult-*/prompt.md")
+    )
+    return consult_prompt.read_text()
+
+
+def _section(prompt_text: str, heading: str) -> str:
+    start = prompt_text.find(heading)
+    if start == -1:
+        return ""
+    body = prompt_text[start + len(heading) :]
+    end = body.find("\n## ")
+    return body if end == -1 else body[:end]
 
 
 @dataclass(frozen=True)
@@ -148,10 +166,29 @@ async def test_consult_reads_operator_answer_after_flow_restarts(
 
     await asyncio.wait_for(after_restart.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
 
-    consult_prompt = next(
-        (run_dir(engine_env.project_root, task.id) / "turns").glob("*-consult-*/prompt.md")
+    prompt_text = _consult_prompt_text(engine_env, task.id)
+    assert answer in _section(prompt_text, _OPERATOR_DECISION_HEADING)
+    assert _IMPLEMENTER_QUESTION_HEADING not in prompt_text
+
+
+async def test_consult_caused_by_the_implementer_alone_has_no_operator_section(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env)
+    question = "Should the retry preserve the original input?"
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "needs_decision", "question": question}, {"kind": "accept"}],
     )
-    assert answer in consult_prompt.read_text()
+
+    await _run_flow(engine_env, task.id, settings)
+
+    prompt_text = _consult_prompt_text(engine_env, task.id)
+    assert question in _section(prompt_text, _IMPLEMENTER_QUESTION_HEADING)
+    assert _OPERATOR_DECISION_HEADING not in prompt_text
 
 
 async def test_later_consult_uses_implementer_question_after_flow_restarts(

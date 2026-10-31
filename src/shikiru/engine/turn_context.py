@@ -43,6 +43,7 @@ class ContextKey(StrEnum):
     TRACKERS = "trackers"
     REPORTS = "reports"
     QUESTION = "question"
+    OPERATOR_DECISION = "operator_decision"
     FACTS = "facts"
     BASE = "base"
     FINAL_ROUND = "final_round"
@@ -115,13 +116,11 @@ class TurnContextPreparer:
             ContextKey.REPORTS: self._history.context(history),
         }
         if template is PromptName.CONSULT:
-            answer = (
+            context[ContextKey.QUESTION] = self._history.latest_question(history)
+            context[ContextKey.OPERATOR_DECISION] = (
                 self._escalation_store.latest_answer(task.id)
                 if task.counters.consults == 0
                 else None
-            )
-            context[ContextKey.QUESTION] = (
-                answer if answer is not None else self._history.latest_question(history)
             )
         fresh = session_handoff and not continue_turn
         handoff = (fresh and bool(history)) or next_turn.handoff
