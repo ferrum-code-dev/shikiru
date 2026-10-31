@@ -117,48 +117,74 @@ _WRAPPED_REQUEST = (
 _FENCED_EXAMPLE_REQUEST = (
     "Make the parser strict\n\n```markdown\n## Acceptance criteria\n- example only\n```\n"
 )
+_BOLD_COLON_REQUEST = (
+    "Before the section.\n\n**Acceptance criteria:**\n- Reject invalid input\n"
+    "\nAfter the section.\n"
+)
 DESCRIPTION_CRITERIA_CASES = [
     pytest.param(
         ["from triage"],
         _HEADED_REQUEST,
         ("from triage",),
+        ("Make the parser strict",),
         id="triage-criteria-without-duplicating-the-request-heading",
     ),
     pytest.param(
         ["from triage"],
         _PLAIN_REQUEST,
         ("from triage",),
+        ("Make the parser strict", "", "- a list that is not criteria", ""),
         id="triage-criteria-without-a-request-heading",
     ),
     pytest.param(
         [],
         _HEADED_REQUEST,
         ("from the request",),
+        ("Make the parser strict",),
         id="empty-triage-criteria-fall-back-to-the-request-heading",
     ),
     pytest.param(
         None,
         _HEADED_REQUEST,
         ("from the request",),
+        ("Make the parser strict",),
         id="skipped-triage-reads-the-request-heading",
     ),
     pytest.param(
         None,
         _PLAIN_REQUEST,
         (),
+        ("Make the parser strict", "", "- a list that is not criteria", ""),
         id="skipped-triage-without-a-heading-keeps-the-notice",
     ),
     pytest.param(
         None,
         _WRAPPED_REQUEST,
         ("Reject invalid input and preserve the original file.", "Keep valid input."),
+        ("Make the parser strict",),
         id="skipped-triage-keeps-wrapped-criteria-whole",
     ),
     pytest.param(
         None,
         _FENCED_EXAMPLE_REQUEST,
         (),
+        (
+            "Make the parser strict",
+            "",
+            "```markdown",
+            "## Acceptance criteria",
+            "- example only",
+            "```",
+            "",
+        ),
         id="skipped-triage-ignores-a-fenced-example",
+    ),
+    pytest.param(
+        None,
+        _BOLD_COLON_REQUEST,
+        ("Reject invalid input",),
+        ("Before the section.", "", "After the section."),
+        id="skipped-triage-reads-a-bold-colon-heading-and-keeps-the-text-around-it",
     ),
 ]
 
@@ -207,7 +233,7 @@ async def test_task_description_comes_first_with_criteria_as_a_list_and_no_proje
 
 
 @pytest.mark.parametrize(
-    ("triage_criteria", "request_text", "expected"), DESCRIPTION_CRITERIA_CASES
+    ("triage_criteria", "request_text", "expected", "description"), DESCRIPTION_CRITERIA_CASES
 )
 async def test_description_lists_triage_criteria_else_the_request_heading_else_the_notice(
     connection: Connection,
@@ -217,6 +243,7 @@ async def test_description_lists_triage_criteria_else_the_request_heading_else_t
     triage_criteria: list[str] | None,
     request_text: str,
     expected: tuple[str, ...],
+    description: tuple[str, ...],
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
@@ -252,8 +279,12 @@ async def test_description_lists_triage_criteria_else_the_request_heading_else_t
                 for line in lines
                 if line.startswith(CRITERION_LEAD)
             )
+            assert tuple(lines[: lines.index(CRITERIA_LABEL)]) == description
             assert criteria == expected
             assert (NO_CRITERIA in lines) == (not expected)
+            stored = reader.get_task(task.id)
+            assert stored is not None
+            assert stored.request == request_text
     finally:
         reader.close()
 

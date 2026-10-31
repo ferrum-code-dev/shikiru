@@ -24,6 +24,7 @@ from shikiru.dashboard.briefing_view import (
     pull_request_groups,
     tests_groups,
 )
+from shikiru.domain.acceptance import request_without_criteria_section
 from shikiru.domain.decisions import Decider
 from shikiru.domain.results import ResultOutcome
 from shikiru.domain.tasks import Status
@@ -191,16 +192,23 @@ class DecisionsBody:
 
 @dataclass(frozen=True)
 class DescriptionBody:
-    """The Task description fold body: the request, then the acceptance criteria as a list."""
+    """The Task description fold body: the request, then the acceptance criteria as a list.
+
+    When the criteria are listed, the request's own criteria section is left out of the text so
+    each criterion is shown once.
+    """
 
     view: TaskDetailView
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         """Yield the request text and the criteria list."""
         del console, options
-        yield Text(self.view.request)
-        yield Text(CRITERIA_LABEL, style=BOLD_STEEL)
         criteria = self.view.acceptance_criteria
+        request = self.view.request
+        if criteria:
+            request = request_without_criteria_section(request)
+        yield Text(request)
+        yield Text(CRITERIA_LABEL, style=BOLD_STEEL)
         if not criteria:
             yield grey(NO_CRITERIA)
         for item in criteria:

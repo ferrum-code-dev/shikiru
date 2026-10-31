@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from shikiru.domain.acceptance import acceptance_criteria_from_request
+from shikiru.domain.acceptance import (
+    acceptance_criteria_from_request,
+    request_without_criteria_section,
+)
 
 _CASES: list[tuple[str, tuple[str, ...]]] = [
     (
@@ -61,3 +64,43 @@ def test_criteria_are_the_bullets_and_their_continuations_under_the_heading_outs
     request_text: str, criteria: tuple[str, ...]
 ) -> None:
     assert acceptance_criteria_from_request(request_text) == criteria
+
+
+_WITHOUT_SECTION_CASES: list[tuple[str, str]] = [
+    ("Make it strict.\n\n## Acceptance criteria\n- one\n", "Make it strict."),
+    ("Before.\n\n## Acceptance criteria\n- a\n  b\n\nAfter.\n", "Before.\n\nAfter."),
+    ("Acceptance criteria\n- a\n\nAfter the section.\n", "After the section."),
+    ("Before.\n\n**Acceptance criteria:**\n- a\n", "Before."),
+    (
+        "Before.\n\n```\nexample\n```\n\nAcceptance criteria:\n- a\n",
+        "Before.\n\n```\nexample\n```",
+    ),
+    ("## Acceptance criteria\n- a\n", ""),
+    (
+        "Before.\n\n## Acceptance criteria\n- a\n```\nexample\n```\n",
+        "Before.\n\n```\nexample\n```",
+    ),
+    (
+        "```\n## Acceptance criteria\n- example\n```\n\n## Acceptance criteria\n- real\n",
+        "```\n## Acceptance criteria\n- example\n```",
+    ),
+    (
+        "We set Acceptance criteria: to be strict.\n- not a criterion\n",
+        "We set Acceptance criteria: to be strict.\n- not a criterion\n",
+    ),
+    (
+        "## Acceptance criteria\nNo bullets here.\n- not a criterion\n",
+        "## Acceptance criteria\nNo bullets here.\n- not a criterion\n",
+    ),
+    (
+        "Make it strict.\n\n- a list that is not criteria\n",
+        "Make it strict.\n\n- a list that is not criteria\n",
+    ),
+]
+
+
+@pytest.mark.parametrize(("request_text", "remaining"), _WITHOUT_SECTION_CASES)
+def test_the_criteria_section_is_removed_and_every_other_line_kept(
+    request_text: str, remaining: str
+) -> None:
+    assert request_without_criteria_section(request_text) == remaining
