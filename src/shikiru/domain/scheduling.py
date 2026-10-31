@@ -7,11 +7,14 @@ from enum import StrEnum, auto
 from graphlib import CycleError, TopologicalSorter
 from typing import TYPE_CHECKING
 
-from shikiru.domain.tasks import Status
+from shikiru.domain.ladder import pick_rung
+from shikiru.domain.tasks import Role, Status
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
+    from datetime import datetime
 
+    from shikiru.config.settings import Settings
     from shikiru.domain.tasks import Task
 
 
@@ -82,6 +85,24 @@ def occupied_slot_ids(tasks: Sequence[Task]) -> frozenset[int]:
         for task in tasks
         if task.status in (Status.RUNNING, Status.INTEGRATING) and task.slot is not None
     )
+
+
+def task_agents(task: Task, settings: Settings) -> TaskAgents:
+    """Resolve the Leader and Implementer agents `task` would use for its next turns."""
+    return TaskAgents(
+        leader=pick_rung(task, Role.LEADER, settings).agent,
+        implementer=pick_rung(task, Role.IMPLEMENTER, settings).agent,
+    )
+
+
+def quota_blocking_agent(agents: TaskAgents, blocked_until: Mapping[str, datetime]) -> str | None:
+    """Return the blocked agent of `agents` with the latest deadline; Leader wins ties."""
+    blocked = [
+        agent
+        for agent in dict.fromkeys((agents.leader, agents.implementer))
+        if agent in blocked_until
+    ]
+    return max(blocked, key=blocked_until.__getitem__, default=None)
 
 
 def _group_queued_tasks(

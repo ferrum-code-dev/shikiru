@@ -17,9 +17,10 @@ from shikiru.ui.compact import (
     ProjectUsageTotals,
 )
 from shikiru.ui.gated_static import GatedStatic
+from shikiru.ui.glyphs import GLYPH_QUOTA
 from shikiru.ui.screen import widget_is_attached, widget_is_current
 from shikiru.ui.section import Section
-from shikiru.ui.tokens import STYLE_BOLD
+from shikiru.ui.tokens import AMBER, STYLE_BOLD
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -28,7 +29,12 @@ if TYPE_CHECKING:
     from textual.app import App
     from textual.widget import Widget
 
-    from shikiru.dashboard.contract import AgentUsageView, RecordedUsageView, WidgetContext
+    from shikiru.dashboard.contract import (
+        AgentUsageView,
+        QuotaBlockView,
+        RecordedUsageView,
+        WidgetContext,
+    )
 
 ENTER_KEY = "enter"
 NO_USAGE_RECORDED = "No runs or quota windows recorded."
@@ -40,8 +46,10 @@ def _usage_body(
     agents: list[AgentUsageView],
     context: WidgetContext,
     scope: str | None,
+    blocks: list[QuotaBlockView],
 ) -> Group:
     parts: list[RenderableType] = [] if scope is None else [Text(scope, style=STYLE_BOLD)]
+    parts.extend(Text(f"{GLYPH_QUOTA} {block.banner}", style=AMBER) for block in blocks)
     parts.append(ProjectUsageTotals(totals))
     with_runs = [agent for agent in agents if agent.run_count]
     with_quotas = [agent for agent in agents if agent.quotas]
@@ -64,7 +72,9 @@ class UsagePanel(GatedStatic):
         super().__init__(id="usage")
         self.can_focus = context.placement is WidgetPlacement.PROJECT_USAGE
         self._widget_context = context
-        self._rendered: tuple[RecordedUsageView, list[AgentUsageView]] | None = None
+        self._rendered: (
+            tuple[RecordedUsageView, list[AgentUsageView], list[QuotaBlockView]] | None
+        ) = None
         self._home_usage: RecordedUsageView | None = None
         self._remove_motion_callback: Callable[[], None] | None = None
 
@@ -109,11 +119,12 @@ class UsagePanel(GatedStatic):
         usage = self._widget_context.views.usage(self._widget_context.focus_task)
         if self._widget_context.focus_task is None:
             project_usage = self._widget_context.views.project_usage()
-            rendering = (project_usage, usage)
+            blocks = self._widget_context.views.quota_blocks()
+            rendering = (project_usage, usage, blocks)
             if motion and rendering == self._rendered:
                 return
             self._rendered = rendering
-            body = _usage_body(project_usage, usage, self._widget_context, None)
+            body = _usage_body(project_usage, usage, self._widget_context, None, blocks)
         else:
             detail = await self._widget_context.views.task_detail(
                 self._widget_context.focus_task,
@@ -124,7 +135,7 @@ class UsagePanel(GatedStatic):
                 body = Group(Text(TASK_USAGE_UNAVAILABLE, style=STYLE_BOLD))
             else:
                 scope = f"Task {self._widget_context.focus_task}"
-                body = _usage_body(detail.usage, usage, self._widget_context, scope)
+                body = _usage_body(detail.usage, usage, self._widget_context, scope, [])
         self.update_if_changed(body)
 
     def _render_home_usage(self, usage: RecordedUsageView) -> None:

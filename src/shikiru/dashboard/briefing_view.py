@@ -213,6 +213,8 @@ def needed_from_you(view: TaskDetailView) -> str | None:
             None,
         )
         return _sentence(question) if question is not None else NO_QUESTION
+    if view.blocker is not None and view.blocker.quota_wait is not None:
+        return _sentence(f"{WAITING_ON} {view.blocker.quota_wait}")
     blocker_quota = view.blocker is not None and view.blocker.kind == WaitReason.QUOTA.value
     reason = view.wait_reason or (WaitReason.QUOTA.value if blocker_quota else None)
     if reason is None or reason == WaitReason.PAUSED.value:

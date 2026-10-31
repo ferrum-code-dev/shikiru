@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import partial
@@ -32,6 +33,7 @@ from shikiru.dashboard.contract import (
     HeaderView,
     HeldTaskStateView,
     QueueRow,
+    QuotaBlockView,
     QuotaGaugeView,
     RecordedUsageView,
     RepoStatus,
@@ -71,6 +73,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import move_up, pick_rung
 from shikiru.domain.levels import free_space_level, usage_level
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
+from shikiru.domain.quota_waits import quota_banner, quota_wait_description
 from shikiru.domain.reports import (
     ConsultAnswer,
     ImplementationReport,
@@ -80,7 +83,13 @@ from shikiru.domain.reports import (
 )
 from shikiru.domain.results import derive_task_results, new_task_ids, tracks_live_work
 from shikiru.domain.runs import RunStatus, has_positive_token_evidence
-from shikiru.domain.scheduling import WaitReason, dispatch_sort_key, occupied_slot_ids
+from shikiru.domain.scheduling import (
+    WaitReason,
+    dispatch_sort_key,
+    occupied_slot_ids,
+    quota_blocking_agent,
+    task_agents,
+)
 from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
 from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Role, Status, Task
 from shikiru.domain.timeline import TIMELINE_EVIDENCE_CATEGORY
@@ -124,6 +133,7 @@ if TYPE_CHECKING:
         UsageView,
     )
     from shikiru.process import ProcessIdentity
+    from shikiru.store.quotas import AgentBlock
     from shikiru.store.reader import StateReader
     from shikiru.store.tasks import TaskBrowserPage, TaskRelationships
 
@@ -221,6 +231,12 @@ class _StructuredEscalationCache:
     packet: str | None
     packet_error: str | None
     evidence: StructuredEscalationEvidence
+
+
+@dataclass(frozen=True)
+class _RunningQuotaWait:
+    block: AgentBlock
+    lines: tuple[str, ...]
 
 
 class _VersionedCache[K, V]:
@@ -384,7 +400,7 @@ class StateDashboardViews:
         ]
         now = self._now()
         quota_wait_ids = {
-            task.id for task in tasks if self._running_quota_evidence(task, now) is not None
+            task.id for task in tasks if self._running_quota_wait(task, now) is not None
         }
         running = sum(
             task.status in _ACTIVE_TURN_STATUSES
@@ -644,8 +660,36 @@ class StateDashboardViews:
         return tuple(
             task.id
             for task in self._cached_tasks(statuses=_ACTIVE_TURN_STATUSES)
-            if self._running_quota_evidence(task, now) is not None
+            if self._running_quota_wait(task, now) is not None
         )
+
+    def _quota_waits(self, now: datetime) -> dict[str, AgentBlock]:
+        return self._tick_memo.get("quota_waits", lambda: self._build_quota_waits(now))
+
+    def _build_quota_waits(self, now: datetime) -> dict[str, AgentBlock]:
+        waits: dict[str, AgentBlock] = {}
+        for task in self._cached_tasks(statuses=_ACTIVE_TURN_STATUSES):
+            running_wait = self._running_quota_wait(task, now)
+            if running_wait is not None:
+                waits[task.id] = running_wait.block
+        for task in self._cached_tasks(statuses=(Status.QUEUED,)):
+            queued_block = self._queued_quota_block(task, now)
+            if queued_block is not None:
+                waits[task.id] = queued_block
+        return waits
+
+    def _queued_quota_block(self, task: Task, now: datetime) -> AgentBlock | None:
+        if task.status is not Status.QUEUED or task.wait_reason != WaitReason.QUOTA.value:
+            return None
+        blocks = {block.agent: block for block in self._active_blocks(now)}
+        agent = quota_blocking_agent(
+            task_agents(task, self._settings),
+            {name: block.until for name, block in blocks.items()},
+        )
+        return None if agent is None else blocks[agent]
+
+    def _active_blocks(self, now: datetime) -> list[AgentBlock]:
+        return self._tick_memo.get("active_blocks", lambda: self._state.active_agent_blocks(now))
 
     def _selected_browser_task(
         self,
@@ -698,12 +742,14 @@ class StateDashboardViews:
                 item.task_id for item in frames.tasks if item.agent_processing
             )
         open_decision_ids = page.open_decision_task_ids
+        quota_waits = self._quota_waits(now)
         rows = [
             self._task_browser_row(
                 task,
                 open_decision=task.id in open_decision_ids,
                 diagnosed_stall=task.id in page_stalled_ids,
                 agent_processing_ids=page_agent_processing_ids,
+                quota_wait=task.id in quota_waits,
                 now=now,
                 task_filter=task_filter,
             )
@@ -721,6 +767,7 @@ class StateDashboardViews:
                 open_decision=selected_task.status is Status.ESCALATED,
                 diagnosed_stall=selected_task.id in page_stalled_ids,
                 agent_processing_ids=page_agent_processing_ids,
+                quota_wait=selected_task.id in quota_waits,
                 now=now,
                 task_filter=task_filter,
             )
@@ -742,6 +789,7 @@ class StateDashboardViews:
         open_decision: bool,
         diagnosed_stall: bool,
         agent_processing_ids: set[str],
+        quota_wait: bool,
         now: datetime,
         task_filter: TaskBrowserFilter,
     ) -> TaskBrowserRow:
@@ -768,6 +816,7 @@ class StateDashboardViews:
             agent_processing=(
                 task.id in agent_processing_ids and not open_decision and not diagnosed_stall
             ),
+            quota_wait=quota_wait,
         )
 
     def escalations(self) -> list[EscalationPanelView]:
@@ -1181,11 +1230,16 @@ class StateDashboardViews:
         now: datetime,
     ) -> TaskBlockerView | None:
         wait_reason = task.wait_reason
-        quota_wait = self._running_quota_evidence(task, now)
-        if wait_reason is None and not task.holds and quota_wait is None:
+        running_wait = self._running_quota_wait(task, now)
+        if wait_reason is None and not task.holds and running_wait is None:
             return None
+        quota_block = (
+            running_wait.block if running_wait is not None else self._queued_quota_block(task, now)
+        )
         hold_reason = Hold.PAUSED.value if Hold.PAUSED in task.holds else Hold.INTERVENTION.value
-        reason = wait_reason or (WaitReason.QUOTA.value if quota_wait is not None else hold_reason)
+        reason = wait_reason or (
+            WaitReason.QUOTA.value if running_wait is not None else hold_reason
+        )
         lines = _hold_evidence(task, ownership)
         if wait_reason is not None:
             lines.insert(0, f"Recorded scheduler reason · {wait_reason}")
@@ -1204,11 +1258,20 @@ class StateDashboardViews:
             case WaitReason.PAUSED.value:
                 extra_lines = ["Resume clears the scheduler pause wait when submitted."]
             case None:
-                extra_lines = list(quota_wait or ())
+                extra_lines = list(running_wait.lines) if running_wait is not None else []
             case _:
                 extra_lines = ["No additional blocker evidence is recorded."]
         lines.extend(extra_lines)
-        return TaskBlockerView(kind=reason, lines=tuple(lines), related_tasks=related)
+        return TaskBlockerView(
+            kind=reason,
+            lines=tuple(lines),
+            related_tasks=related,
+            quota_wait=(
+                None
+                if quota_block is None
+                else quota_wait_description(quota_block.agent, quota_block.until, now)
+            ),
+        )
 
     def _dependency_evidence(
         self,
@@ -1243,7 +1306,7 @@ class StateDashboardViews:
             )
         return lines, related
 
-    def _running_quota_evidence(self, task: Task, now: datetime) -> tuple[str, ...] | None:
+    def _running_quota_wait(self, task: Task, now: datetime) -> _RunningQuotaWait | None:
         if task.status not in _ACTIVE_TURN_STATUSES or task.step is None:
             return None
         role = task_acting_role(task)
@@ -1281,7 +1344,7 @@ class StateDashboardViews:
                 )
         else:
             lines.append(f"Provider quota observation · {agent} · unavailable")
-        return tuple(lines)
+        return _RunningQuotaWait(block=block, lines=tuple(lines))
 
     def _current_quota_wait_events(
         self,
@@ -1566,6 +1629,21 @@ class StateDashboardViews:
                 )
             )
         return result
+
+    def quota_blocks(self) -> list[QuotaBlockView]:
+        """Build one banner per agent whose quota block is still in effect."""
+        now = self._now()
+        waiting = Counter(block.agent for block in self._quota_waits(now).values())
+        return [
+            QuotaBlockView(
+                agent=block.agent,
+                banner=quota_banner(
+                    quota_wait_description(block.agent, block.until, now),
+                    waiting[block.agent],
+                ),
+            )
+            for block in self._active_blocks(now)
+        ]
 
     def command_history(
         self,

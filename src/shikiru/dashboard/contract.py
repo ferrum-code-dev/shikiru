@@ -362,6 +362,7 @@ class TaskBrowserRow:
     diagnosed_stall: bool
     requeued_age: str | None = None
     agent_processing: bool = False
+    quota_wait: bool = False
 
 
 @dataclass(frozen=True)
@@ -614,6 +615,7 @@ class TaskBlockerView:
     kind: str
     lines: tuple[str, ...]
     related_tasks: tuple[TaskReferenceView, ...] = ()
+    quota_wait: str | None = None
 
 
 @dataclass(frozen=True)
@@ -695,6 +697,14 @@ class AgentUsageView:
     api_equivalent_cost_usd: float | None = None
     api_equivalent_cost_runs: int = 0
     unknown_cost_runs: int = 0
+
+
+@dataclass(frozen=True)
+class QuotaBlockView:
+    """One agent blocked by a provider quota, announced by its banner."""
+
+    agent: str
+    banner: str
 
 
 @dataclass(frozen=True)
@@ -906,6 +916,10 @@ class DashboardViews(Protocol):
 
     def usage(self, task_id: str | None = None) -> list[AgentUsageView]:
         """Return project usage or usage recorded for one task."""
+        ...
+
+    def quota_blocks(self) -> list[QuotaBlockView]:
+        """Return one banner per agent whose quota block is still in effect."""
         ...
 
     def command_history(

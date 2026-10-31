@@ -181,8 +181,10 @@ additional agents. Built-in widgets cover tasks, decisions, usage/quota, host/pr
 Docker, disk and faults. Layout, titles, warning thresholds, refresh and motion are configurable.
 
 Usage preserves provenance and uncertainty: absent tokens/cost/context/billing are not invented,
-and quota readings can be stale. CPU/RAM, disk, Docker and fault diagnostics complement task
-progress. Notifications go to tmux and an optional external command receiving JSON on stdin.
+and quota readings can be stale. An active quota block shows as a banner in the expanded usage
+view, and tasks waiting on it carry an amber `quota` marker in the task list. CPU/RAM, disk,
+Docker and fault diagnostics complement task progress. Notifications go to tmux and an optional
+external command receiving JSON on stdin.
 A durable delivery cursor replays undelivered urgent events after restart; delivery is not
 exactly-once, so external hooks must tolerate repeats.
 

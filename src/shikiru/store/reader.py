@@ -21,7 +21,13 @@ from shikiru.store.events import (
     fetch_latest_events,
     fetch_timeline_events,
 )
-from shikiru.store.quotas import AgentBlock, fetch_agent_block, fetch_quota_agents, fetch_quotas
+from shikiru.store.quotas import (
+    AgentBlock,
+    fetch_active_agent_blocks,
+    fetch_agent_block,
+    fetch_quota_agents,
+    fetch_quotas,
+)
 from shikiru.store.runs import fetch_all_runs, fetch_runs_for_task, fetch_taken_over_roles_for_task
 from shikiru.store.tasks import (
     fetch_task,
@@ -33,6 +39,7 @@ from shikiru.store.tasks import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
     from shikiru.agents.contracts import QuotaWindow
     from shikiru.clock import Clock
@@ -140,6 +147,14 @@ class StateReader:
         """Read the engine's recorded quota block for one required agent."""
         try:
             return fetch_agent_block(self._connection, agent)
+        except sqlite3.Error as error:
+            message = f"could not query read-only database {self._database_path}: {error}"
+            raise DatabaseError(message) from error
+
+    def active_agent_blocks(self, now: datetime) -> list[AgentBlock]:
+        """Read every quota block the engine recorded that is still in effect at `now`."""
+        try:
+            return fetch_active_agent_blocks(self._connection, now)
         except sqlite3.Error as error:
             message = f"could not query read-only database {self._database_path}: {error}"
             raise DatabaseError(message) from error

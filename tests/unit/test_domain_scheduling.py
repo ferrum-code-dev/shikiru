@@ -12,6 +12,7 @@ from shikiru.domain.scheduling import (
     find_dependency_cycle,
     occupied_slot_ids,
     pick_ready,
+    quota_blocking_agent,
 )
 from shikiru.domain.tasks import Hold, Status
 from tests.support.factories import make_task
@@ -236,3 +237,29 @@ def test_dependency_cycle_names_the_tasks_that_wait_on_each_other(
     graph: Mapping[str, list[str]], cycle_ids: frozenset[str] | set[str]
 ) -> None:
     assert set(find_dependency_cycle(graph)) == cycle_ids
+
+
+_LEADER_AGENTS = TaskAgents(leader="claude", implementer="codex")
+_EARLIER = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
+_LATER = datetime(2026, 1, 1, 13, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("blocked_until", "expected"),
+    [
+        pytest.param({}, None, id="nothing-blocked"),
+        pytest.param({"codex": _LATER}, "codex", id="only-implementer-blocked"),
+        pytest.param({"claude": _LATER}, "claude", id="only-leader-blocked"),
+        pytest.param(
+            {"claude": _EARLIER, "codex": _LATER}, "codex", id="implementer-blocked-longer"
+        ),
+        pytest.param({"claude": _LATER, "codex": _EARLIER}, "claude", id="leader-blocked-longer"),
+        pytest.param({"claude": _LATER, "codex": _LATER}, "claude", id="tie-goes-to-leader"),
+        pytest.param({"gemini": _LATER}, None, id="unrelated-agent-blocked"),
+    ],
+)
+def test_quota_wait_is_attributed_to_the_blocked_agent_with_the_latest_deadline(
+    blocked_until: Mapping[str, datetime],
+    expected: str | None,
+) -> None:
+    assert quota_blocking_agent(_LEADER_AGENTS, blocked_until) == expected

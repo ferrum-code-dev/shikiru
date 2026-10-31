@@ -29,7 +29,6 @@ from shikiru.domain.reports import NewTask, Verdict
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step, next_step
 from shikiru.domain.tasks import Hold, Mode, Role, Status, StatusReason, TaskOrigin
-from shikiru.engine.events import emit_turn_started
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.runs import RunStore
@@ -47,6 +46,7 @@ from tests.support.dashboard import (
     state_views,
     widget_context,
 )
+from tests.support.quota_waits import record_quota_wait
 from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
@@ -57,7 +57,6 @@ if TYPE_CHECKING:
     from textual.pilot import Pilot
 
     from shikiru.config.settings import Settings
-    from shikiru.domain.events import Event
     from shikiru.domain.tasks import Task
     from shikiru.store.database import Database
     from shikiru.store.reader import StateReader
@@ -67,7 +66,6 @@ TASK_CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 TASK_BROWSER_PAGE_SIZE = 24
 RESOURCE_SAMPLE_AGE_SECONDS = 120
 QUOTA_BLOCK_SECONDS = 300
-QUOTA_EVENT_DELAY_SECONDS = 1
 
 
 def _task_detail_app(
@@ -95,46 +93,6 @@ def _start_task(connection: Connection, clock: FakeClock, task_id: str) -> None:
     store = TaskStore(connection, clock)
     store.set_slot(task_id, 0)
     store.apply_transition(task_id, first_step(task))
-
-
-def _record_turn_start(
-    connection: Connection,
-    clock: FakeClock,
-    task: Task,
-    role: Role,
-    rung: Rung,
-) -> None:
-    assert task.step is not None
-    emit_turn_started(EventLog(connection, clock), task, task.step, role, rung)
-
-
-def _record_quota_wait(
-    connection: Connection,
-    clock: FakeClock,
-    task: Task,
-    *,
-    role: Role,
-    rung: Rung,
-    until: datetime,
-) -> tuple[Event, Event]:
-    _record_turn_start(connection, clock, task, role, rung)
-    assert task.step is not None
-    events = EventLog(connection, clock)
-    failure = events.append(
-        EventKind.TURN_FAILED,
-        task_id=task.id,
-        message="quota",
-        data={"kind": "quota", "step": task.step.value, "resets_at": None},
-    )
-    clock.advance(QUOTA_EVENT_DELAY_SECONDS)
-    quota_block = events.append(
-        EventKind.QUOTA_BLOCKED,
-        task_id=task.id,
-        message="quota wait",
-        data={"agent": rung.agent, "until": until.isoformat()},
-    )
-    QuotaStore(connection).block(rung.agent, until, "quota")
-    return failure, quota_block
 
 
 def _nested_plan_family(
@@ -884,7 +842,7 @@ async def test_running_quota_wait_requires_a_live_block_for_the_current_task_rol
     owner = seed_task(connection, clock, title="Leader quota wait", mode=Mode.PLAN)
     store.apply_transition(owner.id, Transition.stay(owner, step=Step.PLAN))
     owner = store.require(owner.id)
-    failure, quota_block = _record_quota_wait(
+    failure, quota_block = record_quota_wait(
         connection,
         clock,
         owner,
@@ -902,7 +860,7 @@ async def test_running_quota_wait_requires_a_live_block_for_the_current_task_rol
     )
     store.apply_transition(other_role.id, Transition.stay(other_role, step=Step.TRIAGE))
     other_role = store.require(other_role.id)
-    _record_quota_wait(
+    record_quota_wait(
         connection,
         clock,
         other_role,
@@ -914,7 +872,7 @@ async def test_running_quota_wait_requires_a_live_block_for_the_current_task_rol
     expired = seed_task(connection, clock, title="Expired quota wait", mode=Mode.IMPLEMENT)
     store.apply_transition(expired.id, Transition.stay(expired, step=Step.IMPLEMENT))
     expired = store.require(expired.id)
-    _record_quota_wait(
+    record_quota_wait(
         connection,
         clock,
         expired,
@@ -929,7 +887,7 @@ async def test_running_quota_wait_requires_a_live_block_for_the_current_task_rol
     )
     store.apply_transition(changed_rung.id, Transition.stay(changed_rung, step=Step.IMPLEMENT))
     changed_rung = store.require(changed_rung.id)
-    _record_quota_wait(
+    record_quota_wait(
         connection,
         clock,
         changed_rung,

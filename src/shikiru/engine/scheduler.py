@@ -15,10 +15,10 @@ from shikiru.domain.scheduling import (
     Dispatch,
     ReadySchedule,
     SchedulingGates,
-    TaskAgents,
     WaitReason,
     occupied_slot_ids,
     pick_ready,
+    task_agents,
 )
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, StatusReason, Step, Task
@@ -171,10 +171,7 @@ class Scheduler:
         )
         blocked = frozenset(block.agent for block in self._quotas.active_blocks(self._clock.now()))
         agents = {
-            task.id: TaskAgents(
-                leader=pick_rung(task, Role.LEADER, self._settings).agent,
-                implementer=pick_rung(task, Role.IMPLEMENTER, self._settings).agent,
-            )
+            task.id: task_agents(task, self._settings)
             for task in tasks
             if task.status is Status.QUEUED
         }
