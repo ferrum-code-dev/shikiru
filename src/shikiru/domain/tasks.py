@@ -11,6 +11,7 @@ from shikiru.agents.contracts import Rung
 from shikiru.config.settings import ComplexityName
 
 TASK_TITLE_MAX_LENGTH = 60
+TASK_TITLE_ELLIPSIS = "…"
 
 
 class TaskOrigin(StrEnum):
@@ -161,3 +162,13 @@ class Task(DomainModel):
     def held(self) -> bool:
         """Whether a task-scoped hold forbids starting the task's next external effect."""
         return bool(self.holds)
+
+
+def title_from_request(request: str) -> str:
+    """Derive a title from the request's first line, cut at a word boundary within the limit."""
+    lines = request.splitlines()
+    first_line = lines[0] if lines else request
+    if len(first_line) <= TASK_TITLE_MAX_LENGTH:
+        return first_line
+    kept = first_line[: TASK_TITLE_MAX_LENGTH - len(TASK_TITLE_ELLIPSIS)]
+    return kept.rsplit(" ", 1)[0] + TASK_TITLE_ELLIPSIS

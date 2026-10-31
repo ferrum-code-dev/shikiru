@@ -30,7 +30,7 @@ from shikiru.domain.commands import (
     Submit,
     TakeOver,
 )
-from shikiru.domain.tasks import TASK_TITLE_MAX_LENGTH
+from shikiru.domain.tasks import title_from_request
 from shikiru.errors import DatabaseError
 from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import OperationalDatabaseError
@@ -177,7 +177,7 @@ class OperatorCommands:
         implementer: Rung | None = None,
     ) -> Submit:
         """Prepare the typed submission used by both palette recovery and dispatch."""
-        task_title = title if title is not None else _title_from_request(request)
+        task_title = title if title is not None else title_from_request(request)
         return Submit(
             title=task_title,
             request=request,
@@ -299,11 +299,6 @@ class OperatorCommands:
     def prepare_stop_engine(self) -> Stop:
         """Prepare the typed stop command used by the palette and dispatcher."""
         return Stop()
-
-
-def _title_from_request(request: str) -> str:
-    first_line = request.splitlines()[0] if request.splitlines() else request
-    return first_line[:TASK_TITLE_MAX_LENGTH]
 
 
 def _queued_ack(command_id: int, command: Command, message: str) -> Ack:
