@@ -8,6 +8,7 @@ from pydantic import TypeAdapter
 
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import Escalation, EscalationOption, EscalationStatus
+from shikiru.domain.events import EventKind
 from shikiru.domain.tasks import EscalationReason, Step
 from shikiru.store.database import (
     dump_json,
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
 ESCALATION_ID_PREFIX = "E-"
 ESCALATION_SEQUENCE = "escalation"
 ANSWER_RESOLUTION_PREFIX = f"{ResolutionKind.ANSWER.value} "
+ANSWER_ESCALATION_ID_JSON_PATH = "$.escalation_id"
+TURN_STEP_JSON_PATH = "$.step"
 
 _OPTIONS_ADAPTER: TypeAdapter[tuple[EscalationOption, ...]] = TypeAdapter(
     tuple[EscalationOption, ...]
@@ -167,7 +170,7 @@ class EscalationStore:
         """
         rows = self._connection.execute(
             """
-            SELECT step, resolution FROM escalations
+            SELECT id, step, resolution FROM escalations
             WHERE task_id = ? AND status = ?
             ORDER BY resolved_at DESC, CAST(substr(id, 3) AS INTEGER) DESC
             """,
@@ -179,10 +182,44 @@ class EscalationStore:
         for row in rows:
             resolution = row["resolution"]
             if resolution is not None and resolution.startswith(ANSWER_RESOLUTION_PREFIX):
+                if self._answer_was_consumed(task_id, row["id"]):
+                    return None
                 return resolution[len(ANSWER_RESOLUTION_PREFIX) :]
             if row["step"] != Step.CONSULT.value:
                 return None
         return None
+
+    def _answer_was_consumed(self, task_id: str, escalation_id: str) -> bool:
+        resolution_event = self._connection.execute(
+            """
+            SELECT id FROM events
+            WHERE task_id = ? AND kind = ? AND json_extract(data, ?) = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (
+                task_id,
+                EventKind.ESCALATION_RESOLVED.value,
+                ANSWER_ESCALATION_ID_JSON_PATH,
+                escalation_id,
+            ),
+        ).fetchone()
+        if resolution_event is None:
+            return False
+        consult_turn = self._connection.execute(
+            """
+            SELECT 1 FROM events
+            WHERE task_id = ? AND kind = ? AND id > ? AND json_extract(data, ?) = ?
+            LIMIT 1
+            """,
+            (
+                task_id,
+                EventKind.TURN_COMPLETED.value,
+                resolution_event["id"],
+                TURN_STEP_JSON_PATH,
+                Step.CONSULT.value,
+            ),
+        ).fetchone()
+        return consult_turn is not None
 
     def settle_open(self, task_id: str, resolution: str) -> None:
         """Resolve every open escalation of `task_id`, so none can act on its later state."""

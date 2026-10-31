@@ -1937,6 +1937,65 @@ async def test_replaying_an_acknowledged_retry_leaves_the_restarted_turn_running
         assert len(operator.events.since(0, kinds=[EventKind.TASK_RETRIED])) == 1
 
 
+async def test_task_retry_does_not_reuse_an_answer_after_its_consult_completed(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    question_a = "Which parser policy should I use?"
+    question_b = "Which cache policy should I use?"
+    operator_answer = "Keep the parser strict"
+    async with _operator_session(
+        tmp_path,
+        tmux_server,
+        implementer_script=[
+            {"kind": "needs_decision", "question": question_a},
+            {"kind": "needs_decision", "question": question_b},
+        ],
+        leader_script=[
+            {
+                "kind": "escalate",
+                "question": "Which parser policy should the Operator choose?",
+            },
+            {"kind": "accept"},
+            {"kind": "fail", "failure_kind": "auth"},
+            {"kind": "accept"},
+        ],
+    ) as (operator, task_id, _run):
+        escalations = EscalationStore(operator.connection, operator.clock)
+        await operator.advance_until(lambda: bool(escalations.list_open()))
+        [decision_escalation] = escalations.list_open()
+        resolved = await operator.send(
+            Resolve(
+                escalation_id=decision_escalation.id,
+                resolution=AnswerResolution(text=operator_answer),
+            )
+        )
+        assert resolved.status is CommandStatus.DONE
+
+        await operator.advance_until(
+            lambda: (
+                len(operator.events.since(0, kinds=[EventKind.ESCALATION], task_id=task_id)) >= 2
+            )
+        )
+        open_escalations = escalations.list_open()
+        assert any(
+            escalation.reason is EscalationReason.AGENT_AUTH for escalation in open_escalations
+        ), [(escalation.id, escalation.reason) for escalation in open_escalations]
+        prompt_paths_before_retry = sorted(run_dir(tmp_path, task_id).glob("turns/*/prompt.md"))
+        assert any(operator_answer in path.read_text() for path in prompt_paths_before_retry)
+        turns_before_retry = operator.turns(task_id)
+        retried = await operator.send(Retry(task_id=task_id))
+        assert retried.status is CommandStatus.DONE
+
+        def turn_prompts() -> list[Path]:
+            return sorted(run_dir(tmp_path, task_id).glob("turns/*/prompt.md"))
+
+        await operator.advance_until(lambda: operator.turns(task_id) > turns_before_retry)
+
+        retry_prompt = turn_prompts()[-1].read_text()
+        assert question_b in retry_prompt
+        assert operator_answer not in retry_prompt
+
+
 @dataclass(frozen=True)
 class _Replay:
     command: Command
