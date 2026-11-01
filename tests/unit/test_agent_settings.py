@@ -6,13 +6,33 @@ from shikiru.agents.settings import (
     AgentSetting,
     AgentSettingError,
     SettingKind,
-    billing_declaration_setting,
-    cli_args_setting,
-    compact_threshold_setting,
 )
 
-_THRESHOLD = compact_threshold_setting(80.0)
-_BILLING = billing_declaration_setting()
+_THRESHOLD = AgentSetting(
+    key="threshold",
+    label="Threshold",
+    help="",
+    kind=SettingKind.NUMBER,
+    default=80.0,
+    minimum=0,
+    maximum=100,
+)
+_BILLING = AgentSetting(
+    key="billing",
+    label="Billing",
+    help="",
+    kind=SettingKind.CHOICE,
+    default=None,
+    choices=("api", "subscription"),
+)
+
+
+def cli_args_setting(default: tuple[str, ...]) -> AgentSetting:
+    return AgentSetting(
+        key="args", label="Arguments", help="", kind=SettingKind.ARGS, default=default
+    )
+
+
 _ARGS = cli_args_setting(("--permission-mode", "bypassPermissions"))
 _REQUIRED_CHOICE = AgentSetting(
     key="mode", label="Mode", help="", kind=SettingKind.CHOICE, default="a", choices=("a", "b")

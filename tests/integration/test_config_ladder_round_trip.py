@@ -84,3 +84,18 @@ def test_rungs_the_short_form_cannot_express_still_load_back_unchanged(
     settings = _load_rendered(tmp_path, config_text)
 
     assert settings.roles.leader.ladder == leader_ladder
+
+
+def test_agent_options_with_awkward_text_load_back_unchanged(tmp_path: Path) -> None:
+    options = {
+        "claude": {
+            "args": ["--add-dir", "C:\\work\\\U0001f680", 'say "hi"', "tab\there", "näive"],
+            "custom.mode": "fast",
+            "compact_at_pct": 75,
+        }
+    }
+
+    config_text = render_config(_PROJECT, agent_options=options)
+    settings = _load_rendered(tmp_path, config_text)
+
+    assert settings.agents["claude"].options == options["claude"]

@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from shikiru.agents.contracts import PERCENT, BillingMode
-from shikiru.agents.settings import (
-    AgentSetting,
+from shikiru.plugins.agents.shared_settings import (
     billing_declaration_setting,
     cli_args_setting,
     compact_threshold_setting,
 )
+
+if TYPE_CHECKING:
+    from shikiru.agents.settings import AgentSetting
 
 CLAUDE_COMMAND = "claude"
 PRINT_FLAG = "-p"

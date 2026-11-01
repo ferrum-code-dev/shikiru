@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 from shikiru.agents.contracts import ModelCatalog, Rung, short_rung_text
 from shikiru.config.loader import validate_project_config_text
 from shikiru.errors import ConfigError, ProjectNotRepositoryRootError, RepositoryHasNoCommitsError
+from shikiru.operator.toml_text import toml_key, toml_value
 from shikiru.paths import EXCLUDE_LINE, SHIKIRU_DIR_NAME, project_config_path
 from shikiru.private import create_private_text, make_private_dir
 
@@ -22,7 +23,11 @@ if TYPE_CHECKING:
     from shikiru.agents.settings import AgentSettings
     from shikiru.config.settings import ComplexityName
     from shikiru.operator.doctor import DoctorReport
-    from shikiru.operator.plugin_checks import AgentCapabilityResult, PluginChecks
+    from shikiru.operator.plugin_checks import (
+        AgentCapabilityResult,
+        OptionsRejection,
+        PluginChecks,
+    )
     from shikiru.workspace.caches import CacheCloner
     from shikiru.workspace.git import Git, LineChangeStats
 
@@ -179,9 +184,11 @@ class ProjectDetectors:
         """Return an agent's optional authoritative choices through the injected plugin boundary."""
         return await self._plugin_checks.model_catalog(name, options)
 
-    def agent_options_error(self, name: str, options: Mapping[str, Any]) -> str | None:
+    def agent_options_rejection(
+        self, name: str, options: Mapping[str, Any]
+    ) -> OptionsRejection | None:
         """Return the plugin's rejection of `options` for `name`, or `None` when accepted."""
-        return self._plugin_checks.validation_error(name, options)
+        return self._plugin_checks.options_rejection(name, options)
 
     def agent_capabilities(self, name: str, options: Mapping[str, Any]) -> AgentCapabilityResult:
         """Return generic optional capabilities through the injected plugin boundary."""
@@ -271,12 +278,12 @@ def render_config(
         )
     )
     for name in project.agents:
-        lines.append(f"[agents.{name}]")
+        lines.append(f"[agents.{toml_key(name)}]")
         options = (agent_options or {}).get(name, {})
         if options:
             lines.append("")
-            lines.append(f"[agents.{name}.options]")
-            lines.extend(f"{key} = {json.dumps(value)}" for key, value in options.items())
+            lines.append(f"[agents.{toml_key(name)}.options]")
+            lines.extend(f"{toml_key(key)} = {toml_value(value)}" for key, value in options.items())
         lines.append("")
     selected_ladders = (
         ladders

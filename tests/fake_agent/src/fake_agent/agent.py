@@ -22,13 +22,12 @@ from shikiru.agents.contracts import (
     QuotaReading,
     QuotaWindow,
 )
-from shikiru.agents.settings import (
-    AgentSetting,
-    SettingKind,
+from shikiru.agents.settings import AgentSetting, SettingKind
+from shikiru.errors import ConfigError, ShikiruError
+from shikiru.plugins.agents.shared_settings import (
     billing_declaration_setting,
     compact_threshold_setting,
 )
-from shikiru.errors import ConfigError, ShikiruError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

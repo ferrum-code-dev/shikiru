@@ -272,7 +272,9 @@ command queue as the dashboard. Agent and widget plugins use Python entry points
 [contract test kit](src/shikiru/agents/testing/) support additional agents. A plugin opts into the
 wizard's Agents step by giving its agent a `settings()` method that returns
 [`AgentSetting`](src/shikiru/agents/settings.py) entries (key, label, help, kind, default and
-bounds or choices); the plugin's own factory still validates the resulting options.
+bounds or choices); the plugin's own factory still validates the resulting options. It can raise
+[`AgentOptionsError`](src/shikiru/agents/settings.py) with the rejected option key so the wizard
+focuses that field, or omit the key for an agent-wide rejection.
 
 For exact fields and defaults, see [defaults.toml](src/shikiru/config/defaults.toml),
 [settings validation](src/shikiru/config/settings.py), [Claude options](src/shikiru/plugins/agents/claude/options.py)

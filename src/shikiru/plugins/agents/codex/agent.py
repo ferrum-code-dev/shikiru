@@ -56,6 +56,7 @@ from shikiru.plugins.agents.codex.options import (
 from shikiru.plugins.agents.codex.quota import CodexQuotaProbe
 from shikiru.plugins.agents.codex.sandbox_probe import CodexSandboxProbe
 from shikiru.plugins.agents.codex.turn import CodexTurnSequence, context_window
+from shikiru.plugins.agents.shared_settings import options_error
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -481,6 +482,5 @@ def create(context: AgentContext) -> CodexAgent:
     try:
         options = CodexOptions.model_validate(context.options)
     except ValidationError as error:
-        message = f"invalid options for the Codex agent: {error}"
-        raise ConfigError(message) from error
+        raise options_error(CODEX_COMMAND, error) from error
     return CodexAgent(context.runner, context.clock, options)

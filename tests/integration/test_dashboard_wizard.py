@@ -15,7 +15,7 @@ import shikiru.agents.registry as registry_module
 import shikiru.dashboard.wizard as wizard_module
 from shikiru.agents.contracts import AgentContext, CheckResult, ModelCatalog, ModelChoice, Rung
 from shikiru.agents.registry import AgentRegistry
-from shikiru.agents.settings import AgentSetting, SettingKind
+from shikiru.agents.settings import AgentOptionsError, AgentSetting, SettingKind
 from shikiru.bootstrap import build_doctor, build_project_detectors, run_init_wizard
 from shikiru.cli.render import doctor_renderable
 from shikiru.clock import SystemClock
@@ -1371,7 +1371,15 @@ class _PickyAgent(_LegacyAgent):
     def settings(self) -> tuple[AgentSetting, ...]:
         return (
             AgentSetting(
-                key="depth",
+                key="first",
+                label="First",
+                help="A first option.",
+                kind=SettingKind.NUMBER,
+                default=1,
+                minimum=0,
+            ),
+            AgentSetting(
+                key="custom.depth",
                 label="Depth",
                 help="How deep.",
                 kind=SettingKind.NUMBER,
@@ -1382,9 +1390,16 @@ class _PickyAgent(_LegacyAgent):
 
 
 def _create_picky_agent(context: AgentContext) -> Agent:
-    if context.options.get("depth") == PICKY_REJECTED_DEPTH:
+    if context.options.get("custom.depth") == PICKY_REJECTED_DEPTH:
         message = "depth 13 is unlucky"
-        raise ConfigError(message)
+        raise AgentOptionsError(message, "custom.depth")
+    return cast("Agent", _PickyAgent())
+
+
+def _create_unwelcoming_agent(context: AgentContext) -> Agent:
+    if context.options.get("first") == PICKY_REJECTED_DEPTH:
+        message = "this combination is unsupported"
+        raise AgentOptionsError(message)
     return cast("Agent", _PickyAgent())
 
 
@@ -1507,19 +1522,45 @@ async def test_third_party_plugin_settings_work_and_its_rejection_is_reported(
 
     async with app.run_test(size=WIZARD_SIZE) as pilot:
         await _advance_to_agent_settings(pilot)
-        assert _input_value(pilot, "#agent-setting-1-0") == "1"
-        await _replace_input(pilot, "#agent-setting-1-0", str(PICKY_REJECTED_DEPTH))
+        assert _input_value(pilot, "#agent-setting-1-1") == "1"
+        await _replace_input(pilot, "#agent-setting-1-1", str(PICKY_REJECTED_DEPTH))
         await _click_next(pilot)
-        message = await _wait_for_agent_setting_error(pilot, "agent-setting-1-0")
+        message = await _wait_for_agent_setting_error(pilot, "agent-setting-1-1")
         assert "picky" in message
         assert "unlucky" in message
         assert not config_path.exists()
 
-        await _replace_input(pilot, "#agent-setting-1-0", "7")
+        await _replace_input(pilot, "#agent-setting-1-1", "7")
         await _finish_from_agent_settings(pilot)
         await wait_until(config_path.is_file, timeout=3)
 
-    assert load_settings(tmp_path).agents["picky"].options == {"depth": 7.0}
+    assert load_settings(tmp_path).agents["picky"].options == {"first": 1.0, "custom.depth": 7.0}
+
+
+async def test_agent_wide_plugin_rejection_shows_a_page_error_and_blocks_the_write(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    _private_doctor_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    app = await _app_with_agents(
+        tmp_path, {"fake": create_fake_agent, "picky": _create_unwelcoming_agent}
+    )
+    config_path = tmp_path / ".shikiru" / "config.toml"
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await _advance_to_agent_settings(pilot)
+        await _replace_input(pilot, "#agent-setting-1-0", str(PICKY_REJECTED_DEPTH))
+        await _click_next(pilot)
+        error = pilot.app.query_one("#wizard-error", Static)
+        await wait_until(lambda: "unsupported" in str(error.render()), timeout=3)
+        assert pilot.app.query_one("#wizard-page-5").display
+        assert not config_path.exists()
+
+        await _replace_input(pilot, "#agent-setting-1-0", "2")
+        await _finish_from_agent_settings(pilot)
+        await wait_until(config_path.is_file, timeout=3)
 
 
 async def test_agent_without_settings_capability_is_explained_and_writes_no_options(

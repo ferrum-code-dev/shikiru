@@ -119,8 +119,10 @@ def test_built_in_plugin_settings_defaults_are_accepted_by_their_own_options(
     }
     assert values["args"] == expected_args
     assert "billing_mode" not in values
-    assert checks.validation_error(name, values) is None
-    assert checks.validation_error(name, {**values, "unknown_option": 1}) is not None
+    assert checks.options_rejection(name, values) is None
+    rejection = checks.options_rejection(name, {**values, "unknown_option": 1})
+    assert rejection is not None
+    assert rejection.key == "unknown_option"
 
 
 def test_plugin_without_settings_capability_is_reported_explicitly() -> None:

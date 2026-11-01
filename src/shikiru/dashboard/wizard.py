@@ -1026,7 +1026,8 @@ class InitWizardApp(App[InitWizardResult | None]):
             self.query_one("#ladder-editor", LadderEditor).show_validation_error(str(error))
         else:
             self._show_error(str(error))
-        self.call_after_refresh(lambda: self.query_one(f"#{focus_id}").focus())
+        if focus_id:
+            self.call_after_refresh(lambda: self.query_one(f"#{focus_id}").focus())
 
     def _result(self) -> InitWizardResult:
         if self._config_path is None:
@@ -1075,11 +1076,13 @@ class InitWizardApp(App[InitWizardResult | None]):
                     raise AgentSettingError(error.key, str(error), input_id) from error
                 if value is not None:
                     values[setting.key] = value
-            rejection = self._detectors.agent_options_error(offered.agent, values)
+            rejection = self._detectors.agent_options_rejection(offered.agent, values)
             if rejection is not None:
-                first = _agent_setting_id(agent_index, 0)
-                message = f"The {offered.agent} agent rejected its settings: {rejection}"
-                raise AgentSettingError(offered.agent, message, first)
+                keys = [setting.key for setting in offered.settings]
+                position = keys.index(rejection.key) if rejection.key in keys else None
+                focus = "" if position is None else _agent_setting_id(agent_index, position)
+                message = f"The {offered.agent} agent rejected its settings: {rejection.detail}"
+                raise AgentSettingError(rejection.key or offered.agent, message, focus)
             options[offered.agent] = values
         return options
 

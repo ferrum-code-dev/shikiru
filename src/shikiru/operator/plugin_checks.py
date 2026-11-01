@@ -12,7 +12,7 @@ from shikiru.agents.contracts import (
     assess_model_choice,
     model_catalog_for,
 )
-from shikiru.agents.settings import AgentSettings, settings_for
+from shikiru.agents.settings import AgentOptionsError, AgentSettings, settings_for
 from shikiru.errors import ShikiruError
 
 _SETTINGS_UNSUPPORTED_DETAIL = "agent does not expose editable settings"
@@ -49,6 +49,14 @@ class PluginCheckResult:
             return "plugin returned no checks"
         failures = [f"{check.name}: {check.detail}" for check in self.checks if not check.ok]
         return "; ".join(failures) if failures else "all checks passed"
+
+
+@dataclass(frozen=True)
+class OptionsRejection:
+    """A plugin's refusal of its options and the option at fault, when it says which."""
+
+    detail: str
+    key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -154,12 +162,13 @@ class PluginChecks:
             return AgentSettings(agent=name, supported=False, error=_SETTINGS_UNSUPPORTED_DETAIL)
         return AgentSettings(agent=name, settings=offered)
 
-    def validation_error(self, name: str, options: Mapping[str, Any]) -> str | None:
+    def options_rejection(self, name: str, options: Mapping[str, Any]) -> OptionsRejection | None:
         """Return the plugin's rejection of `options`, or `None` when it accepts them."""
         try:
             self._create(name, options)
         except (ShikiruError, OSError, TimeoutError) as error:
-            return str(error) or type(error).__name__
+            detail = str(error) or type(error).__name__
+            return OptionsRejection(detail=detail, key=_rejected_key(error))
         return None
 
     def _create(self, name: str, options: Mapping[str, Any]) -> Agent:
@@ -174,3 +183,12 @@ async def _agent_model_catalog(agent: Agent) -> ModelCatalog | None:
     except (ShikiruError, OSError, TimeoutError) as error:
         detail = str(error) or type(error).__name__
         return ModelCatalog(error=detail)
+
+
+def _rejected_key(error: BaseException) -> str | None:
+    cause: BaseException | None = error
+    while cause is not None:
+        if isinstance(cause, AgentOptionsError):
+            return cause.key
+        cause = cause.__cause__
+    return None

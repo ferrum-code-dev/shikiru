@@ -8,17 +8,12 @@ from dataclasses import dataclass
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Protocol, cast
 
-from shikiru.agents.contracts import BILLING_MODE_API, BILLING_MODE_SUBSCRIPTION, PERCENT
 from shikiru.errors import ConfigError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from shikiru.agents.contracts import Agent
-
-COMPACT_AT_PCT_KEY = "compact_at_pct"
-BILLING_MODE_KEY = "billing_mode"
-ARGS_KEY = "args"
 
 
 class SettingKind(StrEnum):
@@ -37,6 +32,15 @@ class AgentSettingError(ConfigError):
         super().__init__(message)
         self.key = key
         self.input_id = input_id
+
+
+class AgentOptionsError(ConfigError):
+    """A plugin's rejection of its options; `key` names the offending option when known."""
+
+    def __init__(self, message: str, key: str | None = None) -> None:
+        """Explain why a plugin refuses its options, naming option `key` when one is at fault."""
+        super().__init__(message)
+        self.key = key
 
 
 @dataclass(frozen=True, slots=True)
@@ -128,46 +132,6 @@ class SettingsProvider(Protocol):
     """Optional agent capability listing the options worth writing to the project config."""
 
     def settings(self) -> Sequence[AgentSetting]: ...
-
-
-def compact_threshold_setting(default: float) -> AgentSetting:
-    """Return the shared context-compaction threshold setting with the plugin's `default`."""
-    return AgentSetting(
-        key=COMPACT_AT_PCT_KEY,
-        label="Compact at",
-        help="Context use at which the agent is asked to compact its session; 0 compacts at once.",
-        kind=SettingKind.NUMBER,
-        default=default,
-        unit="percent",
-        minimum=0,
-        maximum=PERCENT,
-    )
-
-
-def billing_declaration_setting() -> AgentSetting:
-    """Return the shared billing declaration setting; unset declares nothing."""
-    return AgentSetting(
-        key=BILLING_MODE_KEY,
-        label="Billing mode",
-        help=(
-            "How this agent is billed, used to label cost as billed or API-equivalent; "
-            "leaving it blank declares nothing."
-        ),
-        kind=SettingKind.CHOICE,
-        default=None,
-        choices=(BILLING_MODE_API, BILLING_MODE_SUBSCRIPTION),
-    )
-
-
-def cli_args_setting(default: tuple[str, ...]) -> AgentSetting:
-    """Return the shared extra CLI arguments setting with the plugin's `default`."""
-    return AgentSetting(
-        key=ARGS_KEY,
-        label="CLI arguments",
-        help="Arguments added to every agent CLI call, split like a shell command line.",
-        kind=SettingKind.ARGS,
-        default=default,
-    )
 
 
 def settings_for(agent: Agent) -> tuple[AgentSetting, ...] | None:

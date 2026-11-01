@@ -21,7 +21,7 @@ from shikiru.agents.contracts import (
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
-from shikiru.errors import CommandFailed, ConfigError, ShikiruError
+from shikiru.errors import CommandFailed, ShikiruError
 from shikiru.plugins.agents.claude.headless import ClaudeHeadless
 from shikiru.plugins.agents.claude.model_catalog import parse_model_catalog
 from shikiru.plugins.agents.claude.options import (
@@ -47,6 +47,7 @@ from shikiru.plugins.agents.claude.options import (
     ClaudeOptions,
 )
 from shikiru.plugins.agents.claude.turn import ClaudeTurnSequence
+from shikiru.plugins.agents.shared_settings import options_error
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -246,6 +247,5 @@ def create(context: AgentContext) -> ClaudeAgent:
     try:
         options = ClaudeOptions.model_validate(context.options)
     except ValidationError as error:
-        message = f"invalid options for the Claude agent: {error}"
-        raise ConfigError(message) from error
+        raise options_error(CLAUDE_COMMAND, error) from error
     return ClaudeAgent(context.runner, context.clock, options)
