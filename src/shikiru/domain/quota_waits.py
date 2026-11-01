@@ -32,14 +32,6 @@ ENGINE_RETRY_DIFFERS = "Engine retry differs from the {window} reset."
 QUOTA_TODAY_WORD = "Today"
 QUOTA_NOT_REPORTED = "not reported"
 QUOTA_WINDOW_LABELS = {QUOTA_WINDOW_FIVE_HOUR: "5-hour", QUOTA_WINDOW_SEVEN_DAY: "weekly"}
-QUOTA_TURN_LIFECYCLE = (
-    EventKind.STEP_STARTED,
-    EventKind.TURN_STARTED,
-    EventKind.TURN_COMPLETED,
-    EventKind.TURN_FAILED,
-    EventKind.TURN_STOPPED,
-    EventKind.RUNG_CHANGED,
-)
 QUOTA_WAIT_CLOCK_FORMAT = "%H:%M"
 QUOTA_WAIT_DATE_FORMAT = "%b %d"
 QUOTA_WAIT_ZERO_OFFSET_SUFFIX = "Z"
