@@ -218,7 +218,7 @@ async def test_a_restart_with_an_unwritable_packet_directory_keeps_running_and_s
         blocked = world.block_packets(task.id)
         world.leave_turn_evidence(task.id, Role.IMPLEMENTER)
         escalated = Transition.escalate_current(task, EscalationReason.AGENT_ERROR)
-        writer = build_writer(world.connection, world.clock)
+        writer = build_writer(world.connection, world.clock, tmp_path)
         await build_raiser(world.connection, world.clock, tmp_path).raise_escalation(
             task,
             step=Step.IMPLEMENT,

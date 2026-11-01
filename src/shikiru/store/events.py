@@ -189,6 +189,16 @@ class EventLog:
         """Read every event since `since_id`, optionally filtered by `kinds` and `task_id`."""
         return fetch_events_since(self._connection, since_id, kinds=kinds, task_id=task_id)
 
+    def latest(
+        self,
+        limit: int,
+        *,
+        kinds: Sequence[EventKind] | None = None,
+        task_id: str | None = None,
+    ) -> list[Event]:
+        """Read the latest matching events in chronological order."""
+        return fetch_latest_events(self._connection, limit, kinds=kinds, task_id=task_id)
+
     def command_applied(self, kind: EventKind, command_id: int) -> bool:
         """Report whether a `kind` event already records the effect of command `command_id`."""
         row = self._connection.execute(

@@ -15,7 +15,6 @@ from shikiru.config.settings import (
 from shikiru.domain.runs import context_title
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Hold, Mode, Role, Status, Step
-from shikiru.engine.titles import TaskTitles
 from shikiru.process import ProcessResult, SubprocessRunner
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.decorator import (
@@ -37,7 +36,7 @@ from shikiru.ui.tokens import (
     OPERATOR_COLOR,
     ROLE_COLORS,
 )
-from tests.support.engine import FAKE_RUNG, set_role_script
+from tests.support.engine import FAKE_RUNG, build_titles, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 
 if TYPE_CHECKING:
@@ -179,7 +178,13 @@ async def test_stale_title_publication_keeps_the_rung_saved_in_sqlite(
     settings = settings.model_copy(
         update={"dashboard": settings.dashboard.model_copy(update={"titles": title_settings})}
     )
-    titles = TaskTitles(PaneDecorator(tmux), engine_env.runs, engine_env.tasks, settings)
+    titles = build_titles(
+        connection=engine_env.connection,
+        clock=engine_env.clock,
+        decorator=PaneDecorator(tmux),
+        settings=settings,
+        project_root=engine_env.project_root,
+    )
     refreshes: list[asyncio.Task[None]] = []
     stale_refresh_started = asyncio.Event()
 

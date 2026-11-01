@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import timedelta
+from enum import StrEnum
 from operator import itemgetter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
-from shikiru.agents.contracts import QUOTA_WINDOW_FIVE_HOUR, QUOTA_WINDOW_SEVEN_DAY, is_exhausted
+from shikiru.agents.contracts import (
+    QUOTA_WINDOW_FIVE_HOUR,
+    QUOTA_WINDOW_SEVEN_DAY,
+    FailureKind,
+    is_exhausted,
+)
+from shikiru.domain.events import EventKind
 from shikiru.domain.recovery import quota_block_until
 
 if TYPE_CHECKING:
@@ -14,6 +22,8 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from shikiru.agents.contracts import QuotaWindow
+    from shikiru.domain.events import Event
+    from shikiru.domain.tasks import Role, Task
 
 QUOTA_BLOCKED_PHRASE = "quota blocked until"
 QUOTA_RETRY_PHRASE = "retry at"
@@ -22,6 +32,14 @@ ENGINE_RETRY_DIFFERS = "Engine retry differs from the {window} reset."
 QUOTA_TODAY_WORD = "Today"
 QUOTA_NOT_REPORTED = "not reported"
 QUOTA_WINDOW_LABELS = {QUOTA_WINDOW_FIVE_HOUR: "5-hour", QUOTA_WINDOW_SEVEN_DAY: "weekly"}
+QUOTA_TURN_LIFECYCLE = (
+    EventKind.STEP_STARTED,
+    EventKind.TURN_STARTED,
+    EventKind.TURN_COMPLETED,
+    EventKind.TURN_FAILED,
+    EventKind.TURN_STOPPED,
+    EventKind.RUNG_CHANGED,
+)
 QUOTA_WAIT_CLOCK_FORMAT = "%H:%M"
 QUOTA_WAIT_DATE_FORMAT = "%b %d"
 QUOTA_WAIT_ZERO_OFFSET_SUFFIX = "Z"
@@ -30,10 +48,34 @@ QUOTA_BANNER_SEPARATOR = " · "
 QUOTA_WAITING_SUFFIX = "waiting"
 QUOTA_TASK_NOUN = "task"
 QUOTA_TASKS_NOUN = "tasks"
+QUOTA_TURN_LIFECYCLE = (
+    EventKind.STEP_STARTED,
+    EventKind.TURN_STARTED,
+    EventKind.TURN_COMPLETED,
+    EventKind.TURN_FAILED,
+    EventKind.TURN_STOPPED,
+    EventKind.RUNG_CHANGED,
+)
 _SECONDS_PER_MINUTE = 60
 _MINUTES_PER_HOUR = 60
 _HOURS_PER_DAY = 24
 _MINUTES_PER_DAY = _HOURS_PER_DAY * _MINUTES_PER_HOUR
+
+
+class QuotaAction(StrEnum):
+    """What the engine does at the time a quota wait shows: probe for newer evidence or retry."""
+
+    NEXT_CHECK = "next check"
+    RETRY = "retry"
+
+
+@dataclass(frozen=True)
+class ScheduledQuotaAction:
+    """The engine's next action on the quota block set at `blocked_at`, and when it happens."""
+
+    action: QuotaAction
+    at: datetime
+    blocked_at: datetime
 
 
 def quota_reset_clock(until: datetime, now: datetime) -> str:
@@ -129,3 +171,57 @@ def next_quota_reload(now: datetime, instants: Iterable[datetime]) -> datetime:
     The wording moves with the clock on its own and never needs this reload.
     """
     return min(instant for instant in instants if instant > now)
+
+
+class LatestEvents(Protocol):
+    """Reads the newest events of one task, in chronological order."""
+
+    def __call__(
+        self, limit: int, *, kinds: Sequence[EventKind] | None = None, task_id: str | None = None
+    ) -> list[Event]:
+        """Return up to `limit` of the newest events matching `kinds` and `task_id`."""
+        ...
+
+
+def current_quota_wait_events(
+    task: Task, role: Role, agent: str, latest_events: LatestEvents
+) -> tuple[Event, Event] | None:
+    """Return the turn failure and quota block that put `task`'s current turn in a quota wait.
+
+    The wait is current only while the task's latest turn lifecycle event is a quota failure of
+    its current step, the turn that failed was `role`'s on `agent` in the current iteration, and
+    the latest quota event of the task is the block of that agent set after the failure.
+    """
+    if task.step is None:
+        return None
+    lifecycle = latest_events(1, kinds=QUOTA_TURN_LIFECYCLE, task_id=task.id)
+    if (
+        not lifecycle
+        or lifecycle[0].kind is not EventKind.TURN_FAILED
+        or lifecycle[0].data.get("kind") != FailureKind.QUOTA.value
+        or lifecycle[0].data.get("step") != task.step.value
+    ):
+        return None
+    failure = lifecycle[0]
+    starts = latest_events(1, kinds=(EventKind.TURN_STARTED,), task_id=task.id)
+    if not starts or starts[0].id >= failure.id:
+        return None
+    started = starts[0]
+    if (
+        started.data.get("step") != task.step.value
+        or started.data.get("iteration") != task.iteration
+        or started.data.get("role") != role.value
+        or started.data.get("agent") != agent
+    ):
+        return None
+    quota_events = latest_events(
+        1, kinds=(EventKind.QUOTA_BLOCKED, EventKind.QUOTA_CLEARED), task_id=task.id
+    )
+    if (
+        not quota_events
+        or quota_events[0].kind is not EventKind.QUOTA_BLOCKED
+        or quota_events[0].id <= failure.id
+        or quota_events[0].data.get("agent") != agent
+    ):
+        return None
+    return failure, quota_events[0]

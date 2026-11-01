@@ -67,6 +67,8 @@ from shikiru.engine.notifier import Notifier
 from shikiru.engine.pull_request_closing import PullRequestClosing
 from shikiru.engine.push_service import PUSH_FAULT_SCOPE, PushService
 from shikiru.engine.quota_reconciler import QuotaReconciler
+from shikiru.engine.quota_schedule import QuotaSchedule
+from shikiru.engine.quota_waits import QuotaWaits
 from shikiru.engine.reconcile import Reconciler
 from shikiru.engine.recovery import TurnRecovery
 from shikiru.engine.retention import Retention
@@ -700,10 +702,11 @@ def _build_fault_reporting(
     clock: Clock,
     settings: Settings,
     logger: logging.Logger,
-) -> tuple[FaultReporter, QuotaReconciler]:
+) -> tuple[FaultReporter, QuotaReconciler, QuotaSchedule]:
     faults = FaultReporter(
         events=events, clock=clock, settings=settings.orchestration.faults, logger=logger
     )
+    schedule = QuotaSchedule()
     reconciler = QuotaReconciler(
         quotas=quotas,
         agents=agents,
@@ -711,8 +714,9 @@ def _build_fault_reporting(
         clock=clock,
         settings=settings.orchestration.quota_refresh,
         faults=faults,
+        schedule=schedule,
     )
-    return faults, reconciler
+    return faults, reconciler, schedule
 
 
 def build_engine(
@@ -747,7 +751,6 @@ def build_engine(
     command_queue = CommandQueue(connection, resolved_clock)
 
     decorator = CosmeticDecorator(resolved_tmux)
-    titles = TaskTitles(decorator, runs, tasks, resolved_settings)
 
     sessions = SessionManager(
         runs=runs,
@@ -760,13 +763,27 @@ def build_engine(
     )
     target = exact_target(session_name(resolved_settings.project.name))
     logger, log_handler = _configure_engine_logging(project_root, resolved_settings.logging)
-    fault_reporter, reconciler = _build_fault_reporting(
+    fault_reporter, reconciler, quota_schedule = _build_fault_reporting(
         events=events,
         quotas=quotas,
         agents=agent_pool,
         clock=resolved_clock,
         settings=resolved_settings,
         logger=logger,
+    )
+    titles = TaskTitles(
+        decorator,
+        runs,
+        tasks,
+        resolved_settings,
+        waits=QuotaWaits(
+            quotas=quotas,
+            events=events,
+            schedule=quota_schedule,
+            clock=resolved_clock,
+            settings=resolved_settings,
+        ),
+        project_root=project_root,
     )
     monitor = TurnMonitor(
         sessions=sessions,

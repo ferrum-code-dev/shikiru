@@ -240,7 +240,15 @@ Usage preserves provenance and uncertainty: absent tokens/cost/context/billing a
 and quota readings can be stale. An active quota block shows as a banner in the home usage section
 and in the expanded usage view, counting the tasks waiting on it; a queued task whose recorded wait
 reason is quota, or a running task in a mid-turn quota wait, carries an amber `quota` marker in the
-task list. Every human-facing quota deadline is shown in the viewer's local timezone, with the date
+task list. The same facts mark the task's tmux window with an amber `⧗ quota` state, and only the
+role panes whose own agent is blocked (the acting role for a mid-turn wait) with an amber glyph and
+a status strip pinned above the pane's output: `⧗ Quota blocked · next check 05:12 CET`, or
+`retry` when the engine's scheduled action is the retry at the block's deadline; no time is shown
+while none is scheduled. Pause, intervention, escalation and a taken-over pane keep their own
+decoration, and the marks clear when the wait ends. The scheduler republishes them when the wait
+changes, so they survive an engine restart or a recreated pane; the engine hands the strip's text to
+the pane's `shikiru view` through `quota-status.json` in the role's run directory. Every
+human-facing quota deadline is shown in the viewer's local timezone, with the date
 only when the reset falls on another local day and a `Z` only for a zero offset; the domain
 formatter renders the zone it is given and the dashboard boundary localizes, while storage, events
 and JSON stay UTC-aware. CPU/RAM, disk,

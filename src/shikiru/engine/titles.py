@@ -17,12 +17,15 @@ from shikiru.domain.levels import usage_level
 from shikiru.domain.runs import NO_USAGE, RunStatus, context_title, cost_title
 from shikiru.domain.steps import ACTING_ROLE
 from shikiru.domain.tasks import Hold, Role, Status, Step
+from shikiru.paths import run_dir
 from shikiru.ui.glyphs import (
     GLYPH_CONSULT,
     GLYPH_ENGINE,
     GLYPH_ESCALATED,
     GLYPH_OPERATOR,
     GLYPH_PAUSED,
+    GLYPH_QUOTA,
+    QUOTA_MARKER,
     ROLE_GLYPHS,
     STAGE_IMPLEMENT,
     STAGE_MERGE,
@@ -42,11 +45,19 @@ from shikiru.ui.tokens import (
     SECONDARY_TEXT_COLOR,
     USAGE_LEVEL_COLORS,
 )
+from shikiru.view_log import (
+    clear_quota_status,
+    quota_status_path,
+    write_quota_status,
+)
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from shikiru.config.settings import Settings
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
+    from shikiru.engine.quota_waits import QuotaWaits, TaskQuotaWait
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
     from shikiru.tmux.decorator import PaneDecorator
@@ -63,23 +74,37 @@ _STEP_GLYPHS: dict[Step, str] = {
 _TITLED_ROLES = (Role.LEADER, Role.IMPLEMENTER)
 
 
-def _window_state(task: Task) -> tuple[str, str]:
+def _quota_shown(task: Task) -> bool:
+    return (
+        Hold.PAUSED not in task.holds
+        and Hold.INTERVENTION not in task.holds
+        and task.status is not Status.ESCALATED
+    )
+
+
+def _window_state(task: Task, quota: TaskQuotaWait | None) -> tuple[str, str]:
     if Hold.PAUSED in task.holds:
         return HOLD_COLOR, GLYPH_PAUSED
     if Hold.INTERVENTION in task.holds:
         return OPERATOR_COLOR, GLYPH_OPERATOR
     if task.status is Status.ESCALATED:
         return ALERT_COLOR, GLYPH_ESCALATED
+    if quota is not None:
+        return AMBER, QUOTA_MARKER
     if task.step is None:
         return ENGINE_COLOR, GLYPH_ENGINE
     return ROLE_COLORS[ACTING_ROLE[task.step]], _STEP_GLYPHS[task.step]
 
 
-def _pane_state(task: Task, role: Role, *, taken_over: bool) -> tuple[str, str]:
+def _pane_state(
+    task: Task, role: Role, *, taken_over: bool, quota_blocked: bool
+) -> tuple[str, str]:
     if taken_over:
         return OPERATOR_COLOR, GLYPH_OPERATOR
     if Hold.PAUSED in task.holds:
         return HOLD_COLOR, GLYPH_PAUSED
+    if quota_blocked:
+        return AMBER, GLYPH_QUOTA
     return ROLE_COLORS[role], ROLE_GLYPHS[role]
 
 
@@ -129,34 +154,59 @@ class TaskTitles:
         runs: RunStore,
         tasks: TaskStore,
         settings: Settings,
+        *,
+        waits: QuotaWaits,
+        project_root: Path,
     ) -> None:
-        """Decorate via `decorator` using current task rows and live run usage."""
+        """Decorate via `decorator` using current task rows, live run usage and quota `waits`.
+
+        Each role pane's quota status is published under `project_root`'s run directories for
+        the pane's view process.
+        """
         self._decorator = decorator
         self._runs = runs
         self._tasks = tasks
         self._settings = settings
+        self._waits = waits
+        self._project_root = project_root
         self._refresh_lock = asyncio.Lock()
+        self._published: dict[str, TaskQuotaWait | None] = {}
+
+    async def sync_quota(self, task: Task) -> None:
+        """Refresh `task`'s decorations when its quota wait differs from the one last published."""
+        current = self._tasks.require(task.id)
+        if (
+            current.id not in self._published
+            or self._waits.resolve(current) != self._published[current.id]
+        ):
+            await self.refresh(current)
 
     async def refresh(self, task: Task) -> None:
         """Set titles from the latest task row, serializing title publications."""
         async with self._refresh_lock:
             current = self._tasks.require(task.id)
+            quota = self._waits.resolve(current)
+            self._published[current.id] = quota
             if current.window_id is not None:
-                await self._refresh_window(current, current.window_id)
+                await self._refresh_window(current, current.window_id, quota)
             for role in _TITLED_ROLES:
                 pane_id = current.panes.get(role)
                 if pane_id is not None:
-                    await self._refresh_pane(current, role, pane_id)
+                    await self._refresh_pane(current, role, pane_id, quota)
 
-    async def _refresh_window(self, task: Task, window_target: str) -> None:
-        color, glyph = _window_state(task)
+    async def _refresh_window(
+        self, task: Task, window_target: str, quota: TaskQuotaWait | None
+    ) -> None:
+        color, glyph = _window_state(task, quota)
         await self._decorator.set_window_state(window_target, color=color, glyph=glyph)
         fields = {"task_id": task.id, "title": task.title}
         await self._decorator.set_window_title(
             window_target, self._settings.dashboard.titles.window, fields
         )
 
-    async def _refresh_pane(self, task: Task, role: Role, pane_id: str) -> None:
+    async def _refresh_pane(
+        self, task: Task, role: Role, pane_id: str, quota: TaskQuotaWait | None
+    ) -> None:
         configured_rung = pick_rung(task, role, self._settings)
         run = self._active_run(task.id, role)
         taken_over = run is not None and run.status is RunStatus.TAKEN_OVER
@@ -214,8 +264,20 @@ class TaskTitles:
             },
             field_segments={"flags_text": _flag_segments(task, taken_over=taken_over)},
         )
-        color, glyph = _pane_state(task, role, taken_over=taken_over)
+        role_wait = (
+            quota.roles.get(role)
+            if quota is not None and not taken_over and _quota_shown(task)
+            else None
+        )
+        color, glyph = _pane_state(
+            task, role, taken_over=taken_over, quota_blocked=role_wait is not None
+        )
         await self._decorator.set_pane_state(pane_id, color=color, glyph=glyph)
+        status_path = quota_status_path(run_dir(self._project_root, task.id), role.value)
+        if role_wait is None:
+            clear_quota_status(status_path)
+        else:
+            write_quota_status(status_path, role_wait.action, role_wait.at)
 
     def _context_color(self, usage: Usage, usage_reported: bool | None) -> str:
         if usage.context_used_pct is None or usage_reported is False:

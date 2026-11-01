@@ -15,7 +15,6 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, Step, Task
 from shikiru.engine.layout_guard import LayoutGuard
-from shikiru.engine.titles import TaskTitles
 from shikiru.paths import task_root
 from shikiru.process import ProcessResult, SubprocessRunner
 from shikiru.store.commands import CommandQueue
@@ -28,7 +27,7 @@ from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from tests.support.clock import FakeClock
 from tests.support.config import MINIMAL_PROJECT_CONFIG
-from tests.support.engine import build_fault_reporter, build_tmux
+from tests.support.engine import build_fault_reporter, build_titles, build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import wait_until
@@ -115,7 +114,13 @@ async def _task_window(
         runs=runs,
         commands=CommandQueue(connection, clock),
         faults=build_fault_reporter(events, clock, settings),
-        refresh_titles=TaskTitles(decorator, runs, tasks, settings).refresh,
+        refresh_titles=build_titles(
+            connection=connection,
+            clock=clock,
+            decorator=decorator,
+            settings=settings,
+            project_root=tmp_path,
+        ).refresh,
     )
     queued = CommandQueue(connection, clock).append(
         Submit(title="restore panes", request="restore panes")

@@ -15,7 +15,6 @@ from shikiru.agents.contracts import (
     BILLING_MODE_SUBSCRIPTION,
     BILLING_MODE_UNKNOWN,
     COST_BASIS_UNKNOWN,
-    FailureKind,
 )
 from shikiru.clock import to_local
 from shikiru.dashboard.contract import (
@@ -80,6 +79,7 @@ from shikiru.domain.levels import free_space_level, usage_level
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.quota_waits import (
     QUOTA_NOT_REPORTED,
+    current_quota_wait_events,
     engine_retry_note,
     next_quota_reload,
     quota_banner,
@@ -263,14 +263,6 @@ _PR_CI_NOTE = "CI state is shown only when an engine observation recorded it."
 _RESET_AT_FIELD = "resets_at"
 _RECORDED_QUOTA_RESET = "Recorded quota reset"
 _UNAVAILABLE = "unavailable"
-_QUOTA_TURN_LIFECYCLE = (
-    EventKind.STEP_STARTED,
-    EventKind.TURN_STARTED,
-    EventKind.TURN_COMPLETED,
-    EventKind.TURN_FAILED,
-    EventKind.TURN_STOPPED,
-    EventKind.RUNG_CHANGED,
-)
 StructuredEscalationEvidence = tuple[str, dict[ResolutionKind, str], tuple[str, ...]]
 
 
@@ -1480,7 +1472,7 @@ class StateDashboardViews:
         role = task_acting_role(task)
         settings = self._settings.current()
         agent = pick_rung(task, role, settings).agent
-        quota_events = self._current_quota_wait_events(task, role, agent)
+        quota_events = current_quota_wait_events(task, role, agent, self._state.latest_events)
         if quota_events is None:
             return None
         failure, quota_block = quota_events
@@ -1537,56 +1529,6 @@ class StateDashboardViews:
             f"observed {window.observed_at.isoformat()}"
             for window in windows
         )
-
-    def _current_quota_wait_events(
-        self,
-        task: Task,
-        role: Role,
-        agent: str,
-    ) -> tuple[Event, Event] | None:
-        if task.step is None:
-            return None
-        lifecycle = self._state.latest_events(
-            1,
-            kinds=_QUOTA_TURN_LIFECYCLE,
-            task_id=task.id,
-        )
-        if (
-            not lifecycle
-            or lifecycle[0].kind is not EventKind.TURN_FAILED
-            or lifecycle[0].data.get("kind") != FailureKind.QUOTA.value
-            or lifecycle[0].data.get("step") != task.step.value
-        ):
-            return None
-        failure = lifecycle[0]
-        starts = self._state.latest_events(
-            1,
-            kinds=(EventKind.TURN_STARTED,),
-            task_id=task.id,
-        )
-        if not starts or starts[0].id >= failure.id:
-            return None
-        started = starts[0]
-        if (
-            started.data.get("step") != task.step.value
-            or started.data.get("iteration") != task.iteration
-            or started.data.get("role") != role.value
-            or started.data.get("agent") != agent
-        ):
-            return None
-        quota_events = self._state.latest_events(
-            1,
-            kinds=(EventKind.QUOTA_BLOCKED, EventKind.QUOTA_CLEARED),
-            task_id=task.id,
-        )
-        if (
-            not quota_events
-            or quota_events[0].kind is not EventKind.QUOTA_BLOCKED
-            or quota_events[0].id <= failure.id
-            or quota_events[0].data.get("agent") != agent
-        ):
-            return None
-        return failure, quota_events[0]
 
     def _slot_parts(self) -> _BlockerParts:
         occupied = [

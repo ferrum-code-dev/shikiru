@@ -258,9 +258,9 @@ class TurnRecovery:
                         message=_QUOTA_WAIT_EXHAUSTED_MESSAGE,
                     )
                 remaining = min(current.until, deadline) - now
-                await self._clock.sleep(
-                    min(remaining.total_seconds(), self._reconciler.interval_seconds)
-                )
+                delay = min(remaining.total_seconds(), self._reconciler.interval_seconds)
+                self._reconciler.expect_check(agent, now + timedelta(seconds=delay))
+                await self._clock.sleep(delay)
                 await self._reconciler.refresh(agent)
                 continue
             self._quota.clear_block(agent)

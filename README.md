@@ -197,7 +197,9 @@ context, costs, billing mode and quota are shown when supplied by
 the agent; missing data stays unknown, and quota observations may be stale. A quota block is
 revalidated periodically (and on an Operator retry) against newer provider readings, so queued work
 resumes when quota returns before the predicted reset. Quota reset times are shown in your local
-timezone.
+timezone. A task waiting on quota shows an amber `⧗ quota` in its tmux window tab, and each agent
+pane affected by the wait shows a `⧗ Quota blocked · next check …` (or `retry …`) strip above its
+output until the wait ends.
 
 ## Configuration and automation
 

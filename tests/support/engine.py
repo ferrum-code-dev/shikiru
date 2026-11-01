@@ -26,6 +26,8 @@ from shikiru.engine.fault_reporter import FaultReporter
 from shikiru.engine.history import ReportHistory
 from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.quota_reconciler import QuotaReconciler
+from shikiru.engine.quota_schedule import QuotaSchedule
+from shikiru.engine.quota_waits import QuotaWaits
 from shikiru.engine.sessions import SessionManager
 from shikiru.engine.task_facts import TaskFacts
 from shikiru.engine.titles import TaskTitles
@@ -87,6 +89,7 @@ class TurnSystem:
     events: EventLog
     quotas: QuotaStore
     titles: TaskTitles
+    schedule: QuotaSchedule
 
 
 def build_registry() -> AgentRegistry:
@@ -125,7 +128,6 @@ def build_raiser(
 ) -> EscalationRaiser:
     """An `EscalationRaiser` over `connection`, refreshing titles through `tmux` when given."""
     runs = RunStore(connection, clock)
-    tasks = TaskStore(connection, clock)
     decorator = PaneDecorator(tmux if tmux is not None else Tmux(SubprocessRunner()))
     return EscalationRaiser(
         EscalationStore(connection, clock),
@@ -133,24 +135,61 @@ def build_raiser(
         runs,
         project_root,
         atomically=lambda: transaction(connection),
-        titles=TaskTitles(decorator, runs, tasks, fake_engine_settings()),
+        titles=build_titles(
+            connection=connection,
+            clock=clock,
+            decorator=decorator,
+            settings=fake_engine_settings(),
+            project_root=project_root,
+        ),
         evidence=build_evidence(project_root),
         settings=fake_engine_settings(),
     )
 
 
+def build_titles(
+    *,
+    connection: Connection,
+    clock: Clock,
+    decorator: PaneDecorator,
+    settings: Settings,
+    project_root: Path,
+    schedule: QuotaSchedule | None = None,
+) -> TaskTitles:
+    """A `TaskTitles` over `connection`, sharing `schedule` with the reconciler when given."""
+    return TaskTitles(
+        decorator,
+        RunStore(connection, clock),
+        TaskStore(connection, clock),
+        settings,
+        waits=QuotaWaits(
+            quotas=QuotaStore(connection),
+            events=EventLog(connection, clock),
+            schedule=schedule if schedule is not None else QuotaSchedule(),
+            clock=clock,
+            settings=settings,
+        ),
+        project_root=project_root,
+    )
+
+
 def build_writer(
-    connection: Connection, clock: Clock, *, tmux: Tmux | None = None
+    connection: Connection, clock: Clock, project_root: Path, *, tmux: Tmux | None = None
 ) -> TransitionWriter:
     """A `TransitionWriter` over `connection`, refreshing titles through `tmux` when given."""
-    runs = RunStore(connection, clock)
     decorator = PaneDecorator(tmux if tmux is not None else Tmux(SubprocessRunner()))
     settings = fake_engine_settings()
     tasks = TaskStore(connection, clock)
     return TransitionWriter(
         tasks=tasks,
         events=EventLog(connection, clock),
-        titles=TaskTitles(decorator, runs, tasks, settings),
+        titles=build_titles(
+            connection=connection,
+            clock=clock,
+            decorator=decorator,
+            settings=settings,
+            project_root=project_root,
+        ),
         settings=settings,
     )
 
@@ -219,7 +258,15 @@ def build_turn_system(
     quotas = QuotaStore(connection)
     decorator = build_decorator(tmux)
     tasks = TaskStore(connection, clock)
-    titles = TaskTitles(decorator, runs, tasks, settings)
+    schedule = QuotaSchedule()
+    titles = build_titles(
+        connection=connection,
+        clock=clock,
+        decorator=decorator,
+        settings=settings,
+        project_root=project_root,
+        schedule=schedule,
+    )
     runner = SubprocessRunner()
     agents = AgentPool(
         (registry if registry is not None else build_registry()).create,
@@ -242,7 +289,12 @@ def build_turn_system(
         await titles.refresh(task)
 
     reconciler = build_reconciler(
-        quotas=quotas, agents=agents, events=events, clock=clock, settings=settings
+        quotas=quotas,
+        agents=agents,
+        events=events,
+        clock=clock,
+        settings=settings,
+        schedule=schedule,
     )
     monitor = TurnMonitor(
         sessions=sessions,
@@ -268,7 +320,14 @@ def build_turn_system(
         project_root=project_root,
         settings=settings,
     )
-    return TurnSystem(sessions=sessions, turns=turns, events=events, quotas=quotas, titles=titles)
+    return TurnSystem(
+        sessions=sessions,
+        turns=turns,
+        events=events,
+        quotas=quotas,
+        titles=titles,
+        schedule=schedule,
+    )
 
 
 @dataclasses.dataclass
@@ -355,6 +414,7 @@ def build_reconciler(
     events: EventLog,
     clock: Clock,
     settings: Settings,
+    schedule: QuotaSchedule | None = None,
 ) -> QuotaReconciler:
     """A `QuotaReconciler` probing `agents` with the quota refresh settings of `settings`."""
     return QuotaReconciler(
@@ -364,6 +424,7 @@ def build_reconciler(
         clock=clock,
         settings=settings.orchestration.quota_refresh,
         faults=build_fault_reporter(events, clock, settings),
+        schedule=schedule if schedule is not None else QuotaSchedule(),
     )
 
 

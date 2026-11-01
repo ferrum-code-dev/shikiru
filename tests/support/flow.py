@@ -247,6 +247,7 @@ def build_flow(
                 events=system.events,
                 clock=flow_clock,
                 settings=settings,
+                schedule=system.schedule,
             ),
             clock=flow_clock,
             writer=writer,

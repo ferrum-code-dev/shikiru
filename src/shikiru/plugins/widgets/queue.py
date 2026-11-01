@@ -20,7 +20,7 @@ from shikiru.dashboard.contract import (
 )
 from shikiru.plugins.widgets.queue_hint import load_more_hint, task_list_header
 from shikiru.ui.gated_static import GatedStatic
-from shikiru.ui.glyphs import GLYPH_QUOTA
+from shikiru.ui.glyphs import QUOTA_MARKER
 from shikiru.ui.keys import key_hint
 from shikiru.ui.recent_window import RecentWindow, step_selection
 from shikiru.ui.screen import widget_is_current
@@ -67,7 +67,6 @@ TASK_MARKER_DONE = "✓"
 TASK_MARKER_CANCELLED = "○"
 TASK_MARKER_QUEUED = "·"
 TASK_MARKER_CURRENT = "\N{SINGLE RIGHT-POINTING ANGLE QUOTATION MARK}"
-TASK_DETAIL_QUOTA = f"{GLYPH_QUOTA} quota"
 TASK_STATUS_RUNNING = "running"
 TASK_STATUS_INTEGRATING = "integrating"
 TASK_STATUS_ESCALATED = "escalated"
@@ -306,7 +305,7 @@ def _focus_row_details(
         details.append((f"depends on {', '.join(row.dependencies)}", SECONDARY_TEXT_COLOR))
     details.extend((hold, AMBER) for hold in row.holds)
     if row.quota_wait:
-        details.append((TASK_DETAIL_QUOTA, AMBER))
+        details.append((QUOTA_MARKER, AMBER))
     if row.diagnosed_stall:
         details.append(("stalled", ALERT_COLOR))
     if row.open_decision and TASK_STATE_DECISION_NEEDED not in state:

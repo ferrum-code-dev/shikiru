@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 from shikiru.agents.contracts import quota_probe_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.quota_blocks import block_released
+from shikiru.domain.quota_waits import QuotaAction, ScheduledQuotaAction
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import QuotaRefreshConfig
     from shikiru.engine.agents import AgentPool
     from shikiru.engine.fault_reporter import FaultReporter
+    from shikiru.engine.quota_schedule import QuotaSchedule
     from shikiru.store.events import EventLog
     from shikiru.store.quotas import QuotaStore
 
@@ -43,8 +45,12 @@ class QuotaReconciler:
         clock: Clock,
         settings: QuotaRefreshConfig,
         faults: FaultReporter,
+        schedule: QuotaSchedule,
     ) -> None:
-        """Probe through `agents`, persist in `quotas` and record outcomes in `events`."""
+        """Probe through `agents`, persist in `quotas`, record outcomes in `events`.
+
+        The next examination or retry of each block is recorded in `schedule`.
+        """
         self._quotas = quotas
         self._agents = agents
         self._events = events
@@ -52,6 +58,7 @@ class QuotaReconciler:
         self._settings = settings
         self._faults = faults
         self._probed_at: dict[str, datetime] = {}
+        self._schedule = schedule
 
     def observe(self, agent: str, windows: Sequence[QuotaWindow]) -> None:
         """Record `windows` for `agent`, first releasing its block when they prove it obsolete."""
@@ -93,6 +100,7 @@ class QuotaReconciler:
             return
         self._probed_at[agent] = now
         async with self._faults.isolate(f"{QUOTA_REFRESH_SCOPE} {agent}"):
+            self.expect_check(agent, now + interval)
             probe = quota_probe_for(self._agents.get(agent))
             if probe is None:
                 return
@@ -100,6 +108,20 @@ class QuotaReconciler:
                 reading = await probe.read_quota(block.blocked_at)
             if reading is not None:
                 self.observe(agent, reading.windows)
+
+    def expect_check(self, agent: str, at: datetime) -> None:
+        """Record that `agent`'s block is next examined at `at`, or retried when it lifts first.
+
+        An agent whose plugin cannot probe is not examined: its block is retried when it lifts.
+        """
+        block = self._quotas.block_for(agent)
+        if block is None:
+            return
+        if block.until <= at or quota_probe_for(self._agents.get(agent)) is None:
+            scheduled = ScheduledQuotaAction(QuotaAction.RETRY, block.until, block.blocked_at)
+        else:
+            scheduled = ScheduledQuotaAction(QuotaAction.NEXT_CHECK, at, block.blocked_at)
+        self._schedule.record(agent, scheduled)
 
     @property
     def interval_seconds(self) -> float:

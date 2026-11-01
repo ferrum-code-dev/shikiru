@@ -45,6 +45,7 @@ DependencyCallback = Callable[[Task], Awaitable[None]]
 DispatchFailureCallback = Callable[[Task, Exception], Awaitable[None]]
 MAX_DISPATCH_FAILURES = 3
 FETCH_FAULT_SCOPE = "dispatch fetch"
+_QUOTA_DECORATED_STATUSES = (Status.QUEUED, Status.RUNNING, Status.INTEGRATING)
 
 
 class Scheduler:
@@ -101,6 +102,7 @@ class Scheduler:
             schedule = pick_ready(all_tasks, self._gates(all_tasks))
         self._roots.begin_tick({task.id for task in all_tasks if task.status is Status.QUEUED})
         self._persist_wait_reasons(all_tasks, schedule)
+        await self._sync_quota_decorations()
         for task_id in schedule.dependency_cancelled:
             task = self._tasks.get(task_id)
             if task is None:
@@ -184,6 +186,11 @@ class Scheduler:
                 )
                 changed = True
         return changed
+
+    async def _sync_quota_decorations(self) -> None:
+        for task in self._tasks.list_all():
+            if task.window_id is not None and task.status in _QUOTA_DECORATED_STATUSES:
+                await self._titles.sync_quota(task)
 
     def _gates(self, tasks: list[Task]) -> SchedulingGates:
         slots = frozenset(range(self._settings.orchestration.max_parallel)) - occupied_slot_ids(

@@ -34,8 +34,7 @@ from shikiru.engine.layout_guard import LayoutGuard
 from shikiru.engine.quota_reconciler import QUOTA_REFRESH_SCOPE
 from shikiru.engine.root_preparation import RootPreparation
 from shikiru.engine.scheduler import FETCH_FAULT_SCOPE, MAX_DISPATCH_FAILURES, Scheduler
-from shikiru.engine.titles import TaskTitles
-from shikiru.paths import task_root
+from shikiru.paths import run_dir, task_root
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import transaction
@@ -47,9 +46,15 @@ from shikiru.store.tasks import TaskStore
 from shikiru.telemetry import resources as resources_module
 from shikiru.telemetry.resources import ResourceSampler
 from shikiru.tmux.client import exact_target
-from shikiru.tmux.decorator import PaneDecorator
+from shikiru.tmux.decorator import (
+    PANE_GLYPH_OPTION,
+    WINDOW_STATE_GLYPH_OPTION,
+    PaneDecorator,
+)
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
+from shikiru.ui.glyphs import GLYPH_QUOTA, QUOTA_MARKER
+from shikiru.view_log import quota_status_path, read_quota_status
 from shikiru.workspace.base_refs import FetchedBaseRefs, LocalBaseRefs
 from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
@@ -61,6 +66,7 @@ from tests.support.engine import (
     build_fault_reporter,
     build_reconciler,
     build_registry,
+    build_titles,
     build_tmux,
     build_writer,
 )
@@ -69,6 +75,7 @@ from tests.support.flow import init_project_repo
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import add_bare_remote
 from tests.support.permissions import EXECUTABLE_MODE
+from tests.support.quota_waits import record_quota_wait
 from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import wait_until, wait_until_advancing
 from tests.support.workspace import task_root_builder
@@ -83,6 +90,7 @@ if TYPE_CHECKING:
     from shikiru.domain.scheduling import ReadySchedule
     from shikiru.domain.tasks import Task
     from shikiru.engine.quota_reconciler import QuotaReconciler
+    from shikiru.engine.titles import TaskTitles
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -263,14 +271,26 @@ async def scheduler_env(
         runs=runs,
         commands=CommandQueue(connection, clock),
         faults=build_fault_reporter(events, clock, settings),
-        refresh_titles=TaskTitles(decorator, runs, tasks, settings).refresh,
+        refresh_titles=build_titles(
+            connection=connection,
+            clock=clock,
+            decorator=decorator,
+            settings=settings,
+            project_root=tmp_path,
+        ).refresh,
     )
     roots = task_root_builder(
         SubprocessRunner(), tmp_path, settings.repo, trackers=settings.project.trackers
     )
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
 
-    titles = TaskTitles(build_decorator(tmux), RunStore(connection, clock), tasks, settings)
+    titles = build_titles(
+        connection=connection,
+        clock=clock,
+        decorator=build_decorator(tmux),
+        settings=settings,
+        project_root=tmp_path,
+    )
     raiser = EscalationRaiser(
         EscalationStore(connection, clock),
         events,
@@ -281,7 +301,7 @@ async def scheduler_env(
         evidence=build_evidence(tmp_path),
         settings=settings,
     )
-    writer = build_writer(connection, clock, tmux=tmux)
+    writer = build_writer(connection, clock, tmp_path, tmux=tmux)
     dependency_callback = DependencyEscalator(writer, raiser)
     dispatch_failure_callback = DispatchFailureEscalator(writer, raiser)
     reconciler = build_reconciler(
@@ -505,6 +525,116 @@ async def test_quota_gate_persists_wait_reason(
     waiting = scheduler_env.tasks.get(task.id)
     assert waiting is not None
     assert waiting.wait_reason == "quota"
+
+
+async def test_scheduler_publishes_and_clears_queued_quota_marks_for_an_existing_window(
+    scheduler_env: SchedulerFixture,
+    connection: Connection,
+    tmux_server: TmuxServer,
+    tmp_path: Path,
+) -> None:
+    task = _submit(connection, scheduler_env.clock, title="quota in an existing window")
+    await scheduler_env.layout.ensure(task)
+    current = scheduler_env.tasks.require(task.id)
+    assert current.window_id is not None
+    scheduler_env.quotas.block(
+        "fake", scheduler_env.clock.now() + timedelta(hours=1), "quota", LONG_AGO
+    )
+
+    waiting = await scheduler_env.scheduler.run_once()
+
+    assert waiting.dispatches == ()
+    assert scheduler_env.tasks.require(task.id).wait_reason == "quota"
+    assert (
+        await tmux_server.run(
+            "display-message", "-p", "-t", current.window_id, f"#{{{WINDOW_STATE_GLYPH_OPTION}}}"
+        )
+    ).stdout.strip() == QUOTA_MARKER
+    status_dir = run_dir(tmp_path, task.id)
+    implementer_status = quota_status_path(status_dir, Role.IMPLEMENTER.value)
+    assert read_quota_status(implementer_status) is not None
+
+    scheduler_env.quotas.clear_block("fake")
+    resumed = await scheduler_env.scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in resumed.dispatches] == [task.id]
+    assert (
+        await tmux_server.run(
+            "display-message", "-p", "-t", current.window_id, f"#{{{WINDOW_STATE_GLYPH_OPTION}}}"
+        )
+    ).stdout.strip() != QUOTA_MARKER
+    assert read_quota_status(implementer_status) is None
+
+
+async def test_scheduler_publishes_a_running_mid_turn_quota_wait_without_agent_output(
+    scheduler_env: SchedulerFixture,
+    connection: Connection,
+    tmux_server: TmuxServer,
+    tmp_path: Path,
+) -> None:
+    assert isinstance(scheduler_env.clock, FakeClock)
+    clock = scheduler_env.clock
+    task = _submit(connection, scheduler_env.clock, title="quota during a turn")
+    await scheduler_env.layout.ensure(task)
+    queued = scheduler_env.tasks.require(task.id)
+    scheduler_env.tasks.apply_transition(
+        task.id,
+        dataclasses.replace(
+            Transition.stay(queued, step=Step.IMPLEMENT, status=Status.RUNNING), iteration=1
+        ),
+    )
+    running = scheduler_env.tasks.require(task.id)
+    until = clock.now() + timedelta(hours=1)
+    record_quota_wait(
+        connection,
+        clock,
+        running,
+        role=Role.IMPLEMENTER,
+        rung=_FAKE_RUNG,
+        until=until,
+    )
+
+    await scheduler_env.scheduler.run_once()
+
+    assert running.window_id is not None
+    assert (
+        await tmux_server.run(
+            "display-message",
+            "-p",
+            "-t",
+            running.window_id,
+            f"#{{{WINDOW_STATE_GLYPH_OPTION}}}",
+        )
+    ).stdout.strip() == QUOTA_MARKER
+    implementer_pane = running.panes[Role.IMPLEMENTER]
+    leader_pane = running.panes[Role.LEADER]
+    assert (
+        await tmux_server.run(
+            "display-message", "-p", "-t", implementer_pane, f"#{{{PANE_GLYPH_OPTION}}}"
+        )
+    ).stdout.strip() == GLYPH_QUOTA
+    assert (
+        await tmux_server.run(
+            "display-message", "-p", "-t", leader_pane, f"#{{{PANE_GLYPH_OPTION}}}"
+        )
+    ).stdout.strip() != GLYPH_QUOTA
+    status_dir = run_dir(tmp_path, task.id)
+    assert read_quota_status(quota_status_path(status_dir, Role.IMPLEMENTER.value)) is not None
+    assert read_quota_status(quota_status_path(status_dir, Role.LEADER.value)) is None
+
+    scheduler_env.quotas.clear_block("fake")
+    await scheduler_env.scheduler.run_once()
+
+    assert (
+        await tmux_server.run(
+            "display-message",
+            "-p",
+            "-t",
+            running.window_id,
+            f"#{{{WINDOW_STATE_GLYPH_OPTION}}}",
+        )
+    ).stdout.strip() != QUOTA_MARKER
+    assert read_quota_status(quota_status_path(status_dir, Role.IMPLEMENTER.value)) is None
 
 
 def _quota_settings(role: Role, ladder: list[Rung], *, both_roles: bool = False) -> Settings:
