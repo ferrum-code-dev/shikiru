@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 _LINE_END = b"\n"
 _VIEW_POLL_SECONDS = 0.5
+_VIEW_READ_BYTES = 65_536
 
 
 class ViewTail:
@@ -53,12 +54,25 @@ class ViewTail:
         self._status_path = status_path
         self._strip = strip
         self._offset = 0
+        self._pending_bytes = b""
+        self._width = console.size.width
 
     async def follow(self) -> None:
         """Print rows as they are appended, polling through the clock until cancelled."""
         while True:
-            self.drain()
-            self.sync_status()
+            width = self._console.size.width
+            resized = width != self._width and self._strip.active
+            if resized:
+                self._strip.reset_after_resize()
+                self._stream.reset()
+                self._offset = 0
+                self._pending_bytes = b""
+                self.sync_status()
+            while self.drain():
+                await self._clock.sleep(0)
+            if not resized:
+                self.sync_status()
+            self._width = self._console.size.width
             await self._clock.sleep(_VIEW_POLL_SECONDS)
 
     def sync_status(self) -> None:
@@ -71,18 +85,23 @@ class ViewTail:
         now = to_local(self._clock.now())
         self._strip.sync(quota_status_text(action, to_local(at) if at is not None else None, now))
 
-    def drain(self) -> None:
-        """Print every complete row appended since the last drain."""
+    def drain(self) -> bool:
+        """Print complete rows from one bounded chunk; return whether more may remain."""
         if not self._path.is_file():
-            return
+            return False
         with self._path.open("rb") as log:
             log.seek(self._offset)
-            chunk = log.read()
-        complete = chunk[: chunk.rfind(_LINE_END) + 1]
-        self._offset += len(complete)
+            chunk = log.read(_VIEW_READ_BYTES)
+        if not chunk:
+            return False
+        self._offset += len(chunk)
+        combined = self._pending_bytes + chunk
+        complete = combined[: combined.rfind(_LINE_END) + 1]
+        self._pending_bytes = combined[len(complete) :]
         for raw in complete.splitlines():
             for line in self._stream.render(json.loads(raw)):
                 self._console.print(line)
+        return len(chunk) == _VIEW_READ_BYTES
 
 
 def view_command(

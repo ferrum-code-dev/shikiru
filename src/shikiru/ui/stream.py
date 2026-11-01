@@ -61,6 +61,10 @@ class StreamLine:
             TurnFailed.__name__: _turn_failed,
         }
 
+    def reset(self) -> None:
+        """Reset turn-boundary tracking before replaying a view log from its start."""
+        self._turn = None
+
     def render(self, row: ViewRow) -> list[Text]:
         """Return the lines `row` adds to the view, headed by a boundary on a new turn."""
         signal = row[VIEW_SIGNAL_KEY]

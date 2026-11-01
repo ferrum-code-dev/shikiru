@@ -30,6 +30,9 @@ _REPORT_READ_BYTES = 64
 _FIRST_COLUMN = 1
 _FIRST_ROW = 1
 _NO_ROWS: tuple[str, ...] = ()
+_CLEAR_SCROLLBACK = f"{_CSI}3J"
+_CLEAR_SCREEN = f"{_CSI}2J"
+_HOME = f"{_CSI}H"
 
 
 class CursorReportError(RuntimeError):
@@ -46,7 +49,8 @@ class StatusStrip:
     The strip sits in rows `1..height`; output scrolls in the rows beneath it through a scroll
     region, so it never overwrites or duplicates the strip. Showing or hiding the strip shifts
     the visible output by its height instead of overwriting it; the rows pushed off the top
-    stay in the terminal's scrollback. A text wider than the terminal wraps onto more rows.
+    stay in the terminal's scrollback. A horizontal resize clears the reflowed terminal buffer;
+    the view then restores its output from the event log under the newly sized strip.
     """
 
     def __init__(self, console: Console, keyboard: TextIO, style: str) -> None:
@@ -67,6 +71,20 @@ class StatusStrip:
         self._width = size.width
         self._height = size.height
         self._apply(rows, size.height)
+
+    @property
+    def active(self) -> bool:
+        """Return whether a status currently reserves terminal rows."""
+        return bool(self._rows)
+
+    def reset_after_resize(self) -> None:
+        """Clear reflowed screen and scrollback before the view restores its logged output."""
+        out = self._console.file
+        out.write(_CLEAR_SCREEN + _CLEAR_SCROLLBACK + _RESET_REGION + _HOME)
+        out.flush()
+        self._rows = _NO_ROWS
+        self._width = self._console.size.width
+        self._height = self._console.size.height
 
     def _wrap(self, text: str | None, width: int, height: int) -> tuple[str, ...]:
         if text is None:

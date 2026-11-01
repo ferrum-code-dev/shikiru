@@ -412,6 +412,10 @@ async def _screen(tmux_server: TmuxServer, pane: str) -> list[str]:
     return (await tmux_server.run("capture-pane", "-p", "-t", pane)).stdout.splitlines()
 
 
+async def _history(tmux_server: TmuxServer, pane: str) -> list[str]:
+    return (await tmux_server.run("capture-pane", "-p", "-S", "-", "-t", pane)).stdout.splitlines()
+
+
 async def test_the_view_pane_pins_the_strip_above_prior_output_and_removes_it_on_clear(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
@@ -457,6 +461,7 @@ async def test_the_view_pane_pins_the_strip_above_prior_output_and_removes_it_on
     await wait_until(strip_gone, timeout=_TIMEOUT_SECONDS)
     assert await shows("earlier output")
     assert await shows("later output")
+    assert _STRIP_PHRASE not in "\n".join(await _history(tmux_server, pane))
 
 
 async def test_the_strip_reflows_at_narrow_widths_and_follows_a_resize(
@@ -490,6 +495,67 @@ async def test_the_strip_reflows_at_narrow_widths_and_follows_a_resize(
     await wait_until(single_row, timeout=_TIMEOUT_SECONDS)
     screen = await _screen(tmux_server, pane)
     assert sum(_STRIP_PHRASE in line for line in screen) == 1
+
+
+async def test_width_resize_and_clear_preserve_all_pane_output_history(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    wait = await _wait(engine_env)
+    log = view_log_path(run_dir(engine_env.project_root, wait.task.id), Role.IMPLEMENTER.value)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("".join(_row("Message", text=f"M{index:03}") + "\n" for index in range(40)))
+    pane = wait.current().panes[Role.IMPLEMENTER]
+    await tmux_server.run("set-option", "-w", "-t", pane, "window-size", "manual")
+    await tmux_server.run("resize-window", "-t", pane, "-x", str(_WIDE_WIDTH), "-y", str(_HEIGHT))
+    await _start_view(wait, Role.IMPLEMENTER)
+
+    async def all_initial_output_rendered() -> bool:
+        history = await _history(tmux_server, pane)
+        return all(f"M{index:03}" in "\n".join(history) for index in range(40))
+
+    await wait_until(all_initial_output_rendered, timeout=_TIMEOUT_SECONDS)
+
+    wait.queue_on_quota()
+    wait.block(_IMPLEMENTER_AGENT)
+    wait.schedule_check(_IMPLEMENTER_AGENT, QuotaAction.NEXT_CHECK)
+    await wait.sync()
+
+    async def strip_visible() -> bool:
+        history = await _history(tmux_server, pane)
+        return any(_STRIP_PHRASE in line for line in history)
+
+    await wait_until(strip_visible, timeout=_TIMEOUT_SECONDS)
+    await tmux_server.run("resize-window", "-t", pane, "-x", str(_NARROW_WIDTH), "-y", str(_HEIGHT))
+
+    async def strip_reflows_narrowly() -> bool:
+        screen = await _screen(tmux_server, pane)
+        top = " ".join(line.strip() for line in screen[:3] if line.strip())
+        return _STRIP_PHRASE in top and "next check" in top
+
+    await wait_until(strip_reflows_narrowly, timeout=_TIMEOUT_SECONDS)
+    await tmux_server.run("resize-window", "-t", pane, "-x", str(_WIDE_WIDTH), "-y", str(_HEIGHT))
+
+    async def strip_reflows_wide() -> bool:
+        screen = await _screen(tmux_server, pane)
+        return bool(screen) and _STRIP_PHRASE in screen[0] and "next check" in screen[0]
+
+    await wait_until(strip_reflows_wide, timeout=_TIMEOUT_SECONDS)
+    active_history = "\n".join(await _history(tmux_server, pane))
+    assert all(active_history.count(f"M{index:03}") == 1 for index in range(40))
+    wait.quotas.clear_block(_IMPLEMENTER_AGENT)
+    engine_env.tasks.set_wait_reason(wait.task.id, None)
+    await wait.sync()
+
+    async def strip_removed_from_screen() -> bool:
+        return not any(_STRIP_PHRASE in line for line in await _screen(tmux_server, pane))
+
+    await wait_until(strip_removed_from_screen, timeout=_TIMEOUT_SECONDS)
+    history = "\n".join(await _history(tmux_server, pane))
+    counts = {f"M{index:03}": history.count(f"M{index:03}") for index in range(40)}
+    assert all(count == 1 for count in counts.values()), {
+        marker: count for marker, count in counts.items() if count != 1
+    }
+    assert _STRIP_PHRASE not in history, history
 
 
 async def test_the_strip_keeps_output_visible_after_a_height_only_resize(
