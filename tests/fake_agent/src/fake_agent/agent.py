@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
@@ -105,12 +104,12 @@ class FakeAgent:
             return ModelCatalog(error=self._model_catalog_error)
         return _FAKE_MODEL_CATALOG
 
-    async def read_quota(self, since: datetime) -> QuotaReading | None:
+    def read_quota(self, since: datetime) -> QuotaReading | None:
         """Return the scripted quota file's reading when it was observed after `since`."""
         if self._quota_file is None:
             return None
         try:
-            raw = await asyncio.to_thread(self._quota_file.read_text, "utf-8")
+            raw = self._quota_file.read_text("utf-8")
             data = json.loads(raw)
             observed_at = datetime.fromisoformat(data["observed_at"])
             windows = tuple(

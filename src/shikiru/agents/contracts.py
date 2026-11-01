@@ -399,10 +399,11 @@ class BillingDeclarationProvider(Protocol):
 class QuotaProbe(Protocol):
     """Optional agent capability that reads fresh quota evidence without running a turn."""
 
-    async def read_quota(self, since: datetime) -> QuotaReading | None:
+    def read_quota(self, since: datetime) -> QuotaReading | None:
         """Return the latest applicable reading observed after `since`, or `None` if none exists.
 
-        It must not block the event loop; an unreadable source raises `ShikiruError`.
+        It may block: the engine calls it on a thread of its own, one at a time per agent, and
+        never interrupts it. An unreadable source raises `ShikiruError`.
         """
         ...
 

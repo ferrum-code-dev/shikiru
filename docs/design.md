@@ -82,7 +82,11 @@ for reset; without an available later agent, the task stays queued until the blo
 A persisted quota block is a prediction, not a lock. While a task waits on a block, in a turn's
 quota wait or queued, including after an engine restart, the engine revalidates it every
 `[orchestration.quota_refresh] interval_seconds` by asking the agent plugin's optional
-`read_quota(since)` capability for a fresh reading. Probes are supervised background work, never
+`read_quota(since)` capability for a fresh reading. The capability is a blocking call: the engine
+runs it on a daemon thread of its own, at most one per agent, and a read that never returns cannot
+be interrupted, so it is neither replaced nor waited for. While it is outstanding, the agent's next
+probe is refused as an `engine_fault` instead of starting another thread, and shutdown leaves it
+behind without delaying process exit. Probes are supervised background work, never
 part of the scheduling tick: a tick starts at most one probe per blocked agent, bounded by
 `timeout_seconds` on the injected clock, and neither independent dispatch nor Operator command
 acknowledgement waits for it. The probe's reading is consumed when it completes, and the next tick

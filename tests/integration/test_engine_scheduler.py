@@ -8,6 +8,7 @@ import errno
 import json
 import os
 import stat
+import threading
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, cast
@@ -34,6 +35,7 @@ from shikiru.engine.agents import AgentPool
 from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.layout_guard import LayoutGuard
+from shikiru.engine.quota_probe_threads import THREAD_NAME_PREFIX
 from shikiru.engine.quota_reconciler import QUOTA_REFRESH_SCOPE
 from shikiru.engine.root_preparation import RootPreparation
 from shikiru.engine.scheduler import FETCH_FAULT_SCOPE, MAX_DISPATCH_FAILURES, Scheduler
@@ -1277,6 +1279,8 @@ class QuotaProbeFixture:
                 return False
             return True
 
+        assert isinstance(self.env.clock, FakeClock)
+        await wait_until(self.env.clock.has_pending_sleep, _REAL_SECONDS)
         await wait_until(connected, _REAL_SECONDS)
         return opened[0]
 
@@ -1286,6 +1290,16 @@ class QuotaProbeFixture:
         reading = self._reading(five_hour=five_hour, weekly=weekly, observed_at=observed_at)
         os.write(writer, reading.encode())
         os.close(writer)
+
+    @staticmethod
+    def reading_threads() -> int:
+        return sum(
+            thread.name.startswith(THREAD_NAME_PREFIX) and thread.is_alive()
+            for thread in threading.enumerate()
+        )
+
+    async def source_drained(self) -> None:
+        await wait_until(lambda: self.reading_threads() == 0, _REAL_SECONDS)
 
     def free_blocked_readers(self) -> None:
         while True:
@@ -1582,6 +1596,7 @@ async def test_a_probe_that_never_answers_is_reported_at_its_timeout_and_the_nex
         assert env.quotas.block_for("fake") is not None
         os.close(hung)
         hung = None
+        await quota_probe.source_drained()
 
         quota_probe.advance(quota_probe.refresh_interval)
         await scheduler.run_once()
@@ -1598,6 +1613,39 @@ async def test_a_probe_that_never_answers_is_reported_at_its_timeout_and_the_nex
         for descriptor in (hung, writer):
             if descriptor is not None:
                 os.close(descriptor)
+        await scheduler.shutdown()
+
+
+async def test_a_source_that_stays_pending_never_gains_a_second_reader_and_shutdown_leaves_it(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    _submit(connection, env.clock, title="source never answers")
+    quota_probe.hold_source()
+    scheduler = quota_probe.restart()
+    refresh = quota_probe.settings.orchestration.quota_refresh
+    held = None
+    try:
+        await scheduler.run_once()
+        held = await quota_probe.reader_waiting()
+        for _ in range(3):
+            quota_probe.advance(refresh.timeout_seconds)
+            await quota_probe.settle()
+            quota_probe.advance(refresh.interval_seconds)
+            await scheduler.run_once()
+
+        assert quota_probe.reading_threads() == 1
+        assert env.events.since(0, kinds=[EventKind.ENGINE_FAULT])
+
+        await asyncio.wait_for(scheduler.shutdown(), _REAL_SECONDS)
+
+        assert quota_probe.reading_threads() == 1
+        assert env.quotas.block_for("fake") is not None
+    finally:
+        if held is not None:
+            os.close(held)
+        quota_probe.free_blocked_readers()
+        await quota_probe.source_drained()
         await scheduler.shutdown()
 
 

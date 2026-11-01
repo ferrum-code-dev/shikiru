@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import tomllib
 from collections.abc import Mapping
@@ -122,9 +121,9 @@ class CodexAgent:
         """Return the explicit plugin option or the unknown declaration."""
         return self._billing_declaration
 
-    async def read_quota(self, since: datetime) -> QuotaReading | None:
+    def read_quota(self, since: datetime) -> QuotaReading | None:
         """Return the newest Codex-bucket reading in this account's rollouts after `since`."""
-        return await asyncio.to_thread(self._quota_probe.latest_reading, since)
+        return self._quota_probe.latest_reading(since)
 
     async def model_catalog(self) -> ModelCatalog:
         """Return choices from Codex CLI's refreshed current model catalog."""

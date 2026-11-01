@@ -11,6 +11,7 @@ from shikiru.agents.contracts import quota_probe_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.quota_blocks import block_released
 from shikiru.domain.quota_waits import QuotaAction, ScheduledQuotaAction
+from shikiru.engine.quota_probe_threads import QuotaProbeThreads
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -68,6 +69,7 @@ class QuotaReconciler:
         self._faults = faults
         self._probed_at: dict[str, datetime] = {}
         self._probes: dict[str, _Probe] = {}
+        self._threads = QuotaProbeThreads()
         self._schedule = schedule
 
     def observe(self, agent: str, windows: Sequence[QuotaWindow]) -> None:
@@ -147,7 +149,7 @@ class QuotaReconciler:
             probe = quota_probe_for(self._agents.get(agent))
             if probe is None:
                 return
-            reading = await self._read(probe, block.blocked_at)
+            reading = await self._read(agent, probe, block.blocked_at)
             current = self._quotas.block_for(agent)
             if (
                 reading is not None
@@ -156,9 +158,11 @@ class QuotaReconciler:
             ):
                 self.observe(agent, reading.windows)
 
-    async def _read(self, probe: QuotaProbe, blocked_at: datetime) -> QuotaReading | None:
+    async def _read(
+        self, agent: str, probe: QuotaProbe, blocked_at: datetime
+    ) -> QuotaReading | None:
         timeout = self._settings.timeout_seconds
-        read = asyncio.create_task(probe.read_quota(blocked_at))
+        read = self._threads.start(agent, probe.read_quota, blocked_at)
         timer = asyncio.create_task(self._clock.sleep(timeout))
         try:
             await asyncio.wait({read, timer}, return_when=asyncio.FIRST_COMPLETED)
