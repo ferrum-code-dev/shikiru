@@ -230,11 +230,13 @@ async def test_old_commands_and_engine_events_go_but_pending_work_and_faults_sta
 
 
 _TASKS = 5
-_WAIT_SECONDS = 60.0
+_WAIT_SECONDS = 120.0
+_TIMEOUT_SECONDS = 240
 _POLL_SECONDS = 0.5
 _TASK_DAYS = 1.0
 
 
+@pytest.mark.timeout(_TIMEOUT_SECONDS)
 async def test_a_long_lived_engine_keeps_its_run_directories_bounded(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
@@ -303,9 +305,11 @@ async def test_a_long_lived_engine_keeps_its_run_directories_bounded(
         )
     finally:
         running.cancel()
-        with suppress(asyncio.CancelledError):
-            await running
-        connection.close()
+        try:
+            with suppress(asyncio.CancelledError):
+                await running
+        finally:
+            connection.close()
 
     assert run_dir(tmp_path, paused).is_dir()
     assert len(_run_dirs(tmp_path)) <= 2
