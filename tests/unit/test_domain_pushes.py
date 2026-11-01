@@ -56,3 +56,16 @@ def test_pending_work_is_due_at_its_deadline_or_always_for_zero(
     target: PushTarget, interval: int, due: bool
 ) -> None:
     assert is_due(target, now=NOW, interval=interval) is due
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        pytest.param(_target(registered=1, pushed=0, due_at=NOW), NOW, id="pending-is-scheduled"),
+        pytest.param(_target(registered=2, pushed=2, due_at=NOW), None, id="nothing-pending"),
+    ],
+)
+def test_scheduled_push_is_the_deadline_only_while_integrations_are_pending(
+    target: PushTarget, expected: datetime | None
+) -> None:
+    assert target.scheduled_at == expected

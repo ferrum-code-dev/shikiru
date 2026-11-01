@@ -159,6 +159,7 @@ class GitRepoStatusService:
                     root=str(self._project_dir),
                     state=DiagnosticSampleState.FAILED,
                     error=str(error),
+                    base=self._repo.base,
                 )
                 self._cache = _CachedRepoStatus(checked_at=now, sampled_at=None, status=status)
             else:
@@ -186,6 +187,8 @@ class GitRepoStatusService:
         if repo.base is not None and repo.base != branch:
             ahead = len(await self._git.log_oneline(repo_dir, f"{repo.base}..{branch}"))
             behind = len(await self._git.log_oneline(repo_dir, f"{branch}..{repo.base}"))
+        base = branch if repo.base is None else repo.base
+        unpushed, unpulled = await self._publication_counts(repo_dir, base)
         return RepoStatus(
             branch=branch,
             ahead=ahead,
@@ -196,7 +199,19 @@ class GitRepoStatusService:
             deleted_lines=line_changes.deleted_lines,
             binary_entries=line_changes.binary_entries,
             untracked_paths=line_changes.untracked_paths,
+            base=base,
+            unpushed=unpushed,
+            unpulled=unpulled,
         )
+
+    async def _publication_counts(self, repo_dir: Path, base: str) -> tuple[int | None, int | None]:
+        remote = self._repo.remote
+        if await self._git.remote_branch_sha(repo_dir, remote, base) is None:
+            return None, None
+        remote_ref = f"refs/remotes/{remote}/{base}"
+        unpushed = await self._git.log_oneline(repo_dir, f"{remote_ref}..{base}")
+        unpulled = await self._git.log_oneline(repo_dir, f"{base}..{remote_ref}")
+        return len(unpushed), len(unpulled)
 
     def _with_sample_age(self, cached: _CachedRepoStatus) -> RepoStatus:
         if cached.sampled_at is None:

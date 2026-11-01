@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -17,9 +18,15 @@ from shikiru.plugins.widgets.queue import QueuePanel, QueueWidget
 from shikiru.plugins.widgets.strips import StripsPanel, StripsWidget
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
+from shikiru.store.pushes import PushTargets
 from shikiru.store.tasks import TaskStore
-from shikiru.ui.tokens import ALERT_COLOR, SAGE
-from tests.support.cells import foregrounds, rendered_lines
+from shikiru.ui.tokens import (
+    ALERT_COLOR,
+    PRIMARY_TEXT_COLOR,
+    SAGE,
+    SECONDARY_TEXT_COLOR,
+)
+from tests.support.cells import foregrounds, rendered_lines, styles
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, WidgetHostApp, state_views, widget_context
@@ -36,10 +43,30 @@ if TYPE_CHECKING:
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 BRAND = "SHIKIRU"
+PUSH_INTERVAL_SECONDS = 3600
 
 
 def _plain(content: object) -> str:
     return plain_text(content)
+
+
+def _publishing_checkout(
+    project_dir: Path, *, unpushed: int | None, unpulled: int | None
+) -> RepoStatus:
+    return RepoStatus(
+        branch="main",
+        ahead=0,
+        behind=0,
+        dirty=0,
+        root=str(project_dir.resolve()),
+        added_lines=0,
+        deleted_lines=0,
+        binary_entries=0,
+        untracked_paths=0,
+        base="main",
+        unpushed=unpushed,
+        unpulled=unpulled,
+    )
 
 
 def _submit_task(
@@ -272,6 +299,127 @@ async def test_header_shows_an_open_fault_streak_and_the_age_of_the_oldest_escal
         events.append(EventKind.ENGINE_RECOVERED, message="ok", data={"scope": "engine tick"})
 
         await wait_until(lambda: "engine tick" not in _plain(widget.content), timeout=5.0)
+
+
+@pytest.mark.usefixtures("connection")
+@pytest.mark.parametrize(
+    ("unpushed", "unpulled", "expected", "in_sync"),
+    [
+        pytest.param(0, 0, "✓ in sync with origin", True, id="in-sync"),
+        pytest.param(5, 0, "5 behind origin", False, id="awaiting-push"),
+        pytest.param(2, 1, "not in sync with origin", False, id="diverged-from-remote"),
+        pytest.param(None, None, "origin unavailable", False, id="remote-ref-unknown"),
+    ],
+)
+async def test_header_states_whether_the_base_is_published(
+    reader: StateReader,
+    tmp_path: Path,
+    *,
+    unpushed: int | None,
+    unpulled: int | None,
+    expected: str,
+    in_sync: bool,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    checkout = _publishing_checkout(project_dir, unpushed=unpushed, unpulled=unpulled)
+    context = widget_context(
+        reader,
+        project_dir,
+        FakeClock(START),
+        services=StubServices(repo_status_value=checkout),
+    )
+    widget = cast("HeaderPanel", HeaderWidget().create(context))
+    async with WidgetHostApp(widget).run_test() as pilot:
+        await pilot.pause()
+        rendered = _plain(widget.content)
+        assert expected in rendered
+        assert ("✓ in sync with origin" in rendered) is in_sync
+
+
+@pytest.mark.usefixtures("connection")
+async def test_header_marks_previously_sampled_publication_counts(
+    reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    checkout = replace(
+        _publishing_checkout(project_dir, unpushed=3, unpulled=0),
+        state=DiagnosticSampleState.STALE,
+        sampled_ago="0:00:05",
+        error="git temporarily unavailable",
+    )
+    context = widget_context(
+        reader,
+        project_dir,
+        FakeClock(START),
+        services=StubServices(repo_status_value=checkout),
+    )
+    widget = cast("HeaderPanel", HeaderWidget().create(context))
+    async with WidgetHostApp(widget).run_test() as pilot:
+        await pilot.pause()
+        assert "3 behind origin (previously)" in _plain(widget.content)
+
+
+@pytest.mark.usefixtures("colour_terminal")
+async def test_header_colours_the_publication_count_bold_and_the_push_time_grey(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    PushTargets(connection).register("main", now=START, interval=PUSH_INTERVAL_SECONDS)
+    checkout = _publishing_checkout(project_dir, unpushed=5, unpulled=0)
+    context = widget_context(
+        reader,
+        project_dir,
+        FakeClock(START),
+        services=StubServices(repo_status_value=checkout),
+    )
+    widget = cast("HeaderPanel", HeaderWidget().create(context))
+    async with WidgetHostApp(widget).run_test():
+        await wait_until(lambda: "5 behind origin" in _plain(widget.content), timeout=5.0)
+        assert styles(widget, "5 behind")[0] == (True, PRIMARY_TEXT_COLOR)
+        assert set(foregrounds(widget, " behind origin")) == {PRIMARY_TEXT_COLOR}
+        assert set(foregrounds(widget, " · push at")) == {SECONDARY_TEXT_COLOR}
+
+
+@pytest.mark.usefixtures("connection", "colour_terminal")
+async def test_header_colours_the_in_sync_mark_green(reader: StateReader, tmp_path: Path) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    checkout = _publishing_checkout(project_dir, unpushed=0, unpulled=0)
+    context = widget_context(
+        reader,
+        project_dir,
+        FakeClock(START),
+        services=StubServices(repo_status_value=checkout),
+    )
+    widget = cast("HeaderPanel", HeaderWidget().create(context))
+    async with WidgetHostApp(widget).run_test():
+        await wait_until(lambda: "✓ in sync" in _plain(widget.content), timeout=5.0)
+        assert set(foregrounds(widget, "✓")) == {SAGE}
+
+
+async def test_header_shows_the_local_push_time_until_a_push_acknowledges_the_integrations(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    targets = PushTargets(connection)
+    targets.register("main", now=START, interval=PUSH_INTERVAL_SECONDS)
+    due = (START + timedelta(seconds=PUSH_INTERVAL_SECONDS)).astimezone().strftime("%H:%M")
+    checkout = _publishing_checkout(project_dir, unpushed=1, unpulled=0)
+    context = widget_context(
+        reader,
+        project_dir,
+        FakeClock(START),
+        services=StubServices(repo_status_value=checkout),
+    )
+    widget = cast("HeaderPanel", HeaderWidget().create(context))
+    async with WidgetHostApp(widget).run_test():
+        await wait_until(
+            lambda: f"1 behind origin · push at {due}" in _plain(widget.content),
+            timeout=UI_WAIT_SECONDS,
+        )
+
+        targets.acknowledge("main", registered=1, now=START, interval=PUSH_INTERVAL_SECONDS)
+
+        await wait_until(lambda: "push at" not in _plain(widget.content), timeout=UI_WAIT_SECONDS)
 
 
 async def test_header_refreshes_when_the_writer_commits(

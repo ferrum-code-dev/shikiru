@@ -21,6 +21,11 @@ class PushTarget:
         """Return whether an integration was registered that no push has acknowledged."""
         return self.registered > self.pushed
 
+    @property
+    def scheduled_at(self) -> datetime | None:
+        """Return when the pending integrations are due, or `None` when nothing is pending."""
+        return self.due_at if self.pending else None
+
 
 def pending_deadline(*, last_pushed_at: datetime | None, now: datetime, interval: int) -> datetime:
     """Return when work that becomes pending at `now` is due, given `interval` seconds.

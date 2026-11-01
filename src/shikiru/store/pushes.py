@@ -53,10 +53,7 @@ class PushTargets:
 
     def get(self, base: str) -> PushTarget | None:
         """Return `base`'s record, or `None` when no integration of it was ever registered."""
-        row = self._connection.execute(
-            f"SELECT {_COLUMNS} FROM push_targets WHERE base = ?", (base,)
-        ).fetchone()
-        return None if row is None else _target(row)
+        return fetch_push_target(self._connection, base)
 
     def pending(self) -> list[PushTarget]:
         """Return every base with integrations no push has acknowledged, oldest deadline first."""
@@ -83,6 +80,14 @@ class PushTargets:
                 "UPDATE push_targets SET pushed = ?, due_at = ?, last_pushed_at = ? WHERE base = ?",
                 (max(current.pushed, registered), due_at, format_timestamp(now), base),
             )
+
+
+def fetch_push_target(connection: sqlite3.Connection, base: str) -> PushTarget | None:
+    """Return `base`'s record, or `None` when no integration of it was ever registered."""
+    row = connection.execute(
+        f"SELECT {_COLUMNS} FROM push_targets WHERE base = ?", (base,)
+    ).fetchone()
+    return None if row is None else _target(row)
 
 
 def _target(row: sqlite3.Row) -> PushTarget:

@@ -250,6 +250,28 @@ class RepoStatus:
     untracked_paths: int | None = None
     state: DiagnosticSampleState = DiagnosticSampleState.AVAILABLE
     error: str | None = None
+    base: str | None = None
+    unpushed: int | None = None
+    unpulled: int | None = None
+
+
+class PublicationState(StrEnum):
+    """How a base branch compares with its remote counterpart."""
+
+    IN_SYNC = "in_sync"
+    AWAITING_PUSH = "awaiting_push"
+    NOT_IN_SYNC = "not_in_sync"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True)
+class PublicationView:
+    """Whether the base's commits reached its remote, and when its pending push is scheduled."""
+
+    state: PublicationState
+    remote: str
+    unpushed: int | None = None
+    push_time: str | None = None
 
 
 @dataclass(frozen=True)
@@ -271,6 +293,7 @@ class HeaderView:
     maximum_slots: int
     repo: RepoStatus
     alerts: tuple[str, ...]
+    publication: PublicationView
     integration_mode: str = ""
     engine_uptime_seconds: float | None = None
     previous_engine_run_seconds: float | None = None

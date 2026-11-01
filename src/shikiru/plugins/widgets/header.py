@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from rich.cells import cell_len
 from rich.text import Text
 
-from shikiru.dashboard.contract import DiagnosticSampleState, WidgetPlacement
+from shikiru.dashboard.contract import DiagnosticSampleState, PublicationState, WidgetPlacement
 from shikiru.ui.age import format_duration
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import widget_is_attached, widget_is_current
@@ -30,7 +30,12 @@ if TYPE_CHECKING:
     from textual import events
     from textual.widget import Widget
 
-    from shikiru.dashboard.contract import HeaderView, WidgetContext, WorkspaceSummaryView
+    from shikiru.dashboard.contract import (
+        HeaderView,
+        PublicationView,
+        WidgetContext,
+        WorkspaceSummaryView,
+    )
 
 
 MIN_HEADER_GAP = 2
@@ -40,6 +45,7 @@ ENGINE_STOPPED_MARKER = "○"
 MERGE_INTEGRATION = "merge"
 SQUASH_INTEGRATION = "squash"
 PULL_REQUEST_INTEGRATION = "pr"
+IN_SYNC_MARKER = "✓"
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +91,7 @@ def _home_header_text(
     )
     runtime_label = _runtime_label(view)
     runtime_width = cell_len(engine_label) + cell_len(runtime_label) + RUNTIME_SEPARATOR_WIDTH
-    checkout = _checkout_text(view)
+    checkout = _checkout_row(view)
     compact_header = identity_width + runtime_width + MIN_HEADER_GAP > width
     identity_text = Text.assemble(
         ("SHIKIRU", f"{STYLE_BOLD} {STEEL_BLUE}"),
@@ -215,6 +221,36 @@ def _checkout_text(view: HeaderView) -> Text:
             and not repo.untracked_paths
         ):
             rendered.append(f" · {repo.dirty} changed paths", style=AMBER)
+    return rendered
+
+
+def _checkout_row(view: HeaderView) -> Text:
+    rendered = _checkout_text(view)
+    rendered.append_text(
+        _publication_text(
+            view.publication,
+            stale=view.repo.state is DiagnosticSampleState.STALE,
+        )
+    )
+    return rendered
+
+
+def _publication_text(publication: PublicationView, *, stale: bool) -> Text:
+    rendered = Text(" · ", style=SECONDARY_TEXT_COLOR)
+    if publication.state is PublicationState.IN_SYNC:
+        rendered.append(IN_SYNC_MARKER, style=SUCCESS_COLOR)
+        rendered.append(f" in sync with {publication.remote}", style=PRIMARY_TEXT_COLOR)
+    elif publication.state is PublicationState.AWAITING_PUSH:
+        rendered.append(str(publication.unpushed), style=f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}")
+        rendered.append(f" behind {publication.remote}", style=PRIMARY_TEXT_COLOR)
+    elif publication.state is PublicationState.NOT_IN_SYNC:
+        rendered.append(f"not in sync with {publication.remote}", style=AMBER)
+    else:
+        rendered.append(f"{publication.remote} unavailable", style=SECONDARY_TEXT_COLOR)
+    if stale and publication.state is not PublicationState.UNAVAILABLE:
+        rendered.append(" (previously)", style=SECONDARY_TEXT_COLOR)
+    if publication.push_time is not None:
+        rendered.append(f" · push at {publication.push_time}", style=SECONDARY_TEXT_COLOR)
     return rendered
 
 

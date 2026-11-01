@@ -177,6 +177,12 @@ count, so an integration arriving during a push stays pending. Failures use the 
 backoff and recovery events per base, so a rejected base keeps its work pending without holding
 back the others; shutdown awaits or cancels an outstanding push. Pull-request mode does not create the service. Changed values load on engine restart.
 
+The dashboard header shows beside the base branch how many of its commits the remote-tracking
+`refs/remotes/<remote>/<base>` lacks, with the local time of the pending push from the same table.
+A missing remote ref, or a read that failed before any sample, is shown as unavailable; a stale
+sample keeps its counts marked as previously sampled. A base that diverged from the remote is shown
+as not in sync. None of these is ever shown as in sync.
+
 Successful tasks release their active sessions/worktrees. Cancellation retains the branch and
 preserves a worktree when it contains unintegrated work. Terminal detach leaves engine and agents
 running. Engine Stop interrupts supervised agent turns and ends orchestration while retaining the

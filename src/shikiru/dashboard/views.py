@@ -33,6 +33,8 @@ from shikiru.dashboard.contract import (
     EscalationPanelView,
     HeaderView,
     HeldTaskStateView,
+    PublicationState,
+    PublicationView,
     QueueRow,
     QuotaBlockView,
     QuotaEvidenceView,
@@ -154,6 +156,7 @@ if TYPE_CHECKING:
 
 DIALOGUE_LINE_LIMIT = 20
 ALERT_TIME_FORMAT = "%H:%M:%S"
+PUSH_TIME_FORMAT = "%H:%M"
 SECONDS_PER_MINUTE = 60
 MINUTES_PER_HOUR = 60
 TIME_UNKNOWN = "\N{EN DASH}"
@@ -410,16 +413,29 @@ class StateDashboardViews:
         """Build the project, engine, slot and repository summary."""
         tasks = self._cached_tasks()
         engine = self.engine_status()
+        repo = await self._sources.repo_status()
         return HeaderView(
             project=self._settings.current().project.name,
             engine_up=engine.up,
             occupied_slots=len(occupied_slot_ids(tasks)),
             maximum_slots=self._settings.current().orchestration.max_parallel,
-            repo=await self._sources.repo_status(),
+            repo=repo,
             alerts=self._alerts(),
             integration_mode=self._settings.current().orchestration.integration,
             engine_uptime_seconds=engine.uptime_seconds,
             previous_engine_run_seconds=engine.previous_run_seconds,
+            publication=self._publication(repo),
+        )
+
+    def _publication(self, repo: RepoStatus) -> PublicationView:
+        target = None if repo.base is None else self._state.push_target(repo.base)
+        scheduled = None if target is None else target.scheduled_at
+        push_time = None if scheduled is None else to_local(scheduled).strftime(PUSH_TIME_FORMAT)
+        return PublicationView(
+            state=_publication_state(repo),
+            remote=self._settings.current().repo.remote,
+            unpushed=repo.unpushed,
+            push_time=push_time,
         )
 
     def engine_status(self) -> EngineStatusView:
@@ -1868,6 +1884,16 @@ class StateDashboardViews:
             self._project_usage_cache = None
             self._project_usage_view_cache = None
             self._task_usage_cache.clear()
+
+
+def _publication_state(repo: RepoStatus) -> PublicationState:
+    if repo.unpushed is None or repo.unpulled is None:
+        return PublicationState.UNAVAILABLE
+    if repo.unpulled:
+        return PublicationState.NOT_IN_SYNC
+    if repo.unpushed:
+        return PublicationState.AWAITING_PUSH
+    return PublicationState.IN_SYNC
 
 
 def _event_role(kind: EventKind, data: dict[str, object]) -> Role | None:

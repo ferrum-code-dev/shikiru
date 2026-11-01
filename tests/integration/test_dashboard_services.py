@@ -3,18 +3,22 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import pytest
+
 from shikiru.config.settings import RepoConfig
 from shikiru.dashboard.contract import DiagnosticSampleState
 from shikiru.dashboard.services import GitRepoStatusService
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
-from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo, run_git
+from tests.support.github import add_bare_remote
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
+REMOTE = "origin"
 
 
 async def test_repo_status_reports_branch_ahead_behind_and_dirty_count(tmp_path: Path) -> None:
@@ -155,3 +159,96 @@ async def test_repo_status_retains_last_success_as_stale_and_reports_first_failu
     assert unavailable.dirty is None
     assert unavailable.root == str(unavailable_dir.resolve())
     assert unavailable.error
+
+
+async def _checkout_with_remote(runner: SubprocessRunner, tmp_path: Path) -> Path:
+    repo_dir = tmp_path / "repo"
+    await init_repo(runner, repo_dir, initial_branch="main")
+    (repo_dir / "a.txt").write_text("1")
+    await commit_all(runner, repo_dir, "initial")
+    await add_bare_remote(repo_dir, tmp_path / "origin.git", REMOTE)
+    return repo_dir
+
+
+async def _commit_file(runner: SubprocessRunner, repo_dir: Path, name: str) -> None:
+    (repo_dir / name).write_text(name)
+    await commit_all(runner, repo_dir, f"add {name}")
+
+
+def _service(
+    git: Git, repo_dir: Path, clock: FakeClock, *, ttl: float = 10
+) -> GitRepoStatusService:
+    return GitRepoStatusService(
+        git, RepoConfig(base="main"), repo_dir, clock, cache_ttl_seconds=ttl
+    )
+
+
+@pytest.mark.parametrize(
+    ("local_commits", "remote_commits", "expected"),
+    [
+        pytest.param(0, 0, (0, 0), id="in-sync"),
+        pytest.param(2, 0, (2, 0), id="local-commits-await-push"),
+        pytest.param(0, 1, (0, 1), id="remote-commit-missing-locally"),
+        pytest.param(1, 2, (1, 2), id="diverged"),
+    ],
+)
+async def test_publication_counts_local_commits_the_remote_lacks_and_the_reverse(
+    tmp_path: Path, local_commits: int, remote_commits: int, expected: tuple[int, int]
+) -> None:
+    runner = SubprocessRunner()
+    git = Git(runner, command_timeout=GIT_COMMAND_TIMEOUT)
+    repo_dir = await _checkout_with_remote(runner, tmp_path)
+    if remote_commits:
+        other = tmp_path / "other"
+        await run_git(
+            runner, None, "clone", "--branch", "main", str(tmp_path / "origin.git"), str(other)
+        )
+        for index in range(remote_commits):
+            await _commit_file(runner, other, f"remote-{index}.txt")
+        await run_git(runner, other, "push", REMOTE, "main")
+    for index in range(local_commits):
+        await _commit_file(runner, repo_dir, f"local-{index}.txt")
+    await run_git(runner, repo_dir, "fetch", REMOTE)
+
+    status = await _service(git, repo_dir, FakeClock(START)).repo_status()
+
+    assert (status.unpushed, status.unpulled) == expected
+
+
+async def test_publication_is_unknown_without_a_remote_tracking_ref(tmp_path: Path) -> None:
+    runner = SubprocessRunner()
+    git = Git(runner, command_timeout=GIT_COMMAND_TIMEOUT)
+    repo_dir = tmp_path / "repo"
+    await init_repo(runner, repo_dir, initial_branch="main")
+    (repo_dir / "a.txt").write_text("1")
+    await commit_all(runner, repo_dir, "initial")
+
+    status = await _service(git, repo_dir, FakeClock(START)).repo_status()
+
+    assert status.state is DiagnosticSampleState.AVAILABLE
+    assert status.branch == "main"
+    assert status.base == "main"
+    assert (status.unpushed, status.unpulled) == (None, None)
+
+
+async def test_publication_counts_follow_integrations_and_pushes_once_the_cache_expires(
+    tmp_path: Path,
+) -> None:
+    runner = SubprocessRunner()
+    git = Git(runner, command_timeout=GIT_COMMAND_TIMEOUT)
+    repo_dir = await _checkout_with_remote(runner, tmp_path)
+    clock = FakeClock(START)
+    service = _service(git, repo_dir, clock, ttl=3)
+    assert (await service.repo_status()).unpushed == 0
+
+    await _commit_file(runner, repo_dir, "integrated.txt")
+    clock.advance(2)
+    assert (await service.repo_status()).unpushed == 0
+    clock.advance(1)
+    assert (await service.repo_status()).unpushed == 1
+
+    await run_git(runner, repo_dir, "push", REMOTE, "main")
+    clock.advance(3)
+    pushed = await service.repo_status()
+
+    assert (pushed.unpushed, pushed.unpulled) == (0, 0)

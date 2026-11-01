@@ -21,6 +21,7 @@ from shikiru.store.events import (
     fetch_latest_events,
     fetch_timeline_events,
 )
+from shikiru.store.pushes import fetch_push_target
 from shikiru.store.quotas import (
     AgentBlock,
     fetch_active_agent_blocks,
@@ -46,6 +47,7 @@ if TYPE_CHECKING:
     from shikiru.domain.commands import Command, CommandStatus
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.events import Event, EventKind
+    from shikiru.domain.pushes import PushTarget
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Role, Status, Task
     from shikiru.store.database import Database
@@ -211,6 +213,10 @@ class StateReader:
         except sqlite3.Error as error:
             message = f"could not query read-only database {self._database_path}: {error}"
             raise DatabaseError(message) from error
+
+    def push_target(self, base: str) -> PushTarget | None:
+        """See `shikiru.store.pushes.fetch_push_target`."""
+        return fetch_push_target(self._connection, base)
 
     def get_escalation(self, escalation_id: str) -> Escalation | None:
         """See `shikiru.store.escalations.fetch_escalation`."""
