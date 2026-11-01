@@ -526,6 +526,13 @@ def _briefing_halves(app: DashboardApp) -> tuple[Static, Static]:
     )
 
 
+def _briefing_laid_out(app: DashboardApp) -> bool:
+    return all(
+        half.size.height == len(rendered_lines(half.content, width=half.size.width))
+        for half in _briefing_halves(app)
+    )
+
+
 def _shown_verbs(app: DashboardApp) -> frozenset[BriefingAction]:
     return frozenset(
         action
@@ -711,6 +718,7 @@ async def test_briefing_details_hint_aligns_and_moves_focus_to_a_fold(
     async with app.run_test(size=WIDE_SIZE) as pilot:
         briefing = app.query_one(f"#{TASK_DETAIL_BRIEFING}", Static)
         await wait_until(lambda: "+120" in plain_text(briefing.content), timeout=UI_WAIT_SECONDS)
+        await wait_until(lambda: _briefing_laid_out(app), timeout=UI_WAIT_SECONDS)
         hint = app.query_one(f"#{TASK_DETAIL_DETAILS_HINT}", Static)
         assert hint.region.right == app.query_one(f"#{TASK_DETAIL_ACTIONS}").region.right
         await pilot.click(f"#{TASK_DETAIL_DETAILS_HINT}")
@@ -732,6 +740,7 @@ async def test_cost_heading_is_cyan_and_its_role_labels_are_grey_beside_their_am
         await wait_until(
             lambda: "Leader $0.42" in plain_text(cost.content), timeout=UI_WAIT_SECONDS
         )
+        await wait_until(lambda: _briefing_laid_out(app), timeout=UI_WAIT_SECONDS)
         assert foregrounds(cost, "Cost") == [STEEL_BLUE] * len("Cost")
         assert foregrounds(cost, "Leader") == [SECONDARY_TEXT_COLOR] * len("Leader")
         assert foregrounds(cost, "$0.42") == [SAGE] * len("$0.42")
