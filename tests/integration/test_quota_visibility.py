@@ -614,6 +614,56 @@ async def test_height_resize_and_clear_preserve_all_pane_output_history(
     assert _STRIP_PHRASE not in history, history
 
 
+async def test_status_growth_and_clear_preserve_all_pane_output_history(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    wait = await _wait(engine_env)
+    log = view_log_path(run_dir(engine_env.project_root, wait.task.id), Role.IMPLEMENTER.value)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("".join(_row("Message", text=f"M{index:03}") + "\n" for index in range(40)))
+    pane = wait.current().panes[Role.IMPLEMENTER]
+    await tmux_server.run("set-option", "-w", "-t", pane, "window-size", "manual")
+    await tmux_server.run("resize-window", "-t", pane, "-x", str(_NARROW_WIDTH), "-y", str(_HEIGHT))
+    await _start_view(wait, Role.IMPLEMENTER)
+
+    async def all_initial_output_rendered() -> bool:
+        history = "\n".join(await _history(tmux_server, pane))
+        return all(f"M{index:03}" in history for index in range(40))
+
+    await wait_until(all_initial_output_rendered, timeout=_TIMEOUT_SECONDS)
+    wait.queue_on_quota()
+    wait.block(_IMPLEMENTER_AGENT)
+    await wait.sync()
+
+    async def time_free_status_visible() -> bool:
+        return _STRIP_PHRASE in "\n".join(await _screen(tmux_server, pane))
+
+    await wait_until(time_free_status_visible, timeout=_TIMEOUT_SECONDS)
+    wait.schedule_check(_IMPLEMENTER_AGENT, QuotaAction.NEXT_CHECK)
+    await wait.sync()
+
+    async def scheduled_status_visible() -> bool:
+        screen = await _screen(tmux_server, pane)
+        return "next check" in " ".join(line.strip() for line in screen[:4])
+
+    await wait_until(scheduled_status_visible, timeout=_TIMEOUT_SECONDS)
+
+    wait.quotas.clear_block(_IMPLEMENTER_AGENT)
+    engine_env.tasks.set_wait_reason(wait.task.id, None)
+    await wait.sync()
+
+    async def strip_removed_from_screen() -> bool:
+        return not any(_STRIP_PHRASE in line for line in await _screen(tmux_server, pane))
+
+    await wait_until(strip_removed_from_screen, timeout=_TIMEOUT_SECONDS)
+    history = "\n".join(await _history(tmux_server, pane))
+    counts = {f"M{index:03}": history.count(f"M{index:03}") for index in range(40)}
+    assert all(count == 1 for count in counts.values()), {
+        marker: count for marker, count in counts.items() if count != 1
+    }
+    assert _STRIP_PHRASE not in history, history
+
+
 async def test_a_recreated_view_pane_shows_the_still_current_wait(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:

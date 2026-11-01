@@ -63,28 +63,35 @@ class ViewTail:
             size = self._console.size
             resized = (size.width, size.height) != self._size and self._strip.active
             if resized:
-                self._strip.reset_after_resize()
-                self._stream.reset()
-                self._offset = 0
-                self._pending_bytes = b""
+                self._reset_for_replay()
                 self.sync_status()
             while self.drain():
                 await self._clock.sleep(0)
-            if not resized:
+            if not resized and self.sync_status():
+                self._reset_for_replay()
                 self.sync_status()
+                while self.drain():
+                    await self._clock.sleep(0)
             size = self._console.size
             self._size = (size.width, size.height)
             await self._clock.sleep(_VIEW_POLL_SECONDS)
 
-    def sync_status(self) -> None:
-        """Show the published quota wait in the strip, or hide the strip when there is none."""
+    def sync_status(self) -> bool:
+        """Show the published quota wait and report whether output needs replaying."""
         status = read_quota_status(self._status_path)
         if status is None:
-            self._strip.sync(None)
-            return
+            return self._strip.sync(None)
         action, at = status
         now = to_local(self._clock.now())
-        self._strip.sync(quota_status_text(action, to_local(at) if at is not None else None, now))
+        return self._strip.sync(
+            quota_status_text(action, to_local(at) if at is not None else None, now)
+        )
+
+    def _reset_for_replay(self) -> None:
+        self._strip.reset_for_replay()
+        self._stream.reset()
+        self._offset = 0
+        self._pending_bytes = b""
 
     def drain(self) -> bool:
         """Print complete rows from one bounded chunk; return whether more may remain."""

@@ -62,23 +62,26 @@ class StatusStrip:
         self._width: int = console.size.width
         self._height: int = console.size.height
 
-    def sync(self, text: str | None) -> None:
-        """Show `text` in the strip, hide the strip for none, and redraw after a terminal resize."""
+    def sync(self, text: str | None) -> bool:
+        """Draw `text` unless its row count changed; return whether output must be replayed."""
         size = self._console.size
         rows = self._wrap(text, size.width, size.height)
         if rows == self._rows and size.width == self._width and size.height == self._height:
-            return
+            return False
+        if self._rows and len(rows) != len(self._rows):
+            return True
         self._width = size.width
         self._height = size.height
         self._apply(rows, size.height)
+        return False
 
     @property
     def active(self) -> bool:
         """Return whether a status currently reserves terminal rows."""
         return bool(self._rows)
 
-    def reset_after_resize(self) -> None:
-        """Clear reflowed screen and scrollback before the view restores its logged output."""
+    def reset_for_replay(self) -> None:
+        """Clear the screen and scrollback before the view restores its logged output."""
         out = self._console.file
         out.write(_CLEAR_SCREEN + _CLEAR_SCROLLBACK + _RESET_REGION + _HOME)
         out.flush()
