@@ -137,8 +137,10 @@ current base tip, titled with the task ID and title and carrying `Shikiru-Task` 
 `Shikiru-Squashed-Tip` trailers, then fast-forwards a checked-out base or updates its ref with the
 same expected-old-value check; a task whose tree equals the base's lands nothing. The original
 branch is no longer an ancestor of the base, so the engine records the proposed landing before its
-ref update and confirms it is on the base after restart; the branch-tip trailer also identifies
-already landed commits from earlier runs.
+ref update and confirms it is on the base after restart. The checkpoint also records the task
+branch tip used to build that landing; recovery verifies the branch still has that tip before it
+can complete the task and remove its worktree. The branch-tip trailer identifies already landed
+commits from earlier runs.
 
 Every integration mode (merge, squash, pull request) persists in `TASK_DONE`, before cleanup, the
 landed commit list, the integration label and the integrated file, insertion and deletion totals. A

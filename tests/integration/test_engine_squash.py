@@ -185,6 +185,37 @@ async def _rig(
     )
 
 
+def _reopened_integrator(
+    rig: Rig, connection: Connection, local: type[LocalMerge]
+) -> tuple[EventLog, TaskStore, Integrator]:
+    events = EventLog(connection, rig.clock)
+    tasks = TaskStore(connection, rig.clock)
+    builder = task_root_builder(_RUNNER, rig.project_root, RepoConfig())
+
+    async def finish_task(finished: Task) -> None:
+        await builder.cleanup(finished.id, finished.repo, integrated=finished.status is Status.DONE)
+
+    strategy = local(
+        rig.git,
+        rig.clock,
+        events=events,
+        project_root=rig.project_root,
+        integration_wait=0,
+    )
+    integrator = Integrator(
+        git=rig.git,
+        strategy=strategy,
+        base_refs=LocalBaseRefs(),
+        lock=asyncio.Lock(),
+        project_root=rig.project_root,
+        tasks=tasks,
+        events=events,
+        finish_task=finish_task,
+        atomically=lambda: transaction(connection),
+    )
+    return events, tasks, integrator
+
+
 @pytest.mark.parametrize("base", ["main", _RELEASE], ids=["checked-out", "ref-only"])
 async def test_a_multi_commit_task_lands_as_one_commit_with_its_rebased_tree(
     connection: Connection, tmp_path: Path, base: str
@@ -377,33 +408,7 @@ async def test_a_local_merge_applied_before_sqlite_reopens_keeps_its_landed_evid
     database_path = Path(connection.execute("PRAGMA database_list").fetchone()["file"])
     reopened = Database(database_path).connect()
     try:
-        events = EventLog(reopened, rig.clock)
-        tasks = TaskStore(reopened, rig.clock)
-        builder = task_root_builder(_RUNNER, rig.project_root, RepoConfig())
-
-        async def finish_task(finished: Task) -> None:
-            await builder.cleanup(
-                finished.id, finished.repo, integrated=finished.status is Status.DONE
-            )
-
-        strategy = LocalMerge(
-            rig.git,
-            rig.clock,
-            events=events,
-            project_root=rig.project_root,
-            integration_wait=0,
-        )
-        integrator = Integrator(
-            git=rig.git,
-            strategy=strategy,
-            base_refs=LocalBaseRefs(),
-            lock=asyncio.Lock(),
-            project_root=rig.project_root,
-            tasks=tasks,
-            events=events,
-            finish_task=finish_task,
-            atomically=lambda: transaction(reopened),
-        )
+        events, tasks, integrator = _reopened_integrator(rig, reopened, LocalMerge)
         recovered = tasks.get(task.id)
         assert recovered is not None
 
@@ -419,6 +424,52 @@ async def test_a_local_merge_applied_before_sqlite_reopens_keeps_its_landed_evid
         assert done.data["changes"] == {"files": 2, "insertions": 2, "deletions": 0}
         assert await rig.sha("main") == landed
         assert not root.exists()
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("local", [LocalMerge, SquashMerge], ids=["merge", "squash"])
+async def test_a_new_task_commit_after_landing_survives_sqlite_restart(
+    connection: Connection, tmp_path: Path, local: type[LocalMerge]
+) -> None:
+    rig = await _rig(connection, tmp_path, local=local)
+    task, root = await rig.start_task("preserve newer work")
+    await rig.commit(root, "landed.txt", "landed\n")
+    assert task.repo is not None
+    await rig.strategy.merge(
+        MergeRequest(
+            task_id=task.id,
+            title=task.title,
+            repo=task.repo,
+            task_root=root,
+            summary="summary",
+            held=lambda: False,
+        )
+    )
+    landed = await rig.sha("main")
+    await rig.commit(root, "keep-my-work.txt", "keep\n")
+    task_tip = await rig.git.rev_parse(root, task.repo.branch)
+
+    database_path = Path(connection.execute("PRAGMA database_list").fetchone()["file"])
+    reopened = Database(database_path).connect()
+    try:
+        events, tasks, integrator = _reopened_integrator(rig, reopened, local)
+        recovered = tasks.get(task.id)
+        assert recovered is not None
+
+        with pytest.raises(IntegrationBlocked):
+            await integrator.run(recovered, _resolve_nothing, IntegrationMetadata("summary"))
+
+        current = tasks.get(task.id)
+        assert current is not None
+        assert current.status is Status.INTEGRATING
+        assert events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id) == []
+        assert root.exists()
+        assert await rig.git.branch_exists(rig.project_root, task.repo.branch)
+        assert await rig.git.rev_parse(rig.project_root, task.repo.branch) == task_tip
+        assert (root / "keep-my-work.txt").read_text() == "keep\n"
+        assert not (rig.project_root / "keep-my-work.txt").exists()
+        assert await rig.sha("main") == landed
     finally:
         reopened.close()
 

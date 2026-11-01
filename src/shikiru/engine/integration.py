@@ -58,12 +58,15 @@ SQUASH_TIP_TRAILER = "Shikiru-Squashed-Tip"
 _APPLYING_BASE_KEY = "base"
 _APPLYING_BASE_SHA_KEY = "base_sha"
 _APPLYING_BRANCH_KEY = "branch"
+_APPLYING_TASK_SHA_KEY = "task_sha"
 _APPLYING_LANDING_SHA_KEY = "landing_sha"
 _INTEGRATION_COMMITS_KEY = "commits"
 _PR_BASE_SHA_KEY = "base_sha"
 _PR_BRANCH_SHA_KEY = "branch_sha"
 _MERGED_PR_WITHOUT_COMMIT = "merged pull request has no landing commit"
 _MERGED_PR_COMMIT_WITHOUT_PARENT = "merged pull request has no parent commit"
+_LOCAL_LANDING_WITHOUT_TASK_TIP = "cannot recover a local landing without its task branch tip"
+_LOCAL_TASK_BRANCH_ADVANCED = "task branch advanced after the local landing; preserving its work"
 
 _PR_ENDED_BY = frozenset((EscalationReason.PR_CLOSED,))
 _INTEGRATION_RESTARTED_BY = _PR_ENDED_BY | {EscalationReason.INTEGRATION_CONFLICT}
@@ -348,7 +351,6 @@ class LocalMerge:
 
     async def applied(self, task_id: str, repo: RepoState, task_root: Path) -> Landing | None:
         """Recover the exact local landing recorded before its ref update, if it applied."""
-        del task_root
         events = self._events.since(0, kinds=[EventKind.INTEGRATION_APPLYING], task_id=task_id)
         if not events:
             return None
@@ -369,6 +371,12 @@ class LocalMerge:
         base_sha = await self._git.rev_parse(self._project_root, repo.base)
         if not await self._git.merge_base_is_ancestor(self._project_root, landing_sha, base_sha):
             return None
+        task_sha = data.get(_APPLYING_TASK_SHA_KEY)
+        if not isinstance(task_sha, str):
+            raise IntegrationBlocked(_LOCAL_LANDING_WITHOUT_TASK_TIP)
+        current_task_sha = await self._git.rev_parse(task_root, repo.branch)
+        if current_task_sha != task_sha:
+            raise IntegrationBlocked(_LOCAL_TASK_BRANCH_ADVANCED)
         return _recorded_landing(data)
 
     async def merge(self, request: MergeRequest) -> Landing:
@@ -417,6 +425,7 @@ class LocalMerge:
                 _APPLYING_BASE_KEY: request.repo.base,
                 _APPLYING_BASE_SHA_KEY: candidate.base_sha,
                 _APPLYING_BRANCH_KEY: request.repo.branch,
+                _APPLYING_TASK_SHA_KEY: candidate.branch_sha,
                 _APPLYING_LANDING_SHA_KEY: candidate.landing_sha,
                 **candidate.landing.done_data(),
             },
@@ -914,6 +923,7 @@ class Integrator:
             self._require_not_held(task.id)
             task_dir = task_root(self._project_root, task.id)
             if not await self._git.is_rebase_in_progress(task_dir):
+                await self._require_integrable(task, repo, task_dir)
                 landed = await self._strategy.applied(task.id, repo, task_dir)
                 if landed is not None:
                     return task, metadata, landed
