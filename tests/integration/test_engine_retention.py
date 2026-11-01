@@ -34,6 +34,7 @@ from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, build_tmux, engine_settings
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
+from tests.support.github import add_bare_remote
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until_advancing
 
@@ -238,7 +239,7 @@ _TASK_DAYS = 1.0
 
 @pytest.mark.timeout(_TIMEOUT_SECONDS)
 async def test_a_long_lived_engine_keeps_its_run_directories_bounded(
-    tmp_path: Path, tmux_server: TmuxServer
+    tmp_path: Path, tmp_path_factory: pytest.TempPathFactory, tmux_server: TmuxServer
 ) -> None:
     await init_project_repo(tmp_path)
     clock = FakeClock(TASK_CREATED_AT)
@@ -253,6 +254,8 @@ async def test_a_long_lived_engine_keeps_its_run_directories_bounded(
             )
         }
     )
+    remote_dir = tmp_path_factory.mktemp("origin") / "origin.git"
+    await add_bare_remote(tmp_path, remote_dir, settings.repo.remote)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
