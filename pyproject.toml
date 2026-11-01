@@ -185,7 +185,7 @@ layers = [
   "(shikiru.workspace) | (shikiru.tmux) | (shikiru.prompts) | (shikiru.helper) | (shikiru.ui) | (shikiru.telemetry) | (shikiru.agents.registry)",
   "(shikiru.store)",
   "(shikiru.domain)",
-  "(shikiru.config) : (shikiru.agents.contracts) : (shikiru.agents.sdk)",
+  "(shikiru.config) : (shikiru.agents.contracts) : (shikiru.agents.sdk) : (shikiru.agents.settings)",
   "shikiru.process | shikiru.clock",
   "shikiru.errors | shikiru.palette",
 ]
@@ -197,6 +197,7 @@ source_modules = ["shikiru.engine"]
 forbidden_modules = [
   "shikiru.agents.registry",
   "shikiru.agents.sdk",
+  "shikiru.agents.settings",
   "shikiru.agents.testing",
 ]
 
@@ -273,7 +274,7 @@ forbidden_modules = [
 allow_indirect_imports = "True"
 
 [[tool.importlinter.contracts]]
-name = "Agent plugins (docs/design.md#agent-contract): plugins.agents imports only agents.contracts, agents.sdk, process, clock and errors"
+name = "Agent plugins (docs/design.md#agent-contract): plugins.agents imports only agents.contracts, agents.sdk, agents.settings, process, clock and errors"
 type = "forbidden"
 source_modules = ["shikiru.plugins.agents"]
 forbidden_modules = [

@@ -27,6 +27,7 @@ from shikiru.plugins.agents.claude.model_catalog import parse_model_catalog
 from shikiru.plugins.agents.claude.options import (
     ADD_DIR_FLAG,
     CLAUDE_COMMAND,
+    CLAUDE_SETTINGS,
     EFFORT_FLAG,
     EMPTY_MCP_CONFIG,
     EMPTY_TOOLS,
@@ -51,6 +52,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung, Turn, TurnSpec
+    from shikiru.agents.settings import AgentSetting
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
 
@@ -171,6 +173,10 @@ class ClaudeAgent:
                 CheckResult("login", False, unavailable),
             ]
         return [binary, await self._check_version(), await self._check_login()]
+
+    def settings(self) -> tuple[AgentSetting, ...]:
+        """Return the options worth writing to the project config."""
+        return CLAUDE_SETTINGS
 
     def headless(self) -> HeadlessAgent | None:
         """Return Claude's schema-constrained headless client."""

@@ -12,8 +12,10 @@ from shikiru.agents.contracts import (
     assess_model_choice,
     model_catalog_for,
 )
+from shikiru.agents.settings import AgentSettings, settings_for
 from shikiru.errors import ShikiruError
 
+_SETTINGS_UNSUPPORTED_DETAIL = "agent does not expose editable settings"
 _MODEL_CATALOG_UNSUPPORTED_DETAIL = "agent does not expose an authoritative model catalog"
 
 if TYPE_CHECKING:
@@ -139,6 +141,31 @@ class PluginChecks:
         except (ShikiruError, OSError, TimeoutError) as error:
             detail = str(error) or type(error).__name__
             return AgentCapabilityResult(headless=False, error=detail)
+
+    def settings(self, name: str) -> AgentSettings:
+        """Return the editable settings `name` offers, or why it offers none."""
+        try:
+            agent = self._create(name, {})
+            offered = settings_for(agent)
+        except (ShikiruError, OSError, TimeoutError) as error:
+            detail = str(error) or type(error).__name__
+            return AgentSettings(agent=name, supported=False, error=detail)
+        if offered is None:
+            return AgentSettings(agent=name, supported=False, error=_SETTINGS_UNSUPPORTED_DETAIL)
+        return AgentSettings(agent=name, settings=offered)
+
+    def validation_error(self, name: str, options: Mapping[str, Any]) -> str | None:
+        """Return the plugin's rejection of `options`, or `None` when it accepts them."""
+        try:
+            self._create(name, options)
+        except (ShikiruError, OSError, TimeoutError) as error:
+            return str(error) or type(error).__name__
+        return None
+
+    def _create(self, name: str, options: Mapping[str, Any]) -> Agent:
+        return self._registry.create(
+            name, AgentContext(options=options, runner=self._runner, clock=self._clock)
+        )
 
 
 async def _agent_model_catalog(agent: Agent) -> ModelCatalog | None:

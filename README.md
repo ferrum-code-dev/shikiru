@@ -66,15 +66,21 @@ shikiru submit "Fix a small, specific issue and verify it"
 shikiru attach
 ```
 
-The seven-step wizard checks the repository, builds role/model/effort ladders, lets you choose
-tracker files and ignored cache paths, sets the orchestration limits and integration mode, then
-writes `.shikiru/config.toml` and runs Doctor. The Orchestration step sets the maximum parallel
+The eight-step wizard checks the repository, builds role/model/effort ladders, lets you choose
+tracker files and ignored cache paths, sets the orchestration limits, reviews each agent's options and
+chooses the integration mode, then writes `.shikiru/config.toml` and runs Doctor. The Orchestration step sets the maximum parallel
 tasks, the maximum passes per task, the maximum quota wait in seconds, the stall and tool timeouts
 in seconds (the silence allowed before a turn is stopped as stalled, without and with a running
 tool), the push interval in seconds (default 14400, four hours; 0 pushes after every local
 integration), the host CPU percentage below which new tasks may start, and the free RAM in GB that must be
 available before a new task starts. Each field starts at the project default, and Finish rejects an
-out-of-range value by focusing that field before anything is written. Available model and effort
+out-of-range value by focusing that field before anything is written. The Agents step lists the
+options each installed agent plugin offers (for the built-in Claude Code and Codex plugins: the
+compaction threshold in percent, the billing declaration, left unset unless you choose one, and
+extra CLI arguments split like a shell command line). They are written explicitly under
+`[agents.<name>.options]` so you can edit them later; an invalid value focuses its field and
+nothing is written. An agent plugin without the settings capability is named on that step and
+keeps its own defaults. Available model and effort
 choices come from agent plugins; where no authoritative catalog exists, Doctor cannot promise model
 availability. Tracker and cache fields start empty: add only what you want Shikiru to use. Cancel
 explicitly with the Cancel button; `Ctrl+F` briefly reveals the background artwork.
@@ -263,7 +269,10 @@ session peeks, submission, prioritization, pause/resume/cancel/retry, rung chang
 takeover/handback, escalation resolution and event waiting. It uses the same operator services and
 command queue as the dashboard. Agent and widget plugins use Python entry points; the
 [agent contract](src/shikiru/agents/contracts.py), [SDK](src/shikiru/agents/sdk/) and
-[contract test kit](src/shikiru/agents/testing/) support additional agents.
+[contract test kit](src/shikiru/agents/testing/) support additional agents. A plugin opts into the
+wizard's Agents step by giving its agent a `settings()` method that returns
+[`AgentSetting`](src/shikiru/agents/settings.py) entries (key, label, help, kind, default and
+bounds or choices); the plugin's own factory still validates the resulting options.
 
 For exact fields and defaults, see [defaults.toml](src/shikiru/config/defaults.toml),
 [settings validation](src/shikiru/config/settings.py), [Claude options](src/shikiru/plugins/agents/claude/options.py)

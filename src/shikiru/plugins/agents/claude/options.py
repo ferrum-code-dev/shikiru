@@ -5,6 +5,12 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from shikiru.agents.contracts import PERCENT, BillingMode
+from shikiru.agents.settings import (
+    AgentSetting,
+    billing_declaration_setting,
+    cli_args_setting,
+    compact_threshold_setting,
+)
 
 CLAUDE_COMMAND = "claude"
 PRINT_FLAG = "-p"
@@ -43,3 +49,10 @@ class ClaudeOptions(BaseModel):
     args: list[str] = Field(default_factory=lambda: list(DEFAULT_ARGS))
     compact_at_pct: float = Field(default=DEFAULT_COMPACT_AT_PCT, ge=0, le=PERCENT)
     billing_mode: BillingMode | None = None
+
+
+CLAUDE_SETTINGS: tuple[AgentSetting, ...] = (
+    compact_threshold_setting(DEFAULT_COMPACT_AT_PCT),
+    billing_declaration_setting(),
+    cli_args_setting(DEFAULT_ARGS),
+)

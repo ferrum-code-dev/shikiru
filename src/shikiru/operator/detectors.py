@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from typing import Any
 
+    from shikiru.agents.settings import AgentSettings
     from shikiru.config.settings import ComplexityName
     from shikiru.operator.doctor import DoctorReport
     from shikiru.operator.plugin_checks import AgentCapabilityResult, PluginChecks
@@ -63,6 +64,7 @@ class DetectedProject:
     caches: tuple[str, ...]
     trackers: tuple[str, ...]
     agents: tuple[str, ...]
+    agent_settings: tuple[AgentSettings, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,6 +127,7 @@ class ProjectDetectors:
             caches=tuple(await self._caches()),
             trackers=tuple(self._trackers()),
             agents=agents,
+            agent_settings=tuple(self._plugin_checks.settings(name) for name in agents),
         )
 
     async def initialize(self) -> Path:
@@ -145,6 +148,7 @@ class ProjectDetectors:
         ladders: Mapping[str, Sequence[Rung]],
         complexity: Mapping[ComplexityName, Sequence[Rung]] | None = None,
         orchestration: OrchestrationChoices,
+        agent_options: Mapping[str, Mapping[str, object]] | None = None,
     ) -> Path:
         """Write the wizard's validated configuration and exclude `.shikiru/`."""
         await self._validate_root()
@@ -157,6 +161,7 @@ class ProjectDetectors:
             ladders=ladders,
             complexity=complexity,
             orchestration=orchestration,
+            agent_options=agent_options,
         )
         validate_project_config_text(contents)
         await self._write_and_exclude(config_path, contents)
@@ -173,6 +178,10 @@ class ProjectDetectors:
     async def model_catalog(self, name: str, options: Mapping[str, Any]) -> ModelCatalog | None:
         """Return an agent's optional authoritative choices through the injected plugin boundary."""
         return await self._plugin_checks.model_catalog(name, options)
+
+    def agent_options_error(self, name: str, options: Mapping[str, Any]) -> str | None:
+        """Return the plugin's rejection of `options` for `name`, or `None` when accepted."""
+        return self._plugin_checks.validation_error(name, options)
 
     def agent_capabilities(self, name: str, options: Mapping[str, Any]) -> AgentCapabilityResult:
         """Return generic optional capabilities through the injected plugin boundary."""
@@ -243,6 +252,7 @@ def render_config(
     ladders: Mapping[str, Sequence[Rung]] | None = None,
     complexity: Mapping[ComplexityName, Sequence[Rung]] | None = None,
     orchestration: OrchestrationChoices | None = None,
+    agent_options: Mapping[str, Mapping[str, object]] | None = None,
 ) -> str:
     """Render a complete default config from detected project facts."""
     agent = project.agents[0]
@@ -261,12 +271,13 @@ def render_config(
         )
     )
     for name in project.agents:
-        lines.extend(
-            (
-                f"[agents.{name}]",
-                "",
-            )
-        )
+        lines.append(f"[agents.{name}]")
+        options = (agent_options or {}).get(name, {})
+        if options:
+            lines.append("")
+            lines.append(f"[agents.{name}.options]")
+            lines.extend(f"{key} = {json.dumps(value)}" for key, value in options.items())
+        lines.append("")
     selected_ladders = (
         ladders
         if ladders is not None

@@ -15,6 +15,7 @@ import shikiru.agents.registry as registry_module
 import shikiru.dashboard.wizard as wizard_module
 from shikiru.agents.contracts import AgentContext, CheckResult, ModelCatalog, ModelChoice, Rung
 from shikiru.agents.registry import AgentRegistry
+from shikiru.agents.settings import AgentSetting, SettingKind
 from shikiru.bootstrap import build_doctor, build_project_detectors, run_init_wizard
 from shikiru.cli.render import doctor_renderable
 from shikiru.clock import SystemClock
@@ -52,6 +53,7 @@ COMPACT_WIZARD_SIZE = (40, 12)
 TRANSIENT_SMALL_SIZE = (40, 8)
 WIZARD_TIMER_TEST_SECONDS = 1.5
 MODEL_WITH_LITERAL_BRACKETS = "claude-fable-5-1[1m]"
+PICKY_REJECTED_DEPTH = 13
 LONG_TRACKER_CANDIDATE = (
     "tasks/z-very-long-tracker-candidate-name-that-wraps-without-losing-its-final-segments.md"
 )
@@ -69,6 +71,7 @@ SELECTOR_OPTIONS = {
         MODEL_WITH_LITERAL_BRACKETS,
     ),
     "#integration": ("merge", "squash", "pr"),
+    "#agent-setting-0-1": ("", "api", "subscription"),
 }
 LADDER_SCOPES = (
     "Leader",
@@ -522,8 +525,9 @@ async def _verify_back_navigation_and_fill_project_fields(
     await _replace_input(pilot, "#max-cpu", "90")
     await _replace_input(pilot, "#min-free-ram", "2.5")
     await _click_next(pilot, "#wizard-page-5")
-    await _choose(pilot, "#integration", "squash")
     await _click_next(pilot, "#wizard-page-6")
+    await _choose(pilot, "#integration", "squash")
+    await _click_next(pilot, "#wizard-page-7")
     summary = str(pilot.app.query_one("#wizard-summary .wizard-detail-value", Static).render())
     assert summary.endswith("Local squash and merge")
 
@@ -548,6 +552,12 @@ async def _advance_to_orchestration(pilot: Pilot[InitWizardResult | None]) -> No
     await _click_next(pilot, "#wizard-page-2")
     await _click_next(pilot, "#wizard-page-3")
     await _click_next(pilot, "#wizard-page-4")
+
+
+async def _advance_orchestration_to_finish(pilot: Pilot[InitWizardResult | None]) -> None:
+    await _click_next(pilot, "#wizard-page-5")
+    await _click_next(pilot, "#wizard-page-6")
+    await _click_next(pilot, "#wizard-page-7")
 
 
 def _input_value(pilot: Pilot[InitWizardResult | None], selector: str) -> str:
@@ -667,8 +677,7 @@ async def test_init_writes_mixed_multirung_config_and_runtime_resolves_complexit
         await _wait_for_orchestration_error(pilot, "max-parallel")
         assert not (tmp_path / ".shikiru" / "config.toml").exists()
         await _replace_input(pilot, "#max-parallel", "3")
-        await _click_next(pilot, "#wizard-page-5")
-        await _click_next(pilot, "#wizard-page-6")
+        await _advance_orchestration_to_finish(pilot)
         assert (frame.region.width, frame.region.height) == preferred_frame_size
         await _click_button(pilot, "#wizard-finish")
         config_path = tmp_path / ".shikiru" / "config.toml"
@@ -740,8 +749,9 @@ async def test_orchestration_fields_start_from_injected_defaults_and_keep_edits(
         assert _input_value(pilot, "#tool-timeout") == "5400"
         assert _input_value(pilot, "#max-cpu") == "90"
         await _click_next(pilot, "#wizard-page-5")
-        await _choose(pilot, "#integration", "pr")
         await _click_next(pilot, "#wizard-page-6")
+        await _choose(pilot, "#integration", "pr")
+        await _click_next(pilot, "#wizard-page-7")
         summary = str(pilot.app.query_one("#wizard-summary .wizard-detail-value", Static).render())
         assert summary == (
             "Max parallel 3 tasks · Max iterations 6 passes · Push interval 7200 seconds · "
@@ -763,32 +773,28 @@ async def test_invalid_orchestration_values_focus_their_field_and_boundaries_rou
     async with app.run_test(size=WIZARD_SIZE) as pilot:
         await _advance_to_orchestration(pilot)
         await _replace_input(pilot, "#max-cpu", "101")
-        await _click_next(pilot, "#wizard-page-5")
-        await _click_next(pilot, "#wizard-page-6")
+        await _advance_orchestration_to_finish(pilot)
         await _click_button(pilot, "#wizard-finish")
         await _wait_for_orchestration_error(pilot, "max-cpu")
         assert not config_path.exists()
 
         await _replace_input(pilot, "#max-cpu", "100")
         await _replace_input(pilot, "#max-parallel", "0")
-        await _click_next(pilot, "#wizard-page-5")
-        await _click_next(pilot, "#wizard-page-6")
+        await _advance_orchestration_to_finish(pilot)
         await _click_button(pilot, "#wizard-finish")
         await _wait_for_orchestration_error(pilot, "max-parallel")
         assert not config_path.exists()
 
         await _replace_input(pilot, "#max-parallel", "1")
         await _replace_input(pilot, "#stall-timeout", "0")
-        await _click_next(pilot, "#wizard-page-5")
-        await _click_next(pilot, "#wizard-page-6")
+        await _advance_orchestration_to_finish(pilot)
         await _click_button(pilot, "#wizard-finish")
         await _wait_for_orchestration_error(pilot, "stall-timeout")
         assert not config_path.exists()
 
         await _replace_input(pilot, "#stall-timeout", "600")
         await _replace_input(pilot, "#tool-timeout", "0")
-        await _click_next(pilot, "#wizard-page-5")
-        await _click_next(pilot, "#wizard-page-6")
+        await _advance_orchestration_to_finish(pilot)
         await _click_button(pilot, "#wizard-finish")
         await _wait_for_orchestration_error(pilot, "tool-timeout")
         assert not config_path.exists()
@@ -797,8 +803,7 @@ async def test_invalid_orchestration_values_focus_their_field_and_boundaries_rou
         await _replace_input(pilot, "#max-iterations", "1")
         await _replace_input(pilot, "#max-quota-wait", "0")
         await _replace_input(pilot, "#min-free-ram", "0")
-        await _click_next(pilot, "#wizard-page-5")
-        await _click_next(pilot, "#wizard-page-6")
+        await _advance_orchestration_to_finish(pilot)
         await _click_button(pilot, "#wizard-finish")
         await wait_until(config_path.is_file, timeout=3)
         await wait_until(
@@ -828,15 +833,13 @@ async def test_invalid_push_interval_focuses_its_field_and_zero_is_saved(
     async with app.run_test(size=WIZARD_SIZE) as pilot:
         await _advance_to_orchestration(pilot)
         await _replace_input(pilot, "#push-interval", "-5")
-        await _click_next(pilot, "#wizard-page-5")
-        await _click_next(pilot, "#wizard-page-6")
+        await _advance_orchestration_to_finish(pilot)
         await _click_button(pilot, "#wizard-finish")
         await _wait_for_orchestration_error(pilot, "push-interval")
         assert not config_path.exists()
 
         await _replace_input(pilot, "#push-interval", "0")
-        await _click_next(pilot, "#wizard-page-5")
-        await _click_next(pilot, "#wizard-page-6")
+        await _advance_orchestration_to_finish(pilot)
         await _click_button(pilot, "#wizard-finish")
         await wait_until(config_path.is_file, timeout=3)
         await wait_until(
@@ -985,6 +988,7 @@ async def test_art_reveal_does_not_interrupt_editors_or_expanded_selects(
         await _click_next(pilot, "#wizard-page-3")
         await _click_next(pilot, "#wizard-page-4")
         await _click_next(pilot, "#wizard-page-5")
+        await _click_next(pilot, "#wizard-page-6")
         integration = cast(
             "Select[str]", app.query_one(f"#{wizard_module.INTEGRATION_SELECT_ID}", Select)
         )
@@ -1033,8 +1037,7 @@ async def test_hidden_incomplete_complexity_draft_blocks_write_with_its_context(
         await _click_next(pilot, "#wizard-page-2")
         await _click_next(pilot, "#wizard-page-3")
         await _click_next(pilot, "#wizard-page-4")
-        await _click_next(pilot, "#wizard-page-5")
-        await _click_next(pilot, "#wizard-page-6")
+        await _advance_orchestration_to_finish(pilot)
         await _click_button(pilot, "#wizard-finish")
         config_path = tmp_path / ".shikiru" / "config.toml"
         await wait_until(config_path.is_file, timeout=3)
@@ -1209,8 +1212,7 @@ async def test_written_config_remains_truthful_when_doctor_fails(
         await _click_next(pilot, "#wizard-page-2")
         await _click_next(pilot, "#wizard-page-3")
         await _click_next(pilot, "#wizard-page-4")
-        await _click_next(pilot, "#wizard-page-5")
-        await _click_next(pilot, "#wizard-page-6")
+        await _advance_orchestration_to_finish(pilot)
         await _click_button(pilot, "#wizard-finish")
         config_path = tmp_path / ".shikiru" / "config.toml"
         await wait_until(config_path.is_file, timeout=3)
@@ -1361,3 +1363,175 @@ async def test_init_wizard_refuses_an_existing_config_without_changing_it(
         await run_init_wizard(tmp_path)
 
     assert config_path.read_text() == "operator-owned config\n"
+
+
+class _PickyAgent(_LegacyAgent):
+    name = "picky"
+
+    def settings(self) -> tuple[AgentSetting, ...]:
+        return (
+            AgentSetting(
+                key="depth",
+                label="Depth",
+                help="How deep.",
+                kind=SettingKind.NUMBER,
+                default=1,
+                minimum=0,
+            ),
+        )
+
+
+def _create_picky_agent(context: AgentContext) -> Agent:
+    if context.options.get("depth") == PICKY_REJECTED_DEPTH:
+        message = "depth 13 is unlucky"
+        raise ConfigError(message)
+    return cast("Agent", _PickyAgent())
+
+
+async def _advance_to_agent_settings(pilot: Pilot[InitWizardResult | None]) -> None:
+    await _advance_to_orchestration(pilot)
+    await _click_next(pilot, "#wizard-page-5")
+
+
+async def _finish_from_agent_settings(pilot: Pilot[InitWizardResult | None]) -> None:
+    await _click_next(pilot, "#wizard-page-6")
+    await _click_next(pilot, "#wizard-page-7")
+    await _click_button(pilot, "#wizard-finish")
+
+
+async def _wait_for_agent_setting_error(
+    pilot: Pilot[InitWizardResult | None], input_id: str
+) -> str:
+    field = pilot.app.query_one(f"#{input_id}")
+    error = pilot.app.query_one("#wizard-error", Static)
+    await wait_until(
+        lambda: (
+            pilot.app.query_one("#wizard-page-5").display
+            and pilot.app.focused is field
+            and bool(str(error.render()).strip())
+        ),
+        timeout=3,
+    )
+    return str(error.render())
+
+
+async def test_agents_step_follows_orchestration_and_writes_edited_options(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    _private_doctor_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    app = await _app_with_agents(tmp_path, {"fake": create_fake_agent})
+    config_path = tmp_path / ".shikiru" / "config.toml"
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await _advance_to_agent_settings(pilot)
+        assert str(app.query_one("#wizard-step", Static).render()) == "6 / 8"
+        assert "Agents" in str(app.query_one("#wizard-title", Static).render())
+        assert _input_value(pilot, "#agent-setting-0-0") == "80"
+        await _replace_input(pilot, "#agent-setting-0-0", "65")
+        await _choose(pilot, "#agent-setting-0-1", "subscription")
+
+        await _click_next(pilot, "#wizard-page-6")
+        await _click_back(pilot, "#wizard-page-5")
+        assert _input_value(pilot, "#agent-setting-0-0") == "65"
+        await _resize(pilot, COMPACT_WIZARD_SIZE)
+        await _resize(pilot, WIZARD_SIZE)
+        assert _input_value(pilot, "#agent-setting-0-0") == "65"
+
+        await _finish_from_agent_settings(pilot)
+        await wait_until(config_path.is_file, timeout=3)
+
+    assert load_settings(tmp_path).agents["fake"].options == {
+        "compact_at_pct": 65.0,
+        "billing_mode": "subscription",
+        "auth": "none",
+    }
+
+
+async def test_unset_optional_agent_settings_are_not_written(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    _private_doctor_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    app = await _app_with_agents(tmp_path, {"fake": create_fake_agent})
+    config_path = tmp_path / ".shikiru" / "config.toml"
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await _advance_to_agent_settings(pilot)
+        await _finish_from_agent_settings(pilot)
+        await wait_until(config_path.is_file, timeout=3)
+
+    assert "billing_mode" not in load_settings(tmp_path).agents["fake"].options
+
+
+async def test_invalid_agent_setting_focuses_its_field_and_blocks_the_write(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    _private_doctor_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    app = await _app_with_agents(tmp_path, {"fake": create_fake_agent})
+    config_path = tmp_path / ".shikiru" / "config.toml"
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await _advance_to_agent_settings(pilot)
+        await _replace_input(pilot, "#agent-setting-0-0", "150")
+        await _click_next(pilot)
+        message = await _wait_for_agent_setting_error(pilot, "agent-setting-0-0")
+        assert "Compact at" in message
+        assert not config_path.exists()
+
+        await _replace_input(pilot, "#agent-setting-0-0", "100")
+        await _finish_from_agent_settings(pilot)
+        await wait_until(config_path.is_file, timeout=3)
+
+    assert load_settings(tmp_path).agents["fake"].options["compact_at_pct"] == 100.0
+
+
+async def test_third_party_plugin_settings_work_and_its_rejection_is_reported(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    _private_doctor_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    app = await _app_with_agents(
+        tmp_path, {"fake": create_fake_agent, "picky": _create_picky_agent}
+    )
+    config_path = tmp_path / ".shikiru" / "config.toml"
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await _advance_to_agent_settings(pilot)
+        assert _input_value(pilot, "#agent-setting-1-0") == "1"
+        await _replace_input(pilot, "#agent-setting-1-0", str(PICKY_REJECTED_DEPTH))
+        await _click_next(pilot)
+        message = await _wait_for_agent_setting_error(pilot, "agent-setting-1-0")
+        assert "picky" in message
+        assert "unlucky" in message
+        assert not config_path.exists()
+
+        await _replace_input(pilot, "#agent-setting-1-0", "7")
+        await _finish_from_agent_settings(pilot)
+        await wait_until(config_path.is_file, timeout=3)
+
+    assert load_settings(tmp_path).agents["picky"].options == {"depth": 7.0}
+
+
+async def test_agent_without_settings_capability_is_explained_and_writes_no_options(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await _git_project(tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
+    app = await _app_with_agents(tmp_path, {"legacy": _create_legacy_agent})
+
+    async with app.run_test(size=WIZARD_SIZE):
+        page = app.query_one("#wizard-page-5")
+        texts = " ".join(str(item.render()) for item in page.query(Static))
+        assert "does not expose editable settings" in texts
+        assert "nothing is written" in texts

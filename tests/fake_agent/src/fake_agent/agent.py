@@ -22,6 +22,12 @@ from shikiru.agents.contracts import (
     QuotaReading,
     QuotaWindow,
 )
+from shikiru.agents.settings import (
+    AgentSetting,
+    SettingKind,
+    billing_declaration_setting,
+    compact_threshold_setting,
+)
 from shikiru.errors import ConfigError, ShikiruError
 
 if TYPE_CHECKING:
@@ -41,6 +47,20 @@ _FAKE_MODEL_CATALOG = ModelCatalog(
         ModelChoice(model="claude-fable-5-1[1m]", efforts=("high",)),
     ),
     complete=True,
+)
+
+
+_FAKE_SETTINGS = (
+    compact_threshold_setting(80.0),
+    billing_declaration_setting(),
+    AgentSetting(
+        key="auth",
+        label="Authentication",
+        help="How the fake CLI authenticates; only no authentication is simulated.",
+        kind=SettingKind.CHOICE,
+        default="none",
+        choices=("none",),
+    ),
 )
 
 
@@ -129,6 +149,10 @@ class FakeAgent:
         return (
             QuotaReading(windows=windows, observed_at=observed_at) if observed_at > since else None
         )
+
+    def settings(self) -> tuple[AgentSetting, ...]:
+        """Return the options the fake plugin offers to the setup wizard."""
+        return _FAKE_SETTINGS
 
     def headless(self) -> HeadlessAgent | None:
         """Return the fake Helper answer provider."""

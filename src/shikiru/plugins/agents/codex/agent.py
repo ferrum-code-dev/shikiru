@@ -33,6 +33,7 @@ from shikiru.plugins.agents.codex.options import (
     CODEX_COMMAND,
     CODEX_HOME_ENV_VAR,
     CODEX_MODEL_CATALOG_ARGV,
+    CODEX_SETTINGS,
     CONFIG_FLAG,
     CONFIG_LONG_FLAG,
     EFFORT_LONG_FLAG,
@@ -68,6 +69,7 @@ if TYPE_CHECKING:
         Turn,
         TurnSpec,
     )
+    from shikiru.agents.settings import AgentSetting
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
 
@@ -323,6 +325,10 @@ class CodexAgent:
         if model not in catalog:
             raise ConfigError(_UNKNOWN_WINDOW_DETAIL.format(models=model))
         return catalog
+
+    def settings(self) -> tuple[AgentSetting, ...]:
+        """Return the options worth writing to the project config."""
+        return CODEX_SETTINGS
 
     def headless(self) -> HeadlessAgent | None:
         """Return Codex's schema-constrained headless client."""

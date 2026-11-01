@@ -12,6 +12,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
 from textual.widgets import Button, Input, Label, Rule, Select, Static
 
+from shikiru.agents.settings import AgentSetting, AgentSettingError, SettingKind
 from shikiru.config.settings import (
     MERGE_INTEGRATION,
     PULL_REQUEST_INTEGRATION,
@@ -72,6 +73,7 @@ if TYPE_CHECKING:
     from textual.timer import Timer
 
     from shikiru.agents.contracts import ModelCatalog
+    from shikiru.agents.settings import AgentSettings
     from shikiru.config.settings import OrchestrationConfig
     from shikiru.dashboard.orchestration_fields import OrchestrationField
     from shikiru.operator.doctor import Doctor, DoctorReport
@@ -83,6 +85,7 @@ STEP_AGENTS = "Agents and ladders"
 STEP_TRACKERS = "Trackers"
 STEP_CACHES = "Caches and CoW"
 STEP_ORCHESTRATION = "Orchestration"
+STEP_AGENT_SETTINGS = "Agents"
 STEP_INTEGRATION = "Integration mode"
 STEP_FINISH = "Finish"
 TRACKERS_INPUT_ID = "trackers"
@@ -90,6 +93,8 @@ CACHES_INPUT_ID = "caches"
 TRACKERS_LIST_ID = "tracker-candidates"
 CACHES_LIST_ID = "cache-candidates"
 INTEGRATION_SELECT_ID = "integration"
+AGENT_SETTING_ID_PREFIX = "agent-setting"
+UNSET_CHOICE_LABEL = "unset"
 REPOSITORY_CHECKOUT_ID = "wizard-checkout"
 WIZARD_STEPS = (
     STEP_REPOSITORY,
@@ -97,6 +102,7 @@ WIZARD_STEPS = (
     STEP_TRACKERS,
     STEP_CACHES,
     STEP_ORCHESTRATION,
+    STEP_AGENT_SETTINGS,
     STEP_INTEGRATION,
     STEP_FINISH,
 )
@@ -105,8 +111,10 @@ AGENTS_STEP_INDEX = WIZARD_STEPS.index(STEP_AGENTS)
 TRACKERS_STEP_INDEX = WIZARD_STEPS.index(STEP_TRACKERS)
 COW_STEP_INDEX = WIZARD_STEPS.index(STEP_CACHES)
 ORCHESTRATION_STEP_INDEX = WIZARD_STEPS.index(STEP_ORCHESTRATION)
+AGENT_SETTINGS_STEP_INDEX = WIZARD_STEPS.index(STEP_AGENT_SETTINGS)
 INTEGRATION_STEP_INDEX = WIZARD_STEPS.index(STEP_INTEGRATION)
 FINISH_STEP_INDEX = WIZARD_STEPS.index(STEP_FINISH)
+BUTTON_FOCUS_IDS = {REPOSITORY_STEP_INDEX: "#wizard-next", FINISH_STEP_INDEX: "#wizard-finish"}
 INTEGRATION_OPTIONS = (
     ("Local merge", MERGE_INTEGRATION),
     ("Local squash and merge", SQUASH_INTEGRATION),
@@ -133,6 +141,7 @@ WIZARD_HINTS = (
     "↑↓ select scope · Enter edit",
     "↑↓ select · Enter add",
     "↑↓ select · Enter add",
+    FIELD_EDIT_HINT,
     FIELD_EDIT_HINT,
     "Tab / Enter choose",
     "Enter run Doctor",
@@ -222,6 +231,10 @@ def _detail_row(
 
 def _section_heading(value: str) -> Text:
     return Text(value, style=f"{STYLE_BOLD} {STEEL_BLUE}")
+
+
+def _agent_setting_id(agent: int, key: int) -> str:
+    return f"{AGENT_SETTING_ID_PREFIX}-{agent}-{key}"
 
 
 def _candidate_add_id(field_id: str, index: int) -> str:
@@ -541,6 +554,7 @@ class InitWizardApp(App[InitWizardResult | None]):
                 yield from self._trackers_page()
                 yield from self._caches_page()
                 yield from self._orchestration_page()
+                yield from self._agent_settings_page()
                 yield from self._integration_page()
                 yield from self._finish_page()
                 yield Static("", id="wizard-error", markup=False)
@@ -874,6 +888,12 @@ class InitWizardApp(App[InitWizardResult | None]):
             except ConfigError as error:
                 self._show_step_error(AGENTS_STEP_INDEX, "ladder-input", error)
                 return
+        if direction > 0 and self._step == AGENT_SETTINGS_STEP_INDEX:
+            try:
+                self._read_agent_options()
+            except AgentSettingError as error:
+                self._show_step_error(AGENT_SETTINGS_STEP_INDEX, error.input_id, error)
+                return
         focused = self.focused
         if focused is not None and focused.id:
             self._last_focus_by_step[self._step] = focused.id
@@ -884,15 +904,19 @@ class InitWizardApp(App[InitWizardResult | None]):
         self._update_pages()
         self.call_after_refresh(self._focus_step)
 
-    def _focus_step(self) -> None:
+    def _focus_previous(self) -> bool:
         previous_id = self._last_focus_by_step.get(self._step)
-        if previous_id:
-            previous = self.query(f"#{previous_id}")
-            if previous:
-                previous.first().focus()
-                return
-        if self._step == REPOSITORY_STEP_INDEX:
-            self.query_one("#wizard-next", Button).focus()
+        previous = self.query(f"#{previous_id}") if previous_id else None
+        if previous:
+            previous.first().focus()
+            return True
+        return False
+
+    def _focus_step(self) -> None:
+        if self._focus_previous():
+            return
+        if self._step in BUTTON_FOCUS_IDS:
+            self.query_one(BUTTON_FOCUS_IDS[self._step], Button).focus()
         elif self._step == AGENTS_STEP_INDEX:
             self.query_one("#ladder-scopes", RowList).focus()
         elif self._step == TRACKERS_STEP_INDEX:
@@ -901,10 +925,15 @@ class InitWizardApp(App[InitWizardResult | None]):
             self._focus_candidate_list(CACHES_LIST_ID, CACHES_INPUT_ID)
         elif self._step == ORCHESTRATION_STEP_INDEX:
             self.query_one(f"#{MAX_PARALLEL.input_id}", Input).focus()
+        elif self._step == AGENT_SETTINGS_STEP_INDEX:
+            self._focus_first_agent_setting()
         elif self._step == INTEGRATION_STEP_INDEX:
             self.query_one(f"#{INTEGRATION_SELECT_ID}", Select).focus()
-        elif self._step == FINISH_STEP_INDEX:
-            self.query_one("#wizard-finish", Button).focus()
+
+    def _focus_first_agent_setting(self) -> None:
+        editors = self.query(".agent-setting-editor")
+        if editors:
+            editors.first().focus()
 
     def _focus_candidate_list(self, list_id: str, input_id: str) -> None:
         candidate_list = self.query_one(f"#{list_id}", CandidateRows)
@@ -930,16 +959,10 @@ class InitWizardApp(App[InitWizardResult | None]):
         except ConfigError as error:
             self._show_step_error(AGENTS_STEP_INDEX, "ladder-input", error)
             return
-        try:
-            trackers = self._read_paths(TRACKERS_INPUT_ID)
-        except ConfigError as error:
-            self._show_step_error(TRACKERS_STEP_INDEX, TRACKERS_INPUT_ID, error)
+        paths = self._read_both_path_lists()
+        if paths is None:
             return
-        try:
-            caches = self._read_paths(CACHES_INPUT_ID)
-        except ConfigError as error:
-            self._show_step_error(COW_STEP_INDEX, CACHES_INPUT_ID, error)
-            return
+        trackers, caches = paths
         try:
             integration = self._read_integration()
         except ConfigError as error:
@@ -949,6 +972,11 @@ class InitWizardApp(App[InitWizardResult | None]):
             orchestration = self._read_orchestration(integration)
         except OrchestrationFieldError as error:
             self._show_step_error(ORCHESTRATION_STEP_INDEX, error.input_id, error)
+            return
+        try:
+            agent_options = self._read_agent_options()
+        except AgentSettingError as error:
+            self._show_step_error(AGENT_SETTINGS_STEP_INDEX, error.input_id, error)
             return
         self._finishing = True
         self.query_one("#wizard-finish", Button).disabled = True
@@ -960,6 +988,7 @@ class InitWizardApp(App[InitWizardResult | None]):
                 ladders=ladders.ladders,
                 complexity=ladders.complexity,
                 orchestration=orchestration,
+                agent_options=agent_options,
             )
             self._config_path = config_path.resolve()
             self._writing_config = False
@@ -975,6 +1004,19 @@ class InitWizardApp(App[InitWizardResult | None]):
         finally:
             self._finishing = False
         self._update_pages()
+
+    def _read_both_path_lists(self) -> tuple[tuple[str, ...], tuple[str, ...]] | None:
+        try:
+            trackers = self._read_paths(TRACKERS_INPUT_ID)
+        except ConfigError as error:
+            self._show_step_error(TRACKERS_STEP_INDEX, TRACKERS_INPUT_ID, error)
+            return None
+        try:
+            caches = self._read_paths(CACHES_INPUT_ID)
+        except ConfigError as error:
+            self._show_step_error(COW_STEP_INDEX, CACHES_INPUT_ID, error)
+            return None
+        return trackers, caches
 
     def _show_step_error(self, step: int, focus_id: str, error: ConfigError) -> None:
         self._step = step
@@ -1020,6 +1062,33 @@ class InitWizardApp(App[InitWizardResult | None]):
             max_cpu_pct=int(self._read_field(MAX_CPU)),
             min_free_ram_gb=float(self._read_field(MIN_FREE_RAM)),
         )
+
+    def _read_agent_options(self) -> dict[str, dict[str, object]]:
+        options: dict[str, dict[str, object]] = {}
+        for agent_index, offered in enumerate(self._project.agent_settings):
+            values: dict[str, object] = {}
+            for key, setting in enumerate(offered.settings):
+                input_id = _agent_setting_id(agent_index, key)
+                try:
+                    value = setting.parse(self._read_agent_setting(input_id, setting))
+                except AgentSettingError as error:
+                    raise AgentSettingError(error.key, str(error), input_id) from error
+                if value is not None:
+                    values[setting.key] = value
+            rejection = self._detectors.agent_options_error(offered.agent, values)
+            if rejection is not None:
+                first = _agent_setting_id(agent_index, 0)
+                message = f"The {offered.agent} agent rejected its settings: {rejection}"
+                raise AgentSettingError(offered.agent, message, first)
+            options[offered.agent] = values
+        return options
+
+    def _read_agent_setting(self, input_id: str, setting: AgentSetting) -> str:
+        widget = self.query_one(f"#{input_id}")
+        if setting.kind is SettingKind.CHOICE:
+            value = cast("Select[str]", widget).value
+            return value if isinstance(value, str) else ""
+        return cast("Input", widget).value
 
     def _read_integration(self) -> str:
         value = cast("Select[str]", self.query_one(f"#{INTEGRATION_SELECT_ID}", Select)).value
@@ -1198,8 +1267,55 @@ class InitWizardApp(App[InitWizardResult | None]):
             classes="orchestration-field",
         )
 
-    def _integration_page(self) -> ComposeResult:
+    def _agent_settings_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-5", classes="wizard-page"):
+            yield Static(
+                "Review the options each agent plugin offers; they are written to "
+                ".shikiru/config.toml so you can change them later.",
+                classes="wizard-description",
+                markup=False,
+            )
+            for agent_index, offered in enumerate(self._project.agent_settings):
+                yield from self._agent_settings_section(agent_index, offered)
+
+    def _agent_settings_section(self, agent_index: int, offered: AgentSettings) -> ComposeResult:
+        yield Static(_section_heading(offered.agent), classes="section-heading", markup=False)
+        if not offered.supported:
+            yield Static(
+                f"{offered.error}; the plugin's own defaults apply and nothing is written.",
+                classes="orchestration-help",
+                markup=False,
+            )
+        for key, setting in enumerate(offered.settings):
+            yield self._agent_setting_field(agent_index, key, setting)
+
+    def _agent_setting_field(self, agent: int, key: int, setting: AgentSetting) -> Vertical:
+        input_id = _agent_setting_id(agent, key)
+        editor: Input | Select[str]
+        if setting.kind is SettingKind.CHOICE:
+            editor = Select(
+                [(choice, choice) for choice in setting.choices],
+                value=setting.display() if setting.default is not None else Select.BLANK,
+                allow_blank=setting.optional,
+                prompt=UNSET_CHOICE_LABEL,
+                id=input_id,
+                classes="agent-setting-editor",
+            )
+        else:
+            editor = Input(value=setting.display(), id=input_id, classes="agent-setting-editor")
+        return Vertical(
+            Horizontal(
+                Label(setting.label),
+                editor,
+                Static(setting.unit, classes="orchestration-unit", markup=False),
+                classes="palette-row wizard-long-label",
+            ),
+            Static(setting.help, classes="orchestration-help", markup=False),
+            classes="orchestration-field",
+        )
+
+    def _integration_page(self) -> ComposeResult:
+        with Vertical(id="wizard-page-6", classes="wizard-page"):
             yield Static(
                 "Choose how completed work is integrated back into the repository.",
                 classes="wizard-description",
@@ -1220,7 +1336,7 @@ class InitWizardApp(App[InitWizardResult | None]):
             yield _detail_row("Pull request", "open a pull request for review")
 
     def _finish_page(self) -> ComposeResult:
-        with Vertical(id="wizard-page-6", classes="wizard-page"):
+        with Vertical(id="wizard-page-7", classes="wizard-page"):
             with Vertical(id="wizard-finish-before"):
                 yield Static(
                     "Finish writes .shikiru/config.toml, excludes .shikiru/ in Git, "

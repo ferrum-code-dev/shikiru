@@ -5,6 +5,12 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 from shikiru.agents.contracts import PERCENT, BillingMode
+from shikiru.agents.settings import (
+    AgentSetting,
+    billing_declaration_setting,
+    cli_args_setting,
+    compact_threshold_setting,
+)
 
 CODEX_HOME_ENV_VAR = "CODEX_HOME"
 CODEX_COMMAND = "codex"
@@ -74,4 +80,11 @@ GIT_DIRS_ARGV = (
     "--path-format=absolute",
     "--absolute-git-dir",
     "--git-common-dir",
+)
+
+
+CODEX_SETTINGS: tuple[AgentSetting, ...] = (
+    compact_threshold_setting(DEFAULT_COMPACT_AT_PCT),
+    billing_declaration_setting(),
+    cli_args_setting(()),
 )

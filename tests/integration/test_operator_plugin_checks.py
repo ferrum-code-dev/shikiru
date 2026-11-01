@@ -93,3 +93,44 @@ async def test_plugins_without_catalog_keep_checks_and_report_unknown_choices() 
     assert assess_model_choice("configured-model", None, result.catalog).supported is None
     assert not result.ok
     assert result.checks[0].detail == "binary is missing"
+
+
+@pytest.mark.parametrize(
+    ("name", "expected_args"),
+    [("claude", ["--permission-mode", "bypassPermissions"]), ("codex", [])],
+)
+def test_built_in_plugin_settings_defaults_are_accepted_by_their_own_options(
+    name: str, expected_args: list[str]
+) -> None:
+    checks = PluginChecks(AgentRegistry(), SubprocessRunner(), FakeClock(TASK_CREATED_AT))
+
+    offered = checks.settings(name)
+
+    assert offered.supported
+    assert {setting.key for setting in offered.settings} == {
+        "compact_at_pct",
+        "billing_mode",
+        "args",
+    }
+    values = {
+        setting.key: setting.parse(setting.display())
+        for setting in offered.settings
+        if setting.parse(setting.display()) is not None
+    }
+    assert values["args"] == expected_args
+    assert "billing_mode" not in values
+    assert checks.validation_error(name, values) is None
+    assert checks.validation_error(name, {**values, "unknown_option": 1}) is not None
+
+
+def test_plugin_without_settings_capability_is_reported_explicitly() -> None:
+    registry = AgentRegistry()
+    registry.register("broken", lambda _context: cast("Agent", _BrokenAgent()))
+    checks = PluginChecks(registry, SubprocessRunner(), FakeClock(TASK_CREATED_AT))
+
+    offered = checks.settings("broken")
+
+    assert not offered.supported
+    assert offered.settings == ()
+    assert offered.error is not None
+    assert "does not expose editable settings" in offered.error

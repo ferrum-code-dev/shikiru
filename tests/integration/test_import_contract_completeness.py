@@ -18,7 +18,7 @@ _PLUGIN_ALLOWED = frozenset({"agents", "clock", "errors", "process", "plugins"})
 _WIDGET_ALLOWED = frozenset({"dashboard", "ui", "plugins"})
 _WIDGET_ALLOWED_DASHBOARD = frozenset({"contract"})
 _ENGINE_ALLOWED_AGENTS = frozenset({"contracts"})
-_PLUGIN_ALLOWED_AGENTS = frozenset({"contracts", "sdk"})
+_PLUGIN_ALLOWED_AGENTS = frozenset({"contracts", "sdk", "settings"})
 
 
 def _forbidden(source: str) -> set[str]:

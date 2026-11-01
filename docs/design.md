@@ -225,7 +225,11 @@ both. The short form takes its third part as effort. `init` and the wizard write
 only when parsing that string gives back the same rung; a model or effort containing `:`, or an
 empty effort, is written as a table. The wizard configures repository,
 role ladders, trackers, caches, orchestration limits (maximum parallel tasks, iterations, quota wait,
-stall and tool timeouts, push interval in seconds, CPU percent and free RAM) and integration, and finishes with Doctor. Its
+stall and tool timeouts, push interval in seconds, CPU percent and free RAM), the options each agent
+plugin offers through its optional `settings()` capability, and integration, and finishes with Doctor.
+Core code renders those options generically and never names a provider or option key; a plugin
+without the capability is reported on that step and keeps its own defaults. The chosen options are
+written under `[agents.<name>.options]` and the plugin factory validates them before anything is written. Its
 orchestration values are checked against the step's own rules at Finish, before anything is written,
 and an out-of-range value focuses its field; hand-written configs keep the settings validation alone.
 Model catalogs come from installed plugin/CLI capabilities; lack of authoritative data is visible
