@@ -94,7 +94,7 @@ class Scheduler:
     async def run_once(self) -> ReadySchedule:
         """Evaluate gates, persist wait reasons and dispatch every eligible task."""
         all_tasks = self._tasks.list_all()
-        await self._revalidate_quota_blocks(all_tasks)
+        self._request_quota_refreshes(all_tasks)
         gates = self._gates(all_tasks)
         schedule = pick_ready(all_tasks, gates)
         if self._advance_quota_blocked(all_tasks, schedule):
@@ -122,10 +122,11 @@ class Scheduler:
         return dataclasses.replace(schedule, dispatches=tuple(successful_dispatches))
 
     async def shutdown(self) -> None:
-        """Stop the task root builds still in flight."""
+        """Stop the quota probes and the task root builds still in flight."""
+        await self._reconciler.shutdown()
         await self._roots.shutdown()
 
-    async def _revalidate_quota_blocks(self, tasks: list[Task]) -> None:
+    def _request_quota_refreshes(self, tasks: list[Task]) -> None:
         now = self._clock.now()
         demands: dict[str, datetime | None] = {}
         for block in self._quotas.active_blocks(now):
@@ -139,7 +140,7 @@ class Scheduler:
                 requeues = [task.requeued_at for task in queued if task.requeued_at is not None]
                 demands[block.agent] = max(requeues, default=None)
         for agent, demanded_at in demands.items():
-            await self._reconciler.refresh(agent, demanded_at=demanded_at)
+            self._reconciler.request_refresh(agent, demanded_at=demanded_at)
 
     def _advance_quota_blocked(self, tasks: list[Task], schedule: ReadySchedule) -> bool:
         now = self._clock.now()

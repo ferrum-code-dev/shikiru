@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import errno
 import json
+import os
+import stat
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, cast
@@ -76,12 +79,13 @@ from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT, comm
 from tests.support.github import add_bare_remote
 from tests.support.permissions import EXECUTABLE_MODE
 from tests.support.quota_waits import record_quota_wait
+from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import wait_until, wait_until_advancing
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Iterator
     from datetime import datetime
     from pathlib import Path
 
@@ -1227,6 +1231,7 @@ async def test_a_slow_cache_copy_runs_beside_the_tick_and_completes_the_dispatch
 _EXHAUSTED_WEEKLY_RESET = timedelta(days=3)
 _AVAILABLE_AFTER_BLOCK = timedelta(minutes=10)
 _RESTART_AGENT = "fake"
+_INDEPENDENT_AGENT = "fake2"
 
 
 @dataclass
@@ -1235,20 +1240,61 @@ class QuotaProbeFixture:
     source: Path
     settings: Settings
     blocked_at: datetime
+    reconciler: QuotaReconciler | None = None
+
+    def _reading(self, *, five_hour: float, weekly: float, observed_at: datetime) -> str:
+        return json.dumps(
+            {
+                "observed_at": observed_at.isoformat(),
+                "windows": [
+                    {"name": "5h", "used_pct": five_hour, "resets_at": None},
+                    {
+                        "name": "7d",
+                        "used_pct": weekly,
+                        "resets_at": (self.blocked_at + _EXHAUSTED_WEEKLY_RESET).isoformat(),
+                    },
+                ],
+            }
+        )
 
     def publish(self, *, five_hour: float, weekly: float, observed_at: datetime) -> None:
-        source = {
-            "observed_at": observed_at.isoformat(),
-            "windows": [
-                {"name": "5h", "used_pct": five_hour, "resets_at": None},
-                {
-                    "name": "7d",
-                    "used_pct": weekly,
-                    "resets_at": (self.blocked_at + _EXHAUSTED_WEEKLY_RESET).isoformat(),
-                },
-            ],
-        }
-        self.source.write_text(json.dumps(source), encoding="utf-8")
+        reading = self._reading(five_hour=five_hour, weekly=weekly, observed_at=observed_at)
+        self.source.write_text(reading, encoding="utf-8")
+
+    def hold_source(self) -> None:
+        os.mkfifo(self.source)
+
+    async def reader_waiting(self) -> int:
+        """Return a writer on the held source once a probe is blocked reading it."""
+        opened: list[int] = []
+
+        def connected() -> bool:
+            try:
+                opened.append(os.open(self.source, os.O_WRONLY | os.O_NONBLOCK))
+            except OSError as error:
+                if error.errno != errno.ENXIO:
+                    raise
+                return False
+            return True
+
+        await wait_until(connected, _REAL_SECONDS)
+        return opened[0]
+
+    def answer(
+        self, writer: int, *, five_hour: float, weekly: float, observed_at: datetime
+    ) -> None:
+        reading = self._reading(five_hour=five_hour, weekly=weekly, observed_at=observed_at)
+        os.write(writer, reading.encode())
+        os.close(writer)
+
+    def free_blocked_readers(self) -> None:
+        while True:
+            try:
+                os.close(os.open(self.source, os.O_WRONLY | os.O_NONBLOCK))
+            except OSError as error:
+                if error.errno != errno.ENXIO:
+                    raise
+                return
 
     def advance(self, seconds: float) -> None:
         assert isinstance(self.env.clock, FakeClock)
@@ -1264,7 +1310,13 @@ class QuotaProbeFixture:
             clock=self.env.clock,
             settings=self.settings,
         )
+        self.reconciler = reconciler
         return _scheduler(dataclasses.replace(self.env, reconciler=reconciler), self.settings)
+
+    async def settle(self) -> None:
+        assert self.reconciler is not None
+        reconciler = self.reconciler
+        await wait_until(lambda: not reconciler.probing, _REAL_SECONDS)
 
     @property
     def refresh_interval(self) -> float:
@@ -1272,10 +1324,15 @@ class QuotaProbeFixture:
 
 
 @pytest.fixture
-def quota_probe(scheduler_env: SchedulerFixture, tmp_path: Path) -> QuotaProbeFixture:
+def quota_probe(scheduler_env: SchedulerFixture, tmp_path: Path) -> Iterator[QuotaProbeFixture]:
     source = tmp_path / "quota-source.json"
     settings = scheduler_env.settings.model_copy(
-        update={"agents": {"fake": AgentConfig(options={"quota_file": str(source)})}}
+        update={
+            "agents": {
+                "fake": AgentConfig(options={"quota_file": str(source)}),
+                _INDEPENDENT_AGENT: AgentConfig(),
+            }
+        }
     )
     clock = scheduler_env.clock
     blocked_at = clock.now()
@@ -1289,7 +1346,10 @@ def quota_probe(scheduler_env: SchedulerFixture, tmp_path: Path) -> QuotaProbeFi
     scheduler_env.quotas.block(
         _RESTART_AGENT, blocked_at + _EXHAUSTED_WEEKLY_RESET, "quota", blocked_at
     )
-    return QuotaProbeFixture(scheduler_env, source, settings, blocked_at)
+    probe = QuotaProbeFixture(scheduler_env, source, settings, blocked_at)
+    yield probe
+    if source.exists() and stat.S_ISFIFO(source.stat().st_mode):
+        probe.free_blocked_readers()
 
 
 async def test_a_newer_available_reading_dispatches_a_task_queued_behind_a_future_block(
@@ -1299,10 +1359,13 @@ async def test_a_newer_available_reading_dispatches_a_task_queued_behind_a_futur
     task = _submit(connection, env.clock, title="blocked behind a stale deadline")
     scheduler = quota_probe.restart()
     assert (await scheduler.run_once()).dispatches == ()
+    await quota_probe.settle()
     assert env.tasks.require(task.id).wait_reason == "quota"
 
     quota_probe.advance(quota_probe.refresh_interval + 1)
     quota_probe.publish(five_hour=2, weekly=0, observed_at=env.clock.now())
+    assert (await scheduler.run_once()).dispatches == ()
+    await quota_probe.settle()
     schedule = await scheduler.run_once()
 
     assert [dispatch.task_id for dispatch in schedule.dispatches] == [task.id]
@@ -1326,7 +1389,10 @@ async def test_a_block_persisted_before_a_restart_is_revalidated_on_the_first_ti
     quota_probe.advance(_AVAILABLE_AFTER_BLOCK.total_seconds())
     quota_probe.publish(five_hour=3, weekly=0, observed_at=env.clock.now())
 
-    schedule = await quota_probe.restart().run_once()
+    scheduler = quota_probe.restart()
+    await scheduler.run_once()
+    await quota_probe.settle()
+    schedule = await scheduler.run_once()
 
     assert [dispatch.task_id for dispatch in schedule.dispatches] == [task.id]
     assert env.quotas.block_for("fake") is None
@@ -1357,6 +1423,7 @@ async def test_readings_that_do_not_prove_availability_keep_the_block(
         quota_probe.advance(quota_probe.refresh_interval + 1)
 
         schedule = await scheduler.run_once()
+        await quota_probe.settle()
 
         assert schedule.dispatches == ()
     assert env.tasks.require(task.id).wait_reason == "quota"
@@ -1374,6 +1441,7 @@ async def test_the_passage_of_the_refresh_interval_alone_never_lifts_a_block(
     for _ in range(5):
         quota_probe.advance(quota_probe.refresh_interval * 2)
         assert (await scheduler.run_once()).dispatches == ()
+        await quota_probe.settle()
 
     assert env.quotas.block_for("fake") is not None
 
@@ -1387,6 +1455,7 @@ async def test_an_unreadable_quota_source_is_reported_once_per_interval_and_keep
 
     for _ in range(3):
         assert (await scheduler.run_once()).dispatches == ()
+        await quota_probe.settle()
 
     [fault] = env.events.since(0, kinds=[EventKind.ENGINE_FAULT])
     assert fault.data["scope"] == f"{QUOTA_REFRESH_SCOPE} fake"
@@ -1396,6 +1465,8 @@ async def test_an_unreadable_quota_source_is_reported_once_per_interval_and_keep
     quota_probe.advance(quota_probe.refresh_interval + 1)
     quota_probe.publish(five_hour=1, weekly=0, observed_at=env.clock.now())
 
+    await scheduler.run_once()
+    await quota_probe.settle()
     schedule = await scheduler.run_once()
 
     assert [dispatch.task_id for dispatch in schedule.dispatches] == [task.id]
@@ -1410,13 +1481,17 @@ async def test_an_operator_retry_revalidates_inside_the_interval_without_a_secon
     scheduler = quota_probe.restart()
     quota_probe.publish(five_hour=2, weekly=100, observed_at=quota_probe.blocked_at)
     assert (await scheduler.run_once()).dispatches == ()
+    await quota_probe.settle()
 
     quota_probe.advance(1)
     quota_probe.publish(five_hour=2, weekly=0, observed_at=env.clock.now())
     assert (await scheduler.run_once()).dispatches == ()
+    await quota_probe.settle()
 
     quota_probe.advance(1)
     env.tasks.set_requeued(task.id)
+    await scheduler.run_once()
+    await quota_probe.settle()
     retried = await scheduler.run_once()
     again = await scheduler.run_once()
 
@@ -1424,3 +1499,156 @@ async def test_an_operator_retry_revalidates_inside_the_interval_without_a_secon
     assert again.dispatches == ()
     assert len(env.events.since(0, task_id=task.id, kinds=[EventKind.TASK_STARTED])) == 1
     assert env.quotas.block_for("fake") is None
+
+
+def _independent_task(connection: Connection, clock: Clock) -> Task:
+    free = Rung(agent=_INDEPENDENT_AGENT, model="fake-1", effort=None)
+    return seed_task(connection, clock, title="independent", leader=free, implementer=free)
+
+
+async def test_a_pending_probe_holds_back_neither_the_tick_nor_an_independent_dispatch(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    blocked = _submit(connection, env.clock, title="behind the block")
+    independent = _independent_task(connection, env.clock)
+    quota_probe.hold_source()
+    scheduler = quota_probe.restart()
+    writer = None
+    try:
+        schedule = await asyncio.wait_for(scheduler.run_once(), _REAL_SECONDS)
+        writer = await quota_probe.reader_waiting()
+
+        assert [dispatch.task_id for dispatch in schedule.dispatches] == [independent.id]
+        assert env.tasks.require(blocked.id).wait_reason == "quota"
+
+        quota_probe.advance(1)
+        quota_probe.answer(writer, five_hour=2, weekly=0, observed_at=env.clock.now())
+        writer = None
+        await quota_probe.settle()
+        released = await scheduler.run_once()
+
+        assert [dispatch.task_id for dispatch in released.dispatches] == [blocked.id]
+        assert env.quotas.block_for("fake") is None
+    finally:
+        if writer is not None:
+            os.close(writer)
+        await scheduler.shutdown()
+
+
+async def test_a_forced_retry_never_starts_a_second_probe_of_the_same_block(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    task = _submit(connection, env.clock, title="retried while probing")
+    quota_probe.hold_source()
+    scheduler = quota_probe.restart()
+    writer = None
+    try:
+        await scheduler.run_once()
+        writer = await quota_probe.reader_waiting()
+        quota_probe.advance(1)
+        env.tasks.set_requeued(task.id)
+
+        await scheduler.run_once()
+        quota_probe.answer(writer, five_hour=2, weekly=0, observed_at=env.clock.now())
+        writer = None
+        await quota_probe.settle()
+
+        assert env.quotas.block_for("fake") is None
+    finally:
+        if writer is not None:
+            os.close(writer)
+        await scheduler.shutdown()
+
+
+async def test_a_probe_that_never_answers_is_reported_at_its_timeout_and_the_next_one_runs(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    task = _submit(connection, env.clock, title="probe hangs")
+    quota_probe.hold_source()
+    scheduler = quota_probe.restart()
+    hung = None
+    writer = None
+    try:
+        await scheduler.run_once()
+        hung = await quota_probe.reader_waiting()
+        quota_probe.advance(quota_probe.settings.orchestration.quota_refresh.timeout_seconds)
+        await quota_probe.settle()
+
+        [fault] = env.events.since(0, kinds=[EventKind.ENGINE_FAULT])
+        assert fault.data["scope"] == f"{QUOTA_REFRESH_SCOPE} fake"
+        assert env.quotas.block_for("fake") is not None
+        os.close(hung)
+        hung = None
+
+        quota_probe.advance(quota_probe.refresh_interval)
+        await scheduler.run_once()
+        writer = await quota_probe.reader_waiting()
+        quota_probe.answer(writer, five_hour=2, weekly=0, observed_at=env.clock.now())
+        writer = None
+        await quota_probe.settle()
+
+        assert [dispatch.task_id for dispatch in (await scheduler.run_once()).dispatches] == [
+            task.id
+        ]
+        assert len(env.events.since(0, kinds=[EventKind.ENGINE_RECOVERED])) == 1
+    finally:
+        for descriptor in (hung, writer):
+            if descriptor is not None:
+                os.close(descriptor)
+        await scheduler.shutdown()
+
+
+async def test_a_probe_of_a_block_since_replaced_cannot_release_the_newer_block(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    _submit(connection, env.clock, title="blocked again")
+    quota_probe.hold_source()
+    scheduler = quota_probe.restart()
+    writer = None
+    try:
+        await scheduler.run_once()
+        writer = await quota_probe.reader_waiting()
+        available_at = env.clock.now() + timedelta(seconds=1)
+        quota_probe.advance(2)
+        newer = env.clock.now()
+        env.quotas.block("fake", newer + _EXHAUSTED_WEEKLY_RESET, "quota", newer)
+
+        await scheduler.run_once()
+        await quota_probe.settle()
+        quota_probe.answer(writer, five_hour=2, weekly=0, observed_at=available_at)
+        writer = None
+        await scheduler.run_once()
+
+        block = env.quotas.block_for("fake")
+        assert block is not None
+        assert block.blocked_at == newer
+    finally:
+        if writer is not None:
+            os.close(writer)
+        await scheduler.shutdown()
+
+
+async def test_shutdown_ends_a_probe_that_is_still_waiting(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    _submit(connection, env.clock, title="engine stops while probing")
+    quota_probe.hold_source()
+    scheduler = quota_probe.restart()
+    writer = None
+    try:
+        await scheduler.run_once()
+        writer = await quota_probe.reader_waiting()
+
+        await asyncio.wait_for(scheduler.shutdown(), _REAL_SECONDS)
+
+        assert quota_probe.reconciler is not None
+        assert not quota_probe.reconciler.probing
+        assert env.quotas.block_for("fake") is not None
+    finally:
+        if writer is not None:
+            os.close(writer)

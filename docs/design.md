@@ -82,13 +82,22 @@ for reset; without an available later agent, the task stays queued until the blo
 A persisted quota block is a prediction, not a lock. While a task waits on a block, in a turn's
 quota wait or queued, including after an engine restart, the engine revalidates it every
 `[orchestration.quota_refresh] interval_seconds` by asking the agent plugin's optional
-`read_quota(since)` capability for a fresh reading, bounded by `timeout_seconds` and run off the
-event loop. An Operator retry forces one revalidation. A block records when it was set; it is
-released only by a reading observed after that instant that shows no exhausted window and covers
-every window the block was exhausted on (`domain.quota_blocks`). Older samples, other quota buckets,
-null or missing windows and the mere passing of an interval never release a block. A plugin
-without the capability, or a probe that finds nothing newer, keeps the block until its deadline; a
-probe that fails is an `engine_fault` (and `engine_recovered` later), never silently ignored. The
+`read_quota(since)` capability for a fresh reading. Probes are supervised background work, never
+part of the scheduling tick: a tick starts at most one probe per blocked agent, bounded by
+`timeout_seconds` on the injected clock, and neither independent dispatch nor Operator command
+acknowledgement waits for it. The probe's reading is consumed when it completes, and the next tick
+sees the outcome. A probe whose block has since been replaced is cancelled and its reading dropped;
+shutdown cancels every probe in flight. An Operator retry forces one revalidation. A block records
+when it was set; it is released only by readings observed after that instant, and no earlier than
+the stored sample of the same window, that show no exhausted window and cover every window the
+block was exhausted on, whose reset is unknown or still ahead (`domain.quota_blocks`). A missing
+reset is not proof that a window expired. Older samples, other quota buckets, null or missing
+windows and the mere passing of an interval never release a block. A block's deadline and set time
+are written in one transaction, and opening a database repairs rows left half-written by earlier
+versions: a deadline without a set time gets the upgrade time, so only a newer reading releases it,
+and a set time without a deadline is dropped. A plugin without the capability, or a probe that
+finds nothing newer, keeps the block until its deadline; a probe that fails or times out is an
+`engine_fault` (and `engine_recovered` later), never silently ignored. The
 Codex plugin answers from the `limit_id: codex` bucket of its rollouts: a trailing event of another
 bucket with null windows does not replace the latest usable Codex reading.
 

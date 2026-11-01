@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import errno
 import fcntl
 import json
 import logging
+import os
 import stat
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
@@ -69,6 +71,7 @@ from shikiru.store.commands import CommandQueue, CommandStatus
 from shikiru.store.database import Database
 from shikiru.store.escalations import EscalationStore, fetch_open_escalations
 from shikiru.store.events import EventLog
+from shikiru.store.quotas import QuotaStore
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux
@@ -95,7 +98,7 @@ from tests.support.engine import (
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.permissions import requires_enforced_permissions
-from tests.support.store import reopen_command
+from tests.support.store import reopen_command, seed_task
 from tests.support.waiting import wait_until, wait_until_advancing
 from tests.support.workspace import task_root_builder
 
@@ -747,6 +750,70 @@ async def _until_closed(escalated: _Escalated, fake_github: FakeGitHub) -> None:
 
 def _withdrawn(escalated: _Escalated) -> int:
     return len(escalated.operator.events.since(0, kinds=[EventKind.PR_WITHDRAWN]))
+
+
+async def test_a_pending_quota_probe_neither_delays_commands_nor_an_independent_task(
+    tmp_path: Path, tmux_server: TmuxServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await init_project_repo(tmp_path)
+    set_script(monkeypatch, [{"kind": "stall"}])
+    clock = FakeClock(TASK_CREATED_AT)
+    source = tmp_path / "quota-source.fifo"
+    os.mkfifo(source)
+    base = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=2)
+    refresh = base.orchestration.quota_refresh.model_copy(update={"timeout_seconds": 3600})
+    settings = base.model_copy(
+        update={
+            "agents": {
+                "fake": AgentConfig(options={"quota_file": str(source)}),
+                "fake2": AgentConfig(),
+            },
+            "orchestration": base.orchestration.model_copy(update={"quota_refresh": refresh}),
+        }
+    )
+    tmux = build_tmux(tmux_server)
+    await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
+    connection = Database(tmp_path / ".shikiru" / "state.db").connect()
+    tasks = TaskStore(connection, clock)
+    queue = CommandQueue(connection, clock)
+    quotas = QuotaStore(connection)
+    quotas.block("fake", clock.now() + timedelta(days=3), "quota", clock.now())
+    blocked = seed_task(connection, clock, title="behind the block")
+    free = Rung(agent="fake2", model="fake-1", effort=None)
+    independent = seed_task(connection, clock, title="independent", leader=free, implementer=free)
+    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine_task = asyncio.create_task(engine.run())
+    writer: int | None = None
+
+    def reader_waiting() -> bool:
+        nonlocal writer
+        try:
+            writer = os.open(source, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as error:
+            if error.errno != errno.ENXIO:
+                raise
+            return False
+        return True
+
+    try:
+        await wait_until_advancing(clock, reader_waiting, _TAKEOVER_REPL_WAIT_SECONDS)
+        acknowledged = await _append_and_wait(
+            Submit(title="while probing", request="while probing"), queue, clock
+        )
+
+        assert acknowledged.status is CommandStatus.DONE
+        await wait_until_advancing(
+            clock,
+            lambda: _required_task(tasks, independent.id).status is not Status.QUEUED,
+            _TAKEOVER_REPL_WAIT_SECONDS,
+        )
+        assert _required_task(tasks, blocked.id).status is Status.QUEUED
+    finally:
+        if writer is not None:
+            os.close(writer)
+        await _append_and_wait(Stop(), queue, clock)
+        await engine_task
+        connection.close()
 
 
 async def test_a_slow_pull_request_close_does_not_delay_the_commands_behind_it(
