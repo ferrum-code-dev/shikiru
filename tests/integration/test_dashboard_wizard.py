@@ -1414,6 +1414,12 @@ async def _finish_from_agent_settings(pilot: Pilot[InitWizardResult | None]) -> 
     await _click_button(pilot, "#wizard-finish")
 
 
+async def _wait_for_finish_then_exit(pilot: Pilot[InitWizardResult | None]) -> None:
+    finish_button = pilot.app.query_one("#wizard-finish", Button)
+    await wait_until(lambda: finish_button.label == "Exit", timeout=UI_WAIT_SECONDS)
+    await _click_button(pilot, "#wizard-finish")
+
+
 async def _wait_for_agent_setting_error(
     pilot: Pilot[InitWizardResult | None], input_id: str
 ) -> str:
@@ -1438,7 +1444,6 @@ async def test_agents_step_follows_orchestration_and_writes_edited_options(
     _private_doctor_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
     app = await _app_with_agents(tmp_path, {"fake": create_fake_agent})
-    config_path = tmp_path / ".shikiru" / "config.toml"
 
     async with app.run_test(size=WIZARD_SIZE) as pilot:
         await _advance_to_agent_settings(pilot)
@@ -1456,7 +1461,7 @@ async def test_agents_step_follows_orchestration_and_writes_edited_options(
         assert _input_value(pilot, "#agent-setting-0-0") == "65"
 
         await _finish_from_agent_settings(pilot)
-        await wait_until(config_path.is_file, timeout=3)
+        await _wait_for_finish_then_exit(pilot)
 
     assert load_settings(tmp_path).agents["fake"].options == {
         "compact_at_pct": 65.0,
@@ -1473,12 +1478,11 @@ async def test_unset_optional_agent_settings_are_not_written(
     _private_doctor_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(registry_module, "entry_points", _no_entry_points)
     app = await _app_with_agents(tmp_path, {"fake": create_fake_agent})
-    config_path = tmp_path / ".shikiru" / "config.toml"
 
     async with app.run_test(size=WIZARD_SIZE) as pilot:
         await _advance_to_agent_settings(pilot)
         await _finish_from_agent_settings(pilot)
-        await wait_until(config_path.is_file, timeout=3)
+        await _wait_for_finish_then_exit(pilot)
 
     assert "billing_mode" not in load_settings(tmp_path).agents["fake"].options
 
@@ -1503,10 +1507,7 @@ async def test_invalid_agent_setting_focuses_its_field_and_blocks_the_write(
 
         await _replace_input(pilot, "#agent-setting-0-0", "100")
         await _finish_from_agent_settings(pilot)
-        await wait_until(config_path.is_file, timeout=3)
-        finish_button = app.query_one("#wizard-finish", Button)
-        await wait_until(lambda: finish_button.label == "Exit", timeout=UI_WAIT_SECONDS)
-        await _click_button(pilot, "#wizard-finish")
+        await _wait_for_finish_then_exit(pilot)
 
     assert load_settings(tmp_path).agents["fake"].options["compact_at_pct"] == 100.0
 
@@ -1535,7 +1536,7 @@ async def test_third_party_plugin_settings_work_and_its_rejection_is_reported(
 
         await _replace_input(pilot, "#agent-setting-1-1", "7")
         await _finish_from_agent_settings(pilot)
-        await wait_until(config_path.is_file, timeout=3)
+        await _wait_for_finish_then_exit(pilot)
 
     assert load_settings(tmp_path).agents["picky"].options == {"first": 1.0, "custom.depth": 7.0}
 
@@ -1563,7 +1564,7 @@ async def test_agent_wide_plugin_rejection_shows_a_page_error_and_blocks_the_wri
 
         await _replace_input(pilot, "#agent-setting-1-0", "2")
         await _finish_from_agent_settings(pilot)
-        await wait_until(config_path.is_file, timeout=3)
+        await _wait_for_finish_then_exit(pilot)
 
 
 async def test_agent_without_settings_capability_is_explained_and_writes_no_options(
