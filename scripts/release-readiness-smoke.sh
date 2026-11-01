@@ -101,7 +101,7 @@ data = {
     "source_diff_fingerprint": sys.argv[6],
     "failed_stage": sys.argv[7] if os.environ["SMOKE_EXIT_STATUS"] != "0" else None,
     "status": "passed" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "failed",
-    "installation": ["uv tool install <built wheel>", "uv tool install <built wheel> --with <fake-agent wheel> --with pytest --with pytest-asyncio"],
+    "installation": ["uv tool install <built wheel>", "uv tool install <built wheel> --with <fake-agent wheel> --with pytest --with pytest-asyncio --with pytest-xdist"],
     "fresh_disposable_home": True,
     "runtime_isolation": ["HOME", "XDG directories", "uv cache/tools/bin", "private tmux socket"],
     "installed_package_data_and_entrypoints": "verified" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
@@ -113,7 +113,7 @@ data = {
     "home_dashboard_pane_after_merge": sys.argv[8],
     "task_result": "T-1 merged on main and A1 ticked from interactive quickstart" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
     "agent_cost": "unknown; test-only fake agent reports no billed cost",
-    "limitation": "The existing test-only fake-agent plugin and pytest (needed by its test-kit import) were injected only into this disposable tool environment for repeatable unauthenticated packaging and CLI smoke coverage; no paid-provider or real-project reliability claim is made.",
+    "limitation": "The existing test-only fake-agent plugin, pytest and pytest-xdist (needed by its test-kit import and conftest hooks) were injected only into this disposable tool environment for repeatable unauthenticated packaging and CLI smoke coverage; no paid-provider or real-project reliability claim is made.",
     "log": f"build/release-readiness/{sys.argv[4]}.log",
 }
 artifact.write_text(json.dumps(data, indent=2) + "\n")
@@ -296,7 +296,7 @@ record env -i \
     "UV_TOOL_DIR=$TOOL_DIR" \
     "UV_TOOL_BIN_DIR=$TOOL_BIN_DIR" \
     "PATH=$PATH" \
-    "$UV_BIN" tool install "${WHEELS[0]}" --with "${FAKE_AGENT_WHEELS[0]}" --with pytest --with pytest-asyncio
+    "$UV_BIN" tool install "${WHEELS[0]}" --with "${FAKE_AGENT_WHEELS[0]}" --with pytest --with pytest-asyncio --with pytest-xdist
 
 TOOL_BIN="$TOOL_BIN_DIR/shikiru"
 PACKAGE_PYTHON="$(sed -n '1{s/^#!//;p;}' "$TOOL_BIN")"
@@ -375,6 +375,7 @@ tmux_run capture-pane -p -t "$WIZARD_WINDOW" -S - > "$RUN_ROOT/wizard-agents.txt
 click_wizard_button 'Next' 'SHIKIRU · Trackers'
 click_wizard_button 'Next' 'SHIKIRU · Caches and CoW'
 click_wizard_button 'Next' 'SHIKIRU · Orchestration'
+click_wizard_button 'Next' 'SHIKIRU · Agents'
 click_wizard_button 'Next' 'SHIKIRU · Integration mode'
 click_wizard_button 'Next' 'SHIKIRU · Finish'
 wait_for_advance "$WIZARD_WINDOW" 'Doctor passed'
@@ -383,8 +384,8 @@ wait_for_exit ''
 
 WIZARD_CONFIG="$WIZARD_PROJECT/.shikiru/config.toml"
 [[ -f "$WIZARD_CONFIG" ]]
-grep -Fq 'model = "smoke"' "$WIZARD_CONFIG"
-grep -Fq 'model = "strong"' "$WIZARD_CONFIG"
+grep -Fq 'ladder = ["fake:smoke"]' "$WIZARD_CONFIG"
+grep -Fq 'ladder = ["fake:strong"]' "$WIZARD_CONFIG"
 record "$PACKAGE_PYTHON" - "$WORK_PROJECT" <<'PY'
 import sys
 from pathlib import Path
@@ -418,9 +419,9 @@ from pathlib import Path
 
 path = Path(sys.argv[1])
 contents = path.read_text()
-if contents.count('model = "default"') != 3:
+if contents.count('"fake:default"') != 3:
     raise SystemExit("init --yes did not generate all three editable model placeholders")
-path.write_text(contents.replace('model = "default"', 'model = "smoke"'))
+path.write_text(contents.replace('"fake:default"', '"fake:smoke"'))
 PY
 DOCTOR_PATH="$RUN_ROOT/doctor.json"
 app "$WORK_PROJECT" --json doctor > "$DOCTOR_PATH" 2>> "$LOG"
