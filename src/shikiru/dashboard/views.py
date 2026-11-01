@@ -261,6 +261,7 @@ _PR_HEADLINE = "Waiting on pull request"
 _PR_NO_EVENT = "No recorded pull-request event is available."
 _PR_CI_NOTE = "CI state is shown only when an engine observation recorded it."
 _RESET_AT_FIELD = "resets_at"
+_RECORDED_QUOTA_RESET = "Recorded quota reset"
 _UNAVAILABLE = "unavailable"
 _QUOTA_TURN_LIFECYCLE = (
     EventKind.STEP_STARTED,
@@ -1496,7 +1497,7 @@ class StateDashboardViews:
         )
         raw = (
             f"Current turn quota wait · {role.value} · {agent}",
-            f"Provider-reported quota reset · {reset_text}",
+            f"{_RECORDED_QUOTA_RESET} · {reset_text}",
             f"Task quota-block event · {quota_block.ts.isoformat()}",
             _account_raw(agent, block, now),
             *self._provider_quota_raw(agent),
@@ -1524,6 +1525,7 @@ class StateDashboardViews:
                 if window.resets_at is None or window.resets_at > now
             ),
             retry_note=engine_retry_note(until, windows, now),
+            has_recorded_readings=bool(windows),
         )
 
     def _provider_quota_raw(self, agent: str) -> tuple[str, ...]:

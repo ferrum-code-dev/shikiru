@@ -230,10 +230,11 @@ evidence disclosure starts collapsed and keeps its open state across refreshes; 
 how old the observations are, never a count of lines. Quota evidence lists each blocked provider's
 windows with the rounded used share, the provider's own reset (or `not reported` when none was
 given) and, only when the engine's retry differs from the exhausted reset, a note saying so.
-Readings whose reset has passed and providers that do not block the task are left out of it. A
-nested Raw events disclosure, also collapsed, holds exact timestamps with their original offsets,
-event references and diagnostics. The engine's retry is never shown as a provider reset, and no
-evidence promises execution at a block's expiry.
+Readings whose reset has passed and providers that do not block the task are left out of it; the
+view refreshes when a displayed reset passes. A nested Raw events disclosure, also collapsed,
+holds exact timestamps with their original offsets, event references and diagnostics. Recorded
+reset values with unknown provenance are described neutrally. The engine's retry is never shown as
+a provider reset, and no evidence promises execution at a block's expiry.
 
 Usage preserves provenance and uncertainty: absent tokens/cost/context/billing are not invented,
 and quota readings can be stale. An active quota block shows as a banner in the home usage section

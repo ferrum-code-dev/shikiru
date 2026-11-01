@@ -57,6 +57,8 @@ WEEKLY_RESET = START + timedelta(days=2)
 WEEKLY_RESET_TEXT = "Jan 03 00:00Z"
 NEXT_DAY_RESET = START + timedelta(days=1, minutes=5)
 NEXT_DAY_RESET_TEXT = "Jan 02 00:05Z"
+NEAR_RESET = NOW + timedelta(minutes=5)
+AFTER_NEAR_RESET_SECONDS = 6 * 60
 RESOURCE_SAMPLE_CPU_PCT = 92.0
 WEEKLY_DIFFERS = ENGINE_RETRY_DIFFERS.format(window=quota_window_label(QUOTA_WINDOW_SEVEN_DAY))
 PANEL_WIDTH = 100
@@ -330,6 +332,71 @@ async def test_an_expired_reading_leaves_the_readings_and_stays_in_raw_events(
         assert EXPIRED_RESET.isoformat() in plain_text(
             panel.query_one(f"#{TASK_DETAIL_RAW_EVENTS}", Static).content
         )
+
+
+async def test_an_expired_only_reading_is_not_shown_as_an_unreported_reading(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(NOW)
+    leader = _leader(project_dir)
+    task_id = _seed_queued_quota_wait(connection, clock, (leader,))
+    _record_window(connection, leader, QUOTA_WINDOW_FIVE_HOUR, 40.0, EXPIRED_RESET)
+
+    async with _mounted(database, project_dir, clock, task_id) as panel:
+        _open_evidence(panel)
+        await wait_until(
+            lambda: "No current provider quota reading" in _body_text(panel),
+            timeout=UI_WAIT_SECONDS,
+        )
+        assert "40%" not in _body_text(panel)
+
+        panel.open_view(TASK_VIEW_RAW_EVENTS)
+        await wait_until(lambda: _raw_fold(panel).is_open, timeout=UI_WAIT_SECONDS)
+        raw = plain_text(panel.query_one(f"#{TASK_DETAIL_RAW_EVENTS}", Static).content)
+        assert EXPIRED_RESET.isoformat() in raw
+
+
+async def test_a_provider_reset_refreshes_normal_evidence_but_keeps_raw_provenance(
+    connection: Connection, database: Database, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(NOW)
+    leader = _leader(project_dir)
+    task_id = _seed_queued_quota_wait(connection, clock, (leader,))
+    _record_window(connection, leader, QUOTA_WINDOW_FIVE_HOUR, 100.0, NEAR_RESET)
+    _record_window(connection, leader, QUOTA_WINDOW_SEVEN_DAY, 40.0, WEEKLY_RESET)
+
+    async with _mounted(database, project_dir, clock, task_id) as panel:
+        _open_evidence(panel)
+        await wait_until(
+            lambda: (
+                ENGINE_RETRY_DIFFERS.format(window=quota_window_label(QUOTA_WINDOW_FIVE_HOUR))
+                in _body_text(panel)
+            ),
+            timeout=UI_WAIT_SECONDS,
+        )
+        assert "100%" in _body_text(panel)
+        assert "40%" in _body_text(panel)
+
+        await _elapse(clock, AFTER_NEAR_RESET_SECONDS)
+
+        await wait_until(
+            lambda: (
+                "100%" not in _body_text(panel)
+                and "40%" in _body_text(panel)
+                and ENGINE_RETRY_DIFFERS.format(window=quota_window_label(QUOTA_WINDOW_FIVE_HOUR))
+                not in _body_text(panel)
+            ),
+            timeout=UI_WAIT_SECONDS,
+        )
+        assert "26m" in fold_headline(panel, TASK_VIEW_BLOCKER_EVIDENCE)
+        assert _evidence_fold(panel).is_open
+
+        panel.open_view(TASK_VIEW_RAW_EVENTS)
+        await wait_until(lambda: _raw_fold(panel).is_open, timeout=UI_WAIT_SECONDS)
+        raw = plain_text(panel.query_one(f"#{TASK_DETAIL_RAW_EVENTS}", Static).content)
+        assert NEAR_RESET.isoformat() in raw
 
 
 @pytest.mark.parametrize(

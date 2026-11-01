@@ -39,6 +39,7 @@ def record_quota_wait(
     role: Role,
     rung: Rung,
     until: datetime,
+    failure_reset: datetime | None = None,
 ) -> tuple[Event, Event]:
     record_turn_start(connection, clock, task, role, rung)
     assert task.step is not None
@@ -47,7 +48,11 @@ def record_quota_wait(
         EventKind.TURN_FAILED,
         task_id=task.id,
         message="quota",
-        data={"kind": "quota", "step": task.step.value, "resets_at": None},
+        data={
+            "kind": "quota",
+            "step": task.step.value,
+            "resets_at": failure_reset.isoformat() if failure_reset is not None else None,
+        },
     )
     clock.advance(QUOTA_EVENT_DELAY_SECONDS)
     quota_block = events.append(

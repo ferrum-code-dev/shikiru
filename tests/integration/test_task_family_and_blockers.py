@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 from textual.widgets import Input, ListView, Static
 
-from shikiru.agents.contracts import QuotaWindow, Rung
+from shikiru.agents.contracts import FailureKind, QuotaWindow, Rung
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.app import DashboardApp, TaskDetailScreen, TaskPaletteRoute
 from shikiru.dashboard.contract import ResourceView, TaskBrowserFilter
@@ -25,6 +25,7 @@ from shikiru.dashboard.detail import (
 from shikiru.dashboard.row_list import RowList
 from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.domain.events import EventKind
+from shikiru.domain.recovery import QUOTA_MARGIN, Failed, with_known_quota_reset
 from shikiru.domain.reports import NewTask, Verdict
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step, next_step
@@ -66,6 +67,7 @@ TASK_CREATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
 TASK_BROWSER_PAGE_SIZE = 24
 RESOURCE_SAMPLE_AGE_SECONDS = 120
 QUOTA_BLOCK_SECONDS = 300
+INFERRED_TURN_RESET = TASK_CREATED_AT + timedelta(minutes=10)
 
 
 def _task_detail_app(
@@ -819,6 +821,54 @@ async def test_quota_and_resource_evidence_keeps_engine_deadline_reset_and_sampl
     assert resource_evidence is not None
     assert "Recorded scheduler reason · resources" in resource_evidence.raw
     assert resource_evidence.observed_at == (TASK_CREATED_AT,)
+
+
+async def test_mid_turn_inferred_reset_has_neutral_provenance_in_raw_evidence(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = load_settings(project_dir)
+    rung = settings.roles.leader.ladder[0]
+    window = QuotaWindow(
+        name="5h",
+        used_pct=100.0,
+        resets_at=INFERRED_TURN_RESET,
+        observed_at=TASK_CREATED_AT,
+    )
+    QuotaStore(connection).record(rung.agent, window)
+    failed = with_known_quota_reset(
+        Failed(FailureKind.QUOTA, None, "quota"),
+        (window,),
+        clock.now(),
+    )
+    assert isinstance(failed, Failed)
+    assert failed.resets_at == INFERRED_TURN_RESET
+
+    task = seed_task(connection, clock, title="Mid-turn inferred reset", mode=Mode.PLAN)
+    store = TaskStore(connection, clock)
+    store.apply_transition(task.id, Transition.stay(task, step=Step.PLAN))
+    task = store.require(task.id)
+    record_quota_wait(
+        connection,
+        clock,
+        task,
+        role=Role.LEADER,
+        rung=rung,
+        until=INFERRED_TURN_RESET + QUOTA_MARGIN,
+        failure_reset=failed.resets_at,
+    )
+    views = state_views(reader, project_dir, clock, StubServices(), settings=settings)
+
+    detail = await views.task_detail(task.id)
+
+    assert detail is not None
+    assert detail.blocker_evidence is not None
+    raw = "\n".join(detail.blocker_evidence.raw)
+    assert f"Recorded quota reset · {INFERRED_TURN_RESET.isoformat()}" in raw
+    assert "Provider-reported quota reset" not in raw
 
 
 async def test_running_quota_wait_requires_a_live_block_for_the_current_task_role(

@@ -36,6 +36,7 @@ _WINDOW_HEADER = "Window"
 _USED_HEADER = "Used"
 _RESET_HEADER = "Provider reset"
 _NO_READING = "No provider quota reading is recorded."
+_NO_CURRENT_READING = "No current provider quota reading is available."
 _COLUMN_GAP = 2
 
 
@@ -78,9 +79,12 @@ def raw_evidence_text(evidence: BlockerEvidenceView) -> Text:
 
 
 def _quota_block(quota: QuotaEvidenceView, now: datetime) -> RenderableType:
-    parts: list[RenderableType] = (
-        [_readings_table(quota.readings, now)] if quota.readings else [grey(_NO_READING)]
-    )
+    if quota.readings:
+        parts: list[RenderableType] = [_readings_table(quota.readings, now)]
+    elif quota.has_recorded_readings:
+        parts = [grey(_NO_CURRENT_READING)]
+    else:
+        parts = [grey(_NO_READING)]
     if quota.retry_note is not None:
         parts.append(grey(quota.retry_note))
     return Group(*parts)

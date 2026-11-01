@@ -641,13 +641,15 @@ class QuotaReadingView:
 class QuotaEvidenceView:
     """The quota facts behind one provider's active blocker.
 
-    `readings` is empty when no window was recorded for the provider. `retry_note` names a
-    difference between the engine's retry and the provider reset, when the readings show one.
+    `readings` excludes expired windows. `has_recorded_readings` distinguishes a provider with
+    only expired windows from one with no stored reading. `retry_note` names a difference between
+    the engine's retry and the provider reset, when the readings show one.
     """
 
     agent: str
     readings: tuple[QuotaReadingView, ...] = ()
     retry_note: str | None = None
+    has_recorded_readings: bool = False
 
 
 @dataclass(frozen=True)

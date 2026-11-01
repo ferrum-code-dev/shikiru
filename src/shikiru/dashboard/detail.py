@@ -573,6 +573,9 @@ class TaskDetailPanel(Vertical):
             return
         now = tick_now(self._widget_context.clock)
         quota = view.quota_wait
+        if _has_expired_quota_reading(view.blocker_evidence, now):
+            await self._load_view()
+            return
         if quota is not None and now >= quota.refresh_at:
             await self._load_view()
             return
@@ -1196,3 +1199,11 @@ type CloseDetail = Callable[[], Awaitable[None]]
 
 def _task_identity_text(identity: str) -> Text:
     return Text(identity, style=BOLD_PRIMARY)
+
+
+def _has_expired_quota_reading(evidence: BlockerEvidenceView | None, now: datetime) -> bool:
+    return evidence is not None and any(
+        reading.resets_at is not None and reading.resets_at <= now
+        for quota in evidence.quotas
+        for reading in quota.readings
+    )
