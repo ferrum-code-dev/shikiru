@@ -55,13 +55,13 @@ class ViewTail:
         self._strip = strip
         self._offset = 0
         self._pending_bytes = b""
-        self._width = console.size.width
+        self._size = (console.size.width, console.size.height)
 
     async def follow(self) -> None:
         """Print rows as they are appended, polling through the clock until cancelled."""
         while True:
-            width = self._console.size.width
-            resized = width != self._width and self._strip.active
+            size = self._console.size
+            resized = (size.width, size.height) != self._size and self._strip.active
             if resized:
                 self._strip.reset_after_resize()
                 self._stream.reset()
@@ -72,7 +72,8 @@ class ViewTail:
                 await self._clock.sleep(0)
             if not resized:
                 self.sync_status()
-            self._width = self._console.size.width
+            size = self._console.size
+            self._size = (size.width, size.height)
             await self._clock.sleep(_VIEW_POLL_SECONDS)
 
     def sync_status(self) -> None:
