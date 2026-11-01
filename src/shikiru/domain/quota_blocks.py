@@ -22,15 +22,23 @@ def block_released(
 ) -> bool:
     """Return whether `reading` proves the block set at `blocked_at` no longer holds.
 
-    Only samples observed after the block count. The fresh reading must have a usable window,
-    show none exhausted and cover every window `stored` still holds exhausted before its reset.
+    Only samples observed after the block and no earlier than the stored sample of the same
+    window count. The fresh reading must have a usable window, show none exhausted and cover
+    every window `stored` holds exhausted, unless its known reset has already passed. A missing
+    reset does not show an exhausted window expired.
     """
-    fresh = [window for window in reading if window.observed_at > blocked_at]
+    latest = {window.name: window.observed_at for window in stored}
+    fresh = [
+        window
+        for window in reading
+        if window.observed_at > blocked_at
+        and window.observed_at >= latest.get(window.name, window.observed_at)
+    ]
     if not fresh or any(is_exhausted(window) for window in fresh):
         return False
     covered = {window.name for window in fresh}
     return all(
         window.name in covered
         for window in stored
-        if is_exhausted(window) and window.resets_at is not None and window.resets_at > now
+        if is_exhausted(window) and (window.resets_at is None or window.resets_at > now)
     )

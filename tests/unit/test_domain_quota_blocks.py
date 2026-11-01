@@ -18,36 +18,71 @@ _STORED = [
 ]
 
 
+_NEWER_EXHAUSTED_WEEKLY = [QuotaWindow("7d", 100.0, _FUTURE, _FRESH + timedelta(minutes=2))]
+_UNKNOWN_RESET_WEEKLY = [QuotaWindow("7d", 100.0, None, _BLOCKED_AT)]
+
+
 def _window(name: str, used: float, observed_at: datetime = _FRESH) -> QuotaWindow:
     return QuotaWindow(name, used, None, observed_at)
 
 
 @pytest.mark.parametrize(
-    ("reading", "released"),
+    ("stored", "reading", "released"),
     [
-        pytest.param([_window("5h", 2), _window("7d", 0)], True, id="every-window-available"),
-        pytest.param([_window("5h", 2), _window("7d", 100)], False, id="weekly-still-exhausted"),
-        pytest.param([_window("5h", 100), _window("7d", 0)], False, id="five-hour-exhausted"),
-        pytest.param([_window("5h", 2)], False, id="exhausted-window-not-covered"),
-        pytest.param([], False, id="no-windows"),
         pytest.param(
-            [_window("5h", 2, _PAST), _window("7d", 0, _PAST)], False, id="older-than-the-block"
+            _STORED, [_window("5h", 2), _window("7d", 0)], True, id="every-window-available"
         ),
         pytest.param(
+            _STORED, [_window("5h", 2), _window("7d", 100)], False, id="weekly-still-exhausted"
+        ),
+        pytest.param(
+            _STORED, [_window("5h", 100), _window("7d", 0)], False, id="five-hour-exhausted"
+        ),
+        pytest.param(_STORED, [_window("5h", 2)], False, id="exhausted-window-not-covered"),
+        pytest.param(_STORED, [], False, id="no-windows"),
+        pytest.param(
+            _STORED,
+            [_window("5h", 2, _PAST), _window("7d", 0, _PAST)],
+            False,
+            id="older-than-the-block",
+        ),
+        pytest.param(
+            _STORED,
             [_window("5h", 2, _BLOCKED_AT), _window("7d", 0, _BLOCKED_AT)],
             False,
             id="observed-at-the-block-instant",
         ),
         pytest.param(
-            [_window("5h", 2), _window("7d", 0, _PAST)], False, id="covering-window-is-stale"
+            _STORED,
+            [_window("5h", 2), _window("7d", 0, _PAST)],
+            False,
+            id="covering-window-is-stale",
+        ),
+        pytest.param(
+            _NEWER_EXHAUSTED_WEEKLY,
+            [_window("7d", 0)],
+            False,
+            id="older-than-the-stored-sample-of-the-window",
+        ),
+        pytest.param(
+            _UNKNOWN_RESET_WEEKLY,
+            [_window("5h", 2)],
+            False,
+            id="exhausted-window-with-unknown-reset-not-covered",
+        ),
+        pytest.param(
+            _UNKNOWN_RESET_WEEKLY,
+            [_window("5h", 2), _window("7d", 0)],
+            True,
+            id="exhausted-window-with-unknown-reset-cleared",
         ),
     ],
 )
 def test_a_block_is_released_only_by_a_fresh_reading_that_clears_every_exhausted_window(
-    reading: list[QuotaWindow], released: bool
+    stored: list[QuotaWindow], reading: list[QuotaWindow], released: bool
 ) -> None:
     assert (
-        block_released(blocked_at=_BLOCKED_AT, stored=_STORED, reading=reading, now=_NOW)
+        block_released(blocked_at=_BLOCKED_AT, stored=stored, reading=reading, now=_NOW)
         is released
     )
 
