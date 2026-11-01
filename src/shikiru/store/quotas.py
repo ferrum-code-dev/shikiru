@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import QuotaWindow
-from shikiru.store.database import format_timestamp, parse_required_timestamp, parse_timestamp
+from shikiru.store.database import (
+    format_timestamp,
+    parse_required_timestamp,
+    parse_timestamp,
+    transaction,
+)
 
 if TYPE_CHECKING:
     import sqlite3  # noqa: TID251
@@ -109,28 +114,31 @@ class QuotaStore:
     def block(self, agent: str, until: datetime, reason: str, blocked_at: datetime) -> None:
         """Block `agent` until the later of the current and requested deadlines.
 
-        `blocked_at` is when quota was last found exhausted; it only moves forward.
+        `blocked_at` is when quota was last found exhausted; it only moves forward. The deadline
+        and the time land in one transaction, so a block is never half persisted.
         """
-        self._connection.execute(
-            "INSERT INTO agent_blocks (agent, until, reason) VALUES (?, ?, ?) "
-            "ON CONFLICT (agent) DO UPDATE SET "
-            "until = CASE WHEN agent_blocks.until >= excluded.until "
-            "THEN agent_blocks.until ELSE excluded.until END, "
-            "reason = CASE WHEN agent_blocks.until >= excluded.until "
-            "THEN agent_blocks.reason ELSE excluded.reason END",
-            (agent, format_timestamp(until), reason),
-        )
-        self._connection.execute(
-            "INSERT INTO agent_block_times (agent, blocked_at) VALUES (?, ?) "
-            "ON CONFLICT (agent) DO UPDATE SET blocked_at = excluded.blocked_at "
-            "WHERE excluded.blocked_at > agent_block_times.blocked_at",
-            (agent, format_timestamp(blocked_at)),
-        )
+        with transaction(self._connection):
+            self._connection.execute(
+                "INSERT INTO agent_blocks (agent, until, reason) VALUES (?, ?, ?) "
+                "ON CONFLICT (agent) DO UPDATE SET "
+                "until = CASE WHEN agent_blocks.until >= excluded.until "
+                "THEN agent_blocks.until ELSE excluded.until END, "
+                "reason = CASE WHEN agent_blocks.until >= excluded.until "
+                "THEN agent_blocks.reason ELSE excluded.reason END",
+                (agent, format_timestamp(until), reason),
+            )
+            self._connection.execute(
+                "INSERT INTO agent_block_times (agent, blocked_at) VALUES (?, ?) "
+                "ON CONFLICT (agent) DO UPDATE SET blocked_at = excluded.blocked_at "
+                "WHERE excluded.blocked_at > agent_block_times.blocked_at",
+                (agent, format_timestamp(blocked_at)),
+            )
 
     def clear_block(self, agent: str) -> None:
         """Remove `agent`'s block, if any."""
-        self._connection.execute("DELETE FROM agent_blocks WHERE agent = ?", (agent,))
-        self._connection.execute("DELETE FROM agent_block_times WHERE agent = ?", (agent,))
+        with transaction(self._connection):
+            self._connection.execute("DELETE FROM agent_blocks WHERE agent = ?", (agent,))
+            self._connection.execute("DELETE FROM agent_block_times WHERE agent = ?", (agent,))
 
     def active_blocks(self, now: datetime) -> list[AgentBlock]:
         """Read every agent block still in effect at `now`."""

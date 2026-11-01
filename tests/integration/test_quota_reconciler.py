@@ -15,9 +15,8 @@ from tests.support.engine import build_reconciler, build_registry, fake_engine_s
 from tests.support.factories import TASK_CREATED_AT
 
 if TYPE_CHECKING:
-    from sqlite3 import Connection
-
     from shikiru.engine.quota_reconciler import QuotaReconciler
+    from tests.support.store import Connection
 
 _AGENT = "fake"
 _BLOCK_LENGTH = timedelta(days=3)

@@ -82,8 +82,7 @@ def test_a_block_is_released_only_by_a_fresh_reading_that_clears_every_exhausted
     stored: list[QuotaWindow], reading: list[QuotaWindow], released: bool
 ) -> None:
     assert (
-        block_released(blocked_at=_BLOCKED_AT, stored=stored, reading=reading, now=_NOW)
-        is released
+        block_released(blocked_at=_BLOCKED_AT, stored=stored, reading=reading, now=_NOW) is released
     )
 
 

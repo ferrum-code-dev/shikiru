@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import sqlite3  # noqa: TID251
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+import pytest
+
 from shikiru.agents.contracts import QuotaWindow
-from shikiru.store.database import Database
+from shikiru.store.database import Database, format_timestamp, transaction
 from shikiru.store.quotas import QuotaStore, fetch_quotas
 from tests.support.clock import LONG_AGO
 
@@ -116,5 +120,114 @@ def test_legacy_builtin_window_aliases_are_dropped_and_never_shown_beside_canoni
         QuotaStore(connection).record("claude", QuotaWindow("5h", 36.0, None, START))
 
         assert [w.name for w in fetch_quotas(connection, "claude")] == ["5h"]
+    finally:
+        connection.close()
+
+
+def _deny_writes_to(connection: Connection, table: str) -> None:
+    def authorizer(action: int, name: str | None, *_unused: str | None) -> int:
+        denied = action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE} and name == table
+        return sqlite3.SQLITE_DENY if denied else sqlite3.SQLITE_OK
+
+    connection.set_authorizer(authorizer)
+
+
+def test_a_failed_block_write_leaves_no_half_persisted_block(connection: Connection) -> None:
+    store = _make_store(connection)
+    _deny_writes_to(connection, "agent_block_times")
+
+    with pytest.raises(sqlite3.DatabaseError):
+        store.block("claude", START + timedelta(minutes=10), "quota", START)
+    connection.set_authorizer(None)
+
+    assert connection.execute("SELECT COUNT(*) FROM agent_blocks").fetchone()[0] == 0
+    assert store.block_for("claude") is None
+
+
+def test_a_failed_block_update_keeps_the_previous_block_intact(connection: Connection) -> None:
+    store = _make_store(connection)
+    store.block("claude", START + timedelta(minutes=10), "first", START)
+    _deny_writes_to(connection, "agent_block_times")
+
+    with pytest.raises(sqlite3.DatabaseError):
+        store.block("claude", START + timedelta(minutes=30), "second", START + timedelta(minutes=1))
+    connection.set_authorizer(None)
+
+    [active] = store.active_blocks(START)
+    assert (active.reason, active.until, active.blocked_at) == (
+        "first",
+        START + timedelta(minutes=10),
+        START,
+    )
+
+
+def test_a_failed_clear_keeps_the_block_visible(connection: Connection) -> None:
+    store = _make_store(connection)
+    store.block("claude", START + timedelta(minutes=10), "quota", START)
+    _deny_writes_to(connection, "agent_block_times")
+
+    with pytest.raises(sqlite3.DatabaseError):
+        store.clear_block("claude")
+    connection.set_authorizer(None)
+
+    assert [block.agent for block in store.active_blocks(START)] == ["claude"]
+
+
+def test_a_block_written_inside_a_larger_transaction_rolls_back_with_it(
+    connection: Connection,
+) -> None:
+    store = _make_store(connection)
+
+    with suppress(RuntimeError), transaction(connection):
+        store.block("claude", START + timedelta(minutes=10), "quota", START)
+        message = "abort"
+        raise RuntimeError(message)
+
+    assert store.block_for("claude") is None
+
+
+def test_a_block_survives_reopening_the_database(tmp_path: Path) -> None:
+    database = Database(tmp_path / "state.db")
+    first = database.connect()
+    _make_store(first).block("claude", START + timedelta(minutes=10), "quota", START)
+    first.close()
+
+    reopened = database.connect()
+    try:
+        [active] = _make_store(reopened).active_blocks(START)
+        assert (active.agent, active.blocked_at) == ("claude", START)
+    finally:
+        reopened.close()
+
+
+_ORPHAN_REPAIR_BEFORE_VERSION = 14
+
+
+def test_upgrade_repairs_block_rows_left_half_written_by_the_previous_schema(
+    tmp_path: Path,
+) -> None:
+    database = Database(tmp_path / "state.db")
+    connection = database.connect()
+    until = START + timedelta(hours=1)
+    connection.execute(
+        "INSERT INTO agent_blocks (agent, until, reason) VALUES ('claude', ?, 'quota')",
+        (format_timestamp(until),),
+    )
+    connection.execute(
+        "INSERT INTO agent_block_times (agent, blocked_at) VALUES ('codex', ?)",
+        (format_timestamp(START),),
+    )
+    connection.execute(f"PRAGMA user_version = {_ORPHAN_REPAIR_BEFORE_VERSION}")
+    connection.close()
+
+    connection = database.connect()
+    try:
+        store = _make_store(connection)
+        [active] = store.active_blocks(START)
+        assert active.agent == "claude"
+        assert active.blocked_at > START
+        assert store.block_for("codex") is None
+        store.block("codex", until, "quota", START)
+        assert store.block_for("codex") is not None
     finally:
         connection.close()
