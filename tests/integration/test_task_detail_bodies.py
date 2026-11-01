@@ -590,6 +590,10 @@ async def test_simultaneous_blockers_share_one_blockers_label_and_one_evidence_f
             evidence = plain_text(panel.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static).content)
             assert dependency.id not in evidence
             assert "Recorded scheduler reason" in _raw_events_text(panel)
+            await wait_until(
+                lambda: dependency.id in "\n".join(_painted_rows(panel, TASK_DETAIL_RELATED_LIST)),
+                timeout=UI_WAIT_SECONDS,
+            )
             assert "Paused by operator" not in "\n".join(
                 _painted_rows(panel, TASK_DETAIL_RELATED_LIST)
             )
