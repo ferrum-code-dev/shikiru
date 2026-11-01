@@ -1,16 +1,27 @@
-"""The one wording for a quota wait, shared by the task list, Usage and task details."""
+"""Quota wait wording: the block's clock text, the provider reset and the engine retry note."""
 
 from __future__ import annotations
 
 from datetime import timedelta
+from operator import itemgetter
 from typing import TYPE_CHECKING
 
+from shikiru.agents.contracts import QUOTA_WINDOW_FIVE_HOUR, QUOTA_WINDOW_SEVEN_DAY, is_exhausted
+from shikiru.domain.recovery import quota_block_until
+
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
     from datetime import datetime
 
+    from shikiru.agents.contracts import QuotaWindow
+
 QUOTA_BLOCKED_PHRASE = "quota blocked until"
-QUOTA_AGENT_LABEL = "Blocked agent"
+QUOTA_RETRY_PHRASE = "retry at"
+QUOTA_WORD = "quota"
+ENGINE_RETRY_DIFFERS = "Engine retry differs from the {window} reset."
+QUOTA_TODAY_WORD = "Today"
+QUOTA_NOT_REPORTED = "not reported"
+QUOTA_WINDOW_LABELS = {QUOTA_WINDOW_FIVE_HOUR: "5-hour", QUOTA_WINDOW_SEVEN_DAY: "weekly"}
 QUOTA_WAIT_CLOCK_FORMAT = "%H:%M"
 QUOTA_WAIT_DATE_FORMAT = "%b %d"
 QUOTA_WAIT_ZERO_OFFSET_SUFFIX = "Z"
@@ -36,6 +47,19 @@ def quota_reset_clock(until: datetime, now: datetime) -> str:
         clock = f"{until.strftime(QUOTA_WAIT_DATE_FORMAT)} {clock}"
     suffix = QUOTA_WAIT_ZERO_OFFSET_SUFFIX if until.utcoffset() == timedelta(0) else ""
     return f"{clock}{suffix}"
+
+
+def provider_reset_text(resets_at: datetime, now: datetime) -> str:
+    """Return a provider's reset as `Today` and a clock on today's local day, else as a clock."""
+    clock = quota_reset_clock(resets_at, now)
+    if resets_at.date() == now.date():
+        return f"{QUOTA_TODAY_WORD} {clock}"
+    return clock
+
+
+def quota_window_label(name: str) -> str:
+    """Return the words a quota window is named by, such as `5-hour` for `5h`."""
+    return QUOTA_WINDOW_LABELS.get(name, name)
 
 
 def quota_wait_description(agent: str, until: datetime, now: datetime) -> str:
@@ -65,9 +89,37 @@ def quota_remaining(until: datetime, now: datetime) -> str:
     return f"{minutes}m"
 
 
+def quota_retry_description(agent: str, until: datetime, now: datetime) -> str:
+    """Name the `agent` quota and the engine's retry, in the zone `until` carries."""
+    return (
+        f"{agent} {QUOTA_WORD}{QUOTA_BANNER_SEPARATOR}{QUOTA_RETRY_PHRASE} "
+        f"{quota_reset_clock(until, now)}"
+    )
+
+
 def quota_clock_text(agent: str, until: datetime, now: datetime) -> tuple[str, str]:
-    """Return the clock-driven wording of a quota wait: its description and its time left."""
-    return quota_wait_description(agent, until, now), quota_remaining(until, now)
+    """Return the clock-driven wording of a quota wait: its retry description and its time left."""
+    return quota_retry_description(agent, until, now), quota_remaining(until, now)
+
+
+def engine_retry_note(retry: datetime, windows: Sequence[QuotaWindow], now: datetime) -> str | None:
+    """Explain how the engine's retry differs from the provider reset it follows, when it does.
+
+    The engine follows the latest pending reset of the windows reported exhausted, plus its margin.
+    A retry on that instant needs no note; any other retry is named against that reset. Without a
+    pending exhausted reset, no reset is known to compare with, so nothing is said.
+    """
+    pending = [
+        (window.resets_at, window.name)
+        for window in windows
+        if is_exhausted(window) and window.resets_at is not None and window.resets_at > now
+    ]
+    if not pending:
+        return None
+    latest_reset, window_name = max(pending, key=itemgetter(0))
+    if retry == quota_block_until(latest_reset, now):
+        return None
+    return ENGINE_RETRY_DIFFERS.format(window=quota_window_label(window_name))
 
 
 def next_quota_reload(now: datetime, instants: Iterable[datetime]) -> datetime:

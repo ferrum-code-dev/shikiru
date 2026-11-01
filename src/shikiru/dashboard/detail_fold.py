@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar
 
 from textual.binding import Binding
 from textual.containers import Vertical
@@ -121,8 +121,16 @@ class DetailFold(Vertical):
 
     @property
     def folds(self) -> DetailFolds:
-        """The list this fold belongs to."""
-        return cast("DetailFolds", self.parent)
+        """The list this fold belongs to: the nearest one above it, so a nested fold has its own."""
+        return next(node for node in self.ancestors if isinstance(node, DetailFolds))
+
+    @property
+    def is_shown(self) -> bool:
+        """Whether the header is on screen: shown itself, inside no hidden or folded fold."""
+        if self.styles.display == _DISPLAY_NONE:
+            return False
+        enclosing = next((node for node in self.ancestors if isinstance(node, DetailFold)), None)
+        return enclosing is None or (enclosing.is_open and enclosing.is_shown)
 
     @property
     def is_open(self) -> bool:
@@ -200,8 +208,8 @@ class DetailFolds(Vertical):
 
     @property
     def visible_folds(self) -> list[DetailFold]:
-        """The folds shown, in display order; a hidden fold has no header to focus."""
-        return [fold for fold in self.all_folds if fold.styles.display != _DISPLAY_NONE]
+        """The folds shown, in display order; a fold inside a closed or hidden one has no header."""
+        return [fold for fold in self.all_folds if fold.is_shown]
 
     @property
     def current_fold(self) -> DetailFold:
@@ -213,7 +221,7 @@ class DetailFolds(Vertical):
 
     def is_current(self, fold: DetailFold) -> bool:
         """Whether `fold` holds the roving Tab stop; a hidden fold never does."""
-        return fold.styles.display != _DISPLAY_NONE and self.current_fold is fold
+        return fold.is_shown and self.current_fold is fold
 
     def make_current(self, fold: DetailFold) -> None:
         """Move the Tab stop to `fold`."""

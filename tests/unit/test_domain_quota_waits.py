@@ -4,13 +4,18 @@ from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
+from shikiru.agents.contracts import QUOTA_WINDOW_FIVE_HOUR, QUOTA_WINDOW_SEVEN_DAY, QuotaWindow
 from shikiru.domain.quota_waits import (
+    ENGINE_RETRY_DIFFERS,
+    engine_retry_note,
     next_quota_reload,
+    provider_reset_text,
     quota_banner,
     quota_clock_text,
     quota_remaining,
     quota_wait_description,
 )
+from shikiru.domain.recovery import QUOTA_MARGIN, QUOTA_PROBE
 
 NOW = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 BEFORE_MIDNIGHT = datetime(2026, 1, 1, 23, 59, 30, tzinfo=UTC)
@@ -110,26 +115,116 @@ def test_quota_remaining_counts_the_whole_minutes_left_until_the_block_lifts(
     assert quota_remaining(NOW + timedelta(seconds=seconds_left), NOW) == expected
 
 
+def test_quota_clock_text_changes_at_utc_midnight_even_when_the_minutes_stay_the_same() -> None:
+    before = quota_clock_text("claude", RESET_AFTER_MIDNIGHT, BEFORE_MIDNIGHT)
+    after = quota_clock_text("claude", RESET_AFTER_MIDNIGHT, AFTER_MIDNIGHT)
+    assert before != after
+    assert before[1] == after[1]
+
+
 @pytest.mark.parametrize(
-    ("now", "expected"),
+    ("resets_at", "now", "expected"),
     [
+        pytest.param(SAME_DAY_RESET, NOW, "Today 14:20Z", id="utc-same-day"),
+        pytest.param(NEXT_DAY_RESET, NOW, "Jan 02 00:05Z", id="utc-other-day"),
         pytest.param(
-            BEFORE_MIDNIGHT,
-            ("claude quota blocked until Jan 02 01:00Z", "1h 0m"),
-            id="before-utc-midnight",
+            SAME_DAY_RESET.astimezone(AHEAD_OF_UTC),
+            NOW.astimezone(AHEAD_OF_UTC),
+            "Today 16:20",
+            id="offset-same-day",
         ),
         pytest.param(
-            AFTER_MIDNIGHT,
-            ("claude quota blocked until 01:00Z", "1h 0m"),
-            id="after-utc-midnight-with-the-same-minutes",
+            datetime(2026, 1, 2, 0, 5, tzinfo=AHEAD_OF_UTC),
+            datetime(2026, 1, 1, 23, 59, 30, tzinfo=AHEAD_OF_UTC),
+            "Jan 02 00:05",
+            id="local-midnight-is-another-day",
+        ),
+        pytest.param(
+            datetime(2026, 1, 2, 0, 5, tzinfo=AHEAD_OF_UTC),
+            datetime(2026, 1, 2, 0, 0, tzinfo=AHEAD_OF_UTC),
+            "Today 00:05",
+            id="local-date-decides-not-the-utc-date",
         ),
     ],
 )
-def test_quota_clock_text_changes_at_utc_midnight_even_when_the_minutes_stay_the_same(
-    now: datetime,
-    expected: tuple[str, str],
+def test_provider_reset_text_says_today_only_on_the_local_day_of_now(
+    resets_at: datetime, now: datetime, expected: str
 ) -> None:
-    assert quota_clock_text("claude", RESET_AFTER_MIDNIGHT, now) == expected
+    assert provider_reset_text(resets_at, now) == expected
+
+
+EXHAUSTED_WEEKLY_RESET = datetime(2026, 1, 4, 7, 52, tzinfo=UTC)
+EXHAUSTED_FIVE_HOUR_RESET = datetime(2026, 1, 1, 13, 0, tzinfo=UTC)
+OBSERVED = NOW - timedelta(minutes=5)
+WEEKLY_DIFFERS = ENGINE_RETRY_DIFFERS.format(window="weekly")
+FIVE_HOUR_DIFFERS = ENGINE_RETRY_DIFFERS.format(window="5-hour")
+
+
+def _window(name: str, used_pct: float, resets_at: datetime | None) -> QuotaWindow:
+    return QuotaWindow(name=name, used_pct=used_pct, resets_at=resets_at, observed_at=OBSERVED)
+
+
+@pytest.mark.parametrize(
+    ("retry", "windows", "expected"),
+    [
+        pytest.param(EXHAUSTED_WEEKLY_RESET + QUOTA_MARGIN, (), None, id="no-readings"),
+        pytest.param(
+            EXHAUSTED_WEEKLY_RESET + QUOTA_MARGIN,
+            (_window(QUOTA_WINDOW_SEVEN_DAY, 100.0, EXHAUSTED_WEEKLY_RESET),),
+            None,
+            id="retry-follows-the-exhausted-reset",
+        ),
+        pytest.param(
+            NOW + QUOTA_PROBE,
+            (_window(QUOTA_WINDOW_SEVEN_DAY, 100.0, EXHAUSTED_WEEKLY_RESET),),
+            WEEKLY_DIFFERS,
+            id="probe-retry-differs-from-the-exhausted-reset",
+        ),
+        pytest.param(
+            NOW + QUOTA_PROBE,
+            (_window(QUOTA_WINDOW_SEVEN_DAY, 100.0, None),),
+            None,
+            id="unknown-reset-leaves-nothing-to-compare",
+        ),
+        pytest.param(
+            NOW + QUOTA_PROBE,
+            (_window(QUOTA_WINDOW_SEVEN_DAY, 100.0, NOW - timedelta(hours=1)),),
+            None,
+            id="expired-reset-leaves-nothing-to-compare",
+        ),
+        pytest.param(
+            NOW + QUOTA_PROBE,
+            (_window(QUOTA_WINDOW_FIVE_HOUR, 40.0, EXHAUSTED_FIVE_HOUR_RESET),),
+            None,
+            id="unexhausted-window-leaves-nothing-to-compare",
+        ),
+        pytest.param(
+            EXHAUSTED_FIVE_HOUR_RESET + QUOTA_MARGIN,
+            (
+                _window(QUOTA_WINDOW_FIVE_HOUR, 100.0, EXHAUSTED_FIVE_HOUR_RESET),
+                _window(QUOTA_WINDOW_SEVEN_DAY, 100.0, EXHAUSTED_WEEKLY_RESET),
+            ),
+            WEEKLY_DIFFERS,
+            id="retry-on-an-earlier-reset-differs-from-the-latest-named-window",
+        ),
+        pytest.param(
+            EXHAUSTED_FIVE_HOUR_RESET + QUOTA_MARGIN,
+            (_window(QUOTA_WINDOW_FIVE_HOUR, 100.0, EXHAUSTED_FIVE_HOUR_RESET),),
+            None,
+            id="retry-follows-the-only-exhausted-reset",
+        ),
+        pytest.param(
+            NOW + QUOTA_PROBE,
+            (_window(QUOTA_WINDOW_FIVE_HOUR, 100.0, EXHAUSTED_FIVE_HOUR_RESET),),
+            FIVE_HOUR_DIFFERS,
+            id="probe-retry-names-the-five-hour-window-when-it-is-the-latest",
+        ),
+    ],
+)
+def test_engine_retry_note_names_the_exhausted_reset_only_when_the_retry_differs(
+    retry: datetime, windows: tuple[QuotaWindow, ...], expected: str | None
+) -> None:
+    assert engine_retry_note(retry, windows, NOW) == expected
 
 
 @pytest.mark.parametrize(

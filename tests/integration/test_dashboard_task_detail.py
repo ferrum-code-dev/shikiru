@@ -41,10 +41,10 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_BODY,
     TASK_DETAIL_BRIEFING,
     TASK_DETAIL_CONTEXT_INFO,
-    TASK_DETAIL_EVIDENCE,
     TASK_DETAIL_FOLDS,
     TASK_DETAIL_IDENTITY,
     TASK_DETAIL_OWNERSHIP,
+    TASK_DETAIL_RAW_EVENTS,
     TASK_DETAIL_SESSIONS,
     TASK_VIEW_AGENT,
     TASK_VIEW_BLOCKER_EVIDENCE,
@@ -2722,9 +2722,9 @@ async def test_blocker_evidence_fold_is_closed_by_default_and_opens_closes_by_ke
                 lambda: TASK_VIEW_BLOCKER_EVIDENCE in panel.open_views,
                 timeout=UI_WAIT_SECONDS,
             )
-            assert fold_headline(panel, TASK_VIEW_BLOCKER_EVIDENCE) == "2 lines"
-            evidence_text = _text(panel.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static))
-            assert "Recorded scheduler reason" in evidence_text
+            assert fold_headline(panel, TASK_VIEW_BLOCKER_EVIDENCE) == ""
+            raw_text = _text(panel.query_one(f"#{TASK_DETAIL_RAW_EVENTS}", Static))
+            assert "Recorded scheduler reason" in raw_text
 
             await pilot.press("space")
             await wait_until(

@@ -22,6 +22,7 @@ from shikiru.dashboard.contract import (
     AgentUsageView,
     AttentionGroupView,
     AttentionView,
+    BlockerEvidenceView,
     CommandFeedbackEntryView,
     CommandFeedbackStatus,
     CommandHistoryView,
@@ -35,7 +36,9 @@ from shikiru.dashboard.contract import (
     HeldTaskStateView,
     QueueRow,
     QuotaBlockView,
+    QuotaEvidenceView,
     QuotaGaugeView,
+    QuotaReadingView,
     QuotaWaitView,
     RecordedUsageView,
     RepoStatus,
@@ -75,7 +78,13 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import move_up, pick_rung
 from shikiru.domain.levels import free_space_level, usage_level
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
-from shikiru.domain.quota_waits import next_quota_reload, quota_banner, quota_wait_description
+from shikiru.domain.quota_waits import (
+    QUOTA_NOT_REPORTED,
+    engine_retry_note,
+    next_quota_reload,
+    quota_banner,
+    quota_wait_description,
+)
 from shikiru.domain.reports import (
     ConsultAnswer,
     ImplementationReport,
@@ -252,6 +261,7 @@ _PR_HEADLINE = "Waiting on pull request"
 _PR_NO_EVENT = "No recorded pull-request event is available."
 _PR_CI_NOTE = "CI state is shown only when an engine observation recorded it."
 _RESET_AT_FIELD = "resets_at"
+_UNAVAILABLE = "unavailable"
 _QUOTA_TURN_LIFECYCLE = (
     EventKind.STEP_STARTED,
     EventKind.TURN_STARTED,
@@ -274,15 +284,19 @@ class _StructuredEscalationCache:
 class _RunningQuotaWait:
     block: AgentBlock
     budget_ends: datetime
-    evidence: tuple[str, ...]
+    quota: QuotaEvidenceView
+    raw: tuple[str, ...]
 
 
 @dataclass(frozen=True)
 class _BlockerParts:
     headline: str
     details: tuple[str, ...] = ()
-    evidence: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
     related: tuple[TaskReferenceView, ...] = ()
+    raw: tuple[str, ...] = ()
+    quotas: tuple[QuotaEvidenceView, ...] = ()
+    observed: tuple[datetime, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1293,8 +1307,10 @@ class StateDashboardViews:
         relationships: TaskRelationshipsView | None,
         ownership: tuple[str, ...],
         now: datetime,
-    ) -> tuple[tuple[TaskBlockerView, ...], tuple[str, ...]]:
+    ) -> tuple[tuple[TaskBlockerView, ...], BlockerEvidenceView | None]:
         found = self._found_blockers(task, relationships, ownership, now)
+        if not found:
+            return (), None
         recorded = (
             (f"{_RECORDED_REASON}{GROUP_SEPARATOR}{task.wait_reason}",) if task.wait_reason else ()
         )
@@ -1308,8 +1324,16 @@ class StateDashboardViews:
             )
             for item in found
         )
-        evidence = (*recorded, *(line for item in found for line in item.parts.evidence))
-        return blockers, evidence
+        evidence = BlockerEvidenceView(
+            quotas=tuple(quota for item in found for quota in item.parts.quotas),
+            observed_at=tuple(instant for item in found for instant in item.parts.observed),
+            notes=tuple(note for item in found for note in item.parts.notes),
+            raw=(*recorded, *(line for item in found for line in item.parts.raw)),
+        )
+        has_evidence = bool(
+            evidence.quotas or evidence.observed_at or evidence.notes or evidence.raw
+        )
+        return blockers, evidence if has_evidence else None
 
     def _found_blockers(
         self,
@@ -1325,16 +1349,14 @@ class StateDashboardViews:
             found.append(quota)
         elif wait_reason not in (None, WaitReason.PAUSED.value):
             found.append(
-                _FoundBlocker(
-                    wait_reason, self._reason_parts(task, wait_reason, relationships, now)
-                )
+                _FoundBlocker(wait_reason, self._reason_parts(task, wait_reason, relationships))
             )
         if Hold.PAUSED in task.holds or wait_reason == WaitReason.PAUSED.value:
-            evidence = (_PAUSE_HOLD_EVIDENCE,) if Hold.PAUSED in task.holds else ()
+            raw = (_PAUSE_HOLD_EVIDENCE,) if Hold.PAUSED in task.holds else ()
             found.append(
                 _FoundBlocker(
                     Hold.PAUSED.value,
-                    _BlockerParts(_PAUSED_HEADLINE, (_PAUSE_HOLD_DETAIL,), evidence=evidence),
+                    _BlockerParts(_PAUSED_HEADLINE, (_PAUSE_HOLD_DETAIL,), raw=raw),
                 )
             )
         if Hold.INTERVENTION in task.holds:
@@ -1344,9 +1366,7 @@ class StateDashboardViews:
     def _quota_blocker(self, task: Task, now: datetime) -> _FoundBlocker | None:
         if task.wait_reason == WaitReason.QUOTA.value:
             quota_block = self._queued_quota_block(task, now)
-            parts = self._queued_quota_parts(
-                task, quota_block, now, self._quota_evidence(task, now)
-            )
+            parts = self._queued_quota_parts(task, quota_block, now)
             return _FoundBlocker(WaitReason.QUOTA.value, parts, quota_block)
         if task.wait_reason is not None:
             return None
@@ -1374,7 +1394,6 @@ class StateDashboardViews:
         task: Task,
         wait_reason: str,
         relationships: TaskRelationshipsView | None,
-        now: datetime,
     ) -> _BlockerParts:
         match wait_reason:
             case WaitReason.DEPENDENCY.value:
@@ -1382,7 +1401,7 @@ class StateDashboardViews:
             case WaitReason.SLOT.value:
                 return self._slot_parts()
             case WaitReason.RESOURCES.value:
-                return self._resource_parts(now)
+                return self._resource_parts()
             case WaitReason.PR_OPEN.value:
                 return self._pull_request_parts(task.id)
             case _:
@@ -1407,27 +1426,36 @@ class StateDashboardViews:
             if count > shown_to
             else ()
         )
-        evidence = (
-            "Blocking dependencies · "
-            + "; ".join(f"{item.task_id} {item.title} ({item.status})" for item in related),
-        )
-        return _BlockerParts(headline, details, evidence)
+        return _BlockerParts(headline, details)
 
     def _queued_quota_parts(
         self,
         task: Task,
         quota_block: AgentBlock | None,
         now: datetime,
-        evidence: tuple[str, ...],
     ) -> _BlockerParts:
-        if quota_block is None:
-            return _BlockerParts(_QUOTA_HEADLINE, evidence=evidence)
         settings = self._settings.current()
-        wait_limit = now + timedelta(seconds=settings.orchestration.timeouts.max_quota_wait)
+        agents = task_agents(task, settings)
         blocked = {block.agent: block.until for block in self._active_blocks(now)}
+        quotas = tuple(
+            self._quota_evidence(agent, blocked[agent], now)
+            for agent in quota_blocked_agents(agents, blocked)
+        )
+        raw = tuple(
+            line
+            for agent in dict.fromkeys((agents.leader, agents.implementer))
+            for line in (
+                _account_raw(agent, self._state.agent_block(agent), now),
+                *self._provider_quota_raw(agent),
+            )
+        )
+        if quota_block is None:
+            return _BlockerParts(_QUOTA_HEADLINE, quotas=quotas, raw=raw)
+        wait_limit = now + timedelta(seconds=settings.orchestration.timeouts.max_quota_wait)
         return _quota_parts(
-            quota_block,
-            evidence,
+            quota_block.until,
+            quotas=quotas,
+            raw=raw,
             budget_ends=wait_limit,
             moves=quota_wait_reroutes(task, settings, blocked, wait_limit),
             exhausted_text=_QUOTA_WAITS_NO_OTHER_AGENT,
@@ -1435,12 +1463,13 @@ class StateDashboardViews:
 
     def _running_quota_parts(self, task: Task, running_wait: _RunningQuotaWait) -> _BlockerParts:
         settings = self._settings.current()
-        block = running_wait.block
+        until = running_wait.block.until
         return _quota_parts(
-            block,
-            running_wait.evidence,
+            until,
+            quotas=(running_wait.quota,),
+            raw=running_wait.raw,
             budget_ends=running_wait.budget_ends,
-            moves=running_quota_wait_moves(task, settings, block.until, running_wait.budget_ends),
+            moves=running_quota_wait_moves(task, settings, until, running_wait.budget_ends),
             exhausted_text=_QUOTA_ESCALATES_AT_LIMIT,
         )
 
@@ -1461,33 +1490,50 @@ class StateDashboardViews:
         reset_text = (
             reset_at
             if isinstance(reset_at, str)
-            else "not reported"
+            else QUOTA_NOT_REPORTED
             if reset_at is None and _RESET_AT_FIELD in failure.data
-            else "unavailable"
+            else _UNAVAILABLE
         )
-        lines = [
+        raw = (
             f"Current turn quota wait · {role.value} · {agent}",
             f"Provider-reported quota reset · {reset_text}",
             f"Task quota-block event · {quota_block.ts.isoformat()}",
-            f"Engine retry/probe deadline · {block.reason} · {block.until.isoformat()}",
-        ]
-        windows = self._state.list_quotas((agent,)).get(agent, [])
-        if windows:
-            for window in windows:
-                reset = (
-                    window.resets_at.isoformat() if window.resets_at is not None else "not reported"
-                )
-                lines.append(
-                    f"Provider quota · {window.name} · reset {reset} · "
-                    f"observed {_age(now - window.observed_at)} ago"
-                )
-        else:
-            lines.append(f"Provider quota observation · {agent} · unavailable")
+            _account_raw(agent, block, now),
+            *self._provider_quota_raw(agent),
+        )
         budget = timedelta(seconds=settings.orchestration.timeouts.max_quota_wait)
         return _RunningQuotaWait(
             block=block,
             budget_ends=quota_block.ts + budget,
-            evidence=tuple(lines),
+            quota=self._quota_evidence(agent, block.until, now),
+            raw=raw,
+        )
+
+    def _quota_evidence(self, agent: str, until: datetime, now: datetime) -> QuotaEvidenceView:
+        windows = self._state.list_quotas((agent,)).get(agent, [])
+        return QuotaEvidenceView(
+            agent=agent,
+            readings=tuple(
+                QuotaReadingView(
+                    window=window.name,
+                    used_pct=window.used_pct,
+                    resets_at=window.resets_at,
+                    observed_at=window.observed_at,
+                )
+                for window in windows
+                if window.resets_at is None or window.resets_at > now
+            ),
+            retry_note=engine_retry_note(until, windows, now),
+        )
+
+    def _provider_quota_raw(self, agent: str) -> tuple[str, ...]:
+        windows = self._state.list_quotas((agent,)).get(agent, [])
+        if not windows:
+            return (f"Provider quota observation · {agent} · {_UNAVAILABLE}",)
+        return tuple(
+            f"Provider quota · {agent} {window.name} · reset {_raw_reset(window.resets_at)} · "
+            f"observed {window.observed_at.isoformat()}"
+            for window in windows
         )
 
     def _current_quota_wait_events(
@@ -1548,68 +1594,30 @@ class StateDashboardViews:
         ]
         maximum = self._settings.current().orchestration.max_parallel
         headline = GROUP_SEPARATOR.join((_SLOT_HEADLINE, f"{len(occupied)}/{maximum} busy"))
-        evidence = (
-            (
-                "Occupying tasks · "
-                + "; ".join(f"{item.id} {item.title} (slot {item.slot})" for item in occupied),
-            )
-            if occupied
-            else ()
-        )
         return _BlockerParts(
             headline,
             (_SLOT_DETAIL,),
-            evidence,
-            tuple(_task_reference_view(item) for item in occupied),
+            related=tuple(_task_reference_view(item) for item in occupied),
         )
 
-    def _resource_parts(self, now: datetime) -> _BlockerParts:
+    def _resource_parts(self) -> _BlockerParts:
         sample = self._sources.resource_sample()
         if sample is None or sample.sampled_at is None:
             sample_line = "Dashboard resource sample · unavailable"
+            observed: tuple[datetime, ...] = ()
         else:
             sample_line = (
                 "Dashboard resource sample · "
                 f"host CPU {sample.host_cpu_pct:.1f}% · "
-                f"free RAM {sample.free_ram_gb:.1f} GiB · "
-                f"sample age {_age(now - sample.sampled_at)}"
+                f"free RAM {sample.free_ram_gb:.1f} GiB"
             )
+            observed = (sample.sampled_at,)
         return _BlockerParts(
             _RESOURCES_HEADLINE,
             (_RESOURCES_DETAIL,),
-            (sample_line, _RESOURCE_SAMPLE_DISCLAIMER),
+            notes=(sample_line, _RESOURCE_SAMPLE_DISCLAIMER),
+            observed=observed,
         )
-
-    def _quota_evidence(self, task: Task, now: datetime) -> tuple[str, ...]:
-        lines: list[str] = []
-        required_agents = tuple(
-            dict.fromkeys(
-                pick_rung(task, role, self._settings.current()).agent
-                for role in (Role.LEADER, Role.IMPLEMENTER)
-            )
-        )
-        for agent in required_agents:
-            block = self._state.agent_block(agent)
-            if block is None:
-                lines.append(f"Scheduler quota account block · {agent} · not recorded")
-            else:
-                activity = "active" if block.until > now else "expired"
-                lines.append(
-                    f"Scheduler quota account block · {agent} · {activity} · "
-                    f"{block.reason} · retry/probe deadline {block.until.isoformat()}"
-                )
-            windows = self._state.list_quotas((agent,)).get(agent, [])
-            if not windows:
-                lines.append(f"Provider quota observation · {agent} · unavailable")
-            for window in windows:
-                reset = (
-                    window.resets_at.isoformat() if window.resets_at is not None else "not reported"
-                )
-                lines.append(
-                    f"Provider quota · {agent} {window.name} · reset {reset} · "
-                    f"observed {_age(now - window.observed_at)} ago"
-                )
-        return tuple(lines)
 
     def _new_task_titles(self, scope: Sequence[Event]) -> dict[str, str]:
         found = {
@@ -1709,7 +1717,7 @@ class StateDashboardViews:
                 f"Latest recorded PR event · {event.kind.value} · {event.ts.isoformat()}"
             )
             details = (_PR_CI_NOTE,)
-        return _BlockerParts(_PR_HEADLINE, details, tuple(evidence))
+        return _BlockerParts(_PR_HEADLINE, details, raw=tuple(evidence))
 
     def dialogue(self, task_id: str | None = None) -> list[DialogueBubbleView]:
         """Build recent project or task decisions and activity in event order."""
@@ -1955,14 +1963,15 @@ def _intervention_parts(ownership: tuple[str, ...]) -> _BlockerParts:
             f"{_OWNERSHIP_HOLD_LABEL}{GROUP_SEPARATOR}{owners or _NO_OWNER_RECORDED}",
             _HAND_BACK_DETAIL,
         ),
-        evidence=(_INTERVENTION_HOLD_EVIDENCE, *takeover),
+        raw=(_INTERVENTION_HOLD_EVIDENCE, *takeover),
     )
 
 
 def _quota_parts(
-    quota_block: AgentBlock,
-    evidence: tuple[str, ...],
+    until: datetime,
     *,
+    quotas: tuple[QuotaEvidenceView, ...],
+    raw: tuple[str, ...],
     budget_ends: datetime,
     moves: bool,
     exhausted_text: str,
@@ -1972,12 +1981,27 @@ def _quota_parts(
         details=(
             _quota_reroute_text(
                 moves=moves,
-                exceeds=quota_block.until > budget_ends,
+                exceeds=until > budget_ends,
                 exhausted_text=exhausted_text,
             ),
         ),
-        evidence=evidence,
+        quotas=quotas,
+        raw=raw,
     )
+
+
+def _account_raw(agent: str, block: AgentBlock | None, now: datetime) -> str:
+    if block is None:
+        return f"Scheduler quota account block · {agent} · not recorded"
+    activity = "active" if block.until > now else "expired"
+    return (
+        f"Scheduler quota account block · {agent} · {activity} · {block.reason} · "
+        f"retry/probe deadline {block.until.isoformat()}"
+    )
+
+
+def _raw_reset(resets_at: datetime | None) -> str:
+    return resets_at.isoformat() if resets_at is not None else QUOTA_NOT_REPORTED
 
 
 def _quota_reroute_text(*, moves: bool, exceeds: bool, exhausted_text: str) -> str:

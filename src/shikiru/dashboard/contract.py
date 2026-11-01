@@ -556,7 +556,7 @@ class TaskDetailView:
     complexity: ComplexityName | None = None
     relationships: TaskRelationshipsView | None = None
     blockers: tuple[TaskBlockerView, ...] = ()
-    blocker_evidence: tuple[str, ...] = ()
+    blocker_evidence: BlockerEvidenceView | None = None
     submitted_age: str = ""
     requeued_age: str | None = None
     usage: RecordedUsageView | None = None
@@ -625,6 +625,39 @@ class QuotaWaitView:
     agent: str
     until: datetime
     refresh_at: datetime
+
+
+@dataclass(frozen=True)
+class QuotaReadingView:
+    """One quota window of a provider as the scheduler last observed it."""
+
+    window: str
+    used_pct: float
+    resets_at: datetime | None
+    observed_at: datetime
+
+
+@dataclass(frozen=True)
+class QuotaEvidenceView:
+    """The quota facts behind one provider's active blocker.
+
+    `readings` is empty when no window was recorded for the provider. `retry_note` names a
+    difference between the engine's retry and the provider reset, when the readings show one.
+    """
+
+    agent: str
+    readings: tuple[QuotaReadingView, ...] = ()
+    retry_note: str | None = None
+
+
+@dataclass(frozen=True)
+class BlockerEvidenceView:
+    """The facts behind a task's Blockers decision: quota groups, observation times, notes, raw."""
+
+    quotas: tuple[QuotaEvidenceView, ...] = ()
+    observed_at: tuple[datetime, ...] = ()
+    notes: tuple[str, ...] = ()
+    raw: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

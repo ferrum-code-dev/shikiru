@@ -21,6 +21,7 @@ from shikiru.dashboard.detail import (
     TASK_DETAIL_FOLDS,
     TASK_DETAIL_HINT,
     TASK_DETAIL_IDENTITY,
+    TASK_DETAIL_RAW_EVENTS,
     TASK_DETAIL_RELATED_LIST,
     TASK_VIEW_AGENT,
     TASK_VIEW_BLOCKER_EVIDENCE,
@@ -34,7 +35,7 @@ from shikiru.dashboard.detail_fold import CLOSED_MARK, DetailFold, DetailFolds
 from shikiru.dashboard.detail_hint import HintTarget, hint_for
 from shikiru.dashboard.details_list_view import DetailsSection, section_headline
 from shikiru.dashboard.fold_bodies import CRITERIA_LABEL, CRITERION_LEAD, NO_CRITERIA
-from shikiru.domain.quota_waits import quota_reset_clock
+from shikiru.domain.quota_waits import quota_retry_description
 from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, TriageReport
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition, first_step
@@ -50,7 +51,7 @@ from tests.support.cells import CYAN_BOLD, GREY, GREY_BOLD, Cell, foregrounds, s
 from tests.support.cells import rendered_lines as painted_lines
 from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import ManualFocusHost, fold_headline, widget_context
+from tests.support.dashboard import ManualFocusHost, widget_context
 from tests.support.render import plain_text, rendered_lines
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, WaitTimeoutError, wait_until
@@ -74,8 +75,9 @@ LEADER_AGENT = "claude"
 MAX_PARALLEL = 2
 QUOTA_BLOCK_UNTIL = START + timedelta(minutes=80)
 QUOTA_RESET = "01:20Z"
-QUOTA_CAUSE = "Waiting on quota"
+QUOTA_CAUSE = f"{LEADER_AGENT} quota"
 QUOTA_REMAINING = "in 1h 20m"
+QUOTA_WITHIN_LIMIT = "Waits for reset; the block lifts within max_quota_wait."
 QUOTA_REMAINING_LATER = "in 1h 9m"
 QUOTA_REMAINING_79_MINUTES = "in 1h 19m"
 QUOTA_REMAINING_78_MINUTES = "in 1h 18m"
@@ -410,8 +412,7 @@ def _seed_blocked_task(
             waiter = seed_task(connection, clock, title="Quota waiter")
             store.set_wait_reason(waiter.id, WaitReason.QUOTA)
             QuotaStore(connection).block(LEADER_AGENT, until, "quota", LONG_AGO)
-            reset = quota_reset_clock(until, clock.now())
-            return waiter.id, f"Waiting on quota · {LEADER_AGENT} quota blocked until {reset}"
+            return waiter.id, quota_retry_description(LEADER_AGENT, until, clock.now())
         case _Blocker.DEPENDENCY:
             dependency = seed_task(connection, clock, title="Add database")
             waiter = seed_task(
@@ -427,6 +428,10 @@ def _widget_text(widget: Widget) -> str:
 
 def _briefing_text(panel: TaskDetailPanel) -> str:
     return _widget_text(panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic))
+
+
+def _raw_events_text(panel: TaskDetailPanel) -> str:
+    return plain_text(panel.query_one(f"#{TASK_DETAIL_RAW_EVENTS}", Static).content)
 
 
 def _quota_headline(panel: TaskDetailPanel) -> str:
@@ -454,7 +459,7 @@ async def _live_work_reads(views: DashboardViews, task_id: str, statements: list
     ("blocker", "details"),
     [
         (_Blocker.SLOT, ("Starts when a slot frees.",)),
-        (_Blocker.QUOTA, (f"Blocked agent · {LEADER_AGENT}",)),
+        (_Blocker.QUOTA, (QUOTA_WITHIN_LIMIT,)),
         (_Blocker.DEPENDENCY, ()),
     ],
 )
@@ -479,7 +484,10 @@ async def test_blocker_headline_has_an_amber_glyph_and_normal_cause_with_grey_de
     try:
         async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
             await _loaded(panel, task_id)
-            await wait_until(lambda: cause in _briefing_text(panel), timeout=UI_WAIT_SECONDS)
+            await wait_until(
+                lambda: all(line in _briefing_text(panel) for line in (cause, *details)),
+                timeout=UI_WAIT_SECONDS,
+            )
             briefing = panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic)
             assert set(styles(briefing, GLYPH_WARNING)) == {(True, AMBER)}
             assert AMBER not in foregrounds(briefing, cause)
@@ -580,8 +588,8 @@ async def test_simultaneous_blockers_share_one_blockers_label_and_one_evidence_f
             assert briefing.count(BLOCKERS_LABEL) == 1
             assert f"Waiting on dependency · {dependency.id}" in briefing
             evidence = plain_text(panel.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static).content)
-            assert "Recorded scheduler reason" in evidence
-            assert dependency.id in evidence
+            assert dependency.id not in evidence
+            assert "Recorded scheduler reason" in _raw_events_text(panel)
             assert "Paused by operator" not in "\n".join(
                 _painted_rows(panel, TASK_DETAIL_RELATED_LIST)
             )
@@ -647,9 +655,7 @@ async def test_the_closed_evidence_fold_hangs_in_grey_from_the_blockers_value_co
                 timeout=UI_WAIT_SECONDS,
             )
             assert not evidence.is_open
-            assert fold_headline(panel, TASK_VIEW_BLOCKER_EVIDENCE) == "2 lines"
             assert set(styles(evidence.header, "Evidence")) == {GREY}
-            assert set(foregrounds(evidence.header, "2 lines")) == {SECONDARY_TEXT_COLOR}
             if width == 32:
                 briefing = panel.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic)
                 stacked_value_x = _blockers_value_x(panel)
@@ -694,17 +700,19 @@ async def test_a_pause_and_an_intervention_hold_share_one_blockers_label_and_one
         async with ManualFocusHost(panel).run_test(size=(PANEL_WIDTH, 40)):
             await _loaded(panel, task.id)
             await wait_until(
-                lambda: fold_headline(panel, TASK_VIEW_BLOCKER_EVIDENCE) == "3 lines",
-                timeout=UI_WAIT_SECONDS,
+                lambda: "Recorded takeover" in _raw_events_text(panel), timeout=UI_WAIT_SECONDS
             )
             briefing = _briefing_text(panel)
             assert briefing.count(BLOCKERS_LABEL) == 1
             assert "Paused by operator" in briefing
             assert "Held by operator" in briefing
             evidence = plain_text(panel.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static).content)
-            assert "Recorded hold · paused" in evidence
-            assert "Recorded hold · intervention" in evidence
-            assert "Recorded takeover · leader" in evidence
+            assert "Paused by operator" not in evidence
+            assert "Held by operator" not in evidence
+            raw_events = _raw_events_text(panel)
+            assert "Recorded hold · paused" in raw_events
+            assert "Recorded hold · intervention" in raw_events
+            assert "Recorded takeover · leader" in raw_events
     finally:
         reader.close()
 
@@ -861,7 +869,7 @@ async def test_a_quota_wait_crossing_utc_midnight_rewords_the_blocker_without_a_
             await _elapse(clock, TIMELINE_REFRESH_SECONDS)
             midnight_reads = _reads(statements)
             await wait_until(
-                lambda: f"quota blocked until {MIDNIGHT_RESET_CLOCK}" in _briefing_text(panel),
+                lambda: f"retry at {MIDNIGHT_RESET_CLOCK}" in _briefing_text(panel),
                 timeout=UI_WAIT_SECONDS,
             )
             assert MIDNIGHT_RESET_DATED not in _briefing_text(panel)

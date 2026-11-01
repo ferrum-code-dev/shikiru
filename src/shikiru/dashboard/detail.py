@@ -18,7 +18,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Rule, Static
 
 from shikiru.clock import to_local
-from shikiru.dashboard.blocker_rows import blocker_evidence_text
+from shikiru.dashboard.blocker_evidence import evidence_body, evidence_headline, raw_evidence_text
 from shikiru.dashboard.briefing_view import (
     ACTION_LABELS,
     TERMINAL_STATUSES,
@@ -86,6 +86,7 @@ if TYPE_CHECKING:
 
     from shikiru.dashboard.app import DashboardApp
     from shikiru.dashboard.contract import (
+        BlockerEvidenceView,
         TaskDetailView,
         WidgetContext,
     )
@@ -132,6 +133,8 @@ TASK_DETAIL_HINT = "task-detail-hint"
 TASK_WINDOW_KEY = "t"
 TASK_WINDOW_ACTION = "task_window"
 TASK_DETAIL_EVIDENCE = "task-detail-evidence"
+TASK_DETAIL_RAW_EVENTS = "task-detail-raw-events"
+RAW_EVENTS_TITLE = "Raw events"
 TASK_DETAIL_RELATIONSHIPS = "task-detail-relationships"
 TASK_DETAIL_RELATED_LIST = "task-detail-related-list"
 EVENTS_TIMELINE_IDS = TimelineIds.with_prefix("task-detail-timeline")
@@ -149,6 +152,7 @@ TASK_VIEW_REQUEST = "task-request"
 TASK_VIEW_EVIDENCE = "task-evidence"
 TASK_VIEW_RELATIONSHIPS = "task-relationships"
 TASK_VIEW_BLOCKER_EVIDENCE = "task-blocker-evidence"
+TASK_VIEW_RAW_EVENTS = "task-raw-events"
 TASK_VIEW_WORKSPACE = "task-workspace"
 TASK_VIEW_AGENT = "task-agent"
 DETAILS_SECTION_VIEWS = {
@@ -353,17 +357,33 @@ class TaskDetailPanel(Vertical):
         if timeline is not None:
             return [timeline]
         widgets: list[Widget] = [
-            Static("", id=widget_id, classes="task-detail-section", markup=False)
+            GatedStatic("", id=widget_id, classes="task-detail-section", markup=False)
             for widget_id in FOLD_STATICS.get(view_id, ())
         ]
         if view_id == TASK_VIEW_RELATIONSHIPS:
             widgets.append(RowList(widget_id=TASK_DETAIL_RELATED_LIST))
+        if view_id == TASK_VIEW_BLOCKER_EVIDENCE:
+            widgets.append(self._raw_events_fold())
         return widgets
+
+    def _raw_events_fold(self) -> DetailFold:
+        fold = DetailFold(
+            TASK_VIEW_RAW_EVENTS,
+            RAW_EVENTS_TITLE,
+            [
+                GatedStatic(
+                    "", id=TASK_DETAIL_RAW_EVENTS, classes="task-detail-section", markup=False
+                )
+            ],
+            name_color=SECONDARY_TEXT_COLOR,
+        )
+        self._folds[TASK_VIEW_RAW_EVENTS] = fold
+        return fold
 
     async def on_mount(self) -> None:
         self.disabled = self._task_id is None
         self._folds_list().display = self._task_id is not None
-        self._render_blocker_evidence(None)
+        self._hide_blocker_evidence()
         self._sync_timelines()
         identity = self.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         identity.update(
@@ -498,7 +518,7 @@ class TaskDetailPanel(Vertical):
             self.query_one(f"#{section_id}", Static).update("")
         self.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).update("")
         self.query_one(f"#{TASK_DETAIL_BRIEFING_BELOW}", GatedStatic).update("")
-        self._render_blocker_evidence(None)
+        self._hide_blocker_evidence()
         self._set_feedback(None)
         self.query_one(f"#{TASK_DETAIL_RELATIONSHIPS}", Static).update("")
         self.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList).set_rows(
@@ -534,7 +554,7 @@ class TaskDetailPanel(Vertical):
                 continue
             await self._refresh_activity()
             await self._refresh_live_work()
-            await self._refresh_quota_countdown()
+            await self._refresh_countdowns()
             for timeline in self._timelines.values():
                 await timeline.refresh_when_due()
 
@@ -547,19 +567,22 @@ class TaskDetailPanel(Vertical):
             return
         await self._load_view()
 
-    async def _refresh_quota_countdown(self) -> None:
+    async def _refresh_countdowns(self) -> None:
         view = self._view
-        if view is None or view.quota_wait is None:
+        if view is None:
             return
-        quota = view.quota_wait
         now = tick_now(self._widget_context.clock)
-        if now >= quota.refresh_at:
+        quota = view.quota_wait
+        if quota is not None and now >= quota.refresh_at:
             await self._load_view()
-        elif (
+            return
+        if quota is not None and (
             quota_clock_text(quota.agent, to_local(quota.until), to_local(now))
             != self._shown_quota_wording
         ):
             self._render_briefing(view, now, self._briefing_layout())
+        if view.blocker_evidence is not None:
+            self._show_blocker_evidence(view.blocker_evidence, now)
 
     async def _refresh_activity(self) -> None:
         if (
@@ -617,6 +640,10 @@ class TaskDetailPanel(Vertical):
             header_text(view, now, compact=layout.compact)
         )
         self._render_briefing(view, now, layout)
+        if view.blocker_evidence is None:
+            self._hide_blocker_evidence()
+        else:
+            self._show_blocker_evidence(view.blocker_evidence, now)
         self._render_verbs(view)
 
     def _briefing_layout(self) -> BriefingLayout:
@@ -837,7 +864,6 @@ class TaskDetailPanel(Vertical):
         self._rendered_task_id = view.task_id
         self._render_ownership(view)
         self.query_one(f"#{TASK_DETAIL_CONTEXT_INFO}", Static).update(SettingsBody(view))
-        self._render_blocker_evidence(blocker_evidence_text(view))
         self._render_relationships(view)
         self._render_activity(view)
         self.query_one(f"#{TASK_DETAIL_REQUEST}", Static).update(DescriptionBody(view))
@@ -885,15 +911,28 @@ class TaskDetailPanel(Vertical):
             blockers_value_indent(compact=layout.compact, width=width) - cell_len(ROW_LEAD),
         )
 
-    def _render_blocker_evidence(self, evidence: Text | None) -> None:
+    def _show_blocker_evidence(self, evidence: BlockerEvidenceView, now: datetime) -> None:
         fold = self._folds[TASK_VIEW_BLOCKER_EVIDENCE]
-        self.query_one(f"#{TASK_DETAIL_EVIDENCE}", Static).update(evidence or "")
-        fold.display = evidence is not None
-        if evidence is None:
-            fold.set_open(False)
+        raw_fold = self._folds[TASK_VIEW_RAW_EVENTS]
+        fold.display = True
+        fold.set_headline(evidence_headline(evidence, now))
+        self.query_one(f"#{TASK_DETAIL_EVIDENCE}", GatedStatic).update_if_changed(
+            evidence_body(evidence, now)
+        )
+        raw_fold.display = bool(evidence.raw)
+        self.query_one(f"#{TASK_DETAIL_RAW_EVENTS}", GatedStatic).update_if_changed(
+            raw_evidence_text(evidence)
+        )
+
+    def _hide_blocker_evidence(self) -> None:
+        fold = self._folds[TASK_VIEW_BLOCKER_EVIDENCE]
+        fold.display = False
+        fold.set_headline(None)
+        fold.set_open(False)
+        self._folds[TASK_VIEW_RAW_EVENTS].set_open(False)
 
     def _paint_headlines(self, view: TaskDetailView) -> None:
-        for section in DetailsSection:
+        for section in MAIN_SECTIONS:
             view_id = DETAILS_SECTION_VIEWS[section]
             if view_id not in self._timelines:
                 self._folds[view_id].set_headline(section_headline(section, view))

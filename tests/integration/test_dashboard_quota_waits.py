@@ -489,9 +489,10 @@ async def test_task_details_name_the_blocked_agent_and_reset_time_under_the_bloc
             lambda: "Blockers" in plain_text(briefing.content), timeout=UI_WAIT_SECONDS
         )
 
-        assert f"Waiting on quota · {_block_description(agent, LEADER_RESET)}" in plain_text(
-            briefing.content
-        )
+        blockers = plain_text(briefing.content)
+        assert agent in blockers
+        assert LEADER_RESET in blockers
+        assert "(in 20m)" in blockers
 
 
 @pytest.mark.parametrize(

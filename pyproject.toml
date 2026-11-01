@@ -215,6 +215,7 @@ forbidden_modules = [
   "shikiru.dashboard.activity",
   "shikiru.dashboard.app",
   "shikiru.dashboard.covered",
+  "shikiru.dashboard.blocker_evidence",
   "shikiru.dashboard.blocker_rows",
   "shikiru.dashboard.briefing_view",
   "shikiru.dashboard.diagnostics",

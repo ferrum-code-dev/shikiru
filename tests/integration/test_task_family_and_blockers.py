@@ -712,7 +712,8 @@ async def test_relationship_pages_keep_tail_tasks_navigable_and_blocking_depende
     ).task_detail(tasks.blocked.id)
     assert blocker_view is not None
     assert blocker_view.blockers
-    assert tasks.dependencies[-1].id in "\n".join(blocker_view.blocker_evidence)
+    assert blocker_view.blocker_evidence is not None
+    assert all(tasks.dependencies[-1].id not in line for line in blocker_view.blocker_evidence.raw)
     assert blocker_view.relationships is not None
     assert [item.task_id for item in blocker_view.relationships.blocking_dependencies] == [
         tasks.dependencies[-1].id
@@ -803,17 +804,21 @@ async def test_quota_and_resource_evidence_keeps_engine_deadline_reset_and_sampl
 
     assert quota_detail is not None
     assert quota_detail.blockers
-    quota_evidence = "\n".join(quota_detail.blocker_evidence)
-    assert "reset not reported" in quota_evidence
-    assert "retry/probe deadline" in quota_evidence
-    assert (TASK_CREATED_AT + timedelta(seconds=QUOTA_BLOCK_SECONDS)).isoformat() in quota_evidence
-    assert "observed 2m ago" in quota_evidence
+    quota_wait = quota_detail.blockers[0].quota_wait
+    assert quota_wait is not None
+    assert quota_wait.until == TASK_CREATED_AT + timedelta(seconds=QUOTA_BLOCK_SECONDS)
+    quota_evidence = quota_detail.blocker_evidence
+    assert quota_evidence is not None
+    [quota] = quota_evidence.quotas
+    assert quota.agent == quota_agent
+    assert [reading.resets_at for reading in quota.readings] == [None]
+    assert [reading.observed_at for reading in quota.readings] == [TASK_CREATED_AT]
     assert resource_detail is not None
     assert resource_detail.blockers
-    resource_evidence = "\n".join(resource_detail.blocker_evidence)
-    assert "Recorded scheduler reason · resources" in resource_evidence
-    assert "Dashboard resource sample" in resource_evidence
-    assert "sample age 2m" in resource_evidence
+    resource_evidence = resource_detail.blocker_evidence
+    assert resource_evidence is not None
+    assert "Recorded scheduler reason · resources" in resource_evidence.raw
+    assert resource_evidence.observed_at == (TASK_CREATED_AT,)
 
 
 async def test_running_quota_wait_requires_a_live_block_for_the_current_task_role(
@@ -908,12 +913,14 @@ async def test_running_quota_wait_requires_a_live_block_for_the_current_task_rol
     ]
 
     assert owner_detail is not None
-    assert owner_detail.blockers
-    owner_evidence = "\n".join(owner_detail.blocker_evidence)
-    assert "Current turn quota wait · leader" in owner_evidence
+    assert owner_detail.blockers[0].quota_wait is not None
+    assert owner_detail.blockers[0].quota_wait.agent == other_agent
+    assert owner_detail.blocker_evidence is not None
+    owner_raw = "\n".join(owner_detail.blocker_evidence.raw)
+    assert "Current turn quota wait · leader" in owner_raw
     assert failure.ts != quota_block.ts
-    assert f"Task quota-block event · {quota_block.ts.isoformat()}" in owner_evidence
-    assert f"Task quota-block event · {failure.ts.isoformat()}" not in owner_evidence
+    assert f"Task quota-block event · {quota_block.ts.isoformat()}" in owner_raw
+    assert f"Task quota-block event · {failure.ts.isoformat()}" not in owner_raw
     assert unrelated_detail is not None
     assert unrelated_detail.blockers == ()
     assert other_role_detail is not None
@@ -968,7 +975,9 @@ async def test_slot_pause_ownership_and_pr_blockers_use_only_recorded_state(
     assert slot_detail is not None
     assert slot_detail.blockers
     assert f"1/{slot_settings.orchestration.max_parallel} busy" in slot_detail.blockers[0].headline
-    assert occupying.id in "\n".join(slot_detail.blocker_evidence)
+    assert [task.task_id for task in slot_detail.blockers[0].related_tasks] == [occupying.id]
+    assert slot_detail.blocker_evidence is not None
+    assert all(occupying.id not in line for line in slot_detail.blocker_evidence.raw)
     assert held_detail is not None
     assert held_detail.blockers
     held_blockers = {blocker.kind: blocker for blocker in held_detail.blockers}
@@ -978,8 +987,8 @@ async def test_slot_pause_ownership_and_pr_blockers_use_only_recorded_state(
     assert Role.LEADER.value in hold_details
     assert pr_detail is not None
     assert pr_detail.blockers
-    pr_evidence = "\n".join(pr_detail.blocker_evidence)
-    assert "https://example.test/pr/82" in pr_evidence
+    assert pr_detail.blocker_evidence is not None
+    assert any("https://example.test/pr/82" in line for line in pr_detail.blocker_evidence.raw)
     assert "CI state" in "\n".join(pr_detail.blockers[0].details)
 
 

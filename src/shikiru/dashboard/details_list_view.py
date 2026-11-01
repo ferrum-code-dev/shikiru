@@ -32,7 +32,6 @@ _COMMIT_NOUNS = {True: "commit", False: "commits"}
 _BRANCH_WORD = "branch"
 _PRIORITY_WORD = "priority"
 _DEPENDENCY_NOUNS = ("dependency", "dependencies")
-_LINE_NOUNS = ("line", "lines")
 
 
 class DetailsSection(StrEnum):
@@ -141,17 +140,11 @@ def _dependencies_headline(view: TaskDetailView) -> str | None:
     return f"{count} {_DEPENDENCY_NOUNS[count != 1]}" if count else None
 
 
-def _blocker_evidence_headline(view: TaskDetailView) -> str | None:
-    count = len(view.blocker_evidence)
-    return f"{count} {_LINE_NOUNS[count != 1]}" if count else None
-
-
 _HEADLINES: dict[DetailsSection, Callable[[TaskDetailView], str | None]] = {
     DetailsSection.RESULTS: _results_headline,
     DetailsSection.DECISIONS: _decisions_headline,
     DetailsSection.USAGE: _usage_headline,
     DetailsSection.WORKSPACE: _workspace_headline,
     DetailsSection.BLOCKERS: _dependencies_headline,
-    DetailsSection.BLOCKER_EVIDENCE: _blocker_evidence_headline,
     DetailsSection.SETTINGS: _settings_headline,
 }
