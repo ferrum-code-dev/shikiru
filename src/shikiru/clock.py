@@ -29,3 +29,13 @@ class SystemClock:
     async def sleep(self, seconds: float) -> None:
         """Suspend the caller for `seconds`."""
         await asyncio.sleep(seconds)
+
+
+def to_local(value: datetime) -> datetime:
+    """Return `value` as the viewer's local time, using the offset in force at that instant."""
+    return value.astimezone()
+
+
+def from_local(value: datetime) -> datetime:
+    """Return the aware instant the naive wall-clock `value` names in the viewer's zone."""
+    return value.astimezone()

@@ -13,6 +13,13 @@ if TYPE_CHECKING:
     from datetime import datetime
 
 
+_SELECT_BLOCK = (
+    "SELECT agent_blocks.agent AS agent, agent_blocks.until AS until, "
+    "agent_blocks.reason AS reason, agent_block_times.blocked_at AS blocked_at "
+    "FROM agent_blocks JOIN agent_block_times ON agent_block_times.agent = agent_blocks.agent"
+)
+
+
 @dataclass(frozen=True, slots=True)
 class AgentBlock:
     """An agent blocked from dispatch until `until`."""
@@ -20,6 +27,7 @@ class AgentBlock:
     agent: str
     until: datetime
     reason: str
+    blocked_at: datetime
 
 
 def _row_to_quota_window(row: sqlite3.Row) -> QuotaWindow:
@@ -33,7 +41,10 @@ def _row_to_quota_window(row: sqlite3.Row) -> QuotaWindow:
 
 def _row_to_agent_block(row: sqlite3.Row) -> AgentBlock:
     return AgentBlock(
-        agent=row["agent"], until=parse_required_timestamp(row["until"]), reason=row["reason"]
+        agent=row["agent"],
+        until=parse_required_timestamp(row["until"]),
+        reason=row["reason"],
+        blocked_at=parse_required_timestamp(row["blocked_at"]),
     )
 
 
@@ -55,7 +66,7 @@ def fetch_quota_agents(connection: sqlite3.Connection) -> list[str]:
 def fetch_active_agent_blocks(connection: sqlite3.Connection, now: datetime) -> list[AgentBlock]:
     """Read every agent block still in effect at `now`."""
     rows = connection.execute(
-        "SELECT agent, until, reason FROM agent_blocks WHERE until > ?",
+        _SELECT_BLOCK + " WHERE agent_blocks.until > ?",
         (format_timestamp(now),),
     ).fetchall()
     return [_row_to_agent_block(row) for row in rows]
@@ -63,9 +74,7 @@ def fetch_active_agent_blocks(connection: sqlite3.Connection, now: datetime) -> 
 
 def fetch_agent_block(connection: sqlite3.Connection, agent: str) -> AgentBlock | None:
     """Read an agent's block, including one whose deadline has passed."""
-    row = connection.execute(
-        "SELECT agent, until, reason FROM agent_blocks WHERE agent = ?", (agent,)
-    ).fetchone()
+    row = connection.execute(_SELECT_BLOCK + " WHERE agent_blocks.agent = ?", (agent,)).fetchone()
     return _row_to_agent_block(row) if row is not None else None
 
 
@@ -77,7 +86,7 @@ class QuotaStore:
         self._connection = connection
 
     def record(self, agent: str, window: QuotaWindow) -> None:
-        """Upsert `agent`'s quota window, keeping the plugin-supplied `observed_at` as-is."""
+        """Upsert `agent`'s quota window unless the stored sample was observed later."""
         self._connection.execute(
             """
             INSERT INTO quotas (agent, window, used_pct, resets_at, observed_at)
@@ -86,6 +95,7 @@ class QuotaStore:
               used_pct = excluded.used_pct,
               resets_at = excluded.resets_at,
               observed_at = excluded.observed_at
+            WHERE excluded.observed_at >= quotas.observed_at
             """,
             (
                 agent,
@@ -96,8 +106,11 @@ class QuotaStore:
             ),
         )
 
-    def block(self, agent: str, until: datetime, reason: str) -> None:
-        """Block `agent` from dispatch until the later of the current and requested deadlines."""
+    def block(self, agent: str, until: datetime, reason: str, blocked_at: datetime) -> None:
+        """Block `agent` until the later of the current and requested deadlines.
+
+        `blocked_at` is when quota was last found exhausted; it only moves forward.
+        """
         self._connection.execute(
             "INSERT INTO agent_blocks (agent, until, reason) VALUES (?, ?, ?) "
             "ON CONFLICT (agent) DO UPDATE SET "
@@ -107,10 +120,17 @@ class QuotaStore:
             "THEN agent_blocks.reason ELSE excluded.reason END",
             (agent, format_timestamp(until), reason),
         )
+        self._connection.execute(
+            "INSERT INTO agent_block_times (agent, blocked_at) VALUES (?, ?) "
+            "ON CONFLICT (agent) DO UPDATE SET blocked_at = excluded.blocked_at "
+            "WHERE excluded.blocked_at > agent_block_times.blocked_at",
+            (agent, format_timestamp(blocked_at)),
+        )
 
     def clear_block(self, agent: str) -> None:
         """Remove `agent`'s block, if any."""
         self._connection.execute("DELETE FROM agent_blocks WHERE agent = ?", (agent,))
+        self._connection.execute("DELETE FROM agent_block_times WHERE agent = ?", (agent,))
 
     def active_blocks(self, now: datetime) -> list[AgentBlock]:
         """Read every agent block still in effect at `now`."""

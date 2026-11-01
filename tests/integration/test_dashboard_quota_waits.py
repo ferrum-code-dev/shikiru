@@ -21,7 +21,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.ui.glyphs import GLYPH_QUOTA
 from shikiru.ui.tokens import AMBER
 from tests.support.cells import foregrounds
-from tests.support.clock import FakeClock
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
@@ -37,6 +37,7 @@ from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from shikiru.store.reader import StateReader
@@ -143,12 +144,12 @@ def _set_leader_block(
     store = QuotaStore(connection)
     match state:
         case _BlockState.ACTIVE:
-            store.block(agent, LEADER_BLOCK_UNTIL, "quota")
+            store.block(agent, LEADER_BLOCK_UNTIL, "quota", LONG_AGO)
         case _BlockState.EXPIRED:
-            store.block(agent, EXPIRED_UNTIL, "quota")
+            store.block(agent, EXPIRED_UNTIL, "quota", LONG_AGO)
             clock.advance(EXPIRED_WAIT_SECONDS)
         case _BlockState.CLEARED:
-            store.block(agent, LEADER_BLOCK_UNTIL, "quota")
+            store.block(agent, LEADER_BLOCK_UNTIL, "quota", LONG_AGO)
             store.clear_block(agent)
 
 
@@ -174,7 +175,7 @@ async def test_queued_task_waiting_on_quota_is_marked_in_amber_while_its_leader_
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task_id = _seed_queued_task(connection, clock, "Retry after quota", WaitReason.QUOTA)
-    QuotaStore(connection).block(_leader_agent(project_dir), LEADER_BLOCK_UNTIL, "quota")
+    QuotaStore(connection).block(_leader_agent(project_dir), LEADER_BLOCK_UNTIL, "quota", LONG_AGO)
     widget = cast("QueuePanel", QueueWidget().create(widget_context(reader, project_dir, clock)))
 
     async with WidgetHostApp(widget).run_test():
@@ -269,13 +270,83 @@ async def test_usage_banner_names_the_blocked_agent_and_the_tasks_waiting_behind
     clock = FakeClock(START)
     _seed_queued_task(connection, clock, "Waiting behind the block", WaitReason.QUOTA)
     agent = _leader_agent(project_dir)
-    QuotaStore(connection).block(agent, LEADER_BLOCK_UNTIL, "quota")
+    QuotaStore(connection).block(agent, LEADER_BLOCK_UNTIL, "quota", LONG_AGO)
     panel = UsagePanel(widget_context(reader, project_dir, clock))
 
     async with WidgetHostApp(panel).run_test(size=(100, 40)):
         text = await _usage_text(panel)
 
         assert f"{_block_description(agent, LEADER_RESET)} · 1 task waiting" in text
+
+
+@pytest.mark.parametrize(
+    ("zone", "now", "until", "expected"),
+    [
+        pytest.param(
+            "Europe/Warsaw",
+            START,
+            START + timedelta(minutes=20),
+            "01:20",
+            id="winter-offset-has-no-z",
+        ),
+        pytest.param(
+            "Europe/Warsaw",
+            datetime(2026, 7, 1, tzinfo=UTC),
+            datetime(2026, 7, 1, 0, 20, tzinfo=UTC),
+            "02:20",
+            id="summer-offset-follows-dst",
+        ),
+        pytest.param(
+            "Europe/Warsaw",
+            datetime(2026, 10, 24, 20, 0, tzinfo=UTC),
+            datetime(2026, 10, 25, 8, 0, tzinfo=UTC),
+            "Oct 25 09:00",
+            id="reset-after-the-dst-change-uses-its-own-offset",
+        ),
+        pytest.param(
+            "America/Los_Angeles",
+            datetime(2026, 1, 1, 7, 50, tzinfo=UTC),
+            datetime(2026, 1, 1, 8, 10, tzinfo=UTC),
+            "Jan 01 00:10",
+            id="local-midnight-adds-the-date",
+        ),
+        pytest.param(
+            "America/Los_Angeles",
+            datetime(2026, 1, 1, 8, 10, tzinfo=UTC),
+            datetime(2026, 1, 1, 8, 30, tzinfo=UTC),
+            "00:30",
+            id="same-local-day-drops-the-date",
+        ),
+    ],
+)
+async def test_usage_alert_reads_the_reset_in_local_time_while_storage_stays_utc(
+    *,
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    local_timezone: Callable[[str], None],
+    zone: str,
+    now: datetime,
+    until: datetime,
+    expected: str,
+) -> None:
+    local_timezone(zone)
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(now)
+    _seed_queued_task(connection, clock, "Waiting behind the block", WaitReason.QUOTA)
+    agent = _leader_agent(project_dir)
+    QuotaStore(connection).block(agent, until, "quota", LONG_AGO)
+    panel = UsagePanel(widget_context(reader, project_dir, clock))
+
+    async with WidgetHostApp(panel).run_test(size=(100, 40)):
+        text = await _usage_text(panel)
+
+    assert f"{_block_description(agent, expected)} · 1 task waiting" in text
+    [stored] = connection.execute("SELECT until FROM agent_blocks").fetchall()
+    assert stored[0] == until.isoformat(timespec="microseconds")
+    [block] = QuotaStore(connection).active_blocks(now)
+    assert block.until == until
+    assert block.until.utcoffset() == timedelta(0)
 
 
 async def test_usage_shows_no_banner_when_no_agent_is_blocked(
@@ -304,8 +375,8 @@ async def test_home_usage_shows_quota_banners_before_details_and_drops_them_at_e
     leader = _leader_agent(project_dir)
     _seed_queued_task(connection, clock, "Waiting behind the leader", WaitReason.QUOTA)
     store = QuotaStore(connection)
-    store.block(leader, LEADER_BLOCK_UNTIL, "quota")
-    store.block(UNRELATED_AGENT, UNRELATED_BLOCK_UNTIL, "quota")
+    store.block(leader, LEADER_BLOCK_UNTIL, "quota", LONG_AGO)
+    store.block(UNRELATED_AGENT, UNRELATED_BLOCK_UNTIL, "quota", LONG_AGO)
     app = dashboard_app(
         reader,
         project_dir,
@@ -342,7 +413,7 @@ async def test_expanded_usage_banner_disappears_on_motion_once_the_block_expires
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     _seed_queued_task(connection, clock, "Waiting until reset", WaitReason.QUOTA)
-    QuotaStore(connection).block(_leader_agent(project_dir), LEADER_BLOCK_UNTIL, "quota")
+    QuotaStore(connection).block(_leader_agent(project_dir), LEADER_BLOCK_UNTIL, "quota", LONG_AGO)
     app = dashboard_app(
         reader,
         project_dir,
@@ -381,9 +452,9 @@ async def test_banner_counts_each_task_once_for_every_blocked_agent_it_needs(
     _seed_queued_task(connection, clock, "Behind a dependency", WaitReason.DEPENDENCY)
     _seed_running_quota_wait(connection, clock, project_dir)
     store = QuotaStore(connection)
-    store.block(leader, LEADER_BLOCK_UNTIL, "quota")
-    store.block(implementer, IMPLEMENTER_BLOCK_UNTIL, "quota")
-    store.block(UNRELATED_AGENT, UNRELATED_BLOCK_UNTIL, "quota")
+    store.block(leader, LEADER_BLOCK_UNTIL, "quota", LONG_AGO)
+    store.block(implementer, IMPLEMENTER_BLOCK_UNTIL, "quota", LONG_AGO)
+    store.block(UNRELATED_AGENT, UNRELATED_BLOCK_UNTIL, "quota", LONG_AGO)
     views = state_views(reader, project_dir, clock, StubServices())
 
     banners = {block.agent: block.banner for block in views.quota_blocks()}
@@ -409,7 +480,7 @@ async def test_task_details_name_the_blocked_agent_and_reset_time_under_the_bloc
     clock = FakeClock(START)
     task_id = _seed_queued_task(connection, clock, "Detail under quota", WaitReason.QUOTA)
     agent = _leader_agent(project_dir)
-    QuotaStore(connection).block(agent, LEADER_BLOCK_UNTIL, "quota")
+    QuotaStore(connection).block(agent, LEADER_BLOCK_UNTIL, "quota", LONG_AGO)
     app = dashboard_app(reader, project_dir, clock, widget_names=["usage"], focus_task=task_id)
 
     async with app.run_test(size=(180, 40)) as pilot:
@@ -445,9 +516,9 @@ async def test_task_details_say_whether_a_quota_wait_moves_the_task_to_another_a
     clock = FakeClock(START)
     task_id = _seed_queued_task(connection, clock, "Reroute candidate", WaitReason.QUOTA)
     quotas = QuotaStore(connection)
-    quotas.block("claude", reset_at, "quota")
+    quotas.block("claude", reset_at, "quota", LONG_AGO)
     if other_agent_blocked:
-        quotas.block("codex", reset_at, "quota")
+        quotas.block("codex", reset_at, "quota", LONG_AGO)
     views = state_views(reader, project_dir, clock, StubServices())
 
     detail = await views.task_detail(task_id)
@@ -494,7 +565,7 @@ async def test_a_block_extended_during_a_running_wait_is_judged_against_the_wait
         (project_dir / ".shikiru" / "config.toml").write_text(REROUTING_CONFIG)
     clock = FakeClock(START)
     task_id = _seed_running_quota_wait(connection, clock, project_dir)
-    QuotaStore(connection).block(_leader_agent(project_dir), extended_until, "quota")
+    QuotaStore(connection).block(_leader_agent(project_dir), extended_until, "quota", LONG_AGO)
     clock.advance(RUNNING_WAIT_ELAPSED_SECONDS)
     views = state_views(reader, project_dir, clock, StubServices())
 

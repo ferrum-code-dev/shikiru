@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from shikiru.agents.contracts import QuotaWindow
 from shikiru.store.database import Database
 from shikiru.store.quotas import QuotaStore, fetch_quotas
+from tests.support.clock import LONG_AGO
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -23,8 +24,8 @@ def _make_store(connection: Connection) -> QuotaStore:
 
 def test_active_blocks_excludes_expired_blocks_and_other_agents(connection: Connection) -> None:
     store = _make_store(connection)
-    store.block("claude", START + timedelta(minutes=10), "quota")
-    store.block("codex", START - timedelta(minutes=1), "quota")
+    store.block("claude", START + timedelta(minutes=10), "quota", LONG_AGO)
+    store.block("codex", START - timedelta(minutes=1), "quota", LONG_AGO)
 
     active = store.active_blocks(START)
 
@@ -33,7 +34,7 @@ def test_active_blocks_excludes_expired_blocks_and_other_agents(connection: Conn
 
 def test_clear_block_removes_it(connection: Connection) -> None:
     store = _make_store(connection)
-    store.block("claude", START + timedelta(minutes=10), "quota")
+    store.block("claude", START + timedelta(minutes=10), "quota", LONG_AGO)
 
     store.clear_block("claude")
 
@@ -42,9 +43,9 @@ def test_clear_block_removes_it(connection: Connection) -> None:
 
 def test_block_extends_an_earlier_block_for_the_same_agent(connection: Connection) -> None:
     store = _make_store(connection)
-    store.block("claude", START + timedelta(minutes=5), "first")
+    store.block("claude", START + timedelta(minutes=5), "first", LONG_AGO)
 
-    store.block("claude", START + timedelta(minutes=30), "second")
+    store.block("claude", START + timedelta(minutes=30), "second", LONG_AGO)
 
     [active] = store.active_blocks(START)
     assert active.reason == "second"
@@ -54,9 +55,9 @@ def test_block_extends_an_earlier_block_for_the_same_agent(connection: Connectio
 def test_block_does_not_shorten_an_existing_cross_task_block(connection: Connection) -> None:
     store = _make_store(connection)
     deadline = START + timedelta(minutes=30)
-    store.block("claude", deadline, "first")
+    store.block("claude", deadline, "first", LONG_AGO)
 
-    store.block("claude", START + timedelta(minutes=5), "second")
+    store.block("claude", START + timedelta(minutes=5), "second", LONG_AGO)
 
     [active] = store.active_blocks(START)
     assert active.reason == "first"
@@ -66,7 +67,7 @@ def test_block_does_not_shorten_an_existing_cross_task_block(connection: Connect
 def test_active_blocks_orders_correctly_at_sub_second_precision(connection: Connection) -> None:
     store = _make_store(connection)
     until = START + timedelta(microseconds=500)
-    store.block("claude", until, "quota")
+    store.block("claude", until, "quota", LONG_AGO)
 
     assert [block.agent for block in store.active_blocks(START)] == ["claude"]
     assert store.active_blocks(until) == []

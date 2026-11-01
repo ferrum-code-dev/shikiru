@@ -240,8 +240,8 @@ def test_decide_rejects_a_completed_result() -> None:
         decide(Completed(report=make_verdict()), TurnCounters(), _policy())
 
 
-def _window(resets_at: datetime | None) -> QuotaWindow:
-    return QuotaWindow(name="5h", used_pct=100.0, resets_at=resets_at, observed_at=_NOW)
+def _window(resets_at: datetime | None, used_pct: float = 100.0) -> QuotaWindow:
+    return QuotaWindow(name="5h", used_pct=used_pct, resets_at=resets_at, observed_at=_NOW)
 
 
 _SOONER = _NOW + timedelta(minutes=30)
@@ -269,7 +269,17 @@ _LATER = _NOW + timedelta(hours=1)
         (
             Failed(FailureKind.QUOTA, None, ""),
             [_window(_LATER), _window(None), _window(_SOONER)],
-            Failed(FailureKind.QUOTA, _SOONER, ""),
+            Failed(FailureKind.QUOTA, _LATER, ""),
+        ),
+        (
+            Failed(FailureKind.QUOTA, None, ""),
+            [_window(_SOONER, used_pct=11.0), _window(_LATER)],
+            Failed(FailureKind.QUOTA, _LATER, ""),
+        ),
+        (
+            Failed(FailureKind.QUOTA, None, ""),
+            [_window(_SOONER, used_pct=11.0)],
+            Failed(FailureKind.QUOTA, None, ""),
         ),
         (
             Failed(FailureKind.UNAVAILABLE, None, ""),
@@ -282,7 +292,9 @@ _LATER = _NOW + timedelta(hours=1)
         "explicit-reset-kept",
         "null-windows-ignored",
         "expired-windows-ignored",
-        "earliest-future-reset-chosen",
+        "latest-exhausted-reset-chosen",
+        "available-window-skipped-for-the-exhausted-one",
+        "only-available-windows-leave-it-unknown",
         "other-kinds-untouched",
         "non-failure-untouched",
     ],

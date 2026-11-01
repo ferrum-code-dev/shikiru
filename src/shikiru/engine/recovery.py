@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.domain.recovery import Action, TurnResult
     from shikiru.domain.tasks import Role, Step, Task
+    from shikiru.engine.quota_reconciler import QuotaReconciler
     from shikiru.engine.transitions import TransitionWriter
     from shikiru.engine.turn_execution import TurnExecution
     from shikiru.store.events import EventLog
@@ -68,6 +69,7 @@ class TurnRecovery:
         tasks: TaskStore,
         events: EventLog,
         quota: QuotaStore,
+        reconciler: QuotaReconciler,
         clock: Clock,
         writer: TransitionWriter,
         settings: Settings,
@@ -76,6 +78,7 @@ class TurnRecovery:
         self._tasks = tasks
         self._events = events
         self._quota = quota
+        self._reconciler = reconciler
         self._clock = clock
         self._writer = writer
         self._settings = settings
@@ -170,7 +173,7 @@ class TurnRecovery:
         if isinstance(action, ResumeTurn):
             resumed = dataclasses.replace(counters, stall_recoveries=counters.stall_recoveries + 1)
             return RecoveryStep(self._tasks.require(task.id), resumed, next_turn=_CONTINUE)
-        terminal = await self._wait_for_quota(task, role, action.until)
+        terminal = await self._wait_for_quota(task, role)
         if terminal is None:
             return RecoveryStep(self._tasks.require(task.id), counters, next_turn=_CONTINUE)
         exhausted = dataclasses.replace(execution, result=terminal, quota_wait_exhausted=True)
@@ -227,8 +230,9 @@ class TurnRecovery:
 
     def _block_quota(self, task: Task, role: Role, resets_at: datetime | None) -> None:
         agent = pick_rung(task, role, self._settings).agent
-        until = quota_block_until(resets_at, self._clock.now())
-        self._quota.block(agent, until, QUOTA_BLOCK_REASON)
+        now = self._clock.now()
+        until = quota_block_until(resets_at, now)
+        self._quota.block(agent, until, QUOTA_BLOCK_REASON, now)
         self._events.append(
             EventKind.QUOTA_BLOCKED,
             task_id=task.id,
@@ -236,7 +240,7 @@ class TurnRecovery:
             data={"agent": agent, "until": until.isoformat(), "reason": QUOTA_BLOCK_REASON},
         )
 
-    async def _wait_for_quota(self, task: Task, role: Role, until: datetime) -> Failed | None:
+    async def _wait_for_quota(self, task: Task, role: Role) -> Failed | None:
         agent = pick_rung(task, role, self._settings).agent
         deadline = self._clock.now() + timedelta(
             seconds=self._settings.orchestration.timeouts.max_quota_wait
@@ -244,16 +248,20 @@ class TurnRecovery:
         while True:
             current = self._quota.block_for(agent)
             now = self._clock.now()
-            current_until = current.until if current is not None else until
-            if current_until > now:
+            if current is None:
+                return None
+            if current.until > now:
                 if now >= deadline:
                     return Failed(
                         kind=FailureKind.QUOTA,
-                        resets_at=current_until - QUOTA_MARGIN,
+                        resets_at=current.until - QUOTA_MARGIN,
                         message=_QUOTA_WAIT_EXHAUSTED_MESSAGE,
                     )
-                remaining = min(current_until, deadline) - now
-                await self._clock.sleep(remaining.total_seconds())
+                remaining = min(current.until, deadline) - now
+                await self._clock.sleep(
+                    min(remaining.total_seconds(), self._reconciler.interval_seconds)
+                )
+                await self._reconciler.refresh(agent)
                 continue
             self._quota.clear_block(agent)
             self._events.append(

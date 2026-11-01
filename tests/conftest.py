@@ -6,6 +6,7 @@ import asyncio
 import os
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,7 +16,7 @@ from shikiru.process import SubprocessRunner
 from tests.support.xdist_workers import CPUS_PER_WORKER_ENV, worker_count
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 _TMUX_DIR_PARENT = "/tmp"  # noqa: S108
 _TMUX_DEFAULT_SOCKET = "default"
@@ -45,6 +46,23 @@ def clear_fake_cli_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in tuple(os.environ):
         if name.startswith("SHIKIRU_FAKE_SCRIPT") or name == "SHIKIRU_FAKE_TICK_A1":
             monkeypatch.delenv(name)
+
+
+_DEFAULT_LOCAL_ZONE = "UTC"
+
+
+@pytest.fixture(autouse=True)
+def local_timezone(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[str], None]]:
+    """Pin the process's local zone to UTC; the yielded callable switches it for one test."""
+
+    def use(zone: str) -> None:
+        monkeypatch.setenv("TZ", zone)
+        time.tzset()
+
+    use(_DEFAULT_LOCAL_ZONE)
+    yield use
+    monkeypatch.undo()
+    time.tzset()
 
 
 @pytest.fixture

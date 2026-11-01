@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from shikiru.agents.contracts import Rung
+from shikiru.agents.contracts import QuotaWindow, Rung
 from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
 from shikiru.domain.commands import Submit
 from shikiru.domain.events import EventKind
@@ -26,9 +27,11 @@ from shikiru.domain.tasks import (
     Step,
     TaskOrigin,
 )
+from shikiru.engine.agents import AgentPool
 from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.layout_guard import LayoutGuard
+from shikiru.engine.quota_reconciler import QUOTA_REFRESH_SCOPE
 from shikiru.engine.root_preparation import RootPreparation
 from shikiru.engine.scheduler import FETCH_FAULT_SCOPE, MAX_DISPATCH_FAILURES, Scheduler
 from shikiru.engine.titles import TaskTitles
@@ -51,11 +54,13 @@ from shikiru.workspace.base_refs import FetchedBaseRefs, LocalBaseRefs
 from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
 from shikiru.workspace.roots import TaskRootBuilder
-from tests.support.clock import FakeClock
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.engine import (
     build_decorator,
     build_evidence,
     build_fault_reporter,
+    build_reconciler,
+    build_registry,
     build_tmux,
     build_writer,
 )
@@ -70,12 +75,14 @@ from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
+    from datetime import datetime
     from pathlib import Path
 
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.scheduling import ReadySchedule
     from shikiru.domain.tasks import Task
+    from shikiru.engine.quota_reconciler import QuotaReconciler
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -138,6 +145,7 @@ class SchedulerFixture:
     settings: Settings
     tasks: TaskStore
     quotas: QuotaStore
+    reconciler: QuotaReconciler
     events: EventLog
     layout: LayoutGuard
     roots: TaskRootBuilder
@@ -203,6 +211,7 @@ def _scheduler(environment: SchedulerFixture, settings: Settings) -> Scheduler:
         tasks=environment.tasks,
         settings=settings,
         quotas=environment.quotas,
+        reconciler=environment.reconciler,
         resources=ResourceSampler(environment.clock, lambda: settings.orchestration.resources),
         clock=environment.clock,
         layout=environment.layout,
@@ -275,10 +284,18 @@ async def scheduler_env(
     writer = build_writer(connection, clock, tmux=tmux)
     dependency_callback = DependencyEscalator(writer, raiser)
     dispatch_failure_callback = DispatchFailureEscalator(writer, raiser)
+    reconciler = build_reconciler(
+        quotas=quotas,
+        agents=AgentPool(build_registry().create, SubprocessRunner(), settings, clock),
+        events=events,
+        clock=clock,
+        settings=settings,
+    )
     scheduler = Scheduler(
         tasks=tasks,
         settings=settings,
         quotas=quotas,
+        reconciler=reconciler,
         resources=ResourceSampler(clock, lambda: settings.orchestration.resources),
         clock=clock,
         layout=layout,
@@ -296,6 +313,7 @@ async def scheduler_env(
         settings,
         tasks,
         quotas,
+        reconciler,
         events,
         layout,
         roots,
@@ -477,7 +495,9 @@ async def test_quota_gate_persists_wait_reason(
     scheduler_env: SchedulerFixture, connection: Connection
 ) -> None:
     task = _submit(connection, scheduler_env.clock, title="quota")
-    scheduler_env.quotas.block("fake", scheduler_env.clock.now() + timedelta(hours=1), "test quota")
+    scheduler_env.quotas.block(
+        "fake", scheduler_env.clock.now() + timedelta(hours=1), "test quota", LONG_AGO
+    )
 
     schedule = await scheduler_env.scheduler.run_once()
 
@@ -528,7 +548,7 @@ async def test_persisted_quota_block_falls_back_for_consecutive_queued_tasks(
 ) -> None:
     settings = scheduler_env.settings
     until = scheduler_env.clock.now() + timedelta(hours=5)
-    scheduler_env.quotas.block(_FAKE_RUNG.agent, until, "quota")
+    scheduler_env.quotas.block(_FAKE_RUNG.agent, until, "quota", LONG_AGO)
     scheduler = _scheduler(scheduler_env, settings)
 
     for title in ("first task after restart", "next task"):
@@ -574,6 +594,7 @@ async def test_queued_quota_fallback_respects_remaining_wait_budget(
         _FAKE_RUNG.agent,
         scheduler_env.clock.now() + timedelta(seconds=remaining_seconds),
         "quota",
+        LONG_AGO,
     )
 
     schedule = await _scheduler(scheduler_env, settings).run_once()
@@ -603,7 +624,7 @@ async def test_queued_quota_fallback_skips_other_blocked_agents(
     queued = _submit(connection, scheduler_env.clock, title="multiple quota blocks")
     for rung in ladder if all_blocked else ladder[:-1]:
         scheduler_env.quotas.block(
-            rung.agent, scheduler_env.clock.now() + timedelta(hours=5), "quota"
+            rung.agent, scheduler_env.clock.now() + timedelta(hours=5), "quota", LONG_AGO
         )
 
     schedule = await _scheduler(scheduler_env, settings).run_once()
@@ -639,7 +660,7 @@ async def test_all_agents_on_quota_wait_without_moving_and_resume_when_one_reset
     reset_after = _QUOTA_WAIT_SECONDS * 2
     for rung in (_FAKE_RUNG, _BLOCKED_RUNG, _FALLBACK_RUNG):
         delay = timedelta(seconds=reset_after) if rung == first_reset else timedelta(hours=5)
-        scheduler_env.quotas.block(rung.agent, clock.now() + delay, "quota")
+        scheduler_env.quotas.block(rung.agent, clock.now() + delay, "quota", LONG_AGO)
     scheduler = _scheduler(scheduler_env, settings)
 
     for advance in (0, _QUOTA_WAIT_SECONDS + 1):
@@ -1071,3 +1092,205 @@ async def test_a_slow_cache_copy_runs_beside_the_tick_and_completes_the_dispatch
     finally:
         release.touch()
         await scheduler.shutdown()
+
+
+_EXHAUSTED_WEEKLY_RESET = timedelta(days=3)
+_AVAILABLE_AFTER_BLOCK = timedelta(minutes=10)
+_RESTART_AGENT = "fake"
+
+
+@dataclass
+class QuotaProbeFixture:
+    env: SchedulerFixture
+    source: Path
+    settings: Settings
+    blocked_at: datetime
+
+    def publish(self, *, five_hour: float, weekly: float, observed_at: datetime) -> None:
+        source = {
+            "observed_at": observed_at.isoformat(),
+            "windows": [
+                {"name": "5h", "used_pct": five_hour, "resets_at": None},
+                {
+                    "name": "7d",
+                    "used_pct": weekly,
+                    "resets_at": (self.blocked_at + _EXHAUSTED_WEEKLY_RESET).isoformat(),
+                },
+            ],
+        }
+        self.source.write_text(json.dumps(source), encoding="utf-8")
+
+    def advance(self, seconds: float) -> None:
+        assert isinstance(self.env.clock, FakeClock)
+        self.env.clock.advance(seconds)
+
+    def restart(self) -> Scheduler:
+        reconciler = build_reconciler(
+            quotas=self.env.quotas,
+            agents=AgentPool(
+                build_registry().create, SubprocessRunner(), self.settings, self.env.clock
+            ),
+            events=self.env.events,
+            clock=self.env.clock,
+            settings=self.settings,
+        )
+        return _scheduler(dataclasses.replace(self.env, reconciler=reconciler), self.settings)
+
+    @property
+    def refresh_interval(self) -> float:
+        return self.settings.orchestration.quota_refresh.interval_seconds
+
+
+@pytest.fixture
+def quota_probe(scheduler_env: SchedulerFixture, tmp_path: Path) -> QuotaProbeFixture:
+    source = tmp_path / "quota-source.json"
+    settings = scheduler_env.settings.model_copy(
+        update={"agents": {"fake": AgentConfig(options={"quota_file": str(source)})}}
+    )
+    clock = scheduler_env.clock
+    blocked_at = clock.now()
+    scheduler_env.quotas.record(
+        _RESTART_AGENT, QuotaWindow("5h", 11.0, blocked_at + timedelta(hours=4), blocked_at)
+    )
+    scheduler_env.quotas.record(
+        _RESTART_AGENT,
+        QuotaWindow("7d", 100.0, blocked_at + _EXHAUSTED_WEEKLY_RESET, blocked_at),
+    )
+    scheduler_env.quotas.block(
+        _RESTART_AGENT, blocked_at + _EXHAUSTED_WEEKLY_RESET, "quota", blocked_at
+    )
+    return QuotaProbeFixture(scheduler_env, source, settings, blocked_at)
+
+
+async def test_a_newer_available_reading_dispatches_a_task_queued_behind_a_future_block(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    task = _submit(connection, env.clock, title="blocked behind a stale deadline")
+    scheduler = quota_probe.restart()
+    assert (await scheduler.run_once()).dispatches == ()
+    assert env.tasks.require(task.id).wait_reason == "quota"
+
+    quota_probe.advance(quota_probe.refresh_interval + 1)
+    quota_probe.publish(five_hour=2, weekly=0, observed_at=env.clock.now())
+    schedule = await scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in schedule.dispatches] == [task.id]
+    running = env.tasks.require(task.id)
+    assert running.status is Status.RUNNING
+    assert running.wait_reason is None
+    assert env.quotas.active_blocks(env.clock.now()) == []
+    [cleared] = env.events.since(0, kinds=[EventKind.QUOTA_CLEARED])
+    assert cleared.data["agent"] == _RESTART_AGENT
+    assert {window.name: window.used_pct for window in env.quotas.windows_for("fake")} == {
+        "5h": 2.0,
+        "7d": 0.0,
+    }
+
+
+async def test_a_block_persisted_before_a_restart_is_revalidated_on_the_first_tick(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    task = _submit(connection, env.clock, title="queued across a restart")
+    quota_probe.advance(_AVAILABLE_AFTER_BLOCK.total_seconds())
+    quota_probe.publish(five_hour=3, weekly=0, observed_at=env.clock.now())
+
+    schedule = await quota_probe.restart().run_once()
+
+    assert [dispatch.task_id for dispatch in schedule.dispatches] == [task.id]
+    assert env.quotas.block_for("fake") is None
+
+
+@pytest.mark.parametrize(
+    ("five_hour", "weekly", "age"),
+    [
+        pytest.param(2, 0, -timedelta(minutes=1), id="sample-older-than-the-block"),
+        pytest.param(2, 100, _AVAILABLE_AFTER_BLOCK, id="weekly-still-exhausted"),
+        pytest.param(100, 0, _AVAILABLE_AFTER_BLOCK, id="five-hour-exhausted"),
+    ],
+)
+async def test_readings_that_do_not_prove_availability_keep_the_block(
+    quota_probe: QuotaProbeFixture,
+    connection: Connection,
+    five_hour: float,
+    weekly: float,
+    age: timedelta,
+) -> None:
+    env = quota_probe.env
+    task = _submit(connection, env.clock, title="still blocked")
+    scheduler = quota_probe.restart()
+    quota_probe.publish(
+        five_hour=five_hour, weekly=weekly, observed_at=quota_probe.blocked_at + age
+    )
+    for _ in range(3):
+        quota_probe.advance(quota_probe.refresh_interval + 1)
+
+        schedule = await scheduler.run_once()
+
+        assert schedule.dispatches == ()
+    assert env.tasks.require(task.id).wait_reason == "quota"
+    assert env.quotas.block_for("fake") is not None
+    assert not env.events.since(0, kinds=[EventKind.QUOTA_CLEARED])
+
+
+async def test_the_passage_of_the_refresh_interval_alone_never_lifts_a_block(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    _submit(connection, env.clock, title="no new evidence")
+    scheduler = quota_probe.restart()
+
+    for _ in range(5):
+        quota_probe.advance(quota_probe.refresh_interval * 2)
+        assert (await scheduler.run_once()).dispatches == ()
+
+    assert env.quotas.block_for("fake") is not None
+
+
+async def test_an_unreadable_quota_source_is_reported_once_per_interval_and_keeps_the_block(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    task = _submit(connection, env.clock, title="probe cannot read")
+    scheduler = quota_probe.restart()
+
+    for _ in range(3):
+        assert (await scheduler.run_once()).dispatches == ()
+
+    [fault] = env.events.since(0, kinds=[EventKind.ENGINE_FAULT])
+    assert fault.data["scope"] == f"{QUOTA_REFRESH_SCOPE} fake"
+    assert env.quotas.block_for("fake") is not None
+    assert env.tasks.require(task.id).wait_reason == "quota"
+
+    quota_probe.advance(quota_probe.refresh_interval + 1)
+    quota_probe.publish(five_hour=1, weekly=0, observed_at=env.clock.now())
+
+    schedule = await scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in schedule.dispatches] == [task.id]
+    assert len(env.events.since(0, kinds=[EventKind.ENGINE_RECOVERED])) == 1
+
+
+async def test_an_operator_retry_revalidates_inside_the_interval_without_a_second_dispatch(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    task = _submit(connection, env.clock, title="retried while blocked")
+    scheduler = quota_probe.restart()
+    quota_probe.publish(five_hour=2, weekly=100, observed_at=quota_probe.blocked_at)
+    assert (await scheduler.run_once()).dispatches == ()
+
+    quota_probe.advance(1)
+    quota_probe.publish(five_hour=2, weekly=0, observed_at=env.clock.now())
+    assert (await scheduler.run_once()).dispatches == ()
+
+    quota_probe.advance(1)
+    env.tasks.set_requeued(task.id)
+    retried = await scheduler.run_once()
+    again = await scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in retried.dispatches] == [task.id]
+    assert again.dispatches == ()
+    assert len(env.events.since(0, task_id=task.id, kinds=[EventKind.TASK_STARTED])) == 1
+    assert env.quotas.block_for("fake") is None

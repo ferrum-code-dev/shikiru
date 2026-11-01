@@ -147,6 +147,40 @@ class QuotaWindow:
     observed_at: datetime
 
 
+QUOTA_EXHAUSTED_PCT = 100.0
+
+
+def is_exhausted(window: QuotaWindow) -> bool:
+    """Return whether `window` reports no remaining quota."""
+    return window.used_pct >= QUOTA_EXHAUSTED_PCT
+
+
+def exhausted_reset(windows: Sequence[QuotaWindow], now: datetime) -> datetime | None:
+    """Return when every exhausted, not yet reset window is available again, or `None`.
+
+    Windows that are not exhausted or whose reset is unknown or past say nothing about when
+    quota returns, so a reading without such evidence leaves the reset unknown.
+    """
+    pending = [
+        window.resets_at
+        for window in windows
+        if is_exhausted(window) and window.resets_at is not None and window.resets_at > now
+    ]
+    return max(pending) if pending else None
+
+
+@dataclass(frozen=True)
+class QuotaReading:
+    """The latest usable quota sample for the account and bucket that gate an agent's dispatch.
+
+    A plugin returns only readings it can attribute to its own provider, account and quota
+    bucket; samples of other buckets, null windows or older evidence are never included.
+    """
+
+    windows: tuple[QuotaWindow, ...]
+    observed_at: datetime
+
+
 @dataclass(frozen=True)
 class CheckResult:
     """One named check from `Agent.doctor()`, such as binary, version or login."""
@@ -362,6 +396,17 @@ class BillingDeclarationProvider(Protocol):
     def billing_declaration(self) -> BillingDeclaration: ...
 
 
+class QuotaProbe(Protocol):
+    """Optional agent capability that reads fresh quota evidence without running a turn."""
+
+    async def read_quota(self, since: datetime) -> QuotaReading | None:
+        """Return the latest applicable reading observed after `since`, or `None` if none exists.
+
+        It must not block the event loop; an unreadable source raises `ShikiruError`.
+        """
+        ...
+
+
 class ModelCatalogProvider(Protocol):
     """Optional agent capability for authoritative model and per-model effort choices."""
 
@@ -387,6 +432,12 @@ def billing_declaration_for(agent: Agent) -> BillingDeclaration:
         message = f"agent {agent.name!r} declared a billing mode without its source"
         raise ConfigError(message)
     return declaration
+
+
+def quota_probe_for(agent: Agent) -> QuotaProbe | None:
+    """Return an agent's optional quota probe capability, or `None` when it has none."""
+    probe: object = getattr(agent, "read_quota", None)
+    return cast("QuotaProbe", agent) if callable(probe) else None
 
 
 async def model_catalog_for(agent: Agent) -> ModelCatalog | None:

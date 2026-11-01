@@ -17,6 +17,7 @@ from shikiru.agents.contracts import (
     COST_BASIS_UNKNOWN,
     FailureKind,
 )
+from shikiru.clock import to_local
 from shikiru.dashboard.contract import (
     AgentUsageView,
     AttentionGroupView,
@@ -1790,7 +1791,7 @@ class StateDashboardViews:
             QuotaBlockView(
                 agent=block.agent,
                 banner=quota_banner(
-                    quota_wait_description(block.agent, block.until, now),
+                    quota_wait_description(block.agent, to_local(block.until), to_local(now)),
                     waiting[block.agent],
                 ),
             )

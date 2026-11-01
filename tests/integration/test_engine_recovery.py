@@ -24,7 +24,7 @@ from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.workspace.roots import run_dir
-from tests.support.clock import FakeClock
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.dashboard import StubServices, state_views
 from tests.support.engine import FAKE_AGENT_ALIAS, FAKE_AGENT_NAME, FAKE_RUNG, set_role_script
 from tests.support.factories import TASK_CREATED_AT
@@ -169,6 +169,46 @@ async def test_quota_failure_blocks_then_continues_on_the_same_session(
         if path.is_dir() and "Continue this task's current turn" in (path / "prompt.md").read_text()
     ]
     assert len(continue_dirs) == 1
+
+
+async def test_a_quota_wait_ends_early_when_a_newer_reading_shows_the_quota_is_available(
+    engine_env: EngineEnv, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    source = tmp_path / "quota-source.json"
+    source.write_text(
+        json.dumps(
+            {
+                "observed_at": (TASK_CREATED_AT + timedelta(minutes=1)).isoformat(),
+                "windows": [{"name": "5h", "used_pct": 2, "resets_at": None}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    base = flow_settings()
+    settings = base.model_copy(
+        update={"agents": {FAKE_AGENT_NAME: AgentConfig(options={"quota_file": str(source)})}}
+    )
+    reset = TASK_CREATED_AT + timedelta(hours=2)
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=[{"kind": "fail", "failure_kind": "quota", "resets_at": reset.isoformat()}],
+    )
+
+    await _drive(flow_task, clock)
+
+    final = engine_env.tasks.require(task_id)
+    assert final.step is Step.INTEGRATE
+    assert clock.now() < reset
+    events = build_flow(engine_env, settings, clock=clock).events.since(
+        0, kinds=[EventKind.QUOTA_CLEARED]
+    )
+    [cleared] = events
+    assert cleared.data["agent"] == FAKE_RUNG.agent
+    assert QuotaStore(engine_env.connection).block_for(FAKE_RUNG.agent) is None
 
 
 async def test_live_fake_agent_quota_wait_is_shown_for_its_running_task(
@@ -365,7 +405,7 @@ async def test_quota_wait_deadline_moves_to_a_different_agent(
     quota = QuotaStore(engine_env.connection)
     await wait_until(lambda: quota.block_for(FAKE_RUNG.agent) is not None, timeout=10)
     extended_until = TASK_CREATED_AT + timedelta(minutes=5)
-    quota.block(FAKE_RUNG.agent, extended_until, "another task")
+    quota.block(FAKE_RUNG.agent, extended_until, "another task", LONG_AGO)
     deadline = TASK_CREATED_AT + timedelta(seconds=120)
 
     async def advance_to_deadline() -> bool:

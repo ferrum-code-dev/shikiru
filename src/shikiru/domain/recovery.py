@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import FailureKind
+from shikiru.agents.contracts import FailureKind, exhausted_reset
 from shikiru.domain.tasks import EscalationReason
 
 if TYPE_CHECKING:
@@ -125,18 +125,15 @@ def quota_block_until(resets_at: datetime | None, now: datetime) -> datetime:
 def with_known_quota_reset(
     result: TurnResult, windows: Sequence[QuotaWindow], now: datetime
 ) -> TurnResult:
-    """Fill a quota failure's missing reset with the earliest future reset among `windows`."""
+    """Fill a quota failure's missing reset from the exhausted `windows`, when they name one."""
     if (
         not isinstance(result, Failed)
         or result.kind is not FailureKind.QUOTA
         or result.resets_at is not None
     ):
         return result
-    known = [window.resets_at for window in windows if window.resets_at is not None]
-    future = [resets_at for resets_at in known if resets_at > now]
-    if not future:
-        return result
-    return replace(result, resets_at=min(future))
+    resets_at = exhausted_reset(windows, now)
+    return result if resets_at is None else replace(result, resets_at=resets_at)
 
 
 def _quota_action(resets_at: datetime | None, policy: RecoveryPolicy) -> Action:

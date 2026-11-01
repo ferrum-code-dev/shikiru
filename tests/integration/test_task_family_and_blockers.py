@@ -33,7 +33,7 @@ from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore, fetch_task_relationships
-from tests.support.clock import FakeClock
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
@@ -783,9 +783,7 @@ async def test_quota_and_resource_evidence_keeps_engine_deadline_reset_and_sampl
     )
     QuotaStore(connection).record(quota_agent, resetless)
     QuotaStore(connection).block(
-        quota_agent,
-        clock.now() + timedelta(seconds=QUOTA_BLOCK_SECONDS),
-        "quota",
+        quota_agent, clock.now() + timedelta(seconds=QUOTA_BLOCK_SECONDS), "quota", LONG_AGO
     )
     resource_task = seed_task(connection, clock, title="Resource waiting task")
     TaskStore(connection, clock).set_wait_reason(resource_task.id, WaitReason.RESOURCES)

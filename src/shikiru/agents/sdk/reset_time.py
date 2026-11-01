@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from shikiru.clock import Clock
 
 _EPOCH_SECONDS_PATTERN = re.compile(r"^\d+(\.\d+)?$")
@@ -20,6 +22,13 @@ _RELATIVE_DURATION_PATTERN = re.compile(
     rf"in\s+(?P<components>(?:{_RELATIVE_DURATION_COMPONENT}\s*)+)", re.IGNORECASE
 )
 _RELATIVE_DURATION_COMPONENT_PATTERN = re.compile(_RELATIVE_DURATION_COMPONENT, re.IGNORECASE)
+_DATE_TEXT_PATTERN = re.compile(
+    r"(?P<month>[A-Za-z]{3})[a-z]*\.?\s+(?P<day>\d{1,2})(?:st|nd|rd|th)?,?\s+(?P<year>\d{4})"
+    r"(?:\s+at)?\s+(?P<hour>\d{1,2}):(?P<minute>\d{2})\s*(?P<meridiem>am|pm)"
+    r"(?:\s*\((?P<zone>[^)]+)\)|\s+(?P<utc>UTC|GMT)\b)?",
+    re.IGNORECASE,
+)
+_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
 _PM = "pm"
 _SECONDS_PER_UNIT = {"second": 1, "minute": 60, "hour": 3600, "day": 86400}
 _HOURS_PER_MERIDIEM = 12
@@ -28,9 +37,16 @@ _HOURS_PER_MERIDIEM = 12
 class ResetTimeParser:
     """Parses a `resets ...`, ISO, epoch-seconds or relative-duration string into a `datetime`."""
 
-    def __init__(self, clock: Clock) -> None:
-        """Anchor relative and clock-time parsing on `clock.now()`, never the wall clock."""
+    def __init__(
+        self, clock: Clock, *, resolve_local: Callable[[datetime], datetime] | None = None
+    ) -> None:
+        """Anchor relative and clock-time parsing on `clock.now()`, never the wall clock.
+
+        `resolve_local` turns a naive wall-clock time into the aware instant it names in the
+        zone the agent printed it in. Without it a date text that names no zone stays unknown.
+        """
         self._clock = clock
+        self._resolve_local = resolve_local
 
     def parse(self, text: str) -> datetime | None:
         """Return the aware `datetime` `text` names, or `None` if no known format matches."""
@@ -40,6 +56,7 @@ class ResetTimeParser:
             or self._parse_iso(stripped)
             or self._parse_relative(stripped)
             or self._parse_clock_time(stripped)
+            or self._parse_date_text(stripped)
         )
 
     def _parse_epoch(self, text: str) -> datetime | None:
@@ -83,3 +100,38 @@ class ResetTimeParser:
         if candidate <= now_in_zone:
             candidate += timedelta(days=1)
         return candidate
+
+    def _parse_date_text(self, text: str) -> datetime | None:
+        match = _DATE_TEXT_PATTERN.search(text)
+        if match is None:
+            return None
+        month = match.group("month").lower()
+        if month not in _MONTHS:
+            return None
+        hour = int(match.group("hour"))
+        if not 1 <= hour <= _HOURS_PER_MERIDIEM:
+            return None
+        hour = hour % _HOURS_PER_MERIDIEM
+        if match.group("meridiem").lower() == _PM:
+            hour += _HOURS_PER_MERIDIEM
+        try:
+            naive = datetime(  # noqa: DTZ001
+                int(match.group("year")),
+                _MONTHS.index(month) + 1,
+                int(match.group("day")),
+                hour,
+                int(match.group("minute")),
+            )
+        except ValueError:
+            return None
+        return self._attach_zone(naive, match.group("zone"), match.group("utc"))
+
+    def _attach_zone(self, naive: datetime, zone: str | None, utc: str | None) -> datetime | None:
+        if utc is not None:
+            return naive.replace(tzinfo=UTC)
+        if zone is not None:
+            try:
+                return naive.replace(tzinfo=ZoneInfo(zone.strip()))
+            except ZoneInfoNotFoundError, ValueError:
+                return None
+        return self._resolve_local(naive) if self._resolve_local is not None else None

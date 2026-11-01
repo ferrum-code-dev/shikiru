@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from rich.cells import cell_len
 from rich.text import Text
 
+from shikiru.clock import to_local
 from shikiru.domain.quota_waits import QUOTA_AGENT_LABEL, quota_clock_text
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.tasks import Status
@@ -53,7 +54,7 @@ def _headline(blocker: TaskBlockerView, now: datetime, alert: bool) -> Text:
     cause = blocker.headline
     if blocker.quota_wait is not None:
         quota = blocker.quota_wait
-        description, remaining = quota_clock_text(quota.agent, quota.until, now)
+        description, remaining = quota_clock_text(quota.agent, to_local(quota.until), to_local(now))
         cause = f"{GROUP_SEPARATOR.join((cause, description))} (in {remaining})"
     return Text.assemble(
         (GLYPH_WARNING, _BOLD_ALERT if alert else _BOLD_AMBER),

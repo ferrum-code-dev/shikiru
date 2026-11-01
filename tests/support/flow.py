@@ -10,6 +10,7 @@ from shikiru.config.settings import AgentConfig, RepoConfig
 from shikiru.domain.commands import SetRung, Submit
 from shikiru.domain.tasks import Role, Status
 from shikiru.engine.acceptance import AcceptanceGuard
+from shikiru.engine.agents import AgentPool
 from shikiru.engine.escalation_filing import EscalationFiler
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.evidence import EvidenceCollector
@@ -41,7 +42,13 @@ from shikiru.tmux.session import SessionView
 from shikiru.workspace.base_refs import LocalBaseRefs
 from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
-from tests.support.engine import FAKE_AGENT_NAME, FAKE_RUNG, EngineEnv
+from tests.support.engine import (
+    FAKE_AGENT_NAME,
+    FAKE_RUNG,
+    EngineEnv,
+    build_reconciler,
+    build_registry,
+)
 from tests.support.factories import ESCALATE_AFTER, MAX_ITERATIONS, make_settings
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo
 from tests.support.workspace import task_root_builder
@@ -229,6 +236,18 @@ def build_flow(
             tasks=env.tasks,
             events=system.events,
             quota=QuotaStore(env.connection),
+            reconciler=build_reconciler(
+                quotas=system.quotas,
+                agents=AgentPool(
+                    (registry if registry is not None else build_registry()).create,
+                    SubprocessRunner(),
+                    settings,
+                    flow_clock,
+                ),
+                events=system.events,
+                clock=flow_clock,
+                settings=settings,
+            ),
             clock=flow_clock,
             writer=writer,
             settings=settings,

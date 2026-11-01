@@ -194,7 +194,10 @@ answers, within one total Helper timeout. Any rebuilt report must still pass val
 neither approves work nor decides the workflow. Agent session resumption and compaction are
 provider-specific; automatic compaction thresholds are configurable per agent. Token counts,
 context, costs, billing mode and quota are shown when supplied by
-the agent; missing data stays unknown, and quota observations may be stale.
+the agent; missing data stays unknown, and quota observations may be stale. A quota block is
+revalidated periodically (and on an Operator retry) against newer provider readings, so queued work
+resumes when quota returns before the predicted reset. Quota reset times are shown in your local
+timezone.
 
 ## Configuration and automation
 
@@ -213,6 +216,7 @@ invalid config keeps the last valid values and shows an alert in the header.
 | `roles`, `agents` | Role and complexity ladders, review escalation policy; plugin CLI arguments, compaction threshold and optional billing declaration. |
 | `orchestration` | Parallel task slots, review iterations and local merge versus pull-request integration; `push_interval_seconds` (seconds between pushes of locally integrated bases, default 14400); the init wizard also sets the stall and tool timeouts, the quota, CPU and free-RAM limits below. |
 | `orchestration.resources` | CPU/free-RAM gates for dispatch; these do not impose CPU/RAM limits on already-running agents. |
+| `orchestration.quota_refresh` | `interval_seconds` between quota block revalidations (default 300) and `timeout_seconds` bounding each probe (default 30). |
 | `orchestration.timeouts`, `.network`, `.faults`, `.retries` | Stall/tool/Helper/quota/integration/PR limits, remote polling, engine-fault retries, and configurable provider-unavailable retries. |
 | `dashboard` | Widgets, pane splits/titles, animation, display/refresh limits and resource/quota warning thresholds. |
 | `sessions`, `doctor`, `escalation` | SSH-query timeout, live-probe limits and the amount of attempted work summarized in decision context. |

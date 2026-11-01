@@ -25,6 +25,7 @@ from shikiru.engine.evidence import EvidenceCollector
 from shikiru.engine.fault_reporter import FaultReporter
 from shikiru.engine.history import ReportHistory
 from shikiru.engine.monitor import TurnMonitor
+from shikiru.engine.quota_reconciler import QuotaReconciler
 from shikiru.engine.sessions import SessionManager
 from shikiru.engine.task_facts import TaskFacts
 from shikiru.engine.titles import TaskTitles
@@ -240,10 +241,13 @@ def build_turn_system(
     async def refresh_titles(task: Task) -> None:
         await titles.refresh(task)
 
+    reconciler = build_reconciler(
+        quotas=quotas, agents=agents, events=events, clock=clock, settings=settings
+    )
     monitor = TurnMonitor(
         sessions=sessions,
         runs=runs,
-        quotas=quotas,
+        quotas=reconciler,
         events=events,
         clock=clock,
         settings=settings,
@@ -341,6 +345,25 @@ async def engine_env(tmux_server: TmuxServer, connection: Connection, tmp_path: 
         project_root=tmp_path,
         clock=clock,
         turn_system=turn_system,
+    )
+
+
+def build_reconciler(
+    *,
+    quotas: QuotaStore,
+    agents: AgentPool,
+    events: EventLog,
+    clock: Clock,
+    settings: Settings,
+) -> QuotaReconciler:
+    """A `QuotaReconciler` probing `agents` with the quota refresh settings of `settings`."""
+    return QuotaReconciler(
+        quotas=quotas,
+        agents=agents,
+        events=events,
+        clock=clock,
+        settings=settings.orchestration.quota_refresh,
+        faults=build_fault_reporter(events, clock, settings),
     )
 
 

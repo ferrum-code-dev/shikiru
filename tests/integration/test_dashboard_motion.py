@@ -62,7 +62,7 @@ from shikiru.view_log import (
     VIEW_TURN_KEY,
     view_log_path,
 )
-from tests.support.clock import FakeClock
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
@@ -2011,7 +2011,7 @@ async def test_legacy_quota_rows_give_way_to_canonical_observations_in_project_v
     task, _ = _seed_dashboard_state(connection, clock)
     quotas = QuotaStore(connection)
     block_until = _START + timedelta(hours=3)
-    quotas.block("codex", block_until, "quota")
+    quotas.block("codex", block_until, "quota", LONG_AGO)
     for agent, legacy_window, used_pct in (
         ("codex", "primary", 77.0),
         ("codex", "secondary", 66.0),

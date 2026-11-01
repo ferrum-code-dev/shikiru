@@ -79,6 +79,19 @@ When a queued task's selected agent has a quota block beyond `max_quota_wait` (i
 the scheduler advances that role to the next unblocked agent in its ladder. Shorter blocks wait
 for reset; without an available later agent, the task stays queued until the block expires.
 
+A persisted quota block is a prediction, not a lock. While a task waits on a block, in a turn's
+quota wait or queued, including after an engine restart, the engine revalidates it every
+`[orchestration.quota_refresh] interval_seconds` by asking the agent plugin's optional
+`read_quota(since)` capability for a fresh reading, bounded by `timeout_seconds` and run off the
+event loop. An Operator retry forces one revalidation. A block records when it was set; it is
+released only by a reading observed after that instant that shows no exhausted window and covers
+every window the block was exhausted on (`domain.quota_blocks`). Older samples, other quota buckets,
+null or missing windows and the mere passing of an interval never release a block. A plugin
+without the capability, or a probe that finds nothing newer, keeps the block until its deadline; a
+probe that fails is an `engine_fault` (and `engine_recovered` later), never silently ignored. The
+Codex plugin answers from the `limit_id: codex` bucket of its rollouts: a trailing event of another
+bucket with null windows does not replace the latest usable Codex reading.
+
 Leader and Implementer resolve their own ordered ladders; Implementer can select a low/normal/high
 complexity override, otherwise its base ladder applies. A task-specific rung override selects its
 agent/model/effort from the next turn. Same-provider sessions can resume; a provider change starts
@@ -87,7 +100,11 @@ compaction behavior.
 
 Recovery is explicit and bounded by failure type: unavailable providers receive backoff/retries,
 quota failures wait for reset within policy or move to a later different-provider rung, and stalls
-receive limited continuation attempts. A Codex failure message containing `at capacity` counts as
+receive limited continuation attempts. A quota failure's reset comes from, in order, the provider's
+explicit reset value, its date text (`try again at Nov 4th, 2026 7:52 AM`, read in the host's local
+zone because the provider prints local time; with no zone to establish it stays unknown), then the
+reset of the windows reported exhausted. No evidence leaves the reset unknown and the wait bounded
+by `QUOTA_PROBE`. A Codex failure message containing `at capacity` counts as
 unavailability: retry using `[orchestration.retries]`'s initial delay, multiplier and maximum delay,
 then advance to the next rung when its retry count is exhausted. The packaged policy uses 30 seconds,
 a multiplier of 4, a 300-second cap and three retries, which gives delays of 30, 120 and 300 seconds.
@@ -194,7 +211,10 @@ Usage preserves provenance and uncertainty: absent tokens/cost/context/billing a
 and quota readings can be stale. An active quota block shows as a banner in the home usage section
 and in the expanded usage view, counting the tasks waiting on it; a queued task whose recorded wait
 reason is quota, or a running task in a mid-turn quota wait, carries an amber `quota` marker in the
-task list. CPU/RAM, disk,
+task list. Every human-facing quota deadline is shown in the viewer's local timezone, with the date
+only when the reset falls on another local day and a `Z` only for a zero offset; the domain
+formatter renders the zone it is given and the dashboard boundary localizes, while storage, events
+and JSON stay UTC-aware. CPU/RAM, disk,
 Docker and fault diagnostics complement task progress. Notifications go to tmux and an optional
 external command receiving JSON on stdin.
 A durable delivery cursor replays undelivered urgent events after restart; delivery is not

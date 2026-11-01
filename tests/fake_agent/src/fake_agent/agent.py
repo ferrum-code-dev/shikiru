@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -16,12 +20,13 @@ from shikiru.agents.contracts import (
     CheckResult,
     ModelCatalog,
     ModelChoice,
+    QuotaReading,
+    QuotaWindow,
 )
-from shikiru.errors import ConfigError
+from shikiru.errors import ConfigError, ShikiruError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung, Turn, TurnSpec
     from shikiru.process import SubprocessRunner
@@ -51,6 +56,7 @@ class FakeOptions(BaseModel):
     model_catalog_error: str | None = None
     new_session_id: str | None = None
     billing_mode: BillingMode | None = None
+    quota_file: str | None = None
 
 
 class FakeAgent:
@@ -63,6 +69,7 @@ class FakeAgent:
             runner, options.asks, options.compact_at_pct, options.new_session_id
         )
         self._asks = options.asks
+        self._quota_file = Path(options.quota_file) if options.quota_file is not None else None
         self._model_catalog_error = options.model_catalog_error
         self._billing_declaration = (
             BillingDeclaration(options.billing_mode, BILLING_SOURCE_OPERATOR_CONFIG)
@@ -97,6 +104,32 @@ class FakeAgent:
         if self._model_catalog_error is not None:
             return ModelCatalog(error=self._model_catalog_error)
         return _FAKE_MODEL_CATALOG
+
+    async def read_quota(self, since: datetime) -> QuotaReading | None:
+        """Return the scripted quota file's reading when it was observed after `since`."""
+        if self._quota_file is None:
+            return None
+        try:
+            raw = await asyncio.to_thread(self._quota_file.read_text, "utf-8")
+            data = json.loads(raw)
+            observed_at = datetime.fromisoformat(data["observed_at"])
+            windows = tuple(
+                QuotaWindow(
+                    name=item["name"],
+                    used_pct=item["used_pct"],
+                    resets_at=(
+                        datetime.fromisoformat(item["resets_at"]) if item["resets_at"] else None
+                    ),
+                    observed_at=observed_at,
+                )
+                for item in data["windows"]
+            )
+        except (OSError, ValueError, KeyError) as error:
+            message = f"fake quota source unreadable: {error}"
+            raise ShikiruError(message) from error
+        return (
+            QuotaReading(windows=windows, observed_at=observed_at) if observed_at > since else None
+        )
 
     def headless(self) -> HeadlessAgent | None:
         """Return the fake Helper answer provider."""

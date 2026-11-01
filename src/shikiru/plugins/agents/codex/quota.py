@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from shikiru.agents.contracts import QUOTA_WINDOW_FIVE_HOUR, QUOTA_WINDOW_SEVEN_DAY, QuotaWindow
+from shikiru.agents.contracts import (
+    QUOTA_WINDOW_FIVE_HOUR,
+    QUOTA_WINDOW_SEVEN_DAY,
+    QuotaReading,
+    QuotaWindow,
+)
 from shikiru.plugins.agents.codex.options import USAGE_EVENT_TYPE
 
 if TYPE_CHECKING:
@@ -32,6 +38,12 @@ _MINUTES_PER_DAY = 24 * _MINUTES_PER_HOUR
 _USED_PERCENT_FIELD = "used_percent"
 _RESETS_AT_FIELD = "resets_at"
 _ROLLOUT_GLOB = "rollout-*.jsonl"
+_LIMIT_ID_FIELD = "limit_id"
+CODEX_LIMIT_ID = "codex"
+_ROLLOUT_TAIL_BYTES = 1 << 20
+_NEWLINE = b"\n"
+_FILE_START = 0
+_AFTER_SEPARATOR = -1
 
 
 @dataclass(frozen=True)
@@ -43,7 +55,7 @@ class QuotaObservation:
 
 
 class CodexQuotaProbe:
-    """Reads quota windows from the newest Codex rollout."""
+    """Reads the Codex-bucket quota windows from Codex rollouts."""
 
     def __init__(self, home: Path, clock: Clock, reset_time: ResetTimeParser) -> None:
         """Use `home`, `clock` and `reset_time` to inspect Codex session files."""
@@ -77,26 +89,41 @@ class CodexQuotaProbe:
             if payload.get("type") != USAGE_EVENT_TYPE:
                 continue
             limits = payload.get(_RATE_LIMITS_FIELD)
-            latest = (
-                (
+            if _is_codex_bucket(limits) and _has_windows(cast("Mapping[str, Any]", limits)):
+                latest = (
                     cast("Mapping[str, Any]", limits),
                     _event_time(cast("Mapping[str, Any]", raw)),
                 )
-                if isinstance(limits, Mapping)
-                else None
-            )
         if latest is None:
             return None
         rate_limits, event_time = latest
         window_time = event_time or observed_at
-        windows: list[QuotaWindow] = []
-        for key in _DEFAULT_WINDOW_NAMES:
-            raw_window = rate_limits.get(key)
-            if isinstance(raw_window, Mapping):
-                windows.append(
-                    self._window(key, cast("Mapping[str, Any]", raw_window), window_time)
-                )
-        return QuotaObservation(tuple(windows), event_time) if windows else None
+        windows = tuple(
+            self._window(key, cast("Mapping[str, Any]", rate_limits[key]), window_time)
+            for key in _DEFAULT_WINDOW_NAMES
+            if isinstance(rate_limits.get(key), Mapping)
+        )
+        return QuotaObservation(windows, event_time)
+
+    def latest_reading(self, since: datetime) -> QuotaReading | None:
+        """Return the newest Codex-bucket sample stamped after `since` in any recent rollout.
+
+        Only rollouts written after `since` are read, from their tail; a sample without a
+        provider timestamp cannot show it is fresh and is ignored.
+        """
+        sessions = self._home / "sessions"
+        if not sessions.is_dir():
+            return None
+        readings = [
+            QuotaReading(observation.windows, observation.timestamp)
+            for path in sessions.rglob(_ROLLOUT_GLOB)
+            if datetime.fromtimestamp(path.stat().st_mtime, tz=UTC) > since
+            for observation in [self.parse_observation(_rollout_tail(path), self._clock.now())]
+            if observation is not None
+            and observation.timestamp is not None
+            and observation.timestamp > since
+        ]
+        return max(readings, key=lambda reading: reading.observed_at, default=None)
 
     def _window(self, key: str, raw: Mapping[str, Any], observed_at: datetime) -> QuotaWindow:
         value = raw.get(_USED_PERCENT_FIELD)
@@ -116,6 +143,27 @@ class CodexQuotaProbe:
         sessions = self._home / "sessions"
         paths = list(sessions.rglob(_ROLLOUT_GLOB)) if sessions.is_dir() else []
         return max(paths, key=lambda path: path.stat().st_mtime_ns) if paths else None
+
+
+def _is_codex_bucket(limits: object) -> bool:
+    if not isinstance(limits, Mapping):
+        return False
+    limit_id = cast("Mapping[str, Any]", limits).get(_LIMIT_ID_FIELD)
+    return limit_id is None or limit_id == CODEX_LIMIT_ID
+
+
+def _has_windows(limits: Mapping[str, Any]) -> bool:
+    return any(isinstance(limits.get(key), Mapping) for key in _DEFAULT_WINDOW_NAMES)
+
+
+def _rollout_tail(path: Path) -> str:
+    with path.open("rb") as handle:
+        size = handle.seek(_FILE_START, os.SEEK_END)
+        handle.seek(max(size - _ROLLOUT_TAIL_BYTES, _FILE_START))
+        data = handle.read()
+    if size > _ROLLOUT_TAIL_BYTES:
+        data = data.partition(_NEWLINE)[_AFTER_SEPARATOR]
+    return data.decode("utf-8", errors="ignore")
 
 
 def _payload(entry: Mapping[str, Any]) -> Mapping[str, Any]:

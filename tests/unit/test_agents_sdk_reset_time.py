@@ -100,3 +100,60 @@ def test_parse_returns_none_for_unrecognised_text(text: str) -> None:
     parser = ResetTimeParser(FakeClock(_NOW))
 
     assert parser.parse(text) is None
+
+
+_PROVIDER_MESSAGE = (
+    "You've hit your usage limit. Upgrade to Pro, visit settings to purchase more credits "
+    "or try again at Nov 4th, 2026 7:52 AM."
+)
+_NOVEMBER_RESET_IN_WARSAW = datetime(2026, 11, 4, 6, 52, tzinfo=UTC)
+
+
+def _warsaw_wall_clock(naive: datetime) -> datetime:
+    return naive.replace(tzinfo=_WARSAW)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        pytest.param(
+            _PROVIDER_MESSAGE, _NOVEMBER_RESET_IN_WARSAW, id="provider-message-in-host-zone"
+        ),
+        pytest.param(
+            "try again at Jul 4th, 2026 12:05 PM",
+            datetime(2026, 7, 4, 10, 5, tzinfo=UTC),
+            id="summer-offset-and-noon",
+        ),
+        pytest.param(
+            "try again at Oct 25th, 2026 12:30 AM",
+            datetime(2026, 10, 24, 22, 30, tzinfo=UTC),
+            id="midnight-hour-before-the-offset-change",
+        ),
+        pytest.param(
+            "try again at Nov 4, 2026 7:52 AM (UTC)",
+            datetime(2026, 11, 4, 7, 52, tzinfo=UTC),
+            id="named-zone-beats-host-zone",
+        ),
+    ],
+)
+def test_date_text_resets_in_the_zone_the_text_names_or_the_host_zone(
+    text: str, expected: datetime
+) -> None:
+    parser = ResetTimeParser(FakeClock(_NOW), resolve_local=_warsaw_wall_clock)
+
+    assert parser.parse(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(_PROVIDER_MESSAGE, id="no-zone-and-no-host-zone"),
+        pytest.param("try again at Nov 4, 2026 7:52 AM (Mars/Colony)", id="unknown-zone"),
+        pytest.param("try again at Feb 30th, 2026 7:52 AM", id="impossible-date"),
+        pytest.param("try again at Nov 4th, 2026 13:52 PM", id="impossible-hour"),
+    ],
+)
+def test_date_text_stays_unknown_when_its_zone_cannot_be_established(text: str) -> None:
+    parser = ResetTimeParser(FakeClock(_NOW))
+
+    assert parser.parse(text) is None

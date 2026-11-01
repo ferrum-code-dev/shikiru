@@ -113,6 +113,13 @@ class NetworkConfig(ConfigModel):
     pr_close_attempts: int = Field(gt=0)
 
 
+class QuotaRefreshConfig(ConfigModel):
+    """`[orchestration.quota_refresh]`: how often a persisted quota block is revalidated."""
+
+    interval_seconds: float = Field(gt=0)
+    timeout_seconds: float = Field(gt=0)
+
+
 class OrchestrationConfig(ConfigModel):
     """`[orchestration]`."""
 
@@ -127,6 +134,7 @@ class OrchestrationConfig(ConfigModel):
     timeouts: TimeoutsConfig
     faults: FaultsConfig
     retries: RetriesConfig
+    quota_refresh: QuotaRefreshConfig
     network: NetworkConfig
 
 

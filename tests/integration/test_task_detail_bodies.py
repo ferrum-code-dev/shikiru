@@ -48,7 +48,7 @@ from shikiru.ui.glyphs import GLYPH_WARNING
 from shikiru.ui.tokens import ALERT_COLOR, AMBER, SECONDARY_TEXT_COLOR
 from tests.support.cells import CYAN_BOLD, GREY, GREY_BOLD, Cell, foregrounds, styles
 from tests.support.cells import rendered_lines as painted_lines
-from tests.support.clock import FakeClock
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import ManualFocusHost, fold_headline, widget_context
 from tests.support.render import plain_text, rendered_lines
@@ -409,7 +409,7 @@ def _seed_blocked_task(
         case _Blocker.QUOTA:
             waiter = seed_task(connection, clock, title="Quota waiter")
             store.set_wait_reason(waiter.id, WaitReason.QUOTA)
-            QuotaStore(connection).block(LEADER_AGENT, until, "quota")
+            QuotaStore(connection).block(LEADER_AGENT, until, "quota", LONG_AGO)
             reset = quota_reset_clock(until, clock.now())
             return waiter.id, f"Waiting on quota · {LEADER_AGENT} quota blocked until {reset}"
         case _Blocker.DEPENDENCY:

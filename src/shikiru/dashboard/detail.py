@@ -17,6 +17,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Rule, Static
 
+from shikiru.clock import to_local
 from shikiru.dashboard.blocker_rows import blocker_evidence_text
 from shikiru.dashboard.briefing_view import (
     ACTION_LABELS,
@@ -554,7 +555,10 @@ class TaskDetailPanel(Vertical):
         now = tick_now(self._widget_context.clock)
         if now >= quota.refresh_at:
             await self._load_view()
-        elif quota_clock_text(quota.agent, quota.until, now) != self._shown_quota_wording:
+        elif (
+            quota_clock_text(quota.agent, to_local(quota.until), to_local(now))
+            != self._shown_quota_wording
+        ):
             self._render_briefing(view, now, self._briefing_layout())
 
     async def _refresh_activity(self) -> None:
@@ -859,7 +863,9 @@ class TaskDetailPanel(Vertical):
     def _render_briefing(self, view: TaskDetailView, now: datetime, layout: BriefingLayout) -> None:
         quota = view.quota_wait
         self._shown_quota_wording = (
-            None if quota is None else quota_clock_text(quota.agent, quota.until, now)
+            None
+            if quota is None
+            else quota_clock_text(quota.agent, to_local(quota.until), to_local(now))
         )
         self.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic).update_if_changed(
             Briefing(view, now, layout, BriefingHalf.ABOVE)

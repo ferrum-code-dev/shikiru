@@ -23,6 +23,7 @@ from shikiru.agents.contracts import (
     TurnSpec,
     Usage,
     UsageReported,
+    exhausted_reset,
 )
 from shikiru.agents.sdk.turn import (
     EMPTY_OUTPUT,
@@ -258,7 +259,11 @@ class CodexTurnParser:
                 )
             else:
                 self._context_exceeded = failure.context_exceeded
-                reset = _latest_reset(quota) if failure.kind is FailureKind.QUOTA else None
+                reset = (
+                    self._reset_time.parse(stderr) or exhausted_reset(quota, self._clock.now())
+                    if failure.kind is FailureKind.QUOTA
+                    else None
+                )
                 signals.append(TurnFailed(failure.kind, stderr.strip(), reset))
         return signals
 
@@ -321,7 +326,11 @@ class CodexTurnParser:
             if reset_value is not None
             else None
         )
-        reset = error_reset or _latest_reset(quota) or self._reset_time.parse(message)
+        reset = (
+            error_reset
+            or self._reset_time.parse(message)
+            or exhausted_reset(quota, self._clock.now())
+        )
         kind = FailureKind.UNKNOWN if classification is None else classification.kind
         self._context_exceeded = classification is not None and classification.context_exceeded
         detail = message or _UNKNOWN_ERROR_MESSAGE
@@ -671,10 +680,6 @@ def _classify_error(message: str, status: int | None, code: str) -> _Classificat
     if any(token in text for token in _CONTEXT_TEXT):
         return _Classification(FailureKind.OTHER, context_exceeded=True)
     return None
-
-
-def _latest_reset(windows: Sequence[QuotaWindow]) -> datetime | None:
-    return next((window.resets_at for window in windows if window.resets_at is not None), None)
 
 
 def _mapping(value: object) -> Mapping[str, Any] | None:

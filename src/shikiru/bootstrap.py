@@ -61,6 +61,7 @@ from shikiru.engine.notification_feed import NotificationFeed
 from shikiru.engine.notifier import Notifier
 from shikiru.engine.pull_request_closing import PullRequestClosing
 from shikiru.engine.push_service import PUSH_FAULT_SCOPE, PushService
+from shikiru.engine.quota_reconciler import QuotaReconciler
 from shikiru.engine.reconcile import Reconciler
 from shikiru.engine.recovery import TurnRecovery
 from shikiru.engine.retention import Retention
@@ -686,6 +687,29 @@ def _build_flow(
     )
 
 
+def _build_fault_reporting(
+    *,
+    events: EventLog,
+    quotas: QuotaStore,
+    agents: AgentPool,
+    clock: Clock,
+    settings: Settings,
+    logger: logging.Logger,
+) -> tuple[FaultReporter, QuotaReconciler]:
+    faults = FaultReporter(
+        events=events, clock=clock, settings=settings.orchestration.faults, logger=logger
+    )
+    reconciler = QuotaReconciler(
+        quotas=quotas,
+        agents=agents,
+        events=events,
+        clock=clock,
+        settings=settings.orchestration.quota_refresh,
+        faults=faults,
+    )
+    return faults, reconciler
+
+
 def build_engine(
     project_root: Path,
     settings: Settings | None = None,
@@ -729,10 +753,20 @@ def build_engine(
     turn_processes = TurnProcesses(
         runner=resolved_runner, clock=resolved_clock, project_root=project_root
     )
+    target = exact_target(session_name(resolved_settings.project.name))
+    logger, log_handler = _configure_engine_logging(project_root, resolved_settings.logging)
+    fault_reporter, reconciler = _build_fault_reporting(
+        events=events,
+        quotas=quotas,
+        agents=agent_pool,
+        clock=resolved_clock,
+        settings=resolved_settings,
+        logger=logger,
+    )
     monitor = TurnMonitor(
         sessions=sessions,
         runs=runs,
-        quotas=quotas,
+        quotas=reconciler,
         events=events,
         clock=resolved_clock,
         settings=resolved_settings,
@@ -741,14 +775,6 @@ def build_engine(
         processes=turn_processes,
     )
 
-    target = exact_target(session_name(resolved_settings.project.name))
-    logger, log_handler = _configure_engine_logging(project_root, resolved_settings.logging)
-    fault_reporter = FaultReporter(
-        events=events,
-        clock=resolved_clock,
-        settings=resolved_settings.orchestration.faults,
-        logger=logger,
-    )
     layout = LayoutGuard(
         tmux=resolved_tmux,
         view=SessionView(resolved_tmux),
@@ -858,6 +884,7 @@ def build_engine(
         tasks=tasks,
         events=events,
         quota=quotas,
+        reconciler=reconciler,
         clock=resolved_clock,
         writer=writer,
         settings=resolved_settings,
@@ -950,6 +977,7 @@ def build_engine(
         tasks=tasks,
         settings=resolved_settings,
         quotas=quotas,
+        reconciler=reconciler,
         resources=sampler,
         clock=resolved_clock,
         layout=layout,

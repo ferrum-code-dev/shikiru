@@ -6,6 +6,7 @@ from shikiru.domain.events import EventKind
 from shikiru.engine.events import emit_turn_started
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
+from tests.support.clock import LONG_AGO
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -55,5 +56,5 @@ def record_quota_wait(
         message="quota wait",
         data={"agent": rung.agent, "until": until.isoformat()},
     )
-    QuotaStore(connection).block(rung.agent, until, "quota")
+    QuotaStore(connection).block(rung.agent, until, "quota", LONG_AGO)
     return failure, quota_block

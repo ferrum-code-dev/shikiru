@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 
 class FakeClock:
@@ -67,3 +67,6 @@ class FakeClock:
             _, future = sleeper
             if not future.done():
                 future.set_result(None)
+
+
+LONG_AGO = datetime(2000, 1, 1, tzinfo=UTC)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import tomllib
 from collections.abc import Mapping
@@ -20,6 +21,7 @@ from shikiru.agents.contracts import (
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
+from shikiru.clock import from_local
 from shikiru.errors import CommandFailed, ConfigError, ShikiruError
 from shikiru.plugins.agents.codex.headless import CodexHeadless
 from shikiru.plugins.agents.codex.home import codex_home
@@ -51,13 +53,22 @@ from shikiru.plugins.agents.codex.options import (
     VERSION_ARGV,
     CodexOptions,
 )
+from shikiru.plugins.agents.codex.quota import CodexQuotaProbe
 from shikiru.plugins.agents.codex.sandbox_probe import CodexSandboxProbe
 from shikiru.plugins.agents.codex.turn import CodexTurnSequence, context_window
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
-    from shikiru.agents.contracts import AgentContext, HeadlessAgent, Rung, Turn, TurnSpec
+    from shikiru.agents.contracts import (
+        AgentContext,
+        HeadlessAgent,
+        QuotaReading,
+        Rung,
+        Turn,
+        TurnSpec,
+    )
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
 
@@ -93,13 +104,14 @@ class CodexAgent:
         self._runner = runner
         self._clock = clock
         self._options = options
-        self._reset_time = ResetTimeParser(clock)
+        self._reset_time = ResetTimeParser(clock, resolve_local=from_local)
         self._billing_declaration = (
             BillingDeclaration(options.billing_mode, BILLING_SOURCE_OPERATOR_CONFIG)
             if options.billing_mode is not None
             else UNKNOWN_BILLING_DECLARATION
         )
         self._codex_home = codex_home()
+        self._quota_probe = CodexQuotaProbe(self._codex_home, clock, self._reset_time)
         self._sandbox_probe = CodexSandboxProbe(runner)
         self._catalog_context_windows: dict[str, int] = {}
         self._bundled_context_windows: dict[str, int] = {}
@@ -109,6 +121,10 @@ class CodexAgent:
     def billing_declaration(self) -> BillingDeclaration:
         """Return the explicit plugin option or the unknown declaration."""
         return self._billing_declaration
+
+    async def read_quota(self, since: datetime) -> QuotaReading | None:
+        """Return the newest Codex-bucket reading in this account's rollouts after `since`."""
+        return await asyncio.to_thread(self._quota_probe.latest_reading, since)
 
     async def model_catalog(self) -> ModelCatalog:
         """Return choices from Codex CLI's refreshed current model catalog."""

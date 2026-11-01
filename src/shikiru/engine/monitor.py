@@ -45,10 +45,10 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import Settings
     from shikiru.domain.tasks import Role, Task
+    from shikiru.engine.quota_reconciler import QuotaReconciler
     from shikiru.engine.sessions import SessionManager
     from shikiru.engine.turn_processes import TurnProcesses
     from shikiru.store.events import EventLog
-    from shikiru.store.quotas import QuotaStore
     from shikiru.store.runs import RunStore
     from shikiru.tmux.decorator import PaneDecorator
 
@@ -63,7 +63,7 @@ class TurnMonitor:
         *,
         sessions: SessionManager,
         runs: RunStore,
-        quotas: QuotaStore,
+        quotas: QuotaReconciler,
         events: EventLog,
         clock: Clock,
         settings: Settings,
@@ -262,8 +262,7 @@ class TurnMonitor:
         self, signal: AgentSignal, *, agent: Agent, task: Task, role: Role
     ) -> None:
         if isinstance(signal, QuotaReported):
-            for window in signal.windows:
-                self._quotas.record(agent.name, window)
+            self._quotas.observe(agent.name, signal.windows)
         elif isinstance(signal, Compacted):
             self._events.append(
                 EventKind.COMPACTED,

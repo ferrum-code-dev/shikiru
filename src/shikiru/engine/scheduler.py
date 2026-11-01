@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.engine.fault_reporter import FaultReporter
     from shikiru.engine.layout_guard import LayoutGuard
+    from shikiru.engine.quota_reconciler import QuotaReconciler
     from shikiru.engine.root_preparation import RootPreparation
     from shikiru.engine.titles import TaskTitles
     from shikiru.store.events import EventLog
@@ -55,6 +56,7 @@ class Scheduler:
         tasks: TaskStore,
         settings: Settings,
         quotas: QuotaStore,
+        reconciler: QuotaReconciler,
         resources: ResourceSampler,
         clock: Clock,
         layout: LayoutGuard,
@@ -73,6 +75,7 @@ class Scheduler:
         self._tasks = tasks
         self._settings = settings
         self._quotas = quotas
+        self._reconciler = reconciler
         self._resources = resources
         self._clock = clock
         self._layout = layout
@@ -90,6 +93,7 @@ class Scheduler:
     async def run_once(self) -> ReadySchedule:
         """Evaluate gates, persist wait reasons and dispatch every eligible task."""
         all_tasks = self._tasks.list_all()
+        await self._revalidate_quota_blocks(all_tasks)
         gates = self._gates(all_tasks)
         schedule = pick_ready(all_tasks, gates)
         if self._advance_quota_blocked(all_tasks, schedule):
@@ -118,6 +122,22 @@ class Scheduler:
     async def shutdown(self) -> None:
         """Stop the task root builds still in flight."""
         await self._roots.shutdown()
+
+    async def _revalidate_quota_blocks(self, tasks: list[Task]) -> None:
+        now = self._clock.now()
+        demands: dict[str, datetime | None] = {}
+        for block in self._quotas.active_blocks(now):
+            queued = [
+                task
+                for task in tasks
+                if task.status is Status.QUEUED
+                and block.agent in dataclasses.astuple(task_agents(task, self._settings))
+            ]
+            if queued:
+                requeues = [task.requeued_at for task in queued if task.requeued_at is not None]
+                demands[block.agent] = max(requeues, default=None)
+        for agent, demanded_at in demands.items():
+            await self._reconciler.refresh(agent, demanded_at=demanded_at)
 
     def _advance_quota_blocked(self, tasks: list[Task], schedule: ReadySchedule) -> bool:
         now = self._clock.now()

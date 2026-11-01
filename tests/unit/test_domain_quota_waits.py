@@ -27,49 +27,48 @@ SECONDS_PER_DAY = 24 * SECONDS_PER_HOUR
 
 
 @pytest.mark.parametrize(
-    ("until", "expected"),
+    ("until", "now", "expected"),
     [
-        pytest.param(SAME_DAY_RESET, DESCRIPTION, id="same-utc-day"),
+        pytest.param(SAME_DAY_RESET, NOW, DESCRIPTION, id="utc-same-day-carries-z"),
         pytest.param(
-            NEXT_DAY_RESET,
-            "claude quota blocked until Jan 02 00:05Z",
-            id="other-utc-day",
+            NEXT_DAY_RESET, NOW, "claude quota blocked until Jan 02 00:05Z", id="utc-other-day"
         ),
         pytest.param(
             SAME_DAY_RESET.astimezone(AHEAD_OF_UTC),
-            DESCRIPTION,
-            id="reset-given-in-another-zone",
+            NOW.astimezone(AHEAD_OF_UTC),
+            "claude quota blocked until 16:20",
+            id="positive-offset-has-no-z",
+        ),
+        pytest.param(
+            SAME_DAY_RESET.astimezone(BEHIND_UTC),
+            NOW.astimezone(BEHIND_UTC),
+            "claude quota blocked until 09:20",
+            id="negative-offset-has-no-z",
+        ),
+        pytest.param(
+            datetime(2026, 1, 2, 0, 5, tzinfo=AHEAD_OF_UTC),
+            datetime(2026, 1, 1, 23, 59, 30, tzinfo=AHEAD_OF_UTC),
+            "claude quota blocked until Jan 02 00:05",
+            id="local-midnight-adds-the-date",
+        ),
+        pytest.param(
+            datetime(2026, 1, 2, 0, 5, tzinfo=AHEAD_OF_UTC),
+            datetime(2026, 1, 2, 0, 0, tzinfo=AHEAD_OF_UTC),
+            "claude quota blocked until 00:05",
+            id="local-date-decides-not-the-utc-date",
+        ),
+        pytest.param(
+            datetime(2026, 10, 25, 8, 0, tzinfo=timezone(timedelta(hours=1))),
+            datetime(2026, 10, 24, 23, 0, tzinfo=timezone(timedelta(hours=2))),
+            "claude quota blocked until Oct 25 08:00",
+            id="offset-change-between-now-and-reset",
         ),
     ],
 )
-def test_quota_wait_description_shows_the_reset_in_utc_and_the_date_only_off_today(
-    until: datetime,
-    expected: str,
+def test_quota_wait_description_reads_the_reset_in_the_zone_it_is_given(
+    until: datetime, now: datetime, expected: str
 ) -> None:
-    assert quota_wait_description("claude", until, NOW) == expected
-
-
-@pytest.mark.parametrize(
-    ("now", "expected"),
-    [
-        pytest.param(
-            BEFORE_MIDNIGHT,
-            "claude quota blocked until Jan 02 01:00Z",
-            id="before-utc-midnight",
-        ),
-        pytest.param(AFTER_MIDNIGHT, "claude quota blocked until 01:00Z", id="after-utc-midnight"),
-        pytest.param(
-            datetime(2026, 1, 2, 0, 30, tzinfo=BEHIND_UTC),
-            "claude quota blocked until 01:00Z",
-            id="utc-date-decides-in-another-zone",
-        ),
-    ],
-)
-def test_quota_wait_description_drops_the_date_when_the_clock_reaches_the_reset_day(
-    now: datetime,
-    expected: str,
-) -> None:
-    assert quota_wait_description("claude", RESET_AFTER_MIDNIGHT, now) == expected
+    assert quota_wait_description("claude", until, now) == expected
 
 
 @pytest.mark.parametrize(
