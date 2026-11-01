@@ -33,7 +33,7 @@ from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
 from tests.support.factories import make_task
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
-from tests.support.waiting import wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -1504,6 +1504,9 @@ async def test_invalid_agent_setting_focuses_its_field_and_blocks_the_write(
         await _replace_input(pilot, "#agent-setting-0-0", "100")
         await _finish_from_agent_settings(pilot)
         await wait_until(config_path.is_file, timeout=3)
+        finish_button = app.query_one("#wizard-finish", Button)
+        await wait_until(lambda: finish_button.label == "Exit", timeout=UI_WAIT_SECONDS)
+        await _click_button(pilot, "#wizard-finish")
 
     assert load_settings(tmp_path).agents["fake"].options["compact_at_pct"] == 100.0
 
