@@ -5471,3 +5471,41 @@ async def test_ctrl_p_carries_the_selected_browser_task(
             assert opened[0].task_id == task.id
     finally:
         reader.close()
+
+
+async def test_project_engine_fault_bar_has_no_action_hint_and_opens_the_faults_popup(
+    database: Database, connection: Connection, tmp_path: Path
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = SystemClock()
+    EventLog(connection, clock).append(
+        EventKind.ENGINE_FAULT,
+        task_id=None,
+        message="base push main failed",
+        data={
+            "scope": "base push main",
+            "error": "CommandFailed",
+            "recoverable": True,
+            "repeat": 1276,
+        },
+    )
+    reader = StateReader(database, clock)
+    try:
+        app = _app(reader, project_dir, widget_names=["header", "faults"])
+        async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
+            status = app.query_one("#escalations", Static)
+            await wait_until(
+                lambda: "base push main" in _rendered_text(status),
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert "Ctrl+P" not in _rendered_text(status)
+            assert await pilot.click("#escalations")
+            await wait_until(
+                lambda: bool(app.screen.query("#context-widget-title")),
+                timeout=UI_WAIT_SECONDS,
+            )
+            title = app.screen.query_one("#context-widget-title", Static)
+            assert _rendered_text(title) == "Faults"
+            assert bool(app.screen.query("#faults"))
+    finally:
+        reader.close()

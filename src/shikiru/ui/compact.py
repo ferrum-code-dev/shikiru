@@ -828,10 +828,8 @@ def _attention_group_status(
             None,
         )
         if fault is not None:
-            status = Text.assemble(("! ", ALERT_COLOR))
-            append_key_hint(
-                status, f"{group.task_id or 'Project'} · {fault} · {ACTION_HINT}", ALERT_COLOR
-            )
+            identity = f"{group.task_id or 'Project'} · {fault}"
+            status = Text.assemble(("! ", ALERT_COLOR), (identity, ALERT_COLOR))
         else:
             status = Text.assemble(("! ", AMBER))
             append_key_hint(

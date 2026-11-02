@@ -288,7 +288,6 @@ def _extension_name(name: str) -> str:
 def _contextual_widget_label(name: str, placement: WidgetPlacement) -> str:
     category = {
         WidgetPlacement.DETAILED_USAGE: "Usage",
-        WidgetPlacement.DIAGNOSTICS: "Diagnostics",
         WidgetPlacement.EXTENSIONS: "Extensions",
     }.get(placement)
     label = name.replace("_", " ")
