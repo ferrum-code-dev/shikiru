@@ -85,6 +85,7 @@ from shikiru.paths import (
     engine_output_path,
     run_dir,
     runs_root,
+    state_db_path,
     task_root,
     turns_dir,
 )
@@ -583,8 +584,12 @@ class OperatorQueries:
         )
 
     def engine_log_location(self) -> str:
-        """Return the path of the engine log, which records each failed attempt's traceback."""
+        """Return the path of the engine log, which holds the traceback of each logged fault."""
         return str(engine_log_path(self._project_root))
+
+    def state_database_location(self) -> str:
+        """Return the path of the state database, which records each engine fault event."""
+        return str(state_db_path(self._project_root))
 
     def oldest_escalation_age_seconds(self) -> float | None:
         """Return the age of the oldest unresolved escalation, or `None` when none is open."""

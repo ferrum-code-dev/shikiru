@@ -20,7 +20,7 @@ from shikiru.dashboard.diagnostics import (
     ProjectDiagnosticsPanel,
 )
 from shikiru.domain.events import EventKind
-from shikiru.paths import engine_log_path
+from shikiru.paths import engine_log_path, state_db_path
 from shikiru.process import ProcessIdentity
 from shikiru.store.events import EventLog
 from shikiru.ui.tokens import NEUTRAL_BORDER_COLOR, SAGE
@@ -564,14 +564,53 @@ def _faults_lines(app: DashboardApp) -> list[str]:
     return [_text(row) for row in rows if _ink(row)]
 
 
-@pytest.mark.parametrize(
-    ("scope", "recoverable", "resolution"),
-    [
-        ("base push main", True, "Shikiru retries it automatically"),
-        ("merge", False, "fix the code named in the traceback"),
-        ("remote check origin", True, "could not read the repository's remote configuration"),
-    ],
-)
+_RESOLUTION_CASES = [
+    pytest.param(
+        "base push main",
+        True,
+        "Shikiru retries it automatically",
+        True,
+        id="base-push-retries-with-backoff",
+    ),
+    pytest.param(
+        "remote check origin",
+        True,
+        "could not read the repository's remote configuration",
+        True,
+        id="remote-check-names-the-git-configuration",
+    ),
+    pytest.param(
+        "pull request close",
+        True,
+        "then waits for the next engine start",
+        False,
+        id="pull-request-close-is-bounded",
+    ),
+    pytest.param(
+        "reconcile resume",
+        True,
+        "attempts this step again at the next engine start",
+        True,
+        id="startup-reconciliation-waits-for-restart",
+    ),
+    pytest.param(
+        "merge",
+        True,
+        "this view does not say when it is retried",
+        False,
+        id="unknown-retry-policy-is-conservative",
+    ),
+    pytest.param(
+        "merge",
+        False,
+        "fix the code the evidence points to",
+        False,
+        id="unrecoverable-fault-names-the-code",
+    ),
+]
+
+
+@pytest.mark.parametrize(("scope", "recoverable", "resolution", "logged"), _RESOLUTION_CASES)
 async def test_the_faults_panel_says_how_each_fault_resolves_and_where_its_evidence_is(
     reader: StateReader,
     tmp_path: Path,
@@ -580,6 +619,7 @@ async def test_the_faults_panel_says_how_each_fault_resolves_and_where_its_evide
     scope: str,
     recoverable: bool,
     resolution: str,
+    logged: bool,
 ) -> None:
     clock = FakeClock(_START)
     project_dir = write_minimal_project(tmp_path)
@@ -604,10 +644,32 @@ async def test_the_faults_panel_says_how_each_fault_resolves_and_where_its_evide
         faults = app.screen.query_one("#faults")
         await wait_until(lambda: faults.region.height > 0, timeout=_WAIT_SECONDS)
         flat = " ".join(" ".join(_faults_lines(app)).split())
+        evidence = _unbroken(" ".join(_faults_lines(app)))
         assert resolution in flat
-        assert _unbroken(str(engine_log_path(project_dir))) in _unbroken(
-            " ".join(_faults_lines(app))
-        )
+        assert _unbroken(str(state_db_path(project_dir))) in evidence
+        assert (_unbroken(str(engine_log_path(project_dir))) in evidence) is logged
+
+
+@pytest.mark.parametrize("scope", ["pull request close", "reconcile resume", "merge"])
+async def test_only_a_base_push_or_remote_check_fault_promises_automatic_retries(
+    reader: StateReader, tmp_path: Path, connection: Connection, *, scope: str
+) -> None:
+    clock = FakeClock(_START)
+    _record_fault(connection, clock, None, scope=scope, recoverable=True, repeat=2)
+    app = dashboard_app(
+        reader,
+        write_minimal_project(tmp_path),
+        clock,
+        widget_names=["queue", "resources", "faults"],
+        services=_Services(_SAMPLE),
+    )
+    async with app.run_test(size=_POPUP) as pilot:
+        await _open_popup(app, pilot)
+        faults = app.screen.query_one("#faults")
+        await wait_until(lambda: faults.region.height > 0, timeout=_WAIT_SECONDS)
+        flat = " ".join(" ".join(_faults_lines(app)).split())
+        assert "Recoverable:" in flat
+        assert "retries it automatically" not in flat
 
 
 async def test_a_base_push_fault_names_the_base_and_keeps_the_push_from_being_forced(

@@ -1067,7 +1067,8 @@ class StateDashboardViews:
 
     def engine_faults(self) -> tuple[EngineFaultView, ...]:
         """Return open recorded fault streaks with their original timestamps and guidance."""
-        evidence = self._queries.engine_log_location()
+        log_path = self._queries.engine_log_location()
+        state_path = self._queries.state_database_location()
         return tuple(
             EngineFaultView(
                 scope=fault.scope,
@@ -1078,7 +1079,10 @@ class StateDashboardViews:
                 last_seen=fault.last_seen.isoformat(),
                 repeats=fault.repeat,
                 guidance=engine_fault_guidance(
-                    fault.scope, recoverable=fault.recoverable, evidence=evidence
+                    fault.scope,
+                    recoverable=fault.recoverable,
+                    log_path=log_path,
+                    state_path=state_path,
                 ),
             )
             for fault in self._cached_faults()

@@ -1,16 +1,32 @@
-"""Operator guidance for an open engine fault: what Shikiru does next and what to do."""
+"""Operator guidance for an open engine fault: how Shikiru recovers it and what to do."""
 
 from __future__ import annotations
 
+from shikiru.engine.pull_request_closing import CLOSE_FAULT_SCOPE
 from shikiru.engine.push_service import PUSH_FAULT_SCOPE, REMOTE_CHECK_FAULT_SCOPE
 
-_RECOVERABLE_LINE = (
+_RECONCILE_SCOPE_PREFIX = "reconcile "
+_BACKOFF_LINE = (
     "Recoverable: Shikiru retries it automatically with backoff and records the recovery "
     "once an attempt succeeds."
 )
+_BOUNDED_LINE = (
+    "Recoverable: Shikiru retries it with backoff for a limited number of attempts, then waits "
+    "for the next engine start. Operator action: fix the cause the evidence names, then restart "
+    "the engine to retry it sooner."
+)
+_STARTUP_LINE = (
+    "Recoverable: Shikiru does not retry it while the engine runs; it attempts this step again "
+    "at the next engine start. Operator action: fix the cause the evidence names, then restart "
+    "the engine."
+)
+_UNKNOWN_LINE = (
+    "Recoverable: Shikiru records the recovery once the scope works again, but this view does "
+    "not say when it is retried, so check the evidence before waiting on a retry."
+)
 _UNRECOVERABLE_LINE = (
-    "Unrecoverable: a programming fault that retrying cannot fix. Operator action: fix the "
-    "code named in the traceback, then restart the engine."
+    "Unrecoverable: a programming fault that retrying cannot fix. Operator action: fix the code "
+    "the evidence points to, then restart the engine."
 )
 _REMOTE_CHECK_LINE = (
     "Shikiru could not read the repository's remote configuration, so no base is pushed until "
@@ -26,17 +42,11 @@ _PUSH_PENDING_LINE = (
     "Git could not push {base} to the remote, so its pending work stays unpushed; other bases "
     "keep pushing."
 )
-_EVIDENCE_LINE = (
-    "Evidence: {evidence} holds each failed attempt's traceback, including git's error output, "
-    "and its retry delay."
+_LOGGED_EVIDENCE_LINE = (
+    "Evidence: {log_path} holds the traceback of each failed attempt, and the recorded fault "
+    "event in {state_path} holds its error message."
 )
-
-
-def _push_lines(base: str) -> tuple[str, ...]:
-    return (
-        _PUSH_PENDING_LINE.format(base=base),
-        _PUSH_FORCE_LINE.format(base=base),
-    )
+_EVENT_EVIDENCE_LINE = "Evidence: the recorded fault event in {state_path} holds its error message."
 
 
 def _scope_target(scope: str, prefix: str) -> str | None:
@@ -44,20 +54,54 @@ def _scope_target(scope: str, prefix: str) -> str | None:
     return scope.removeprefix(head) if scope.startswith(head) else None
 
 
-def engine_fault_guidance(scope: str, *, recoverable: bool, evidence: str) -> tuple[str, ...]:
-    """Return the lines explaining an open fault in `scope` and what to do about it.
+def _is_backoff_scope(scope: str) -> bool:
+    return any(
+        _scope_target(scope, prefix) is not None
+        for prefix in (PUSH_FAULT_SCOPE, REMOTE_CHECK_FAULT_SCOPE)
+    )
 
-    `evidence` is where the engine recorded each failed attempt.
-    """
+
+def _is_logged_scope(scope: str) -> bool:
+    return _is_backoff_scope(scope) or scope.startswith(_RECONCILE_SCOPE_PREFIX)
+
+
+def _recovery_line(scope: str, *, recoverable: bool) -> str:
+    if not recoverable:
+        return _UNRECOVERABLE_LINE
+    if _is_backoff_scope(scope):
+        return _BACKOFF_LINE
+    if scope == CLOSE_FAULT_SCOPE:
+        return _BOUNDED_LINE
+    if scope.startswith(_RECONCILE_SCOPE_PREFIX):
+        return _STARTUP_LINE
+    return _UNKNOWN_LINE
+
+
+def _scope_lines(scope: str) -> tuple[str, ...]:
     base = _scope_target(scope, PUSH_FAULT_SCOPE)
     if base is not None:
-        scope_lines = _push_lines(base)
-    elif _scope_target(scope, REMOTE_CHECK_FAULT_SCOPE) is not None:
-        scope_lines = (_REMOTE_CHECK_LINE,)
-    else:
-        scope_lines = ()
+        return (
+            _PUSH_PENDING_LINE.format(base=base),
+            _PUSH_FORCE_LINE.format(base=base),
+        )
+    if _scope_target(scope, REMOTE_CHECK_FAULT_SCOPE) is not None:
+        return (_REMOTE_CHECK_LINE,)
+    return ()
+
+
+def engine_fault_guidance(
+    scope: str, *, recoverable: bool, log_path: str, state_path: str
+) -> tuple[str, ...]:
+    """Return the lines explaining an open fault in `scope` and what to do about it.
+
+    `log_path` is the engine log, which holds a traceback only for the scopes Shikiru logs;
+    `state_path` is the state database, which holds the recorded fault event for every scope.
+    """
+    evidence = (_LOGGED_EVIDENCE_LINE if _is_logged_scope(scope) else _EVENT_EVIDENCE_LINE).format(
+        log_path=log_path, state_path=state_path
+    )
     return (
-        _RECOVERABLE_LINE if recoverable else _UNRECOVERABLE_LINE,
-        *scope_lines,
-        _EVIDENCE_LINE.format(evidence=evidence),
+        _recovery_line(scope, recoverable=recoverable),
+        *_scope_lines(scope),
+        evidence,
     )
