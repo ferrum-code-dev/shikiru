@@ -19,7 +19,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Mode, Status, Step
 from shikiru.engine.fault_reporter import FaultReporter
 from shikiru.engine.integration import IntegrationMetadata, Integrator, LocalMerge, UncommittedWork
-from shikiru.engine.push_service import PUSH_FAULT_SCOPE, PushService
+from shikiru.engine.push_service import PUSH_FAULT_SCOPE, REMOTE_RECHECK_SECONDS, PushService
 from shikiru.engine.tick_guard import TickGuard
 from shikiru.paths import state_db_path
 from shikiru.process import SubprocessRunner
@@ -343,7 +343,7 @@ async def test_an_integration_registered_during_a_push_stays_pending_across_a_re
     assert not PushTargets(connection).pending()
 
 
-async def test_a_missing_remote_keeps_the_work_pending_and_recovers_when_it_appears(
+async def test_a_missing_remote_is_no_fault_and_its_work_publishes_once_configured(
     connection: Connection, tmp_path: Path
 ) -> None:
     rig = await _rig(connection, tmp_path, interval=0)
@@ -352,15 +352,17 @@ async def test_a_missing_remote_keeps_the_work_pending_and_recovers_when_it_appe
 
     await rig.push_due()
 
-    assert EventKind.ENGINE_FAULT in rig.kinds()
+    assert EventKind.ENGINE_FAULT not in rig.kinds()
     assert PushTargets(connection).pending()
     await run_git(_RUNNER, rig.project_root, "remote", "rename", "elsewhere", _REMOTE)
-    rig.clock.advance(engine_settings().orchestration.faults.backoff_initial_seconds)
+    await rig.push_due()
+    assert PushTargets(connection).pending()
+
+    rig.clock.advance(REMOTE_RECHECK_SECONDS)
     await rig.push_due()
 
     assert await rig.remote_sha("main") == await rig.local_sha("main")
     assert not PushTargets(connection).pending()
-    assert EventKind.ENGINE_RECOVERED in rig.kinds()
 
 
 async def test_a_rejected_base_does_not_hold_back_another_due_base(

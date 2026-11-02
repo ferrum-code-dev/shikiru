@@ -340,6 +340,11 @@ class Git:
             untracked_paths=0,
         )
 
+    async def remote_configured(self, repo_dir: Path, remote: str) -> bool:
+        """Return whether the repo at `repo_dir` has a remote named `remote` configured."""
+        result = await self._run(repo_dir, "remote")
+        return remote in result.stdout.splitlines()
+
     async def remote_branch_sha(self, repo_dir: Path, remote: str, branch: str) -> str | None:
         """Return the sha `branch` had when last pushed to or fetched from `remote`, if ever."""
         result = await self._run(

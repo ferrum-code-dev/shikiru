@@ -253,6 +253,7 @@ class RepoStatus:
     base: str | None = None
     unpushed: int | None = None
     unpulled: int | None = None
+    remote_configured: bool = True
 
 
 class PublicationState(StrEnum):

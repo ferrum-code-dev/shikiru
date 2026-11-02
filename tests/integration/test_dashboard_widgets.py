@@ -422,6 +422,42 @@ async def test_header_shows_the_local_push_time_until_a_push_acknowledges_the_in
         await wait_until(lambda: "push at" not in _plain(widget.content), timeout=UI_WAIT_SECONDS)
 
 
+@pytest.mark.usefixtures("connection")
+@pytest.mark.parametrize(
+    ("remote_configured", "push_time_shown"),
+    [
+        pytest.param(True, True, id="remote-configured"),
+        pytest.param(False, False, id="remote-absent"),
+    ],
+)
+async def test_header_shows_the_push_time_only_while_the_remote_is_configured(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+    *,
+    remote_configured: bool,
+    push_time_shown: bool,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    PushTargets(connection).register("main", now=START, interval=PUSH_INTERVAL_SECONDS)
+    checkout = replace(
+        _publishing_checkout(project_dir, unpushed=None, unpulled=None),
+        remote_configured=remote_configured,
+    )
+    context = widget_context(
+        reader,
+        project_dir,
+        FakeClock(START),
+        services=StubServices(repo_status_value=checkout),
+    )
+    widget = cast("HeaderPanel", HeaderWidget().create(context))
+    async with WidgetHostApp(widget).run_test() as pilot:
+        await pilot.pause()
+        rendered = _plain(widget.content)
+        assert "origin unavailable" in rendered
+        assert ("push at" in rendered) is push_time_shown
+
+
 async def test_header_refreshes_when_the_writer_commits(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:

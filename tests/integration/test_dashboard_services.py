@@ -215,19 +215,35 @@ async def test_publication_counts_local_commits_the_remote_lacks_and_the_reverse
     assert (status.unpushed, status.unpulled) == expected
 
 
-async def test_publication_is_unknown_without_a_remote_tracking_ref(tmp_path: Path) -> None:
+async def test_publication_is_unknown_when_the_remote_is_no_longer_configured(
+    tmp_path: Path,
+) -> None:
     runner = SubprocessRunner()
     git = Git(runner, command_timeout=GIT_COMMAND_TIMEOUT)
-    repo_dir = tmp_path / "repo"
-    await init_repo(runner, repo_dir, initial_branch="main")
-    (repo_dir / "a.txt").write_text("1")
-    await commit_all(runner, repo_dir, "initial")
+    repo_dir = await _checkout_with_remote(runner, tmp_path)
+    await _commit_file(runner, repo_dir, "local.txt")
+    await run_git(runner, repo_dir, "config", "--remove-section", f"remote.{REMOTE}")
 
     status = await _service(git, repo_dir, FakeClock(START)).repo_status()
 
     assert status.state is DiagnosticSampleState.AVAILABLE
     assert status.branch == "main"
     assert status.base == "main"
+    assert status.remote_configured is False
+    assert (status.unpushed, status.unpulled) == (None, None)
+
+
+async def test_a_configured_remote_without_a_tracking_ref_is_still_configured(
+    tmp_path: Path,
+) -> None:
+    runner = SubprocessRunner()
+    git = Git(runner, command_timeout=GIT_COMMAND_TIMEOUT)
+    repo_dir = await _checkout_with_remote(runner, tmp_path)
+    await run_git(runner, repo_dir, "update-ref", "-d", f"refs/remotes/{REMOTE}/main")
+
+    status = await _service(git, repo_dir, FakeClock(START)).repo_status()
+
+    assert status.remote_configured is True
     assert (status.unpushed, status.unpulled) == (None, None)
 
 

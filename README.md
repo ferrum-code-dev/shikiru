@@ -245,9 +245,10 @@ commit, move or otherwise resolve them before retrying.
 nonnegative whole number of seconds) controls when locally integrated work reaches `repo.remote`.
 Integrations within an interval accumulate and the first one sets the deadline, so later ones do
 not postpone it. `0` pushes after each successful local integration. Only the base branch is pushed,
-never forced and never task branches or tags; a rejected, timed-out or missing remote raises an
-engine fault, keeps the work pending and retries with backoff. Pending work survives restarts. PR
-mode does not use this setting. Stop and restart the engine to load a changed value.
+never forced and never task branches or tags; a rejected or timed-out push raises an engine fault,
+keeps the work pending and retries with backoff. A remote that is not configured is not pushed to
+and raises no fault: the work stays pending and the remote is checked again after a minute. Pending
+work survives restarts. PR mode does not use this setting. Stop and restart the engine to load a changed value.
 
 **Caches:** selected Git-ignored cache paths can be cloned into task worktrees using filesystem
 copy-on-write. If unsupported, Shikiru warns and leaves caches uncloned; it does not silently make

@@ -188,7 +188,10 @@ class GitRepoStatusService:
             ahead = len(await self._git.log_oneline(repo_dir, f"{repo.base}..{branch}"))
             behind = len(await self._git.log_oneline(repo_dir, f"{branch}..{repo.base}"))
         base = branch if repo.base is None else repo.base
-        unpushed, unpulled = await self._publication_counts(repo_dir, base)
+        remote_configured = await self._git.remote_configured(repo_dir, repo.remote)
+        unpushed, unpulled = (
+            await self._publication_counts(repo_dir, base) if remote_configured else (None, None)
+        )
         return RepoStatus(
             branch=branch,
             ahead=ahead,
@@ -202,6 +205,7 @@ class GitRepoStatusService:
             base=base,
             unpushed=unpushed,
             unpulled=unpulled,
+            remote_configured=remote_configured,
         )
 
     async def _publication_counts(self, repo_dir: Path, base: str) -> tuple[int | None, int | None]:

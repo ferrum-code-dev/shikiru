@@ -175,10 +175,13 @@ pushes right after each integration. Pushes run off the engine loop with a timeo
 `refs/heads/<base>` without force, tags or task branches, and are acknowledged up to the registered
 count, so an integration arriving during a push stays pending. Failures use the engine-fault
 backoff and recovery events per base, so a rejected base keeps its work pending without holding
-back the others; shutdown awaits or cancels an outstanding push. Pull-request mode does not create the service. Changed values load on engine restart.
+back the others. A remote that is not configured is never pushed to and raises no fault: the work
+stays pending and the remote is rechecked about once a minute. Shutdown awaits or cancels an
+outstanding push. Pull-request mode does not create the service. Changed values load on engine restart.
 
 The dashboard header shows beside the base branch how many of its commits the remote-tracking
 `refs/remotes/<remote>/<base>` lacks, with the local time of the pending push from the same table.
+When `repo.remote` is not configured the header shows it as unavailable and omits the push time.
 A missing remote ref, or a read that failed before any sample, is shown as unavailable; a stale
 sample keeps its counts marked as previously sampled. A base that diverged from the remote is shown
 as not in sync. None of these is ever shown as in sync.

@@ -429,7 +429,7 @@ class StateDashboardViews:
 
     def _publication(self, repo: RepoStatus) -> PublicationView:
         target = None if repo.base is None else self._state.push_target(repo.base)
-        scheduled = None if target is None else target.scheduled_at
+        scheduled = None if target is None or not repo.remote_configured else target.scheduled_at
         push_time = None if scheduled is None else to_local(scheduled).strftime(PUSH_TIME_FORMAT)
         return PublicationView(
             state=_publication_state(repo),
