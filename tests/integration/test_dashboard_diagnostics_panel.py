@@ -20,6 +20,7 @@ from shikiru.dashboard.diagnostics import (
     ProjectDiagnosticsPanel,
 )
 from shikiru.domain.events import EventKind
+from shikiru.paths import engine_log_path
 from shikiru.process import ProcessIdentity
 from shikiru.store.events import EventLog
 from shikiru.ui.tokens import NEUTRAL_BORDER_COLOR, SAGE
@@ -552,3 +553,88 @@ async def test_opening_faults_without_the_faults_widget_says_so_and_falls_back_t
             lambda: app.screen is not home and str(status.label).startswith("Faults not"),
             timeout=_WAIT_SECONDS,
         )
+
+
+def _unbroken(text: str) -> str:
+    return "".join(text.split())
+
+
+def _faults_lines(app: DashboardApp) -> list[str]:
+    rows = rendered_lines(app.screen.query_one("#faults"))
+    return [_text(row) for row in rows if _ink(row)]
+
+
+@pytest.mark.parametrize(
+    ("scope", "recoverable", "resolution"),
+    [
+        ("base push main", True, "Shikiru retries it automatically"),
+        ("merge", False, "fix the code named in the traceback"),
+        ("remote check origin", True, "could not read the repository's remote configuration"),
+    ],
+)
+async def test_the_faults_panel_says_how_each_fault_resolves_and_where_its_evidence_is(
+    reader: StateReader,
+    tmp_path: Path,
+    connection: Connection,
+    *,
+    scope: str,
+    recoverable: bool,
+    resolution: str,
+) -> None:
+    clock = FakeClock(_START)
+    project_dir = write_minimal_project(tmp_path)
+    _record_fault(
+        connection,
+        clock,
+        None,
+        scope=scope,
+        error="CommandFailed",
+        recoverable=recoverable,
+        repeat=1276,
+    )
+    app = dashboard_app(
+        reader,
+        project_dir,
+        clock,
+        widget_names=["queue", "resources", "faults"],
+        services=_Services(_SAMPLE),
+    )
+    async with app.run_test(size=_POPUP) as pilot:
+        await _open_popup(app, pilot)
+        faults = app.screen.query_one("#faults")
+        await wait_until(lambda: faults.region.height > 0, timeout=_WAIT_SECONDS)
+        flat = " ".join(" ".join(_faults_lines(app)).split())
+        assert resolution in flat
+        assert _unbroken(str(engine_log_path(project_dir))) in _unbroken(
+            " ".join(_faults_lines(app))
+        )
+
+
+async def test_a_base_push_fault_names_the_base_and_keeps_the_push_from_being_forced(
+    reader: StateReader, tmp_path: Path, connection: Connection
+) -> None:
+    clock = FakeClock(_START)
+    _record_fault(
+        connection,
+        clock,
+        None,
+        scope="base push main",
+        error="CommandFailed",
+        recoverable=True,
+        repeat=1276,
+    )
+    app = dashboard_app(
+        reader,
+        write_minimal_project(tmp_path),
+        clock,
+        widget_names=["queue", "resources", "faults"],
+        services=_Services(_SAMPLE),
+    )
+    async with app.run_test(size=_POPUP) as pilot:
+        await _open_popup(app, pilot)
+        faults = app.screen.query_one("#faults")
+        await wait_until(lambda: faults.region.height > 0, timeout=_WAIT_SECONDS)
+        flat = " ".join(" ".join(_faults_lines(app)).split())
+        assert "Git could not push main to the remote" in flat
+        assert "Pushes never force" in flat
+        assert "pending work stays unpushed" in flat

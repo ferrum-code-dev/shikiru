@@ -57,6 +57,8 @@ class _FaultLines:
         for fault in self.faults:
             yield wrap_groups(_fault_headline(fault), options.max_width)
             yield wrap_groups(_fault_timeline(fault), options.max_width)
+            for line in fault.guidance:
+                yield grey(line)
 
 
 def faults_section(faults: tuple[EngineFaultView, ...], *, ruled: bool) -> Group | Section:

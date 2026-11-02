@@ -80,7 +80,14 @@ from shikiru.operator.timeline import (
     read_signal_batch,
     signal_category_is_requested,
 )
-from shikiru.paths import engine_output_path, run_dir, runs_root, task_root, turns_dir
+from shikiru.paths import (
+    engine_log_path,
+    engine_output_path,
+    run_dir,
+    runs_root,
+    task_root,
+    turns_dir,
+)
 from shikiru.store.database import format_timestamp
 from shikiru.store.escalations import Escalation
 from shikiru.telemetry.disk import directory_usage
@@ -574,6 +581,10 @@ class OperatorQueries:
         return open_fault_streaks(
             self._reader.events_since(0, kinds=[EventKind.ENGINE_FAULT, EventKind.ENGINE_RECOVERED])
         )
+
+    def engine_log_location(self) -> str:
+        """Return the path of the engine log, which records each failed attempt's traceback."""
+        return str(engine_log_path(self._project_root))
 
     def oldest_escalation_age_seconds(self) -> float | None:
         """Return the age of the oldest unresolved escalation, or `None` when none is open."""

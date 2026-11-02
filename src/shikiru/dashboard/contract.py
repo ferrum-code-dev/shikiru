@@ -876,7 +876,7 @@ class DiskView:
 
 @dataclass(frozen=True)
 class EngineFaultView:
-    """One open recorded engine fault streak for Diagnostics."""
+    """One open recorded engine fault streak for Diagnostics, with what the Operator can do."""
 
     scope: str
     task_id: str | None
@@ -885,6 +885,7 @@ class EngineFaultView:
     first_seen: str
     last_seen: str
     repeats: int
+    guidance: tuple[str, ...]
 
 
 class DashboardViews(Protocol):

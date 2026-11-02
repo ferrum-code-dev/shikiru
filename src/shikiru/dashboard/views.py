@@ -62,6 +62,7 @@ from shikiru.dashboard.contract import (
     TaskTimelineSource,
     WorkspaceSummaryView,
 )
+from shikiru.dashboard.fault_guidance import engine_fault_guidance
 from shikiru.dashboard.session_history import project_task_sessions
 from shikiru.dashboard.tick import TickMemo, tick_now
 from shikiru.domain.acceptance import acceptance_criteria_from_request
@@ -1065,7 +1066,8 @@ class StateDashboardViews:
         )
 
     def engine_faults(self) -> tuple[EngineFaultView, ...]:
-        """Return open recorded fault streaks with their original timestamps."""
+        """Return open recorded fault streaks with their original timestamps and guidance."""
+        evidence = self._queries.engine_log_location()
         return tuple(
             EngineFaultView(
                 scope=fault.scope,
@@ -1075,6 +1077,9 @@ class StateDashboardViews:
                 first_seen=fault.first_seen.isoformat(),
                 last_seen=fault.last_seen.isoformat(),
                 repeats=fault.repeat,
+                guidance=engine_fault_guidance(
+                    fault.scope, recoverable=fault.recoverable, evidence=evidence
+                ),
             )
             for fault in self._cached_faults()
         )
