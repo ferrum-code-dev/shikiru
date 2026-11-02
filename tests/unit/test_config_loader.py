@@ -75,6 +75,16 @@ def test_push_interval_rejects_negative_and_non_whole_values(tmp_path: Path, val
         load_settings(project_dir)
 
 
+@pytest.mark.parametrize("value", ["0", "-5", "1.5"])
+def test_remote_recheck_rejects_non_positive_and_non_whole_values(
+    tmp_path: Path, value: str
+) -> None:
+    project_dir = _project(tmp_path, f"\n[orchestration]\nremote_recheck_seconds = {value}\n")
+
+    with pytest.raises(ConfigError):
+        load_settings(project_dir)
+
+
 def test_deep_merge_replaces_arrays_instead_of_concatenating(tmp_path: Path) -> None:
     project_dir = _project(
         tmp_path,

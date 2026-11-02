@@ -128,6 +128,7 @@ class OrchestrationConfig(ConfigModel):
     max_iterations: int
     integration: IntegrationStrategy
     push_interval_seconds: int = Field(ge=0)
+    remote_recheck_seconds: int = Field(gt=0)
     poll_seconds: int
     shutdown_seconds: float = Field(gt=0)
     dispatch_budget_seconds: float = Field(gt=0)

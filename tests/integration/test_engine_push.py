@@ -19,7 +19,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Mode, Status, Step
 from shikiru.engine.fault_reporter import FaultReporter
 from shikiru.engine.integration import IntegrationMetadata, Integrator, LocalMerge, UncommittedWork
-from shikiru.engine.push_service import PUSH_FAULT_SCOPE, REMOTE_RECHECK_SECONDS, PushService
+from shikiru.engine.push_service import PUSH_FAULT_SCOPE, REMOTE_CHECK_FAULT_SCOPE, PushService
 from shikiru.engine.tick_guard import TickGuard
 from shikiru.paths import state_db_path
 from shikiru.process import SubprocessRunner
@@ -126,22 +126,31 @@ async def _resolve_nothing(
 def _service(
     connection: Connection, events: EventLog, clock: FakeClock, project_root: Path, interval: int
 ) -> PushService:
-    settings = engine_settings().orchestration.faults
-    reporter = FaultReporter(events=events, clock=clock, settings=settings, logger=_LOGGER)
+    orchestration = engine_settings().orchestration
+    faults = orchestration.faults
+    reporter = FaultReporter(events=events, clock=clock, settings=faults, logger=_LOGGER)
     return PushService(
         targets=PushTargets(connection),
         git=Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT),
         guard_for=lambda base: TickGuard(
             reporter=reporter,
             clock=clock,
-            settings=settings,
+            settings=faults,
             logger=_LOGGER,
             scope=f"{PUSH_FAULT_SCOPE} {base}",
+        ),
+        remote_guard=TickGuard(
+            reporter=reporter,
+            clock=clock,
+            settings=faults,
+            logger=_LOGGER,
+            scope=f"{REMOTE_CHECK_FAULT_SCOPE} {_REMOTE}",
         ),
         clock=clock,
         project_root=project_root,
         remote=_REMOTE,
         interval_seconds=interval,
+        remote_recheck_seconds=orchestration.remote_recheck_seconds,
     )
 
 
@@ -358,11 +367,37 @@ async def test_a_missing_remote_is_no_fault_and_its_work_publishes_once_configur
     await rig.push_due()
     assert PushTargets(connection).pending()
 
-    rig.clock.advance(REMOTE_RECHECK_SECONDS)
+    rig.clock.advance(engine_settings().orchestration.remote_recheck_seconds)
     await rig.push_due()
 
     assert await rig.remote_sha("main") == await rig.local_sha("main")
     assert not PushTargets(connection).pending()
+
+
+async def test_a_failed_remote_probe_is_backed_off_and_recovers_when_git_works_again(
+    connection: Connection, tmp_path: Path
+) -> None:
+    rig = await _rig(connection, tmp_path, interval=0)
+    await rig.integrate("stranded")
+    config = rig.project_root / ".git" / "config"
+    healthy = config.read_text()
+    config.write_text(healthy + _MALFORMED_CONFIG_SECTION)
+
+    await rig.push_due()
+
+    assert EventKind.ENGINE_FAULT in rig.kinds()
+    assert PushTargets(connection).pending()
+
+    config.write_text(healthy)
+    await rig.push_due()
+    assert await rig.remote_sha("main") != await rig.local_sha("main")
+
+    rig.clock.advance(engine_settings().orchestration.faults.backoff_initial_seconds)
+    await rig.push_due()
+
+    assert await rig.remote_sha("main") == await rig.local_sha("main")
+    assert not PushTargets(connection).pending()
+    assert EventKind.ENGINE_RECOVERED in rig.kinds()
 
 
 async def test_a_rejected_base_does_not_hold_back_another_due_base(
@@ -410,6 +445,7 @@ echo started >> '{calls}'
 while [ ! -e '{release}' ]; do sleep 0.05; done
 """
 _WAIT_SECONDS = 10.0
+_MALFORMED_CONFIG_SECTION = "\n[remote\n"
 
 
 async def test_a_hung_push_never_stops_the_engine_from_processing_commands(

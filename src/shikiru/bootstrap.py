@@ -65,7 +65,7 @@ from shikiru.engine.notification_delivery import NotificationDelivery
 from shikiru.engine.notification_feed import NotificationFeed
 from shikiru.engine.notifier import Notifier
 from shikiru.engine.pull_request_closing import PullRequestClosing
-from shikiru.engine.push_service import PUSH_FAULT_SCOPE, PushService
+from shikiru.engine.push_service import PUSH_FAULT_SCOPE, REMOTE_CHECK_FAULT_SCOPE, PushService
 from shikiru.engine.quota_reconciler import QuotaReconciler
 from shikiru.engine.quota_schedule import QuotaSchedule
 from shikiru.engine.quota_waits import QuotaWaits
@@ -1119,10 +1119,18 @@ def _build_push_service(
             logger=logger,
             scope=f"{PUSH_FAULT_SCOPE} {base}",
         ),
+        remote_guard=TickGuard(
+            reporter=faults,
+            clock=clock,
+            settings=settings.orchestration.faults,
+            logger=logger,
+            scope=f"{REMOTE_CHECK_FAULT_SCOPE} {settings.repo.remote}",
+        ),
         clock=clock,
         project_root=project_root,
         remote=settings.repo.remote,
         interval_seconds=settings.orchestration.push_interval_seconds,
+        remote_recheck_seconds=settings.orchestration.remote_recheck_seconds,
     )
 
 

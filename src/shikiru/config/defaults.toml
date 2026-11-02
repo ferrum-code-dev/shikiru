@@ -9,6 +9,7 @@ max_parallel = 2
 max_iterations = 5
 integration = "merge"
 push_interval_seconds = 14400
+remote_recheck_seconds = 60
 poll_seconds = 2
 shutdown_seconds = 15
 dispatch_budget_seconds = 10

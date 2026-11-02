@@ -22,18 +22,18 @@ if TYPE_CHECKING:
     from shikiru.workspace.git import Git
 
 PUSH_FAULT_SCOPE = "base push"
-REMOTE_RECHECK_SECONDS = 60
+REMOTE_CHECK_FAULT_SCOPE = "remote check"
 
 
 class PushService:
     """Registers integrated bases and pushes each when its deadline comes, on its own task.
 
-    Each base pushes behind its own `TickGuard`, so a rejected push or a timeout is recorded as a
-    fault, keeps that base pending and is retried on the fault backoff without holding back the
-    other bases, the engine loop or task dispatch. A remote that is not configured is not a fault:
-    nothing is pushed, the work stays pending, and the remote is checked again after
-    `REMOTE_RECHECK_SECONDS`. A push acknowledges only the integrations that were registered when
-    it started.
+    Each base pushes behind its own `TickGuard`, and the remote is probed behind `remote_guard`, so
+    a failed probe, a rejected push or a timeout is recorded as a fault, keeps the work pending and
+    is retried on the fault backoff without holding back the other bases, the engine loop or task
+    dispatch. A remote that is not configured is not a fault: nothing is pushed, the work stays
+    pending, and the remote is checked again after `remote_recheck_seconds`. A push acknowledges
+    only the integrations that were registered when it started.
     """
 
     def __init__(
@@ -42,20 +42,24 @@ class PushService:
         targets: PushTargets,
         git: Git,
         guard_for: Callable[[str], TickGuard],
+        remote_guard: TickGuard,
         clock: Clock,
         project_root: Path,
         remote: str,
         interval_seconds: int,
+        remote_recheck_seconds: int,
     ) -> None:
         """Push from `project_root` to `remote`, an interval of `interval_seconds` apart."""
         self._targets = targets
         self._git = git
         self._guard_for = guard_for
         self._guards: dict[str, TickGuard] = {}
+        self._remote_guard = remote_guard
         self._clock = clock
         self._project_root = project_root
         self._remote = remote
         self._interval = interval_seconds
+        self._remote_recheck = timedelta(seconds=remote_recheck_seconds)
         self._task: asyncio.Task[None] | None = None
         self._next_remote_check: datetime | None = None
 
@@ -99,12 +103,18 @@ class PushService:
         )
 
     async def _push_due(self) -> None:
-        if not await self._git.remote_configured(self._project_root, self._remote):
-            self._next_remote_check = self._clock.now() + timedelta(seconds=REMOTE_RECHECK_SECONDS)
+        configured = await self._remote_guard.attempt(self._remote_configured)
+        if configured is None:
+            return
+        if not configured:
+            self._next_remote_check = self._clock.now() + self._remote_recheck
             return
         for target in self._targets.pending():
             if is_due(target, now=self._clock.now(), interval=self._interval):
                 await self._guard(target.base).attempt(lambda target=target: self._push(target))
+
+    async def _remote_configured(self) -> bool:
+        return await self._git.remote_configured(self._project_root, self._remote)
 
     def _guard(self, base: str) -> TickGuard:
         if base not in self._guards:

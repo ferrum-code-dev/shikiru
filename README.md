@@ -222,7 +222,7 @@ invalid config keeps the last valid values and shows an alert in the header.
 | --- | --- |
 | `project`, `repo` | Project name, tracker files agents read/update, integration base/remote, ignored cache paths. |
 | `roles`, `agents` | Role and complexity ladders, review escalation policy; plugin CLI arguments, compaction threshold and optional billing declaration. |
-| `orchestration` | Parallel task slots, review iterations and local merge, local squash or pull-request integration; `push_interval_seconds` (seconds between pushes of locally integrated bases, default 14400); the init wizard also sets the stall and tool timeouts, the quota, CPU and free-RAM limits below. |
+| `orchestration` | Parallel task slots, review iterations and local merge, local squash or pull-request integration; `push_interval_seconds` (seconds between pushes of locally integrated bases, default 14400) and `remote_recheck_seconds` (seconds before an absent remote is checked again, default 60); the init wizard also sets the stall and tool timeouts, the quota, CPU and free-RAM limits below. |
 | `orchestration.resources` | CPU/free-RAM gates for dispatch; these do not impose CPU/RAM limits on already-running agents. |
 | `orchestration.quota_refresh` | `interval_seconds` between quota block revalidations (default 300) and `timeout_seconds` bounding each probe (default 30). |
 | `orchestration.timeouts`, `.network`, `.faults`, `.retries` | Stall/tool/Helper/quota/integration/PR limits, remote polling, engine-fault retries, and configurable provider-unavailable retries. |
@@ -247,8 +247,10 @@ Integrations within an interval accumulate and the first one sets the deadline, 
 not postpone it. `0` pushes after each successful local integration. Only the base branch is pushed,
 never forced and never task branches or tags; a rejected or timed-out push raises an engine fault,
 keeps the work pending and retries with backoff. A remote that is not configured is not pushed to
-and raises no fault: the work stays pending and the remote is checked again after a minute. Pending
-work survives restarts. PR mode does not use this setting. Stop and restart the engine to load a changed value.
+and raises no fault: the work stays pending and the remote is checked again after
+`orchestration.remote_recheck_seconds` (default `60`, a positive whole number of seconds). A check
+that itself fails is a fault like a failed push: it is retried with the same backoff and recovers
+once the check succeeds. Pending work survives restarts. PR mode does not use this setting. Stop and restart the engine to load a changed value.
 
 **Caches:** selected Git-ignored cache paths can be cloned into task worktrees using filesystem
 copy-on-write. If unsupported, Shikiru warns and leaves caches uncloned; it does not silently make

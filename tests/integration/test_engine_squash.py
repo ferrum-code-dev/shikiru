@@ -27,7 +27,7 @@ from shikiru.engine.integration import (
     SquashMerge,
     UncommittedWork,
 )
-from shikiru.engine.push_service import PUSH_FAULT_SCOPE, PushService
+from shikiru.engine.push_service import PUSH_FAULT_SCOPE, REMOTE_CHECK_FAULT_SCOPE, PushService
 from shikiru.engine.tick_guard import TickGuard
 from shikiru.process import SubprocessRunner
 from shikiru.store.database import Database, transaction
@@ -136,7 +136,8 @@ async def _rig(
     events = EventLog(connection, clock)
     tasks = TaskStore(connection, clock)
     git = Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT)
-    faults = engine_settings().orchestration.faults
+    orchestration = engine_settings().orchestration
+    faults = orchestration.faults
     reporter = FaultReporter(events=events, clock=clock, settings=faults, logger=_LOGGER)
     service = PushService(
         targets=PushTargets(connection),
@@ -148,10 +149,18 @@ async def _rig(
             logger=_LOGGER,
             scope=f"{PUSH_FAULT_SCOPE} {base}",
         ),
+        remote_guard=TickGuard(
+            reporter=reporter,
+            clock=clock,
+            settings=faults,
+            logger=_LOGGER,
+            scope=f"{REMOTE_CHECK_FAULT_SCOPE} {_REMOTE}",
+        ),
         clock=clock,
         project_root=project_root,
         remote=_REMOTE,
         interval_seconds=interval,
+        remote_recheck_seconds=orchestration.remote_recheck_seconds,
     )
     builder = task_root_builder(_RUNNER, project_root, RepoConfig())
 

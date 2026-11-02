@@ -176,8 +176,10 @@ pushes right after each integration. Pushes run off the engine loop with a timeo
 count, so an integration arriving during a push stays pending. Failures use the engine-fault
 backoff and recovery events per base, so a rejected base keeps its work pending without holding
 back the others. A remote that is not configured is never pushed to and raises no fault: the work
-stays pending and the remote is rechecked about once a minute. Shutdown awaits or cancels an
-outstanding push. Pull-request mode does not create the service. Changed values load on engine restart.
+stays pending and the remote is rechecked after `orchestration.remote_recheck_seconds` (default 60).
+The configuration probe runs behind its own guard, so a probe that fails, for example on a malformed
+`.git/config`, is an engine fault with the same backoff and recovery events, and the pushes wait
+for a successful probe. Shutdown awaits or cancels an outstanding push. Pull-request mode does not create the service. Changed values load on engine restart.
 
 The dashboard header shows beside the base branch how many of its commits the remote-tracking
 `refs/remotes/<remote>/<base>` lacks, with the local time of the pending push from the same table.
