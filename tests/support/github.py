@@ -210,12 +210,26 @@ def comment_node(
     """An inline review comment of pull request `number`, opening or within a review thread."""
     return {
         "id": f"PRRC_{comment_id}",
-        "databaseId": comment_id,
+        **fake_gh.comment_database_ids(comment_id),
         "url": f"{fake_gh.URL_PREFIX}{number}#discussion_r{comment_id}",
         "body": body,
         "createdAt": fake_gh.FAKE_TIMESTAMP,
         "author": None if author is None else {"login": author},
         "pullRequestReview": None if review_id is None else {"id": review_id},
+    }
+
+
+def conversation_node(
+    number: int, comment_id: int, body: str, *, author: str | None = "reviewer"
+) -> dict[str, Any]:
+    """A comment in the conversation of pull request `number`, as GraphQL reports it."""
+    return {
+        "id": f"IC_{comment_id}",
+        **fake_gh.comment_database_ids(comment_id),
+        "url": f"{fake_gh.URL_PREFIX}{number}#issuecomment-{comment_id}",
+        "body": body,
+        "createdAt": fake_gh.FAKE_TIMESTAMP,
+        "author": None if author is None else {"login": author},
     }
 
 

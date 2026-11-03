@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 from shikiru.errors import ShikiruError
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Iterable
     from pathlib import Path
 
     from shikiru.process import ProcessResult, SubprocessRunner
@@ -27,6 +27,7 @@ _FAILING_CHECK_RESULTS = frozenset(
 )
 _PENDING_CHECK_STATES = frozenset(("PENDING", "EXPECTED"))
 _GITHUB_MAX_PAGE_SIZE = 100
+_DECIMAL_DIGITS = re.compile(r"[0-9]+")
 _PULL_REQUEST_URL = re.compile(
     r"https://(?P<host>[A-Za-z0-9.-]+)/(?P<owner>[A-Za-z0-9_.-]+)/(?P<repo>[A-Za-z0-9_.-]+)"
     r"/pull/(?P<number>[0-9]+)"
@@ -41,7 +42,7 @@ _TYPED_FIELD_FLAG = "-F"
 _REVIEW_COMMENT_FRAGMENT = """
 fragment ReviewComment on PullRequestReviewComment {
   id
-  databaseId
+  fullDatabaseId
   url
   body
   createdAt
@@ -128,7 +129,7 @@ query PullRequestConversation(
     pullRequest(number: $number) {
       comments(first: $pageSize, after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { id databaseId url body createdAt author { login } }
+        nodes { id fullDatabaseId url body createdAt author { login } }
       }
     }
   }
@@ -146,9 +147,9 @@ class _Key(StrEnum):
     CONCLUSION = "conclusion"
     CREATED_AT = "createdAt"
     DATA = "data"
-    DATABASE_ID = "databaseId"
     END_CURSOR = "endCursor"
     ERRORS = "errors"
+    FULL_DATABASE_ID = "fullDatabaseId"
     HAS_NEXT_PAGE = "hasNextPage"
     HEAD_SHA = "headRefOid"
     HTML_URL = "html_url"
@@ -225,10 +226,15 @@ class Review:
 
 @dataclass(frozen=True, slots=True)
 class PullRequestComment:
-    """A comment in an inline discussion or the PR conversation, with the IDs needed to reply."""
+    """A comment in an inline discussion or the PR conversation, with the IDs needed to reply.
+
+    `review_id` is the review an inline comment was submitted in. It is None for conversation
+    comments and for replies this engine posts, which are not part of a review.
+    """
 
     id: str
     database_id: int
+    review_id: str | None
     url: str
     author: str | None
     body: str
@@ -239,12 +245,12 @@ class PullRequestComment:
 class ReviewThread:
     """An inline discussion: where it sits, whether it is outdated or resolved, and its comments.
 
-    `review_id` is the review that opened the discussion, or None when GitHub reports none.
-    Outdated and resolved are separate facts: an outdated discussion may still be unresolved.
+    Each comment carries the review it was submitted in, so a discussion reopened by a later
+    review shows which comments that review added. Outdated and resolved are separate facts:
+    an outdated discussion may still be unresolved.
     """
 
     id: str
-    review_id: str | None
     path: str
     line: int | None
     is_outdated: bool
@@ -353,6 +359,13 @@ def _optional_integer(node: dict[str, Any], key: _Key) -> int | None:
     return _integer(node, key)
 
 
+def _big_integer(node: dict[str, Any], key: _Key) -> int:
+    value = _text(node, key)
+    if not _DECIMAL_DIGITS.fullmatch(value):
+        raise _malformed(key)
+    return int(value)
+
+
 def _flag(node: dict[str, Any], key: _Key) -> bool:
     value = _field(node, key)
     if isinstance(value, bool):
@@ -409,10 +422,11 @@ def _review(node: dict[str, Any]) -> Review:
     )
 
 
-def _comment(node: dict[str, Any]) -> PullRequestComment:
+def _comment(node: dict[str, Any], review_id: str | None) -> PullRequestComment:
     return PullRequestComment(
         id=_text(node, _Key.ID),
-        database_id=_integer(node, _Key.DATABASE_ID),
+        database_id=_big_integer(node, _Key.FULL_DATABASE_ID),
+        review_id=review_id,
         url=_text(node, _Key.URL),
         author=_author(node),
         body=_text(node, _Key.BODY),
@@ -420,11 +434,21 @@ def _comment(node: dict[str, Any]) -> PullRequestComment:
     )
 
 
+def _review_comment(node: dict[str, Any]) -> PullRequestComment:
+    review = _object_field(node, _Key.REVIEW)
+    return _comment(node, None if review is None else _text(review, _Key.ID))
+
+
+def _conversation_comment(node: dict[str, Any]) -> PullRequestComment:
+    return _comment(node, None)
+
+
 def _rest_comment(payload: dict[str, Any]) -> PullRequestComment:
     user = _object_field(payload, _Key.USER)
     return PullRequestComment(
         id=_text(payload, _Key.NODE_ID),
         database_id=_integer(payload, _Key.ID),
+        review_id=None,
         url=_text(payload, _Key.HTML_URL),
         author=None if user is None else _text(user, _Key.LOGIN),
         body=_text(payload, _Key.BODY),
@@ -459,15 +483,7 @@ def _pull_request_node(data: dict[str, Any]) -> dict[str, Any]:
     return _object(_field(repository, _Key.PULL_REQUEST))
 
 
-def _opening_review_id(comments: tuple[dict[str, Any], ...]) -> str | None:
-    if not comments:
-        return None
-    review = _object_field(comments[0], _Key.REVIEW)
-    return None if review is None else _text(review, _Key.ID)
-
-
-def _marked(nodes: tuple[dict[str, Any], ...], marker: str) -> PullRequestComment | None:
-    comments = (_comment(node) for node in nodes)
+def _marked(comments: Iterable[PullRequestComment], marker: str) -> PullRequestComment | None:
     return next((comment for comment in comments if marker in comment.body), None)
 
 
@@ -614,7 +630,7 @@ class GitHub:
             first,
             lambda cursor: self._thread_comment_page(repo_dir, address.host, thread.id, cursor),
         )
-        return _marked(nodes, marker)
+        return _marked((_review_comment(node) for node in nodes), marker)
 
     async def find_conversation_comment(
         self, repo_dir: Path, pr_url: str, *, marker: str
@@ -622,7 +638,7 @@ class GitHub:
         """Return the PR conversation comment whose body carries `marker`, or None if none does."""
         address = _PullRequestAddress.parse(pr_url)
         nodes = await self._all_nodes(repo_dir, address, _CONVERSATION_QUERY, _Key.COMMENTS)
-        return _marked(nodes, marker)
+        return _marked((_conversation_comment(node) for node in nodes), marker)
 
     async def _all_nodes(
         self,
@@ -662,12 +678,11 @@ class GitHub:
         )
         return ReviewThread(
             id=thread_id,
-            review_id=_opening_review_id(raw_comments),
             path=_text(node, _Key.PATH),
             line=_optional_integer(node, _Key.LINE),
             is_outdated=_flag(node, _Key.IS_OUTDATED),
             is_resolved=_flag(node, _Key.IS_RESOLVED),
-            comments=tuple(_comment(raw) for raw in raw_comments),
+            comments=tuple(_review_comment(raw) for raw in raw_comments),
         )
 
     async def _thread_comment_page(

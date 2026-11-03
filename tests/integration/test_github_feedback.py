@@ -19,7 +19,7 @@ from shikiru.workspace.github import (
     ReviewThread,
 )
 from tests.support import fake_gh
-from tests.support.github import comment_node, review_node, thread_node
+from tests.support.github import comment_node, conversation_node, review_node, thread_node
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -140,10 +140,13 @@ def _review_url(review_id: str) -> str:
     return f"{fake_gh.URL_PREFIX}1#pullrequestreview-{review_id}"
 
 
-def _comment(comment_id: int, body: str, author: str | None) -> PullRequestComment:
+def _comment(
+    comment_id: int, body: str, author: str | None, *, review_id: str | None = None
+) -> PullRequestComment:
     return PullRequestComment(
         id=f"PRRC_{comment_id}",
         database_id=comment_id,
+        review_id=review_id,
         url=f"{fake_gh.URL_PREFIX}1#discussion_r{comment_id}",
         author=author,
         body=body,
@@ -216,37 +219,33 @@ async def test_snapshot_has_reviews_discussions_and_head_sha(
         threads=(
             ReviewThread(
                 id="PRRT_resolved",
-                review_id="PRR_changes",
                 path="src/a.py",
                 line=10,
                 is_outdated=False,
                 is_resolved=True,
                 comments=(
-                    _comment(101, "Rename this.", "carol"),
+                    _comment(101, "Rename this.", "carol", review_id="PRR_changes"),
                     _comment(102, "Done in 4f2a1c.", "alice"),
                 ),
             ),
             ReviewThread(
                 id="PRRT_outdated",
-                review_id="PRR_changes",
                 path="src/b.py",
                 line=None,
                 is_outdated=True,
                 is_resolved=False,
-                comments=(_comment(103, "Why not a set?", "carol"),),
+                comments=(_comment(103, "Why not a set?", "carol", review_id="PRR_changes"),),
             ),
             ReviewThread(
                 id="PRRT_both",
-                review_id="PRR_empty",
                 path="src/c.py",
                 line=3,
                 is_outdated=True,
                 is_resolved=True,
-                comments=(_comment(104, "Nit.", "bob"),),
+                comments=(_comment(104, "Nit.", "bob", review_id="PRR_empty"),),
             ),
             ReviewThread(
                 id="PRRT_standalone",
-                review_id=None,
                 path="src/d.py",
                 line=7,
                 is_outdated=False,
@@ -282,6 +281,61 @@ async def test_pagination_returns_every_review_and_reply_once_in_order(
     assert [comment.body for comment in feedback.threads[0].comments] == [
         f"reply {number}" for number in range(1, 6)
     ]
+
+
+async def test_each_comment_keeps_the_review_it_was_submitted_in_across_pages(
+    fake_github: FakeGitHub, tmp_path: Path
+) -> None:
+    github = GitHub(_RUNNER)
+    reviews = [
+        review_node(1, "PRR_old", "CHANGES_REQUESTED", body="Round one."),
+        review_node(1, "PRR_new", "CHANGES_REQUESTED", body="Round two."),
+    ]
+    discussion = [
+        comment_node(1, 501, "Opening.", author="carol", review_id="PRR_old"),
+        comment_node(1, 502, "Reply in round two.", author="alice", review_id="PRR_new"),
+        comment_node(1, 503, "Older reply.", author="bob", review_id="PRR_old"),
+        comment_node(1, 504, "Another older reply.", author="bob", review_id="PRR_old"),
+        comment_node(1, 505, "Follow-up in round two.", author="carol", review_id="PRR_new"),
+    ]
+    url = await _open_with(
+        github,
+        fake_github,
+        tmp_path,
+        reviews=reviews,
+        threads=[thread_node("PRRT_long", discussion)],
+    )
+
+    thread = (await github.pull_request_feedback(tmp_path, url)).threads[0]
+
+    assert [(comment.database_id, comment.review_id) for comment in thread.comments] == [
+        (501, "PRR_old"),
+        (502, "PRR_new"),
+        (503, "PRR_old"),
+        (504, "PRR_old"),
+        (505, "PRR_new"),
+    ]
+
+
+async def test_comment_ids_beyond_32_bits_are_read_replied_to_and_found(
+    fake_github: FakeGitHub, tmp_path: Path
+) -> None:
+    github = GitHub(_RUNNER)
+    large_id = 2**33
+    threads = [thread_node("PRRT_large", [comment_node(1, large_id, "Large.", author="carol")])]
+    url = await _open_with(github, fake_github, tmp_path, threads=threads)
+    fake_github.set_fields(
+        1, conversationComments=[conversation_node(1, large_id + 1, f"{_MARKER}\nlarge")]
+    )
+
+    thread = (await github.pull_request_feedback(tmp_path, url)).threads[0]
+    reply = await github.reply_to_thread(tmp_path, url, thread=thread, body=f"{_MARKER}\nreply")
+
+    assert thread.comments[0].database_id == large_id
+    assert await github.find_thread_reply(tmp_path, url, thread=thread, marker=_MARKER) == reply
+    found = await github.find_conversation_comment(tmp_path, url, marker=_MARKER)
+    assert found is not None
+    assert found.database_id == large_id + 1
 
 
 @pytest.mark.parametrize("text", _TRICKY_BODIES)

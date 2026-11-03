@@ -50,6 +50,7 @@ _LOST_AFTER_RECORD = "network unreachable after the comment was recorded"
 _NO_PULL_REQUEST = "Could not resolve to a PullRequest"
 _NO_THREAD = "no review thread opens with the comment being replied to"
 _UNSUPPORTED_GRAPHQL = "does not support this GraphQL operation"
+_INT32_MAX = 2**31 - 1
 
 
 class _GhError(Exception):
@@ -271,16 +272,29 @@ def _graphql(state: Path, fields: dict[str, Any]) -> str:
     return json.dumps({"data": operation(state, fields)})
 
 
+def comment_database_ids(database_id: int) -> dict[str, Any]:
+    """The identity fields of a comment as GitHub reports them.
+
+    `databaseId` is a 32-bit field GitHub reports as null beyond its range; `fullDatabaseId`
+    is the 64-bit identity, serialised as a decimal string.
+    """
+    return {
+        "databaseId": database_id if database_id <= _INT32_MAX else None,
+        "fullDatabaseId": str(database_id),
+    }
+
+
 def _comment_ids(record: dict[str, Any]) -> list[int]:
     threads = [comment for thread in record["reviewThreads"] for comment in thread["comments"]]
-    return [comment["databaseId"] for comment in [*threads, *record["conversationComments"]]]
+    comments = [*threads, *record["conversationComments"]]
+    return [int(comment["fullDatabaseId"]) for comment in comments]
 
 
 def _posted_comment(number: str, record: dict[str, Any], body: str) -> dict[str, Any]:
     database_id = max(_comment_ids(record), default=0) + 1
     return {
         "id": f"IC_fake_{database_id}",
-        "databaseId": database_id,
+        **comment_database_ids(database_id),
         "url": f"{URL_PREFIX}{number}#comment-{database_id}",
         "body": body,
         "createdAt": FAKE_TIMESTAMP,
@@ -292,7 +306,7 @@ def _posted_comment(number: str, record: dict[str, Any], body: str) -> dict[str,
 def _rest_payload(comment: dict[str, Any]) -> dict[str, Any]:
     return {
         "node_id": comment["id"],
-        "id": comment["databaseId"],
+        "id": int(comment["fullDatabaseId"]),
         "html_url": comment["url"],
         "user": {"login": comment["author"]["login"]},
         "created_at": comment["createdAt"],
@@ -302,7 +316,7 @@ def _rest_payload(comment: dict[str, Any]) -> dict[str, Any]:
 
 def _thread_opened_by(record: dict[str, Any], database_id: int) -> dict[str, Any]:
     for thread in record["reviewThreads"]:
-        if thread["comments"] and thread["comments"][0]["databaseId"] == database_id:
+        if thread["comments"] and int(thread["comments"][0]["fullDatabaseId"]) == database_id:
             return thread
     raise _GhError(_NO_THREAD)
 
