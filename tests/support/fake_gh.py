@@ -34,6 +34,7 @@ FAIL_PREFIX = "fail-"
 GRAPHQL_BUDGET = "graphql"
 POST_BUDGET = "post"
 LOST_POST_BUDGET = "lost-post"
+CLOSE_ON_GRAPHQL_BUDGET = "close-on-graphql"
 PAGE_LIMIT = 2
 FAKE_LOGIN = "shikiru-fake"
 FAKE_TIMESTAMP = "2026-01-02T03:04:05Z"
@@ -264,7 +265,14 @@ _GRAPHQL_OPERATIONS: dict[str, Callable[[Path, dict[str, Any]], dict[str, Any]]]
 }
 
 
+def _close_pull_requests(state: Path) -> None:
+    for path in (state / PULLS_DIR).glob("*.json"):
+        write_record(path, {**json.loads(path.read_text()), "state": "CLOSED"})
+
+
 def _graphql(state: Path, fields: dict[str, Any]) -> str:
+    if _failing(state, CLOSE_ON_GRAPHQL_BUDGET):
+        _close_pull_requests(state)
     name = _OPERATION_NAME.search(fields["query"])
     operation = None if name is None else _GRAPHQL_OPERATIONS.get(name.group(1))
     if operation is None:

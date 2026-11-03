@@ -238,7 +238,13 @@ every local-merge guard, and the Result and Results of the completed task show t
 subject, its destination and the integrated file and line totals, which stay accurate after the task
 branch and worktree are cleaned up. `"pr"` pushes the task branch, opens/adopts a GitHub PR and waits for it to merge;
 conflicting/closed/failed or overdue PRs require recovery or a decision. Shikiru does not bypass
-repository review policy. Dirty overlapping changes in the main checkout block local integration;
+repository review policy. A newly submitted changes-requested review starts a feedback round: the
+Leader analyses it, the Implementer edits, the Leader verifies, and the engine pushes with a lease
+and replies per item, then returns to the PR wait. Comments, approvals, pending or dismissed
+reviews and edits to handled reviews do not start rounds, and Shikiru never dismisses reviews,
+resolves threads, approves or merges. `orchestration.max_iterations` bounds attempts per batch. A
+PR closed without merge escalates and keeps the branch and worktree; only an explicit Operator
+retry opens a new PR. Dirty overlapping changes in the main checkout block local integration;
 commit, move or otherwise resolve them before retrying.
 
 **Pushes (merge and squash modes):** `orchestration.push_interval_seconds` (default `14400`, four hours; a

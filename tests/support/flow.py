@@ -14,6 +14,7 @@ from shikiru.engine.agents import AgentPool
 from shikiru.engine.escalation_filing import EscalationFiler
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.evidence import EvidenceCollector
+from shikiru.engine.feedback import FeedbackRounds
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.handlers.base import HandlerContext
 from shikiru.engine.handlers.tasks import SetRungHandler
@@ -42,6 +43,7 @@ from shikiru.tmux.session import SessionView
 from shikiru.workspace.base_refs import LocalBaseRefs
 from shikiru.workspace.facts import GitFacts
 from shikiru.workspace.git import Git
+from shikiru.workspace.github import GitHub
 from tests.support.engine import (
     FAKE_AGENT_NAME,
     FAKE_RUNG,
@@ -63,6 +65,7 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Mode, Task
     from shikiru.engine.titles import TaskTitles
     from shikiru.store.events import EventLog
+    from shikiru.store.feedback import FeedbackStore
     from shikiru.workspace.base_refs import BaseRefs
 
 
@@ -79,6 +82,16 @@ class _NoOpIntegrationCoordinator:
 
     async def continue_rebase(self, task: Task) -> None:
         del task
+
+    async def prepare_publication(
+        self,
+        task: Task,
+        resolve_conflicts: object,
+        metadata: IntegrationMetadata,
+        conflict_recovery: Callable[[Task], ConflictRecovery],
+    ) -> tuple[Task, IntegrationMetadata]:
+        del resolve_conflicts, conflict_recovery
+        return task, metadata
 
 
 def flow_settings(
@@ -161,6 +174,7 @@ def build_flow(
     base_refs: BaseRefs | None = None,
     lock: asyncio.Lock | None = None,
     registry: AgentRegistry | None = None,
+    feedback_store: FeedbackStore | None = None,
 ) -> FlowEnv:
     """Build one flow and its production turn collaborators with fake CLI processes.
 
@@ -265,6 +279,21 @@ def build_flow(
         events=system.events,
         settings=settings,
     )
+    feedback = (
+        FeedbackRounds(
+            store=feedback_store,
+            steps=steps,
+            github=GitHub(SubprocessRunner()),
+            git=Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT),
+            tasks=env.tasks,
+            events=system.events,
+            project_root=env.project_root,
+            remote=settings.repo.remote,
+            settings=settings.orchestration,
+        )
+        if feedback_store is not None
+        else None
+    )
     flow = TaskFlow(
         tasks=env.tasks,
         writer=writer,
@@ -279,6 +308,7 @@ def build_flow(
             tasks=env.tasks,
             steps=steps,
             escalations=filer,
+            feedback=feedback,
         ),
     )
     return FlowEnv(

@@ -86,11 +86,12 @@ class FeedbackSnapshot(DomainModel):
 
 
 class FeedbackInput(DomainModel):
-    """What a feedback turn is given: the snapshot, the analysis once made, and the round limit."""
+    """What a feedback turn is given: snapshot, analysis once made, round limit, tip verified."""
 
     snapshot: FeedbackSnapshot
     analysis: FeedbackAnalysis | None = None
     final_round: bool = False
+    tip: str | None = None
 
 
 def check_analysis(snapshot: FeedbackSnapshot, analysis: FeedbackAnalysis) -> None:

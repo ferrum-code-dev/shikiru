@@ -22,10 +22,11 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.steps import CONFLICT_ROUNDS, Transition
-from shikiru.domain.tasks import EscalationReason, Role, Step, Task
+from shikiru.domain.tasks import EscalationReason, Role, Status, Step, Task
 from shikiru.engine.events import REPORT_KIND_FIELD
 from shikiru.engine.integration import (
     ConflictRecovery,
+    FeedbackPending,
     IntegrationBlocked,
     IntegrationConflict,
     IntegrationCoordinator,
@@ -47,6 +48,7 @@ if TYPE_CHECKING:
 
     from shikiru.domain.events import Event
     from shikiru.engine.escalation_filing import EscalationFiler
+    from shikiru.engine.feedback import FeedbackRounds
     from shikiru.engine.history import ReportHistory
     from shikiru.engine.step_runner import StepRunner
     from shikiru.store.events import EventLog
@@ -70,8 +72,12 @@ class IntegrationTurns:
         tasks: TaskStore,
         steps: StepRunner,
         escalations: EscalationFiler,
+        feedback: FeedbackRounds | None = None,
     ) -> None:
-        """Coordinate the integration protocol, running its turns through `steps`."""
+        """Coordinate the integration protocol, running its turns through `steps`.
+
+        With `feedback`, a pull request's review rounds run here before it waits again.
+        """
         self._coordinator = coordinator
         self._events = events
         self._history = history
@@ -79,6 +85,7 @@ class IntegrationTurns:
         self._tasks = tasks
         self._steps = steps
         self._escalations = escalations
+        self._feedback = feedback
 
     async def run(self, task: Task) -> None:
         """Run integration and its conflict turns, then escalate blocked integration.
@@ -97,7 +104,25 @@ class IntegrationTurns:
 
         try:
             metadata = self._history.integration_metadata(task)
-            await self._coordinator.run(task, resolve_conflicts, metadata, self._conflict_recovery)
+            current = task
+            if self._feedback is not None and self._feedback.pending(task.id):
+                if task.slot is None:
+                    self._queue(task)
+                    return
+
+                async def prepare(candidate: Task) -> Task:
+                    prepared, _ = await self._coordinator.prepare_publication(
+                        candidate, resolve_conflicts, metadata, self._conflict_recovery
+                    )
+                    return prepared
+
+                await self._feedback.run(task, prepare)
+                current = self._tasks.require(task.id)
+            await self._coordinator.run(
+                current, resolve_conflicts, metadata, self._conflict_recovery
+            )
+        except FeedbackPending:
+            self._queue(task)
         except TurnStopped, IntegrationHeld:
             return
         except (
@@ -111,6 +136,14 @@ class IntegrationTurns:
             transition = Transition.escalate(current, error.reason, step=Step.INTEGRATE)
             await self._escalations.escalate(current, transition, None, question=str(error))
 
+    def _queue(self, task: Task) -> None:
+        current = self._tasks.require(task.id)
+        self._tasks.apply_transition(
+            task.id, Transition.stay(current, step=Step.INTEGRATE, status=Status.QUEUED)
+        )
+        self._tasks.set_slot(task.id, None)
+        self._tasks.set_wait_reason(task.id, None)
+
     def _conflict_recovery(self, task: Task) -> ConflictRecovery:
         history = self._history.load(task.id)
         events = self._events.since(
@@ -120,6 +153,7 @@ class IntegrationTurns:
                 EventKind.TURN_STARTED,
                 EventKind.TURN_COMPLETED,
                 EventKind.INTEGRATION_STARTED,
+                EventKind.FEEDBACK_REBASE_STARTED,
                 EventKind.ESCALATION,
                 EventKind.ESCALATION_RESOLVED,
                 EventKind.TASK_RETRIED,
@@ -164,7 +198,7 @@ class IntegrationTurns:
         reset_events = [
             event
             for event in events
-            if event.kind is EventKind.INTEGRATION_STARTED
+            if event.kind in (EventKind.INTEGRATION_STARTED, EventKind.FEEDBACK_REBASE_STARTED)
             or (
                 event.kind is EventKind.TURN_COMPLETED
                 and event.data.get("step") == Step.INTEGRATE.value
@@ -190,7 +224,11 @@ class IntegrationTurns:
             return recovery
         report_event = completed[-1] if completed else started[-1]
         latest_start = max(
-            (event.id for event in events if event.kind is EventKind.INTEGRATION_STARTED),
+            (
+                event.id
+                for event in events
+                if event.kind in (EventKind.INTEGRATION_STARTED, EventKind.FEEDBACK_REBASE_STARTED)
+            ),
             default=0,
         )
         later_turn_started = any(event.id > report_event.id for event in turn_starts)

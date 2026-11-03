@@ -31,6 +31,8 @@ from shikiru.engine.escalation_filing import EscalationFiler
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.evidence import EvidenceCollector
 from shikiru.engine.fault_reporter import FaultReporter
+from shikiru.engine.feedback import FeedbackRounds
+from shikiru.engine.feedback_intake import FeedbackIntake
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.handlers import (
     CancelHandler,
@@ -116,6 +118,7 @@ from shikiru.store.commands import CommandQueue
 from shikiru.store.database import Database, transaction
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
+from shikiru.store.feedback import FeedbackStore
 from shikiru.store.notification_cursor import NotificationCursor
 from shikiru.store.pushes import PushTargets
 from shikiru.store.quotas import QuotaStore
@@ -140,6 +143,7 @@ from shikiru.workspace.roots import TaskRootBuilder
 _TMUX_PANE_ENVIRONMENT_VARIABLE = "TMUX_PANE"
 
 if TYPE_CHECKING:
+    import sqlite3  # noqa: TID251
     from collections.abc import Awaitable, Callable, Sequence
     from contextlib import AbstractContextManager
     from pathlib import Path
@@ -656,6 +660,9 @@ def _build_flow(
     history: ReportHistory,
     integrator: IntegrationCoordinator,
     settings: Settings,
+    feedback_store: FeedbackStore | None,
+    github: GitHub,
+    git: Git,
 ) -> TaskFlow:
     filer = EscalationFiler(raiser=raiser, evidence=evidence, writer=writer, tasks=tasks)
     turn_loop = TurnLoop(
@@ -676,6 +683,21 @@ def _build_flow(
         events=events,
         settings=settings,
     )
+    feedback_rounds = (
+        FeedbackRounds(
+            store=feedback_store,
+            steps=steps,
+            github=github,
+            git=git,
+            tasks=tasks,
+            events=events,
+            project_root=project_root,
+            remote=settings.repo.remote,
+            settings=settings.orchestration,
+        )
+        if feedback_store is not None
+        else None
+    )
     return TaskFlow(
         tasks=tasks,
         writer=writer,
@@ -690,6 +712,7 @@ def _build_flow(
             tasks=tasks,
             steps=steps,
             escalations=filer,
+            feedback=feedback_rounds,
         ),
     )
 
@@ -881,10 +904,11 @@ def build_engine(
     )
     integrator = _build_integrator(
         project_root=project_root,
+        github=GitHub(resolved_runner),
+        feedback_store=_feedback_store(connection, resolved_settings),
         settings=resolved_settings,
         clock=resolved_clock,
         git=git,
-        runner=resolved_runner,
         fetched_bases=fetched_bases,
         tasks=tasks,
         events=events,
@@ -939,6 +963,9 @@ def build_engine(
         history=history,
         integrator=integrator,
         settings=resolved_settings,
+        feedback_store=_feedback_store(connection, resolved_settings),
+        github=GitHub(resolved_runner),
+        git=git,
     )
     task_supervisor = TaskSupervisor(tasks, flow, task_finisher)
     handler_context = HandlerContext(
@@ -1134,13 +1161,18 @@ def _build_push_service(
     )
 
 
+def _feedback_store(connection: sqlite3.Connection, settings: Settings) -> FeedbackStore | None:
+    if settings.orchestration.integration != PULL_REQUEST_INTEGRATION:
+        return None
+    return FeedbackStore(connection)
+
+
 def _build_integrator(
     *,
     project_root: Path,
     settings: Settings,
     clock: Clock,
     git: Git,
-    runner: SubprocessRunner,
     fetched_bases: FetchedBaseRefs,
     tasks: TaskStore,
     events: EventLog,
@@ -1148,9 +1180,22 @@ def _build_integrator(
     task_finisher: TaskFinisher,
     publication: PushService | None,
     atomically: Callable[[], AbstractContextManager[object]],
+    github: GitHub,
+    feedback_store: FeedbackStore | None,
 ) -> Integrator:
     strategy: IntegrationStrategy
     base_refs: BaseRefs
+    feedback = (
+        FeedbackIntake(
+            github=github,
+            store=feedback_store,
+            events=events,
+            faults=faults,
+            project_root=project_root,
+        )
+        if feedback_store is not None
+        else None
+    )
     match settings.orchestration.integration:
         case "merge" | "squash" as mode:
             base_refs = LocalBaseRefs()
@@ -1166,7 +1211,7 @@ def _build_integrator(
             base_refs = fetched_bases
             strategy = PullRequest(
                 git=git,
-                github=GitHub(runner),
+                github=github,
                 clock=clock,
                 tasks=tasks,
                 events=events,
@@ -1175,6 +1220,7 @@ def _build_integrator(
                 base_refs=fetched_bases,
                 faults=faults,
                 settings=settings.orchestration,
+                feedback=feedback,
             )
     return Integrator(
         git=git,

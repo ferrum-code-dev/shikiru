@@ -64,6 +64,10 @@ class FakeGitHub:
         """
         (self.state / f"{fake_gh.FAIL_PREFIX}{operation}").write_text(str(calls))
 
+    def close_on_next_graphql(self) -> None:
+        """Close every pull request just before the next GraphQL read is answered."""
+        (self.state / f"{fake_gh.FAIL_PREFIX}{fake_gh.CLOSE_ON_GRAPHQL_BUDGET}").write_text("1")
+
     def merge(self, number: int, commit: str) -> None:
         """Record pull request `number` as merged by `commit`, as gh reports a merged PR."""
         path = self.state / fake_gh.PULLS_DIR / f"{number}.json"

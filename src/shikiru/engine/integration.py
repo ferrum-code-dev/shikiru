@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -63,6 +63,8 @@ _APPLYING_LANDING_SHA_KEY = "landing_sha"
 _INTEGRATION_COMMITS_KEY = "commits"
 _PR_BASE_SHA_KEY = "base_sha"
 _PR_BRANCH_SHA_KEY = "branch_sha"
+PUBLISHED_BASE_KEY = "base_sha"
+PUBLISHED_TIP_KEY = "sha"
 _MERGED_PR_WITHOUT_COMMIT = "merged pull request has no landing commit"
 _MERGED_PR_COMMIT_WITHOUT_PARENT = "merged pull request has no parent commit"
 _LOCAL_LANDING_WITHOUT_TASK_TIP = "cannot recover a local landing without its task branch tip"
@@ -159,6 +161,10 @@ class PullRequestClosed(ShikiruError):
     def __init__(self, url: str) -> None:
         """Build the pull-request-closed error for the PR at `url`."""
         super().__init__(f"pull request closed without merging: {url}")
+
+
+class FeedbackPending(Exception):
+    """Review feedback awaits a round, so the pull request wait ends to queue for one."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,6 +275,7 @@ class _OpenPullRequest:
     landing: Landing
     base_sha: str | None = None
     branch_sha: str | None = None
+    prepared: tuple[tuple[str, str], ...] = ()
 
 
 class IntegrationStrategy(Protocol):
@@ -297,6 +304,14 @@ class IntegrationStrategy(Protocol):
         ...
 
 
+class FeedbackIntake(Protocol):
+    """Where a waiting pull request learns whether review feedback awaits a round."""
+
+    async def arrived(self, task_id: str, url: str) -> bool:
+        """Return whether `task_id`'s pull request at `url` has feedback awaiting a round."""
+        ...
+
+
 class BasePublication(Protocol):
     """Where a completed local integration registers its base branch for a later push."""
 
@@ -320,6 +335,16 @@ class IntegrationCoordinator(Protocol):
 
     async def continue_rebase(self, task: Task) -> None:
         """Continue `task`'s rebase after its conflicts were resolved, if one is in progress."""
+        ...
+
+    async def prepare_publication(
+        self,
+        task: Task,
+        resolve_conflicts: ConflictResolver,
+        metadata: IntegrationMetadata,
+        conflict_recovery: ConflictRecoveryLoader,
+    ) -> tuple[Task, IntegrationMetadata]:
+        """Rebase `task` onto its base before a feedback round publishes."""
         ...
 
 
@@ -592,8 +617,11 @@ class PullRequest:
         base_refs: FetchedBaseRefs,
         faults: FaultReporter,
         settings: OrchestrationConfig,
+        feedback: FeedbackIntake | None = None,
     ) -> None:
         """Push to `remote` from `project_root`; record the PR in `events`, waits in `tasks`.
+
+        With `feedback`, an open PR that has review feedback ends its wait with `FeedbackPending`.
 
         A merged PR's base is fetched and verified through `base_refs` before the task is done.
         An open PR that stays unmerged for `timeouts.pr_wait` seconds escalates. A failed poll is
@@ -610,6 +638,7 @@ class PullRequest:
         self._base_refs = base_refs
         self._faults = faults
         self._settings = settings
+        self._feedback = feedback
 
     def started(self, task_id: str) -> Landing | None:
         """Return what `task_id`'s open pull request holds, if it has one."""
@@ -671,7 +700,8 @@ class PullRequest:
         conflicts with its base, `IntegrationBlocked` when the merged commit cannot be fetched
         from and verified on the remote base, when the open PR has failing, settled checks, or
         when it stays unmerged for `pr_wait` seconds (counted from the start of each wait), and
-        `IntegrationHeld` before any poll once `held()` is true.
+        `IntegrationHeld` before any poll once `held()` is true, and `FeedbackPending` when review
+        feedback awaits a round.
         """
         opened = self._open_pull_request(task_id)
         if opened is None:
@@ -692,6 +722,7 @@ class PullRequest:
             if stalled is not None:
                 self._tasks.set_wait_reason(task_id, None)
                 raise PullRequestStalled(opened.url, stalled)
+            await self._end_wait_for_feedback(task_id, opened.url)
             await self._clock.sleep(self._settings.network.pr_poll_seconds)
         self._tasks.set_wait_reason(task_id, None)
         if status.state is PullRequestState.CLOSED:
@@ -704,7 +735,22 @@ class PullRequest:
             await self._base_refs.sync(repo.base, merge_commit)
         except (BaseFetchFailed, MergedBaseUnavailable) as error:
             raise IntegrationBlocked(str(error)) from error
+        return await self._landed_with_prepared(opened, merge_commit, base_sha)
+
+    async def _landed_with_prepared(
+        self, opened: _OpenPullRequest, merge_commit: str, base_sha: str
+    ) -> Landing:
+        for tip, base in reversed(opened.prepared):
+            if await self._git.merge_base_is_ancestor(self._project_root, tip, merge_commit):
+                opened = replace(opened, branch_sha=tip)
+                base_sha = base
+                break
         return await self._landed_pull_request(opened, merge_commit, base_sha)
+
+    async def _end_wait_for_feedback(self, task_id: str, url: str) -> None:
+        if self._feedback is not None and await self._feedback.arrived(task_id, url):
+            self._tasks.set_wait_reason(task_id, None)
+            raise FeedbackPending
 
     async def _landed_pull_request(
         self, opened: _OpenPullRequest, merge_commit: str, base_sha: str
@@ -765,7 +811,13 @@ def _open_pull_request(
     events: EventLog, task_id: str, ended_by: frozenset[EscalationReason]
 ) -> _OpenPullRequest | None:
     opened: _OpenPullRequest | None = None
-    kinds = [EventKind.PR_OPENED, EventKind.PR_WITHDRAWN, EventKind.ESCALATION]
+    kinds = [
+        EventKind.PR_OPENED,
+        EventKind.FEEDBACK_PUBLISHED,
+        EventKind.FEEDBACK_PREPARED,
+        EventKind.PR_WITHDRAWN,
+        EventKind.ESCALATION,
+    ]
     for event in events.since(0, kinds=kinds, task_id=task_id):
         if event.kind is EventKind.PR_OPENED:
             found = landed_changes(event.data)
@@ -779,6 +831,22 @@ def _open_pull_request(
                 event.data.get(_PR_BASE_SHA_KEY),
                 event.data.get(_PR_BRANCH_SHA_KEY),
             )
+        elif event.kind is EventKind.FEEDBACK_PREPARED:
+            if opened is not None and event.data["url"] == opened.url:
+                opened = replace(
+                    opened,
+                    prepared=(
+                        *opened.prepared,
+                        (event.data[PUBLISHED_TIP_KEY], event.data[PUBLISHED_BASE_KEY]),
+                    ),
+                )
+        elif event.kind is EventKind.FEEDBACK_PUBLISHED:
+            if opened is not None and event.data["url"] == opened.url:
+                opened = replace(
+                    opened,
+                    base_sha=event.data[PUBLISHED_BASE_KEY],
+                    branch_sha=event.data[PUBLISHED_TIP_KEY],
+                )
         elif event.kind is EventKind.PR_WITHDRAWN or event.data["reason"] in ended_by:
             opened = None
     return opened
@@ -941,35 +1009,14 @@ class Integrator:
                     data={"branch": repo.branch, "base": repo.base},
                 )
                 recovery_state = ConflictRecovery(force_new_turn=recovery_state.force_new_turn)
-            await self._require_integrable(current, repo, task_dir)
-            base_ref = await self._resolve_base(repo)
-            base_sha = await self._git.rev_parse(task_dir, base_ref)
-            branch_sha = await self._git.rev_parse(task_dir, repo.branch)
-            recovery = None
-            if in_progress:
-                recovery = await self._try_rebase(
-                    task_dir,
-                    base_ref,
-                    current,
-                    recovery_state,
-                )
-            elif recovery_state.resumed_report and (
-                base_sha == branch_sha
-                or await self._git.merge_base_is_ancestor(task_dir, base_ref, repo.branch)
-            ):
-                recovery = recovery_state
-            elif base_sha != branch_sha:
-                recovery = await self._try_rebase(task_dir, base_ref, current, recovery_state)
-                if recovery is None and recovery_state.resumed_report:
-                    recovery = recovery_state
-            if recovery is not None:
-                current, current_metadata = await resolve_conflicts(
-                    current,
-                    lambda: self._continue_rebase(current.id, task_dir),
-                    recovery,
-                )
-                await self._continue_rebase(current.id, task_dir)
-            await self._require_integrable(current, repo, task_dir)
+            current, current_metadata = await self._rebase(
+                current,
+                repo,
+                task_dir,
+                resolve_conflicts=resolve_conflicts,
+                metadata=current_metadata,
+                recovery_state=recovery_state,
+            )
             self._require_not_held(current.id)
             landing = await self._strategy.merge(
                 MergeRequest(
@@ -982,6 +1029,88 @@ class Integrator:
                 )
             )
             return current, current_metadata, landing
+
+    async def prepare_publication(
+        self,
+        task: Task,
+        resolve_conflicts: ConflictResolver,
+        metadata: IntegrationMetadata,
+        conflict_recovery: ConflictRecoveryLoader,
+    ) -> tuple[Task, IntegrationMetadata]:
+        """Rebase `task` onto its base before a feedback round publishes, resolving conflicts.
+
+        Runs under the integration lock and records no integration start.
+        """
+        repo = task.repo
+        if repo is None:
+            message = f"{task.id} has no task root to publish"
+            raise InvariantError(message)
+        async with self._lock:
+            self._require_not_held(task.id)
+            task_dir = task_root(self._project_root, task.id)
+            recovery = conflict_recovery(task)
+            if not await self._git.is_rebase_in_progress(task_dir) and not recovery.resumed_report:
+                self._events.append(
+                    EventKind.FEEDBACK_REBASE_STARTED,
+                    task_id=task.id,
+                    message=f"{task.id} feedback rebase started",
+                    data={"branch": repo.branch, "base": repo.base},
+                )
+                recovery = ConflictRecovery(force_new_turn=recovery.force_new_turn)
+            current, current_metadata = await self._rebase(
+                task,
+                repo,
+                task_dir,
+                resolve_conflicts=resolve_conflicts,
+                metadata=metadata,
+                recovery_state=recovery,
+            )
+            self._require_not_held(current.id)
+            return current, current_metadata
+
+    async def _rebase(
+        self,
+        task: Task,
+        repo: RepoState,
+        task_dir: Path,
+        *,
+        resolve_conflicts: ConflictResolver,
+        metadata: IntegrationMetadata,
+        recovery_state: ConflictRecovery,
+    ) -> tuple[Task, IntegrationMetadata]:
+        current = task
+        current_metadata = metadata
+        in_progress = await self._git.is_rebase_in_progress(task_dir)
+        await self._require_integrable(current, repo, task_dir)
+        base_ref = await self._resolve_base(repo)
+        base_sha = await self._git.rev_parse(task_dir, base_ref)
+        branch_sha = await self._git.rev_parse(task_dir, repo.branch)
+        recovery = None
+        if in_progress:
+            recovery = await self._try_rebase(
+                task_dir,
+                base_ref,
+                current,
+                recovery_state,
+            )
+        elif recovery_state.resumed_report and (
+            base_sha == branch_sha
+            or await self._git.merge_base_is_ancestor(task_dir, base_ref, repo.branch)
+        ):
+            recovery = recovery_state
+        elif base_sha != branch_sha:
+            recovery = await self._try_rebase(task_dir, base_ref, current, recovery_state)
+            if recovery is None and recovery_state.resumed_report:
+                recovery = recovery_state
+        if recovery is not None:
+            current, current_metadata = await resolve_conflicts(
+                current,
+                lambda: self._continue_rebase(current.id, task_dir),
+                recovery,
+            )
+            await self._continue_rebase(current.id, task_dir)
+        await self._require_integrable(current, repo, task_dir)
+        return current, current_metadata
 
     async def _resolve_base(self, repo: RepoState) -> str:
         try:

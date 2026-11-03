@@ -167,6 +167,26 @@ records without these fields keep the previous derivation.
 base, and handles conflicts, failed checks, closure and timeout explicitly. Repository review and
 merge policy remain in force. Integration progress is recorded for restart reconciliation.
 
+**PR feedback rounds.** While the PR waits (status `integrating`, wait reason `PR open`, no slot),
+a newly submitted `CHANGES_REQUESTED` review ID starts a round. Ordinary comments, approvals,
+pending or dismissed reviews, our own replies, edits to handled reviews and re-polls of the same
+review never do. All reviews present at round start form one batch; later ones wait for the next
+round. The Leader analyses the batch, the Implementer edits, the Leader verifies the result and
+the replies, and the Engine alone publishes and replies. A round needs a scheduler-owned slot: the
+task becomes `queued` and is dispatched like any other, then returns to the PR wait. The Engine
+never dismisses reviews, resolves threads, approves or merges. Before edits it records the remote
+head and pushes with `--force-with-lease` on that value; preparing publication reruns the
+cleanliness and rebase/conflict controls, and a changed tip sends the round back to verification.
+PR state is checked before a round and immediately before each external publication. Reply
+intentions persist before sending and carry a marker; a retry looks the marker up first, and a
+read failure is a visible fault. A batch is handled only when every item is accounted for. Replies
+to fixed items name the remote commit and the verified checks. `orchestration.max_iterations`
+bounds implementation attempts per batch with its own persisted count; exhaustion escalates with
+source links. A PR closed without merge raises the existing `pr_closed` escalation and keeps the
+branch and worktree; it is never reopened or replaced automatically, and an explicit Operator
+retry may open a new PR. A merged PR follows the normal remote merge verification. Planning PRs
+neither enqueue follow-ups nor implement product code.
+
 In merge and squash modes a push service publishes locally integrated bases to `repo.remote`. Each completed
 integration is registered with the base's durable pending state in the same transaction that
 completes the task, so a crash cannot lose it. The first pending integration fixes the deadline
