@@ -2,81 +2,122 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from rich.console import Group
 from rich.text import Text
+from textual.containers import Vertical
+from textual.widgets import Collapsible, Static
 
 from shikiru.dashboard.contract import WidgetPlacement
 from shikiru.ui.gated_static import GatedStatic
 from shikiru.ui.screen import is_first_child, widget_is_attached
-from shikiru.ui.section import Section, grey, number, row_name, wrap_groups
+from shikiru.ui.section import GROUP_SEPARATOR, Section, grey, row_name
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from rich.console import Console, ConsoleOptions, RenderResult
+    from textual.app import ComposeResult
     from textual.widget import Widget
 
-    from shikiru.dashboard.contract import EngineFaultView, WidgetContext
+    from shikiru.dashboard.contract import EngineFaultView, FaultDetailRow, WidgetContext
 
 SECTION_TITLE = "Faults"
+TITLE_SEPARATOR = " \N{MIDDLE DOT} "
 PROJECT_TARGET = "project"
-RECOVERABLE_WORD = "recoverable"
-UNRECOVERABLE_WORD = "unrecoverable"
-REPEAT_SIGN = "\N{MULTIPLICATION SIGN}"
-FIRST_WORD = "first"
-LATEST_WORD = "latest"
+DETAILS_TITLE = "Details"
+COLLAPSED_MARK = "\N{BLACK RIGHT-POINTING SMALL TRIANGLE}"
+EXPANDED_MARK = "\N{BLACK DOWN-POINTING SMALL TRIANGLE}"
+IMPACT_LABEL = "Impact:"
+CAUSE_LABEL = "Cause:"
+NEXT_LABEL = "Next:"
+DETAIL_INDENT = "  "
 
 
-def _fault_headline(fault: EngineFaultView) -> tuple[Text, ...]:
-    recoverability = RECOVERABLE_WORD if fault.recoverable else UNRECOVERABLE_WORD
-    return (
+def _summary(fault: EngineFaultView) -> Group:
+    headline = Text.assemble(
         row_name(fault.task_id or PROJECT_TARGET),
+        grey(GROUP_SEPARATOR),
         Text(fault.scope),
-        Text(fault.error),
-        grey(recoverability),
-        number(f"{REPEAT_SIGN}{fault.repeats}"),
+        grey(GROUP_SEPARATOR),
+        Text(fault.status),
+    )
+    cause = Text.assemble(grey(f"{CAUSE_LABEL} "), Text(fault.cause))
+    return Group(
+        headline,
+        Text.assemble(grey(f"{IMPACT_LABEL} "), Text(fault.impact)),
+        cause,
+        Text.assemble(grey(f"{NEXT_LABEL} "), Text(fault.next_step)),
     )
 
 
-def _fault_timeline(fault: EngineFaultView) -> tuple[Text, ...]:
-    return (
-        Text.assemble(grey(f"{FIRST_WORD} "), Text(fault.first_seen)),
-        Text.assemble(grey(f"{LATEST_WORD} "), Text(fault.last_seen)),
-    )
+def _detail_lines(row: FaultDetailRow) -> Text:
+    lines = row.value.strip().splitlines() or [row.value]
+    if len(lines) == 1:
+        return Text.assemble(grey(f"{row.label} "), Text(lines[0]))
+    body = "\n".join(f"{DETAIL_INDENT}{line}" for line in lines)
+    return Text.assemble(grey(row.label), Text("\n"), Text(body))
 
 
-@dataclass(frozen=True)
-class _FaultLines:
-    faults: tuple[EngineFaultView, ...]
-
-    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        del console
-        for fault in self.faults:
-            yield wrap_groups(_fault_headline(fault), options.max_width)
-            yield wrap_groups(_fault_timeline(fault), options.max_width)
-            for line in fault.guidance:
-                yield grey(line)
+def _details(fault: EngineFaultView) -> Group:
+    return Group(*(_detail_lines(row) for row in fault.details))
 
 
-def faults_section(faults: tuple[EngineFaultView, ...], *, ruled: bool) -> Group | Section:
-    """Render open `faults` as the Faults section, and nothing when none is open."""
-    return Section(SECTION_TITLE, _FaultLines(faults), ruled=ruled) if faults else Group()
+class FaultCard(Vertical):
+    """One open fault: its compact summary and a Details disclosure that starts collapsed."""
+
+    DEFAULT_CSS = """
+    FaultCard { height: auto; margin-bottom: 1; }
+    FaultCard Collapsible { padding: 0; border-top: none; }
+    FaultCard Collapsible > Contents { padding: 0 0 0 2; }
+    """
+
+    def __init__(self, fault: EngineFaultView) -> None:
+        """Show `fault`; later `show` calls update it in place, keeping the disclosure state."""
+        super().__init__()
+        self._summary = GatedStatic(_summary(fault))
+        self._details = Static(_details(fault))
+        self._fault = fault
+
+    def compose(self) -> ComposeResult:
+        """Lay out the summary above the collapsed Details disclosure."""
+        yield self._summary
+        yield Collapsible(
+            self._details,
+            title=DETAILS_TITLE,
+            collapsed=True,
+            collapsed_symbol=COLLAPSED_MARK,
+            expanded_symbol=EXPANDED_MARK,
+        )
+
+    def show(self, fault: EngineFaultView) -> None:
+        """Repaint from `fault`, the latest view of the same fault identity."""
+        if fault == self._fault:
+            return
+        self._fault = fault
+        self._summary.update_if_changed(_summary(fault), key=fault)
+        self._details.update(_details(fault))
 
 
-class FaultsPanel(GatedStatic):
-    """Show open engine fault streaks and take no room while there are none."""
+class FaultsPanel(Vertical):
+    """Show one card per open fault and take no room while there are none."""
+
+    DEFAULT_CSS = "FaultsPanel { height: auto; }"
 
     def __init__(self, context: WidgetContext) -> None:
         """Hold the read-only dashboard view and its state-change subscription."""
         super().__init__(id="faults")
         self._widget_context = context
         self._unsubscribe_resources: Callable[[], None] | None = None
+        self._title = GatedStatic()
+        self._cards: dict[str, FaultCard] = {}
+
+    def compose(self) -> ComposeResult:
+        """Start with the title; cards are mounted as faults open."""
+        yield self._title
 
     def on_mount(self) -> None:
-        """Render fault streaks; refresh with the Resources bar and on durable changes."""
+        """Render fault cards; refresh with the Resources bar and on durable changes."""
         self._refresh()
         self._unsubscribe_resources = self._widget_context.views.on_resources_refreshed(
             self._refresh
@@ -97,7 +138,32 @@ class FaultsPanel(GatedStatic):
         faults = self._widget_context.views.engine_faults()
         self.display = bool(faults)
         ruled = not is_first_child(self)
-        self.update_if_changed(faults_section(faults, ruled=ruled), key=(faults, ruled))
+        title = f"{SECTION_TITLE}{TITLE_SEPARATOR}{len(faults)}"
+        self._title.update_if_changed(Section(title, Group(), ruled=ruled), key=(title, ruled))
+        open_keys = {fault.key for fault in faults}
+        for key in [key for key in self._cards if key not in open_keys]:
+            self._cards.pop(key).remove()
+        cards = [self._card(fault) for fault in faults]
+        self._arrange(cards)
+
+    def _card(self, fault: EngineFaultView) -> FaultCard:
+        card = self._cards.get(fault.key)
+        if card is None:
+            card = self._cards[fault.key] = FaultCard(fault)
+        else:
+            card.show(fault)
+        return card
+
+    def _arrange(self, cards: list[FaultCard]) -> None:
+        previous: Widget = self._title
+        placed = [child for child in self.children if child in cards]
+        in_order = placed == [card for card in cards if card in placed]
+        for card in cards:
+            if card.parent is None:
+                self.mount(card, after=previous)
+            elif not in_order:
+                self.move_child(card, after=previous)
+            previous = card
 
 
 class FaultsWidget:

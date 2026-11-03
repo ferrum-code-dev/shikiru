@@ -2,14 +2,25 @@
 
 from __future__ import annotations
 
+import traceback
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from shikiru.domain.events import EventKind
-from shikiru.domain.faults import ERROR_KEY, RECOVERABLE_KEY, REPEAT_KEY, SCOPE_KEY
-from shikiru.errors import InvariantError, ShikiruError
+from shikiru.domain.faults import (
+    COMMAND_KEY,
+    DETAIL_KEY,
+    ERROR_KEY,
+    EXIT_CODE_KEY,
+    RECOVERABLE_KEY,
+    REPEAT_KEY,
+    SCOPE_KEY,
+    STDERR_KEY,
+    TRACEBACK_KEY,
+)
+from shikiru.errors import CommandFailed, CommandTimeoutError, InvariantError, ShikiruError
 from shikiru.store.database import OperationalDatabaseError
 
 if TYPE_CHECKING:
@@ -30,6 +41,19 @@ def is_recoverable(error: Exception) -> bool:
     return isinstance(error, RECOVERABLE_FAULTS) and not isinstance(error, InvariantError)
 
 
+def _evidence(error: Exception) -> dict[str, Any]:
+    evidence: dict[str, Any] = {
+        DETAIL_KEY: str(error),
+        TRACEBACK_KEY: "".join(traceback.format_exception(error)),
+    }
+    if isinstance(error, CommandFailed | CommandTimeoutError):
+        evidence[COMMAND_KEY] = list(error.argv)
+    if isinstance(error, CommandFailed):
+        evidence[EXIT_CODE_KEY] = error.returncode
+        evidence[STDERR_KEY] = error.stderr
+    return evidence
+
+
 @dataclass
 class _Streak:
     recorded_at: datetime | None = None
@@ -41,7 +65,8 @@ class FaultReporter:
 
     A repeat of the same fault is counted and recorded again only after
     `repeat_notify_seconds`, so a persistent or flapping fault stays visible without flooding
-    the log or the Operator, and a new error class is recorded at once.
+    the log or the Operator, and a new error class is recorded at once. Each record carries the
+    full error, its traceback and, for a failed command, the command, exit code and stderr.
     """
 
     def __init__(
@@ -80,6 +105,7 @@ class FaultReporter:
                         ERROR_KEY: kind,
                         RECOVERABLE_KEY: recoverable,
                         REPEAT_KEY: streak.occurrences,
+                        **_evidence(error),
                     },
                 )
             except OperationalDatabaseError:

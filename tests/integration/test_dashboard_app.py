@@ -648,12 +648,18 @@ async def test_dashboard_mounts_the_default_widgets_and_fits_the_pane(
             )
 
             await open_project_diagnostics(pilot)
-            faults = app.screen.query_one("#faults", Static)
+            faults = app.screen.query_one("#faults")
+
+            def faults_text() -> str:
+                shown = [w for w in faults.query(Static) if w.region.height > 0]
+                return " ".join(" ".join(_rendered_widget_lines(w)) for w in shown).replace(
+                    "  ", " "
+                )
+
             await wait_until(
-                lambda: "host sample failed" in "\n".join(_rendered_widget_lines(faults)),
+                lambda: "host sample failed" in " ".join(faults_text().split()),
                 timeout=UI_WAIT_SECONDS,
             )
-            assert "\N{MULTIPLICATION SIGN}2" in "\n".join(_rendered_widget_lines(faults))
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
     finally:

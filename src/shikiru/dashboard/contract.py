@@ -875,17 +875,26 @@ class DiskView:
 
 
 @dataclass(frozen=True)
-class EngineFaultView:
-    """One open recorded engine fault streak for Diagnostics, with what the Operator can do."""
+class FaultDetailRow:
+    """One labelled piece of recorded evidence, or the plain statement that it is unavailable."""
 
-    scope: str
+    label: str
+    value: str
+
+
+@dataclass(frozen=True)
+class EngineFaultView:
+    """One open engine fault streak as a compact card with its evidence behind a disclosure."""
+
+    key: str
     task_id: str | None
-    error: str
-    recoverable: bool
-    first_seen: str
-    last_seen: str
-    repeats: int
-    guidance: tuple[str, ...]
+    scope: str
+    status: str
+    impact: str
+    cause: str
+    next_step: str
+    needs_action: bool
+    details: tuple[FaultDetailRow, ...]
 
 
 class DashboardViews(Protocol):

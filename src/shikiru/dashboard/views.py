@@ -62,7 +62,7 @@ from shikiru.dashboard.contract import (
     TaskTimelineSource,
     WorkspaceSummaryView,
 )
-from shikiru.dashboard.fault_guidance import engine_fault_guidance
+from shikiru.dashboard.fault_guidance import RetryPolicy, engine_fault_view
 from shikiru.dashboard.session_history import project_task_sessions
 from shikiru.dashboard.tick import TickMemo, tick_now
 from shikiru.domain.acceptance import acceptance_criteria_from_request
@@ -1066,27 +1066,21 @@ class StateDashboardViews:
         )
 
     def engine_faults(self) -> tuple[EngineFaultView, ...]:
-        """Return open recorded fault streaks with their original timestamps and guidance."""
+        """Return open fault cards in stable order, those needing the Operator first."""
+        settings = self._settings.current().orchestration
+        policy = RetryPolicy(
+            backoff_initial_seconds=settings.faults.backoff_initial_seconds,
+            backoff_max_seconds=settings.faults.backoff_max_seconds,
+            close_attempts=settings.network.pr_close_attempts,
+        )
         log_path = self._queries.engine_log_location()
         state_path = self._queries.state_database_location()
-        return tuple(
-            EngineFaultView(
-                scope=fault.scope,
-                task_id=fault.task_id,
-                error=fault.error,
-                recoverable=fault.recoverable,
-                first_seen=fault.first_seen.isoformat(),
-                last_seen=fault.last_seen.isoformat(),
-                repeats=fault.repeat,
-                guidance=engine_fault_guidance(
-                    fault.scope,
-                    recoverable=fault.recoverable,
-                    log_path=log_path,
-                    state_path=state_path,
-                ),
-            )
-            for fault in self._cached_faults()
-        )
+        ordered = sorted(self._cached_faults(), key=lambda fault: fault.first_seen)
+        views = [
+            engine_fault_view(fault, policy, log_path=log_path, state_path=state_path)
+            for fault in ordered
+        ]
+        return tuple(sorted(views, key=lambda view: not view.needs_action))
 
     async def live_work(self, task_id: str) -> TaskWorkSample | None:
         """Sample the live work of a task whose Results still change, or None when there is none."""

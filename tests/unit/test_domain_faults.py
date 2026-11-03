@@ -70,6 +70,20 @@ def test_a_streak_keeps_its_first_sighting_and_adds_up_its_repeats() -> None:
     assert streak.repeat == 4
 
 
+def test_a_streak_keeps_the_evidence_of_its_latest_record_only() -> None:
+    first = _event(1, EventKind.ENGINE_FAULT)
+    latest = _event(2, EventKind.ENGINE_FAULT)
+    first.data.update(
+        {"detail": "old", "command": ["git", "push"], "exit_code": 1, "stderr": "denied"}
+    )
+    latest.data.update({"detail": "new", "traceback": "Traceback..."})
+
+    (streak,) = open_fault_streaks([first, latest])
+
+    assert (streak.event_id, streak.detail, streak.traceback) == (2, "new", "Traceback...")
+    assert (streak.command, streak.exit_code, streak.stderr) == (None, None, None)
+
+
 @pytest.mark.parametrize(
     ("previous", "expected"),
     [(0.0, 2.0), (2.0, 4.0), (32.0, 60.0), (60.0, 60.0), (1e308, 60.0)],

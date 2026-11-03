@@ -323,10 +323,11 @@ _DIAGNOSTICS_SECTION_IDS = (
 
 def _project_diagnostics_text(screen: Widget) -> str:
     return "\n".join(
-        " ".join(_rendered_widget_lines(section))
+        " ".join(_rendered_widget_lines(shown))
         for section_id in _DIAGNOSTICS_SECTION_IDS
         for section in screen.query(f"#{section_id}")
-        if isinstance(section, Static)
+        for shown in ([section] if isinstance(section, Static) else section.query(Static))
+        if shown.region.height > 0
     )
 
 

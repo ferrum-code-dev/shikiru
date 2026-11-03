@@ -1,107 +1,180 @@
-"""Operator guidance for an open engine fault: how Shikiru recovers it and what to do."""
+"""Operator-facing summary and evidence of an open engine fault, from what was recorded."""
 
 from __future__ import annotations
 
+import shlex
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import TYPE_CHECKING
+
+from shikiru.dashboard.contract import EngineFaultView, FaultDetailRow
 from shikiru.engine.pull_request_closing import CLOSE_FAULT_SCOPE
 from shikiru.engine.push_service import PUSH_FAULT_SCOPE, REMOTE_CHECK_FAULT_SCOPE
 
+if TYPE_CHECKING:
+    from shikiru.domain.faults import FaultStreak
+
 _RECONCILE_SCOPE_PREFIX = "reconcile "
-_BACKOFF_LINE = (
-    "Recoverable: Shikiru retries it automatically with backoff and records the recovery "
-    "once an attempt succeeds."
-)
-_BOUNDED_LINE = (
-    "Recoverable: Shikiru retries it with backoff for a limited number of attempts, then waits "
-    "for the next engine start. Operator action: fix the cause the evidence names, then restart "
-    "the engine to retry it sooner."
-)
-_STARTUP_LINE = (
-    "Recoverable: Shikiru does not retry it while the engine runs; it attempts this step again "
-    "at the next engine start. Operator action: fix the cause the evidence names, then restart "
-    "the engine."
-)
-_UNKNOWN_LINE = (
-    "Recoverable: Shikiru records the recovery once the scope works again, but this view does "
-    "not say when it is retried, so check the evidence before waiting on a retry."
-)
-_UNRECOVERABLE_LINE = (
-    "Unrecoverable: a programming fault that retrying cannot fix. Operator action: fix the code "
-    "the evidence points to, then restart the engine."
-)
-_REMOTE_CHECK_LINE = (
-    "Shikiru could not read the repository's remote configuration, so no base is pushed until "
-    "it can. Operator action: fix the git configuration named in the evidence, for example a "
-    "malformed .git/config."
-)
-_PUSH_FORCE_LINE = (
-    "Pushes never force. Operator action: fix the cause git names in the evidence, such as "
-    "remote access or authentication, branch protection, or a {base} that diverged from the "
-    "remote. Shikiru cannot resolve a divergence itself."
-)
-_PUSH_PENDING_LINE = (
-    "Git could not push {base} to the remote, so its pending work stays unpushed; other bases "
-    "keep pushing."
-)
-_LOGGED_EVIDENCE_LINE = (
-    "Evidence: {log_path} holds the traceback of each failed attempt, and the recorded fault "
-    "event in {state_path} holds its error message."
-)
-_EVENT_EVIDENCE_LINE = "Evidence: the recorded fault event in {state_path} holds its error message."
+_NOT_RECORDED = "not recorded"
+_KEY_SEPARATOR = "\x00"
+_CAUSE_LIMIT = 120
+_ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 
 
-def _scope_target(scope: str, prefix: str) -> str | None:
+class Recovery(StrEnum):
+    """How Shikiru itself retries a fault: the distinctions the Operator plans around."""
+
+    BACKOFF = "backoff"
+    BOUNDED = "bounded"
+    STARTUP_ONLY = "startup-only"
+    UNKNOWN = "unknown"
+    UNRECOVERABLE = "unrecoverable"
+
+
+_STATUS = {
+    Recovery.BACKOFF: "Retrying automatically",
+    Recovery.BOUNDED: "Retrying a few times, then waiting for an engine restart",
+    Recovery.STARTUP_ONLY: "Retried only at the next engine start",
+    Recovery.UNKNOWN: "Retry timing unknown",
+    Recovery.UNRECOVERABLE: "Not retried",
+}
+_UNRECOVERABLE_STEP = "Fix the code the traceback points to, then restart the engine"
+_UNKNOWN_IMPACT = "not recorded for this kind of fault"
+_UNKNOWN_STEP = "Read the cause in Details; no retry is known for this fault"
+_RESTART_STEP = "Fix the cause, then restart the engine to retry sooner"
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """The configured retry numbers the recovery descriptions quote."""
+
+    backoff_initial_seconds: float
+    backoff_max_seconds: float
+    close_attempts: int
+
+
+def _target(scope: str, prefix: str) -> str | None:
     head = f"{prefix} "
     return scope.removeprefix(head) if scope.startswith(head) else None
 
 
-def _is_backoff_scope(scope: str) -> bool:
-    return any(
-        _scope_target(scope, prefix) is not None
-        for prefix in (PUSH_FAULT_SCOPE, REMOTE_CHECK_FAULT_SCOPE)
-    )
-
-
-def _is_logged_scope(scope: str) -> bool:
-    return _is_backoff_scope(scope) or scope.startswith(_RECONCILE_SCOPE_PREFIX)
-
-
-def _recovery_line(scope: str, *, recoverable: bool) -> str:
+def recovery_of(scope: str, *, recoverable: bool) -> Recovery:
+    """Return how `scope` is retried; a scope this view does not know retries at unknown times."""
     if not recoverable:
-        return _UNRECOVERABLE_LINE
-    if _is_backoff_scope(scope):
-        return _BACKOFF_LINE
+        return Recovery.UNRECOVERABLE
+    if _target(scope, PUSH_FAULT_SCOPE) is not None or _target(scope, REMOTE_CHECK_FAULT_SCOPE):
+        return Recovery.BACKOFF
     if scope == CLOSE_FAULT_SCOPE:
-        return _BOUNDED_LINE
+        return Recovery.BOUNDED
     if scope.startswith(_RECONCILE_SCOPE_PREFIX):
-        return _STARTUP_LINE
-    return _UNKNOWN_LINE
+        return Recovery.STARTUP_ONLY
+    return Recovery.UNKNOWN
 
 
-def _scope_lines(scope: str) -> tuple[str, ...]:
-    base = _scope_target(scope, PUSH_FAULT_SCOPE)
+def _impact_and_step(scope: str) -> tuple[str, str] | None:
+    base = _target(scope, PUSH_FAULT_SCOPE)
     if base is not None:
         return (
-            _PUSH_PENDING_LINE.format(base=base),
-            _PUSH_FORCE_LINE.format(base=base),
+            f"commits on {base} stay local",
+            "Fix the cause git reports; Shikiru never forces a push",
         )
-    if _scope_target(scope, REMOTE_CHECK_FAULT_SCOPE) is not None:
-        return (_REMOTE_CHECK_LINE,)
-    return ()
+    if _target(scope, REMOTE_CHECK_FAULT_SCOPE) is not None:
+        return (
+            "no base is pushed until the remote can be read",
+            "Fix the git remote configuration, for example a malformed .git/config",
+        )
+    if scope == CLOSE_FAULT_SCOPE:
+        return "the pull request is not closed", _RESTART_STEP
+    if scope.startswith(_RECONCILE_SCOPE_PREFIX):
+        return "a startup recovery step did not complete", _RESTART_STEP
+    return None
 
 
-def engine_fault_guidance(
-    scope: str, *, recoverable: bool, log_path: str, state_path: str
-) -> tuple[str, ...]:
-    """Return the lines explaining an open fault in `scope` and what to do about it.
+def _policy_text(recovery: Recovery, policy: RetryPolicy) -> str:
+    backoff = f"{policy.backoff_initial_seconds:g}s doubling up to {policy.backoff_max_seconds:g}s"
+    return {
+        Recovery.BACKOFF: f"retried with backoff, {backoff}, while the engine runs",
+        Recovery.BOUNDED: (
+            f"up to {policy.close_attempts} attempts with backoff, {backoff}; "
+            "then again only at the next engine start"
+        ),
+        Recovery.STARTUP_ONLY: "attempted again only at the next engine start",
+        Recovery.UNKNOWN: "not recorded for this kind of fault",
+        Recovery.UNRECOVERABLE: "none; a programming fault retrying cannot fix",
+    }[recovery]
 
-    `log_path` is the engine log, which holds a traceback only for the scopes Shikiru logs;
-    `state_path` is the state database, which holds the recorded fault event for every scope.
-    """
-    evidence = (_LOGGED_EVIDENCE_LINE if _is_logged_scope(scope) else _EVENT_EVIDENCE_LINE).format(
-        log_path=log_path, state_path=state_path
+
+def _is_logged(scope: str) -> bool:
+    return (
+        _target(scope, PUSH_FAULT_SCOPE) is not None
+        or _target(scope, REMOTE_CHECK_FAULT_SCOPE) is not None
+        or scope.startswith(_RECONCILE_SCOPE_PREFIX)
+    )
+
+
+def _cause(fault: FaultStreak) -> str:
+    if fault.detail is None:
+        return f"{fault.error} (error text {_NOT_RECORDED})"
+    lines = fault.detail.strip().splitlines()
+    first = lines[0] if lines else fault.detail
+    return first if len(first) <= _CAUSE_LIMIT else first[: _CAUSE_LIMIT - 1] + _ELLIPSIS
+
+
+def _command_rows(fault: FaultStreak) -> tuple[FaultDetailRow, ...]:
+    if fault.command is None:
+        return (FaultDetailRow("Command", _NOT_RECORDED),)
+    exit_code = _NOT_RECORDED if fault.exit_code is None else str(fault.exit_code)
+    return (
+        FaultDetailRow("Command", shlex.join(fault.command)),
+        FaultDetailRow("Exit code", exit_code),
+        FaultDetailRow("Stderr", _NOT_RECORDED if fault.stderr is None else fault.stderr.strip()),
+    )
+
+
+def _details(
+    fault: FaultStreak,
+    recovery: Recovery,
+    policy: RetryPolicy,
+    *,
+    log_path: str,
+    state_path: str,
+) -> tuple[FaultDetailRow, ...]:
+    logged = (
+        (FaultDetailRow("Log", f"{log_path} (traceback of each failed attempt)"),)
+        if _is_logged(fault.scope)
+        else ()
     )
     return (
-        _recovery_line(scope, recoverable=recoverable),
-        *_scope_lines(scope),
-        evidence,
+        FaultDetailRow("Error", fault.message if fault.detail is None else fault.detail.strip()),
+        *_command_rows(fault),
+        FaultDetailRow("First seen", fault.first_seen.isoformat()),
+        FaultDetailRow("Latest", fault.last_seen.isoformat()),
+        FaultDetailRow("Failures", str(fault.repeat)),
+        FaultDetailRow("Retry policy", _policy_text(recovery, policy)),
+        FaultDetailRow("Next retry", _NOT_RECORDED),
+        FaultDetailRow("Traceback", _NOT_RECORDED if fault.traceback is None else fault.traceback),
+        FaultDetailRow("Event", f"#{fault.event_id} in {state_path}"),
+        *logged,
+    )
+
+
+def engine_fault_view(
+    fault: FaultStreak, policy: RetryPolicy, *, log_path: str, state_path: str
+) -> EngineFaultView:
+    """Describe the open `fault` as a card summary plus the evidence recorded for it."""
+    recovery = recovery_of(fault.scope, recoverable=fault.recoverable)
+    known = _impact_and_step(fault.scope)
+    impact, step = known if known is not None else (_UNKNOWN_IMPACT, _UNKNOWN_STEP)
+    if recovery is Recovery.UNRECOVERABLE:
+        step = _UNRECOVERABLE_STEP
+    return EngineFaultView(
+        key=f"{fault.task_id or ''}{_KEY_SEPARATOR}{fault.scope}",
+        task_id=fault.task_id,
+        scope=fault.scope,
+        status=_STATUS[recovery],
+        impact=impact,
+        cause=_cause(fault),
+        next_step=step,
+        needs_action=recovery is not Recovery.BACKOFF,
+        details=_details(fault, recovery, policy, log_path=log_path, state_path=state_path),
     )

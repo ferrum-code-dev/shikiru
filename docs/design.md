@@ -264,6 +264,24 @@ holds exact timestamps with their original offsets, event references and diagnos
 reset values with unknown provenance are described neutrally. The engine's retry is never shown as
 a provider reset, and no evidence promises execution at a block's expiry.
 
+The Faults popup section is titled with the open-fault count (`Faults · 3`) and takes no room
+while none is open. Each open fault is one compact card: its task (or `project`) and scope, a
+recovery status, the practical impact, the latest recorded cause shortened to one line and one
+specific next step. Statuses keep the real retry policies apart: automatic backoff (base pushes and
+remote checks), a bounded number of attempts and then the next engine start (pull request close),
+the next engine start only (startup reconciliation), unknown retry timing (any other recoverable
+scope) and not retried (unrecoverable). A scope the view does not know says its impact is not
+recorded rather than guessing. A collapsed `▸ Details` disclosure per card adds, without repeating
+the impact or next step, the full error; the failed command, exit code and stderr; first and latest
+occurrence and the failure count; the retry policy with its configured backoff numbers and the next
+retry time, which is `not recorded` because the engine does not persist it; the traceback; and the
+state-database event reference with its path (plus the engine log for scopes that log). Each
+`engine_fault` event carries that evidence itself, so the card shows the recorded content rather than
+only a path; evidence an older event lacks reads `not recorded`. Repeated failures of the same task
+and scope update one card, unrelated faults stay separate, and cards needing the Operator come
+before those that retry on their own, each group in order of first occurrence. Cards are keyed by
+task and scope, so a refresh keeps each card's disclosure state, focus and scroll position.
+
 Usage preserves provenance and uncertainty: absent tokens/cost/context/billing are not invented,
 and quota readings can be stale. An active quota block shows as a banner in the home usage section
 and in the expanded usage view, counting the tasks waiting on it; a queued task whose recorded wait
