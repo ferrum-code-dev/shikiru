@@ -320,6 +320,12 @@ async def test_a_failing_cleanup_does_not_stop_dispatch_or_resume(
                 in [e.task_id for e in harness.events.since(0, kinds=[EventKind.TASK_STARTED])]
             )
         )
+        await harness.until(
+            lambda: any(
+                fault.task_id == "T-1"
+                for fault in harness.events.since(0, kinds=[EventKind.ENGINE_FAULT])
+            )
+        )
 
         faults = harness.events.since(0, kinds=[EventKind.ENGINE_FAULT])
         assert [fault.task_id for fault in faults] == ["T-1"]
