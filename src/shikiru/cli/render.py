@@ -17,8 +17,10 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
     SEVERITY_BLOCKER,
     ConsultAnswer,
+    FeedbackAnalysis,
     ImplementationReport,
     PlanReport,
+    Report,
     TriageReport,
     Verdict,
 )
@@ -1289,7 +1291,7 @@ def _task_state(task: TaskSummary | Task) -> tuple[str, str]:
 
 
 def _report_summary(
-    report: TriageReport | ImplementationReport | PlanReport | ConsultAnswer | Verdict,
+    report: Report,
 ) -> str:
     match report:
         case TriageReport(title=title):
@@ -1302,6 +1304,8 @@ def _report_summary(
             return f"{decision}: {answer}" if answer else decision
         case Verdict(decision=decision, summary=summary):
             return f"{decision}: {summary}" if summary else decision
+        case FeedbackAnalysis(summary=summary):
+            return summary
 
 
 def _outcome_line(glyph: str, label: str, color: str) -> Text:

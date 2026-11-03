@@ -22,10 +22,12 @@ from shikiru.agents.contracts import (
     TurnSpec as AgentTurnSpec,
 )
 from shikiru.domain.events import EventKind
+from shikiru.domain.feedback import FeedbackContractError, check_feedback_report
 from shikiru.domain.recovery import Completed, Failed, ProtocolError, Stalled, TurnResult
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
     FACTS_FILENAME,
+    FEEDBACK_FILENAME,
     HELPER_REPORT_FILENAME,
     PROMPT_FILENAME,
     REPORT_FILENAME,
@@ -48,6 +50,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.config.settings import Settings
+    from shikiru.domain.feedback import FeedbackInput
     from shikiru.domain.reports import Report, ReportKind
     from shikiru.domain.tasks import Role, Step, Task
     from shikiru.engine.agents import AgentPool
@@ -90,6 +93,7 @@ class TurnRequest:
     template: PromptName
     context: Mapping[str, object]
     facts: str
+    feedback: FeedbackInput | None = None
 
 
 def read_turn_report(turn_dir: Path) -> Report | None:
@@ -288,6 +292,11 @@ class TurnRunner:
         write_private_text(turn_dir / REPORT_KIND_FILENAME, request.kind.value)
         if request.facts:
             write_private_text(turn_dir / FACTS_FILENAME, request.facts)
+        if request.feedback is not None:
+            write_private_text(
+                turn_dir / FEEDBACK_FILENAME,
+                request.feedback.model_dump_json(indent=REPORT_JSON_INDENT),
+            )
         return turn_dir
 
     def _requeue_unreported(self, task_run_dir: Path, task_id: str, role: Role) -> None:
@@ -389,6 +398,14 @@ class TurnRunner:
                 data={"role": selection.run.role.value, "reason": report.unrecoverable},
             )
             return ProtocolError()
+        if request.feedback is not None:
+            try:
+                check_feedback_report(request.feedback, report)
+            except FeedbackContractError as error:
+                _LOGGER.warning(
+                    "rebuilt report for %s breaks the feedback contract: %s", task.id, error
+                )
+                return ProtocolError()
         write_private_text(
             turn_dir / HELPER_REPORT_FILENAME, report.model_dump_json(indent=REPORT_JSON_INDENT)
         )

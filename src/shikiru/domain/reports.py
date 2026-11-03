@@ -26,6 +26,7 @@ CURRENT_TURN_LINK_NAME = "current_turn"
 PROMPT_FILENAME = "prompt.md"
 FACTS_FILENAME = "facts.md"
 REPORT_KIND_FILENAME = "report.kind"
+FEEDBACK_FILENAME = "feedback.json"
 REPORT_SCHEMA_FILENAME = "report.schema.json"
 REPORT_FILENAME = "report.json"
 HELPER_REPORT_FILENAME = "helper.json"
@@ -34,6 +35,7 @@ SIBLING_REFERENCE_PREFIX = "#"
 DEPENDS_ON_PATTERN = rf"^(T-\d+|{SIBLING_REFERENCE_PREFIX}\d+)$"
 
 _TaskReference = Annotated[str, StringConstraints(pattern=DEPENDS_ON_PATTERN)]
+_Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 def resolve_dependency(reference: str, sibling_ids: Sequence[str]) -> str:
@@ -49,6 +51,13 @@ def _require_iff(*, condition: bool, present: bool, field: str, rule: str) -> No
         raise ValueError(message)
     if not condition and present:
         message = f"{field}: must be empty unless {rule}"
+        raise ValueError(message)
+
+
+def _require_unique(identities: list[str], field: str) -> None:
+    duplicates = sorted({identity for identity in identities if identities.count(identity) > 1})
+    if duplicates:
+        message = f"{field}: duplicate ids {duplicates}"
         raise ValueError(message)
 
 
@@ -258,6 +267,143 @@ class Verdict(DomainModel):
         return self
 
 
+class FeedbackAction(StrEnum):
+    """What the Leader decided to do about one source item of PR review feedback."""
+
+    ADDRESS = auto()
+    ALREADY_ADDRESSED = auto()
+    DISAGREE = auto()
+    NEEDS_OPERATOR = auto()
+
+
+class FeedbackWork(DomainModel):
+    """One implementation instruction, possibly shared by several duplicate source items."""
+
+    id: _Text
+    instruction: _Text
+
+
+class FeedbackDecision(DomainModel):
+    """The Leader's decision for one review body or original inline discussion."""
+
+    source_id: _Text
+    action: FeedbackAction
+    points: list[_Text] = Field(
+        min_length=1,
+        description="Every substantive point the source item raises, one entry each.",
+    )
+    detail: _Text = Field(
+        description=(
+            "address: the concrete work requested; already_addressed: the commit or file that "
+            "shows it; disagree: the specific reason; needs_operator: the question to ask."
+        )
+    )
+    work_id: str = Field(
+        default="", description="Required iff action is 'address': the id of a `work` entry."
+    )
+    reply: str = Field(
+        default="",
+        description="Proposed reply to this source item; required unless action is "
+        "'needs_operator', otherwise empty.",
+    )
+
+    @model_validator(mode="after")
+    def _work_id_required_iff_address(self) -> Self:
+        _require_iff(
+            condition=self.action is FeedbackAction.ADDRESS,
+            present=bool(self.work_id),
+            field="work_id",
+            rule="action is 'address'",
+        )
+        return self
+
+    @model_validator(mode="after")
+    def _reply_required_unless_needs_operator(self) -> Self:
+        _require_iff(
+            condition=self.action is not FeedbackAction.NEEDS_OPERATOR,
+            present=bool(self.reply.strip()),
+            field="reply",
+            rule="action is not 'needs_operator'",
+        )
+        return self
+
+
+class FeedbackAnalysis(DomainModel):
+    """The Leader's `feedback_analysis` report: one decision per source item of a snapshot."""
+
+    summary: _Text
+    work: list[FeedbackWork] = Field(
+        default_factory=list,
+        description="Implementation instructions; one may serve several duplicate source items.",
+    )
+    decisions: list[FeedbackDecision] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _identities_are_unique(self) -> Self:
+        _require_unique([decision.source_id for decision in self.decisions], "decisions")
+        _require_unique([work.id for work in self.work], "work")
+        return self
+
+    @model_validator(mode="after")
+    def _work_matches_address_decisions(self) -> Self:
+        work_ids = {work.id for work in self.work}
+        used = {
+            decision.work_id
+            for decision in self.decisions
+            if decision.action is FeedbackAction.ADDRESS
+        }
+        unknown = used - work_ids
+        if unknown:
+            message = f"decisions: work_id {sorted(unknown)} is not an id in `work`"
+            raise ValueError(message)
+        unused = work_ids - used
+        if unused:
+            message = f"work: {sorted(unused)} is not the work_id of any 'address' decision"
+            raise ValueError(message)
+        return self
+
+
+class FeedbackRework(ImplementationReport):
+    """The Implementer's report on the accepted work of a feedback round."""
+
+
+class VerifiedReply(DomainModel):
+    """The reply the Leader verified for one source item."""
+
+    source_id: _Text
+    reply: _Text
+
+
+class FeedbackVerdict(Verdict):
+    """The Leader's verification of a feedback round's changes and replies."""
+
+    replies: list[VerifiedReply] = Field(
+        default_factory=list,
+        description=(
+            "Required and non-empty iff decision is 'accept': the final reply for every source "
+            "item whose decision has a reply; otherwise empty."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _decision_is_available(self) -> Self:
+        if self.decision == DECISION_SUPERSEDE:
+            message = "decision: 'supersede' is not available for feedback"
+            raise ValueError(message)
+        return self
+
+    @model_validator(mode="after")
+    def _replies_required_iff_accept(self) -> Self:
+        _require_iff(
+            condition=self.decision == DECISION_ACCEPT,
+            present=bool(self.replies),
+            field="replies",
+            rule="decision is 'accept'",
+        )
+        _require_unique([reply.source_id for reply in self.replies], "replies")
+        return self
+
+
 class ReportKind(StrEnum):
     """The `report.kind` discriminator naming a turn's report model."""
 
@@ -266,9 +412,18 @@ class ReportKind(StrEnum):
     PLAN = auto()
     CONSULT = auto()
     VERDICT = auto()
+    FEEDBACK_ANALYSIS = auto()
+    FEEDBACK_REWORK = auto()
+    FEEDBACK_VERDICT = auto()
 
 
-Report = TriageReport | ImplementationReport | PlanReport | ConsultAnswer | Verdict
+FEEDBACK_REPORT_KINDS: Final = frozenset(
+    {ReportKind.FEEDBACK_ANALYSIS, ReportKind.FEEDBACK_REWORK, ReportKind.FEEDBACK_VERDICT}
+)
+
+Report = (
+    TriageReport | ImplementationReport | PlanReport | ConsultAnswer | Verdict | FeedbackAnalysis
+)
 
 _MODELS_BY_KIND: dict[ReportKind, type[Report]] = {
     ReportKind.TRIAGE: TriageReport,
@@ -276,6 +431,9 @@ _MODELS_BY_KIND: dict[ReportKind, type[Report]] = {
     ReportKind.PLAN: PlanReport,
     ReportKind.CONSULT: ConsultAnswer,
     ReportKind.VERDICT: Verdict,
+    ReportKind.FEEDBACK_ANALYSIS: FeedbackAnalysis,
+    ReportKind.FEEDBACK_REWORK: FeedbackRework,
+    ReportKind.FEEDBACK_VERDICT: FeedbackVerdict,
 }
 
 

@@ -13,14 +13,17 @@ from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
     DECISION_ACCEPT,
     DECISION_CHANGES_REQUESTED,
+    FEEDBACK_REPORT_KINDS,
     STATUS_COMPLETED,
     ConsultAnswer,
+    FeedbackRework,
     ImplementationReport,
     ReportKind,
     Verdict,
 )
 from shikiru.domain.steps import CONFLICT_ROUNDS, Transition
 from shikiru.domain.tasks import EscalationReason, Role, Step, Task
+from shikiru.engine.events import REPORT_KIND_FIELD
 from shikiru.engine.integration import (
     ConflictRecovery,
     IntegrationBlocked,
@@ -42,11 +45,16 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
+    from shikiru.domain.events import Event
     from shikiru.engine.escalation_filing import EscalationFiler
     from shikiru.engine.history import ReportHistory
     from shikiru.engine.step_runner import StepRunner
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
+
+
+def _is_feedback_turn(event: Event) -> bool:
+    return event.data.get(REPORT_KIND_FIELD) in {kind.value for kind in FEEDBACK_REPORT_KINDS}
 
 
 class IntegrationTurns:
@@ -117,6 +125,7 @@ class IntegrationTurns:
                 EventKind.TASK_RETRIED,
             ),
         )
+        events = [event for event in events if not _is_feedback_turn(event)]
         implementer_turns = [
             event
             for event in events
@@ -169,7 +178,11 @@ class IntegrationTurns:
         if task.step is not Step.INTEGRATE or not history:
             return recovery
         label, report = history[-1]
-        if not isinstance(report, ImplementationReport) or report.status != STATUS_COMPLETED:
+        if (
+            not isinstance(report, ImplementationReport)
+            or isinstance(report, FeedbackRework)
+            or report.status != STATUS_COMPLETED
+        ):
             return recovery
         completed = [event for event in implementer_turns if event.data.get("turn") == label]
         started = [event for event in turn_starts if event.data.get("turn") == label]

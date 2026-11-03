@@ -1290,6 +1290,7 @@ async def test_turn_cost_basis_requires_comparable_recorded_cumulative_amounts(
         Step.IMPLEMENT,
         Role.IMPLEMENTER,
         rung,
+        kind=ReportKind.PLAN,
         run_id=run.id,
         turn=turn,
     )
@@ -1303,6 +1304,7 @@ async def test_turn_cost_basis_requires_comparable_recorded_cumulative_amounts(
         run_id=run.id,
         usage_before=case.before,
         usage_after=case.after,
+        kind=ReportKind.PLAN,
     )
     emit_turn_completed(events, task, report, execution)
 

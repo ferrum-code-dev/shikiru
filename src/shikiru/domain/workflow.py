@@ -344,6 +344,10 @@ def _report_stage(kind: ReportKind) -> Step | None:
             return Step.CONSULT
         case ReportKind.VERDICT:
             return Step.VERIFY
+        case (
+            ReportKind.FEEDBACK_ANALYSIS | ReportKind.FEEDBACK_REWORK | ReportKind.FEEDBACK_VERDICT
+        ):
+            return None
 
 
 def _report_completes_stage(report: Report) -> bool:

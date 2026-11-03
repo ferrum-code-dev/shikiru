@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shikiru.domain.events import EventKind
+from shikiru.domain.reports import ReportKind
 from shikiru.engine.events import emit_turn_started
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
@@ -28,7 +29,9 @@ def record_turn_start(
     rung: Rung,
 ) -> None:
     assert task.step is not None
-    emit_turn_started(EventLog(connection, clock), task, task.step, role, rung)
+    emit_turn_started(
+        EventLog(connection, clock), task, task.step, role, rung, kind=ReportKind.IMPLEMENTATION
+    )
 
 
 def record_quota_wait(

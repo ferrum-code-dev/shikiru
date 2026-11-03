@@ -42,6 +42,7 @@ from shikiru.domain.reports import (
     HELPER_REPORT_FILENAME,
     REPORT_FILENAME,
     REPORT_KIND_FILENAME,
+    FeedbackVerdict,
     Option,
     Report,
     ReportKind,
@@ -1299,7 +1300,11 @@ def _task_turn_reports(turn_dir: Path) -> tuple[list[ReportRow], list[str]]:
             reports.append(
                 ReportRow(
                     turn=turn_dir.name,
-                    kind=ReportKind.VERDICT,
+                    kind=(
+                        ReportKind.FEEDBACK_VERDICT
+                        if isinstance(verdict, FeedbackVerdict)
+                        else ReportKind.VERDICT
+                    ),
                     data=verdict,
                     source=ENGINE_REPORT_SOURCE,
                 )

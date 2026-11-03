@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import Rung, Usage
     from shikiru.domain.recovery import TurnResult
+    from shikiru.domain.reports import ReportKind
     from shikiru.domain.tasks import Role
 
 
@@ -25,4 +26,5 @@ class TurnExecution:
     run_id: int
     usage_before: Usage
     usage_after: Usage
+    kind: ReportKind
     quota_wait_exhausted: bool = False

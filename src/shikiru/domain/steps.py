@@ -17,6 +17,7 @@ from shikiru.domain.reports import (
     DECISION_ESCALATE,
     STATUS_COMPLETED,
     ConsultAnswer,
+    FeedbackAnalysis,
     ImplementationReport,
     PlanReport,
     TriageReport,
@@ -41,7 +42,9 @@ if TYPE_CHECKING:
 CONSULT_LIMIT = 3
 CONFLICT_ROUNDS = 2
 
-Outcome = TriageReport | PlanReport | ImplementationReport | ConsultAnswer | Verdict
+Outcome = (
+    TriageReport | PlanReport | ImplementationReport | ConsultAnswer | Verdict | FeedbackAnalysis
+)
 
 ACTING_ROLE: dict[Step, Role] = {
     Step.TRIAGE: Role.LEADER,

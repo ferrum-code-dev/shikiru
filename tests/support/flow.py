@@ -133,6 +133,7 @@ async def build_flow_task(
 @dataclass
 class FlowEnv:
     flow: TaskFlow
+    steps: StepRunner
     env: EngineEnv
     events: EventLog
     escalations: EscalationStore
@@ -282,6 +283,7 @@ def build_flow(
     )
     return FlowEnv(
         flow=flow,
+        steps=steps,
         env=env,
         events=system.events,
         escalations=escalations_store,

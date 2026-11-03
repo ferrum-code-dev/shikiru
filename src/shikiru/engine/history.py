@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from shikiru.domain.reports import (
     DECISION_ACCEPT,
     ConsultAnswer,
+    FeedbackVerdict,
     ImplementationReport,
     PlanReport,
     Report,
@@ -94,7 +95,11 @@ class ReportHistory:
         """Choose the accepted summary, falling back to the latest plan or task title."""
         history = self.load(task.id)
         for _, report in reversed(history):
-            if isinstance(report, Verdict) and report.decision == DECISION_ACCEPT:
+            if (
+                isinstance(report, Verdict)
+                and not isinstance(report, FeedbackVerdict)
+                and report.decision == DECISION_ACCEPT
+            ):
                 return IntegrationMetadata(
                     summary=report.summary,
                     residual_risks=tuple(report.residual_risks),

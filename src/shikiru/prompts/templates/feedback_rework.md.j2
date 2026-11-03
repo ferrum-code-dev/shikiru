@@ -1,0 +1,25 @@
+{% extends "_base.md.j2" %}
+{% import "_macros.md.j2" as macros %}
+{% block body %}
+You are the Implementer applying the accepted work from pull request review feedback. Task mode: `{{ mode }}`.
+
+{{ macros.facts_section(facts) }}
+
+## Work to do
+{% for work in feedback_work %}
+
+{{ work | fenced("json") }}
+{% endfor %}
+
+## Feedback it answers
+
+{{ feedback_snapshot | fenced("json") }}
+
+Do exactly this work, commit it, run the project's tests and keep the trackers current. Do not
+reply to the reviewers or touch other feedback.
+{% if mode == "plan" %}
+This is a planning task: stay within planning and documentation changes.
+{% endif %}
+Report `completed` only when nothing remains; report `needs_decision` or `blocked` with a concrete
+`question` otherwise.
+{% endblock %}

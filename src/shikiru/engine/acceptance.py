@@ -10,6 +10,7 @@ from shikiru.domain.reports import (
     DECISION_SUPERSEDE,
     REPORT_JSON_INDENT,
     SEVERITY_BLOCKER,
+    FeedbackVerdict,
     Issue,
     Verdict,
 )
@@ -68,7 +69,8 @@ class AcceptanceGuard:
         description = _blocker(task, facts)
         if description is None:
             return report
-        rejection = Verdict(
+        rejection_type = FeedbackVerdict if isinstance(report, FeedbackVerdict) else Verdict
+        rejection = rejection_type(
             decision=DECISION_CHANGES_REQUESTED,
             summary=REJECTION_SUMMARY,
             issues=[Issue(severity=SEVERITY_BLOCKER, description=description)],

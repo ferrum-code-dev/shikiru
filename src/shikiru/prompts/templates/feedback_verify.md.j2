@@ -1,0 +1,27 @@
+{% extends "_base.md.j2" %}
+{% import "_macros.md.j2" as macros %}
+{% block body %}
+You are the Leader verifying the result of a pull request review feedback round. Task mode: `{{ mode }}`.
+
+{{ macros.facts_section(facts) }}
+
+## Feedback snapshot
+
+{{ feedback_snapshot | fenced("json") }}
+
+## Your analysis
+
+{{ feedback_analysis | fenced("json") }}
+
+Review the changes with `git diff {{ base }}...HEAD` in the workspace. The facts above outrank the
+Implementer's claims. Check that each accepted request is really satisfied, that each
+`already_addressed` claim is true, and that each reply is accurate against the snapshot and the
+Git and check evidence. Do not change code or tests.
+
+Choose `accept` only when every change and reply is right; give the final reply for each source
+item that has one in `replies`. Choose `changes_requested` with `issues` for further rework, or
+`escalate` with options for the Operator. `supersede` is not available.
+{% if final_round %}
+This is the final round: `changes_requested` is not available.
+{% endif %}
+{% endblock %}

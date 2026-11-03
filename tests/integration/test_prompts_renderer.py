@@ -18,6 +18,11 @@ if TYPE_CHECKING:
 _REQUEST = "Add retries to the flaky parser"
 _WORKSPACE = "/projects/demo/.shikiru/worktrees/T-7"
 _BASE = "release-7"
+_FEEDBACK_PROMPTS = (
+    PromptName.FEEDBACK_ANALYSIS,
+    PromptName.FEEDBACK_REWORK,
+    PromptName.FEEDBACK_VERIFY,
+)
 _FENCING_REPORT_JSON = '{"note": "closes a ```` fence early"}'
 
 
@@ -34,6 +39,14 @@ def _full_context(name: PromptName) -> dict[str, Any]:
         context["question"] = "Which retry library should I use?"
         context["operator_decision"] = None
     if name is PromptName.VERIFY:
+        context["facts"] = "git log --oneline base..HEAD"
+        context["base"] = _BASE
+        context["final_round"] = False
+    if name in _FEEDBACK_PROMPTS:
+        context["mode"] = "implement"
+        context["feedback_snapshot"] = "{}"
+        context["feedback_analysis"] = "{}"
+        context["feedback_work"] = ['{"id": "w1"}']
         context["facts"] = "git log --oneline base..HEAD"
         context["base"] = _BASE
         context["final_round"] = False

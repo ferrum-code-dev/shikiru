@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shikiru.domain.recovery import ProtocolError, TurnCounters
-from shikiru.domain.reports import ImplementationReport, Verdict
+from shikiru.domain.reports import FeedbackAnalysis, ImplementationReport, Verdict
 from shikiru.domain.steps import Transition, next_step
 from shikiru.domain.tasks import EscalationReason, Status, Step
 from shikiru.engine.events import emit_turn_failed
@@ -14,6 +14,7 @@ from shikiru.errors import InvariantError, UsageError
 
 if TYPE_CHECKING:
     from shikiru.config.settings import Settings
+    from shikiru.domain.feedback import FeedbackInput
     from shikiru.domain.reports import Report, ReportKind
     from shikiru.domain.steps import Outcome
     from shikiru.domain.tasks import Role, Task
@@ -89,18 +90,19 @@ class StepRunner:
         role: Role,
         template: PromptName,
         kind: ReportKind,
-    ) -> tuple[Task, ImplementationReport | Verdict]:
+        feedback: FeedbackInput | None = None,
+    ) -> tuple[Task, ImplementationReport | Verdict | FeedbackAnalysis]:
         """Run one integration report through the shared turn and recovery loop."""
         result = await self._loop.run(
             task,
             Step.INTEGRATE,
             TurnCounters(),
-            TurnOverrides(role=role, template=template, kind=kind),
+            TurnOverrides(role=role, template=template, kind=kind, feedback=feedback),
         )
         if isinstance(result, TurnsStopped):
             raise TurnStopped
         report: Report = result.report
-        if not isinstance(report, ImplementationReport | Verdict):
+        if not isinstance(report, ImplementationReport | Verdict | FeedbackAnalysis):
             message = f"{result.task.id} integration turn returned an unexpected report"
             raise InvariantError(message)
         return result.task, await self._acceptance.settle(result.task, report, result.execution)

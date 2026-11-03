@@ -16,6 +16,7 @@ from shikiru.errors import InvariantError
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from shikiru.domain.feedback import FeedbackInput
     from shikiru.domain.recovery import TurnCounters
     from shikiru.domain.reports import Report, ReportKind
     from shikiru.domain.tasks import Role, Step, Task
@@ -38,6 +39,7 @@ class TurnOverrides:
     template: PromptName | None = None
     kind: ReportKind | None = None
     conflict_context: str | None = None
+    feedback: FeedbackInput | None = None
 
 
 NO_OVERRIDES = TurnOverrides()
@@ -156,6 +158,7 @@ class TurnLoop:
             template_override=overrides.template,
             kind_override=overrides.kind,
             conflict_context=overrides.conflict_context,
+            feedback=overrides.feedback,
         )
         usage_before = selection.run.usage
         resumed = task.id in self._resumed
@@ -172,6 +175,7 @@ class TurnLoop:
                 run_id=selection.run.id,
                 usage_before=usage_before,
                 usage_after=usage_before,
+                kind=turn_request.kind,
             )
         turn_name: str | None = None
 
@@ -184,6 +188,7 @@ class TurnLoop:
                 step,
                 role,
                 selection.rung,
+                kind=turn_request.kind,
                 run_id=selection.run.id,
                 turn=turn_name,
             )
@@ -221,4 +226,5 @@ class TurnLoop:
             run_id=selection.run.id,
             usage_before=usage_before,
             usage_after=live_run.usage,
+            kind=turn_request.kind,
         )

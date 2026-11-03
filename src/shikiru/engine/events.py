@@ -12,6 +12,7 @@ from shikiru.domain.reports import (
     DECISION_ANSWER,
     STATUS_COMPLETED,
     ConsultAnswer,
+    FeedbackAnalysis,
     ImplementationReport,
     PlanReport,
     TriageReport,
@@ -23,6 +24,7 @@ if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung, Usage
     from shikiru.config.settings import Settings
     from shikiru.domain.recovery import TurnResult
+    from shikiru.domain.reports import ReportKind
     from shikiru.domain.steps import Outcome
     from shikiru.domain.tasks import Role, Step, Task
     from shikiru.engine.turn_execution import TurnExecution
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
 TURN_FIELD = "turn"
 ROLE_FIELD = "role"
 ITERATION_FIELD = "iteration"
+REPORT_KIND_FIELD = "report_kind"
 
 
 def emit_step_started(events: EventLog, task: Task, settings: Settings) -> None:
@@ -60,10 +63,11 @@ def emit_turn_started(
     role: Role,
     rung: Rung,
     *,
+    kind: ReportKind,
     run_id: int | None = None,
     turn: str | None = None,
 ) -> None:
-    """Record that `role` started its `step` turn on `rung`."""
+    """Record that `role` started its `step` turn on `rung`, owing a report of `kind`."""
     events.append(
         EventKind.TURN_STARTED,
         task_id=task.id,
@@ -75,6 +79,7 @@ def emit_turn_started(
             "agent": rung.agent,
             "model": rung.model,
             "effort": rung.effort,
+            REPORT_KIND_FIELD: kind.value,
             **_turn_data(turn),
             **({"run_id": run_id} if run_id is not None else {}),
         },
@@ -177,6 +182,7 @@ def emit_turn_completed(
             "model": execution.rung.model,
             "effort": execution.rung.effort,
             "run_id": execution.run_id,
+            REPORT_KIND_FIELD: execution.kind.value,
             "outcome": _turn_outcome(outcome),
             "summary": summary,
             "question": _turn_question(outcome),
@@ -246,7 +252,7 @@ def _turn_question(outcome: Outcome) -> str:
 def _turn_outcome(outcome: Outcome) -> str:
     if isinstance(outcome, TriageReport):
         return outcome.mode.value
-    if isinstance(outcome, PlanReport):
+    if isinstance(outcome, PlanReport | FeedbackAnalysis):
         return STATUS_COMPLETED
     if isinstance(outcome, ConsultAnswer):
         return outcome.decision

@@ -1,0 +1,27 @@
+{% extends "_base.md.j2" %}
+{% import "_macros.md.j2" as macros %}
+{% block body %}
+You are the Leader analysing the pull request review feedback below for this task. Task mode: `{{ mode }}`.
+
+{{ macros.facts_section(facts) }}
+
+## Feedback
+
+{{ feedback_snapshot | fenced("json") }}
+
+Decide every source item exactly once, by its `id`. Each item may raise several points: list all of
+them in `points` and cover each in `detail` and `reply`. Choose `address` for a request to accept,
+`already_addressed` when the Git facts or files show it is done (a moved or outdated location is
+not proof), `disagree` for a request to decline with a specific reason, and `needs_operator`
+when evidence is missing or requirements conflict; never invent a fix for those.
+
+Put each piece of implementation work in `work` with a concrete instruction, and point every
+`address` decision at it by `work_id`. Duplicate requests share one `work` entry but keep their own
+decision and `reply`. Do not change code or files. Replies are proposals; the engine publishes
+them after verification.
+
+{% if mode == "plan" %}
+This is a planning task: accepted work stays within its planning and documentation scope. A request
+to implement the planned product is a `needs_operator` decision about scope.
+{% endif %}
+{% endblock %}

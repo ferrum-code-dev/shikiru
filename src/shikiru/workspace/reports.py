@@ -12,6 +12,7 @@ from shikiru.domain.reports import (
     HELPER_REPORT_FILENAME,
     REPORT_FILENAME,
     REPORT_KIND_FILENAME,
+    FeedbackVerdict,
     Report,
     ReportKind,
     Verdict,
@@ -73,7 +74,12 @@ def load_engine_verdict(turn_dir: Path) -> Verdict | None:
     except (OSError, UnicodeError) as error:
         message = f"cannot read engine verdict {path}: {error}"
         raise InvalidTurnReportError(message) from error
-    return Verdict.model_validate_json(text)
+    model = (
+        FeedbackVerdict
+        if _read_kind(turn_dir / REPORT_KIND_FILENAME) is ReportKind.FEEDBACK_VERDICT
+        else Verdict
+    )
+    return model.model_validate_json(text)
 
 
 def _file_exists(path: Path) -> bool:

@@ -12,8 +12,10 @@ import typer
 from pydantic import ValidationError
 
 from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, role_dir
+from shikiru.domain.feedback import FeedbackContractError, FeedbackInput, check_feedback_report
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
+    FEEDBACK_FILENAME,
     REPORT_FILENAME,
     REPORT_JSON_INDENT,
     REPORT_KIND_FILENAME,
@@ -26,6 +28,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from pydantic import BaseModel
+
+    from shikiru.domain.reports import Report
 
 
 class ReportError(ShikiruError):
@@ -96,10 +100,26 @@ def validate_report(turn_dir: Path, file_path: Path) -> BaseModel:
     data = _load_report_data(file_path)
     model = model_for(kind)
     try:
-        return model.model_validate(data)
+        report = model.model_validate(data)
     except ValidationError as error:
         message = "\n".join(_validation_error_messages(error))
         raise ReportError(EXIT_USAGE_ERROR, message) from error
+    _check_feedback_contract(turn_dir, report)
+    return report
+
+
+def _check_feedback_contract(turn_dir: Path, report: Report) -> None:
+    feedback_path = turn_dir / FEEDBACK_FILENAME
+    if not feedback_path.is_file():
+        return
+    try:
+        feedback = FeedbackInput.model_validate_json(feedback_path.read_text())
+        check_feedback_report(feedback, report)
+    except (ValidationError, OSError) as error:
+        message = f"cannot read {feedback_path}: {error}"
+        raise ReportError(EXIT_USAGE_ERROR, message) from error
+    except FeedbackContractError as error:
+        raise ReportError(EXIT_USAGE_ERROR, str(error)) from error
 
 
 def write_report(turn_dir: Path, report: BaseModel) -> Path:

@@ -17,6 +17,7 @@ from fake_agent.script import (
     EscalateStep,
     NeedsDecisionStep,
     NewTaskSpec,
+    ReportStep,
     SupersedeStep,
     TurnStep,
 )
@@ -58,7 +59,8 @@ _REPORT_TIMEOUT_SECONDS = 10.0
 _MAX_COMMIT_SUBJECT_LENGTH = 72
 _COMMIT_IDENTITY_ARGS = ("-c", "user.name=Fake Agent", "-c", "user.email=fake-agent@shikiru.test")
 _OTHER_BRANCH = "feature/agent-chose-this"
-_KINDS_WITH_COMMITS = (ReportKind.IMPLEMENTATION, ReportKind.PLAN)
+_KINDS_WITH_COMMITS = (ReportKind.IMPLEMENTATION, ReportKind.PLAN, ReportKind.FEEDBACK_REWORK)
+_COMMITS_FIELD = "commits"
 
 
 def role_script_env_var(role: str) -> str:
@@ -336,14 +338,26 @@ def _current_report_kind(turn_dir: Path) -> ReportKind:
     return ReportKind((turn_dir / REPORT_KIND_FILENAME).read_text().strip())
 
 
-def _write_report_file(role_path: Path, report: Report) -> Path:
+def _write_report_file(role_path: Path, report: str) -> Path:
     descriptor, temp_name = tempfile.mkstemp(
         dir=role_path, prefix=_REPORT_FILENAME_PREFIX, suffix=".json"
     )
     report_path = Path(temp_name)
     with os.fdopen(descriptor, "w") as handle:
-        handle.write(report.model_dump_json())
+        handle.write(report)
     return report_path
+
+
+async def _scripted_payload(
+    ctx: ScriptContext, step: TurnStep, kind: ReportKind, prompt_text: str, commits: list[Commit]
+) -> str:
+    if isinstance(step, ReportStep):
+        payload = dict(step.report)
+        if step.commit:
+            made = await _commit_changes(ctx.runner, ctx.cwd, prompt_text)
+            payload[_COMMITS_FIELD] = [commit.model_dump() for commit in made]
+        return json.dumps(payload)
+    return _build_report(kind, step, prompt_text, commits).model_dump_json()
 
 
 async def submit_scripted_report(ctx: ScriptContext, step: TurnStep, prompt_text: str) -> None:
@@ -365,7 +379,7 @@ async def submit_scripted_report(ctx: ScriptContext, step: TurnStep, prompt_text
     )
     if isinstance(step, AcceptStep | SupersedeStep) and step.uncommitted:
         await asyncio.to_thread((ctx.cwd / step.uncommitted).write_text, prompt_text)
-    report = _build_report(kind, step, prompt_text, commits)
+    report = await _scripted_payload(ctx, step, kind, prompt_text, commits)
     role_path = role_dir(ctx.run_dir, ctx.role)
     report_path = await asyncio.to_thread(_write_report_file, role_path, report)
     try:

@@ -90,6 +90,7 @@ from shikiru.domain.quota_waits import (
 )
 from shikiru.domain.reports import (
     ConsultAnswer,
+    FeedbackAnalysis,
     ImplementationReport,
     PlanReport,
     TriageReport,
@@ -2162,6 +2163,8 @@ def _task_report(row: ReportRow) -> TaskReportView:
     elif isinstance(report, PlanReport):
         summary = report.summary
         risks = tuple(report.scope_changes)
+    elif isinstance(report, FeedbackAnalysis):
+        summary = report.summary
     elif isinstance(report, ConsultAnswer):
         summary = report.answer or report.decision
         decision = report.decision

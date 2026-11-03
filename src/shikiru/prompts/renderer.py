@@ -50,6 +50,9 @@ class PromptName(StrEnum):
     CONFLICTS = auto()
     CONTINUE = auto()
     HANDOFF = auto()
+    FEEDBACK_ANALYSIS = auto()
+    FEEDBACK_REWORK = auto()
+    FEEDBACK_VERIFY = auto()
 
 
 class PromptRenderer:

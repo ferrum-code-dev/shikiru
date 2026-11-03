@@ -79,6 +79,14 @@ class EscalateStep(_StepModel):
     question: str = ""
 
 
+class ReportStep(_StepModel):
+    """Submit `report` verbatim as the turn's report, committing a change first if `commit`."""
+
+    kind: Literal["report"] = "report"
+    report: dict[str, object]
+    commit: bool = False
+
+
 class NoReportStep(_StepModel):
     """End the turn without ever calling `shikiru report`."""
 
@@ -130,6 +138,7 @@ type TurnStep = (
     | StallStep
     | DialogStep
     | SupersedeStep
+    | ReportStep
 )
 
 _STEPS_ADAPTER: TypeAdapter[list[Annotated[TurnStep, Field(discriminator="kind")]]] = TypeAdapter(

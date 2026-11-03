@@ -18,6 +18,8 @@ from shikiru.agents.contracts import (
 from shikiru.domain.reports import (
     ConsultAnswer,
     EscalationRequest,
+    FeedbackAnalysis,
+    FeedbackVerdict,
     ImplementationReport,
     NewTask,
     PlanReport,
@@ -44,7 +46,7 @@ if TYPE_CHECKING:
 
     from shikiru.domain.reports import Commit, Issue, Option, TestRun
 
-_REPORT: TypeAdapter[Report] = TypeAdapter(Report)
+_REPORT: TypeAdapter[Report] = TypeAdapter(Report | FeedbackVerdict)
 _LABEL_OPEN = "**"
 _LABEL_CLOSE = "**\n\n"
 _BLOCK_SEPARATOR = "\n\n"
@@ -78,6 +80,8 @@ _REPORT_KINDS = {
     PlanReport: "plan",
     ConsultAnswer: "consult",
     Verdict: "verify",
+    FeedbackAnalysis: "feedback analysis",
+    FeedbackVerdict: "feedback verify",
 }
 
 
@@ -189,6 +193,21 @@ def _implementation(report: ImplementationReport) -> tuple[Part, list[DetailRow]
     ]
 
 
+def _feedback_analysis(report: FeedbackAnalysis) -> tuple[Part, list[DetailRow]]:
+    decisions = [
+        (
+            Part(decision.source_id, accent=True),
+            Part(f" {decision.action.value}: {decision.detail}"),
+        )
+        for decision in report.decisions
+    ]
+    return Part(report.summary), [
+        *_row("Summary", report.summary),
+        *_listed("Decisions", decisions),
+        *_plain_items("Work", [work.instruction for work in report.work]),
+    ]
+
+
 def _verdict(report: Verdict) -> tuple[Part, list[DetailRow]]:
     phrase = verdict_phrase(report.decision)
     text, tone = (phrase.text, phrase.tone) if phrase is not None else (report.decision, Tone.PLAIN)
@@ -244,6 +263,8 @@ def _report_content(report: Report) -> tuple[Part, list[DetailRow]]:
             return _plan(report)
         case ConsultAnswer():
             return _consult(report)
+        case FeedbackAnalysis():
+            return _feedback_analysis(report)
 
 
 def _first_line(text: str) -> str:

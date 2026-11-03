@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from shikiru.domain.reports import ReportKind
+from shikiru.domain.reports import FeedbackAction, ReportKind
 from shikiru.domain.tasks import Step
 from shikiru.engine.task_facts import require_repo
 from shikiru.engine.turns import TurnRequest
@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.config.settings import Settings
+    from shikiru.domain.feedback import FeedbackInput
     from shikiru.domain.tasks import Task
     from shikiru.engine.history import ReportHistory
     from shikiru.engine.task_facts import TaskFacts
@@ -34,6 +35,12 @@ class NextTurn:
 
 ORDINARY_TURN = NextTurn()
 
+_JSON_INDENT = 2
+
+FEEDBACK_TEMPLATES = frozenset(
+    {PromptName.FEEDBACK_ANALYSIS, PromptName.FEEDBACK_REWORK, PromptName.FEEDBACK_VERIFY}
+)
+
 
 class ContextKey(StrEnum):
     """The variables the prompt templates read from a turn's context."""
@@ -48,6 +55,10 @@ class ContextKey(StrEnum):
     BASE = "base"
     FINAL_ROUND = "final_round"
     CONFLICT = "conflict"
+    MODE = "mode"
+    FEEDBACK_SNAPSHOT = "feedback_snapshot"
+    FEEDBACK_ANALYSIS = "feedback_analysis"
+    FEEDBACK_WORK = "feedback_work"
 
 
 def template_for_step(step: Step, iteration: int) -> tuple[PromptName, ReportKind]:
@@ -98,6 +109,7 @@ class TurnContextPreparer:
         template_override: PromptName | None = None,
         kind_override: ReportKind | None = None,
         conflict_context: str | None = None,
+        feedback: FeedbackInput | None = None,
     ) -> TurnRequest:
         """Build the request of `task`'s next `step` turn."""
         history = self._history.load(task.id)
@@ -124,12 +136,16 @@ class TurnContextPreparer:
             )
         fresh = session_handoff and not continue_turn
         handoff = (fresh and bool(history)) or next_turn.handoff
-        needs_facts = template in (PromptName.VERIFY, PromptName.CONFLICTS) or handoff
+        needs_facts = (
+            template in (PromptName.VERIFY, PromptName.CONFLICTS, *FEEDBACK_TEMPLATES) or handoff
+        )
         facts_text = await self._facts.text(task) if needs_facts else ""
-        if handoff:
+        if handoff and template not in FEEDBACK_TEMPLATES:
             template = PromptName.HANDOFF
         if needs_facts:
             context[ContextKey.FACTS] = facts_text
+        if template in FEEDBACK_TEMPLATES:
+            context.update(self._feedback_context(task, template, feedback))
         if template is PromptName.VERIFY:
             context[ContextKey.BASE] = require_repo(task).base_ref
             context[ContextKey.FINAL_ROUND] = (
@@ -144,4 +160,45 @@ class TurnContextPreparer:
             template=template,
             context=context,
             facts=facts_text,
+            feedback=feedback,
         )
+
+    @staticmethod
+    def _feedback_context(
+        task: Task, template: PromptName, feedback: FeedbackInput | None
+    ) -> dict[str, object]:
+        if feedback is None:
+            message = f"{task.id} {template.value} turn has no feedback to work from"
+            raise InvariantError(message)
+        context: dict[str, object] = {
+            ContextKey.MODE: task.mode.value if task.mode is not None else ""
+        }
+        if template is PromptName.FEEDBACK_ANALYSIS:
+            context[ContextKey.FEEDBACK_SNAPSHOT] = feedback.snapshot.model_dump_json(
+                indent=_JSON_INDENT
+            )
+            return context
+        analysis = feedback.analysis
+        if analysis is None:
+            message = f"{task.id} {template.value} turn has no analysis to work from"
+            raise InvariantError(message)
+        if template is PromptName.FEEDBACK_REWORK:
+            addressed = {
+                decision.source_id
+                for decision in analysis.decisions
+                if decision.action is FeedbackAction.ADDRESS
+            }
+            context[ContextKey.FEEDBACK_SNAPSHOT] = feedback.snapshot.only(
+                addressed
+            ).model_dump_json(indent=_JSON_INDENT)
+            context[ContextKey.FEEDBACK_WORK] = [
+                work.model_dump_json(indent=_JSON_INDENT) for work in analysis.work
+            ]
+            return context
+        context[ContextKey.BASE] = require_repo(task).base_ref
+        context[ContextKey.FINAL_ROUND] = feedback.final_round
+        context[ContextKey.FEEDBACK_SNAPSHOT] = feedback.snapshot.model_dump_json(
+            indent=_JSON_INDENT
+        )
+        context[ContextKey.FEEDBACK_ANALYSIS] = analysis.model_dump_json(indent=_JSON_INDENT)
+        return context
