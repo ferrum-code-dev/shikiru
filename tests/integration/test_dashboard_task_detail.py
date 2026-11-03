@@ -674,6 +674,35 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
     await _assert_billing_details_are_visible(reader, project_root, task.id, clock)
 
 
+async def test_detail_uses_historical_engine_verdicts_after_report_schema_changes(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Historical verdict", mode=Mode.IMPLEMENT)
+    TaskStore(connection, clock).set_repo(
+        task.id,
+        RepoState(base="main", base_ref="main", base_sha="base-sha", branch="shikiru/T-1"),
+    )
+    turn = turns_dir(project_root, task.id) / "03-verify-i1"
+    turn.mkdir(parents=True)
+    (turn / REPORT_KIND_FILENAME).write_text(ReportKind.VERDICT.value)
+    legacy_verdict = {"decision": "accept", "summary": "Accepted before subject reporting"}
+    legacy_json = json.dumps(legacy_verdict)
+    (turn / REPORT_FILENAME).write_text(legacy_json)
+    (turn / ENGINE_VERDICT_FILENAME).write_text(legacy_json)
+    views = state_views(reader, project_root, clock, StubServices())
+
+    detail = await views.task_detail(task.id)
+
+    assert detail is not None
+    assert detail.latest_verdict is not None
+    assert detail.latest_verdict.summary == "Accepted before subject reporting"
+    assert detail.latest_verdict.provenance == "engine"
+
+
 def _record_briefing_evidence(
     connection: Connection, clock: Clock, task_id: str, turn_dir: Path
 ) -> None:

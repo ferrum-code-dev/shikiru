@@ -84,7 +84,8 @@ def load_engine_verdict(turn_dir: Path) -> Verdict | None:
         if _read_kind(turn_dir / REPORT_KIND_FILENAME) is ReportKind.FEEDBACK_VERDICT
         else Verdict
     )
-    return model.model_validate_json(text)
+    data = json.loads(text)
+    return cast("Verdict", _validate_stored_report(data, model))
 
 
 def _file_exists(path: Path) -> bool:
@@ -140,6 +141,5 @@ def _validate_stored_report(data: object, model: type[Report]) -> Report:
     if model is PlanReport or (
         model in (Verdict, FeedbackVerdict) and fields.get(REPORT_DECISION_FIELD) == DECISION_ACCEPT
     ):
-        normalized = model.model_validate({**fields, COMMIT_SUBJECT_FIELD: LEGACY_COMMIT_SUBJECT})
-        return normalized.model_copy(update={COMMIT_SUBJECT_FIELD: ""})
+        return model.model_validate({**fields, COMMIT_SUBJECT_FIELD: LEGACY_COMMIT_SUBJECT})
     return model.model_validate(data)

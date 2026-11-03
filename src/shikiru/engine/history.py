@@ -20,6 +20,7 @@ from shikiru.paths import turns_dir
 from shikiru.view_log import ordered_turn_dirs
 from shikiru.workspace.reports import ENGINE_VERDICT_FILENAME as _ENGINE_VERDICT_FILENAME
 from shikiru.workspace.reports import (
+    LEGACY_COMMIT_SUBJECT,
     InvalidTurnReportError,
     load_engine_verdict,
 )
@@ -106,13 +107,22 @@ class ReportHistory:
                 and report.decision == DECISION_ACCEPT
             ):
                 return IntegrationMetadata(
-                    subject=report.commit_subject or fallback_subject,
+                    subject=(
+                        fallback_subject
+                        if report.commit_subject == LEGACY_COMMIT_SUBJECT
+                        else report.commit_subject
+                    ),
                     summary=report.summary,
                     residual_risks=tuple(report.residual_risks),
                 )
         for _, report in reversed(history):
             if isinstance(report, PlanReport):
                 return IntegrationMetadata(
-                    subject=report.commit_subject or fallback_subject, summary=report.summary
+                    subject=(
+                        fallback_subject
+                        if report.commit_subject == LEGACY_COMMIT_SUBJECT
+                        else report.commit_subject
+                    ),
+                    summary=report.summary,
                 )
         return IntegrationMetadata(subject=fallback_subject, summary=task.title)
