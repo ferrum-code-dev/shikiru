@@ -176,6 +176,7 @@ async def _rig(
         remote=_REMOTE,
         interval_seconds=interval,
         remote_recheck_seconds=orchestration.remote_recheck_seconds,
+        fetch_timeout_seconds=orchestration.network.fetch_timeout_seconds,
     )
     builder = task_root_builder(_RUNNER, project_root, RepoConfig())
 

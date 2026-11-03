@@ -204,7 +204,12 @@ In merge and squash modes a push service publishes locally integrated bases to `
 integration is registered with the base's durable pending state in the same transaction that
 completes the task, so a crash cannot lose it. The first pending integration fixes the deadline
 (`orchestration.push_interval_seconds`, default four hours); later ones do not postpone it, and zero
-pushes right after each integration. Pushes run off the engine loop with a timeout, send only
+pushes right after each integration. While work is pending, the service periodically fetches each
+base; when the fetched remote ref matches the local base, it acknowledges the integrations observed
+by that check and clears their push deadline and previous-push baseline, so later work starts a full
+interval from its registration. Missing remote refs and failed reads keep pending work; a failed
+check for one base does not delay another base's reconciliation or push.
+Pushes run off the engine loop with a timeout, send only
 `refs/heads/<base>` without force, tags or task branches, and are acknowledged up to the registered
 count, so an integration arriving during a push stays pending. Failures use the engine-fault
 backoff and recovery events per base, so a rejected base keeps its work pending without holding

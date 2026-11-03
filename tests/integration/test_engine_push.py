@@ -60,6 +60,7 @@ _RUNNER = SubprocessRunner()
 _REMOTE = "origin"
 _FOUR_HOURS = 14400
 _HOUR = 3600
+_FIVE_HOURS = 5 * _HOUR
 _LOGGER = logging.getLogger("push-test")
 _UNEXPECTED_FAULT_LIMIT = 2
 _FAST_BACKOFF_INITIAL_SECONDS = 1
@@ -164,6 +165,7 @@ def _service(
         remote=_REMOTE,
         interval_seconds=interval,
         remote_recheck_seconds=orchestration.remote_recheck_seconds,
+        fetch_timeout_seconds=orchestration.network.fetch_timeout_seconds,
     )
 
 
@@ -300,6 +302,121 @@ async def test_pending_work_and_its_deadline_survive_a_restart(
     rig.clock.advance(_HOUR)
     await rig.push_due()
     assert await rig.remote_sha("main") == await rig.local_sha("main")
+
+
+@pytest.mark.parametrize(
+    "idle_seconds",
+    [_HOUR, _FIVE_HOURS],
+    ids=("short-idle", "long-idle"),
+)
+async def test_an_external_push_clears_pending_work_and_new_work_gets_a_fresh_deadline(
+    connection: Connection, tmp_path: Path, idle_seconds: int
+) -> None:
+    rig = await _rig(connection, tmp_path, interval=_FOUR_HOURS)
+    await rig.integrate("already-pushed")
+    await rig.push_due()
+    original_due = PushTargets(connection).get("main")
+    assert original_due is not None
+    assert original_due.scheduled_at == TASK_CREATED_AT + timedelta(seconds=_FOUR_HOURS)
+    assert original_due.scheduled_at is not None
+
+    rig.clock.advance(engine_settings().orchestration.remote_recheck_seconds)
+    await run_git(_RUNNER, rig.project_root, "push", _REMOTE, "main")
+    await rig.push_due()
+
+    target = PushTargets(connection).get("main")
+    assert target is not None
+    assert target.scheduled_at is None
+    assert target.last_pushed_at is None
+    assert not PushTargets(connection).pending()
+    assert await rig.remote_sha("main") == await rig.local_sha("main")
+
+    rig.restart()
+    assert PushTargets(connection).get("main") == target
+    rig.clock.advance(idle_seconds)
+    await rig.integrate("new-work")
+    fresh_due = PushTargets(connection).get("main")
+    assert fresh_due is not None
+    assert fresh_due.scheduled_at == rig.clock.now() + timedelta(seconds=_FOUR_HOURS)
+    assert fresh_due.scheduled_at is not None
+    assert fresh_due.scheduled_at > original_due.scheduled_at
+    await rig.push_due()
+    assert PushTargets(connection).pending()
+
+    rig.clock.advance(_HOUR)
+    await rig.integrate("later-work")
+    later = PushTargets(connection).get("main")
+    assert later is not None
+    assert later.registered == fresh_due.registered + 1
+    assert later.scheduled_at == fresh_due.scheduled_at
+
+
+async def test_a_failed_base_reconciliation_does_not_block_another_base_or_recovery(
+    connection: Connection, tmp_path: Path
+) -> None:
+    rig = await _rig(connection, tmp_path, interval=0, branches=("release",))
+    await run_git(_RUNNER, rig.project_root, "remote", "rename", _REMOTE, "elsewhere")
+    await rig.integrate("main-work")
+    await rig.integrate("release-work", base="release")
+    await rig.push_due()
+
+    assert PushTargets(connection).pending()
+    await run_git(_RUNNER, rig.project_root, "remote", "rename", "elsewhere", _REMOTE)
+    rig.clock.advance(engine_settings().orchestration.remote_recheck_seconds)
+    await run_git(_RUNNER, rig.project_root, "update-ref", "-d", "refs/remotes/origin/main")
+    lock = rig.project_root / ".git" / "refs" / "remotes" / _REMOTE / "main.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    lock.write_text("locked\n")
+
+    await rig.push_due()
+
+    targets = PushTargets(connection)
+    assert await rig.remote_sha("release") == await rig.local_sha("release")
+    assert [target.base for target in targets.pending()] == ["main"]
+    assert EventKind.ENGINE_FAULT in rig.kinds()
+
+    lock.unlink()
+    rig.clock.advance(engine_settings().orchestration.faults.backoff_initial_seconds)
+    await rig.push_due()
+
+    assert await rig.remote_sha("main") == await rig.local_sha("main")
+    assert not targets.pending()
+    assert EventKind.ENGINE_RECOVERED in rig.kinds()
+
+
+async def test_missing_remote_branch_evidence_keeps_pending_work(
+    connection: Connection, tmp_path: Path
+) -> None:
+    rig = await _rig(connection, tmp_path, interval=_FOUR_HOURS)
+    targets = PushTargets(connection)
+    targets.register("main", now=rig.clock.now(), interval=_FOUR_HOURS)
+    due_at = targets.get("main")
+    assert due_at is not None
+
+    await run_git(_RUNNER, rig.remote_dir, "update-ref", "-d", "refs/heads/main")
+    await rig.push_due()
+
+    assert targets.pending()
+    assert targets.get("main") == due_at
+
+
+async def test_unreadable_remote_branch_evidence_keeps_pending_work(
+    connection: Connection, tmp_path: Path
+) -> None:
+    rig = await _rig(connection, tmp_path, interval=_FOUR_HOURS)
+    targets = PushTargets(connection)
+    targets.register("main", now=rig.clock.now(), interval=_FOUR_HOURS)
+    due_at = targets.get("main")
+    assert due_at is not None
+
+    await run_git(
+        _RUNNER, rig.project_root, "remote", "set-url", _REMOTE, str(tmp_path / "missing.git")
+    )
+    await rig.push_due()
+
+    assert targets.pending()
+    assert targets.get("main") == due_at
+    assert EventKind.ENGINE_FAULT in rig.kinds()
 
 
 async def test_overdue_work_is_sent_right_after_a_restart(

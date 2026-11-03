@@ -1171,6 +1171,7 @@ def _build_push_service(
         remote=settings.repo.remote,
         interval_seconds=settings.orchestration.push_interval_seconds,
         remote_recheck_seconds=settings.orchestration.remote_recheck_seconds,
+        fetch_timeout_seconds=settings.orchestration.network.fetch_timeout_seconds,
     )
 
 

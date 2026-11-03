@@ -81,6 +81,23 @@ class PushTargets:
                 (max(current.pushed, registered), due_at, format_timestamp(now), base),
             )
 
+    def reconcile(self, base: str, *, registered: int, now: datetime, interval: int) -> None:
+        """Record externally observed publication and reset the next-work scheduling baseline."""
+        with transaction(self._connection):
+            current = self.get(base)
+            if current is None or current.pushed >= registered:
+                return
+            due_at = (
+                format_timestamp(pending_deadline(last_pushed_at=None, now=now, interval=interval))
+                if current.registered > registered
+                else None
+            )
+            self._connection.execute(
+                "UPDATE push_targets SET pushed = ?, due_at = ?, "
+                "last_pushed_at = NULL WHERE base = ?",
+                (registered, due_at, base),
+            )
+
 
 def fetch_push_target(connection: sqlite3.Connection, base: str) -> PushTarget | None:
     """Return `base`'s record, or `None` when no integration of it was ever registered."""

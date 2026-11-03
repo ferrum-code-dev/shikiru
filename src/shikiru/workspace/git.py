@@ -15,6 +15,12 @@ if TYPE_CHECKING:
 
 _GIT_BIN = "git"
 _HEAD_REF = "HEAD"
+_HEADS_REF_PREFIX = "refs/heads/"
+_REMOTE_TRACKING_REF_PREFIX = "refs/remotes/"
+_REFSPEC_SEPARATOR = ":"
+_REMOTE_HEADS_OPTION = "--heads"
+_REMOTE_REF_FIELDS = 2
+_FORCE_REFSPEC_PREFIX = "+"
 _PUSH_TIMEOUT_SECONDS = 300.0
 GIT_STOP_GRACE = 10.0
 _WORKTREE_LIST_PREFIX = "worktree "
@@ -353,6 +359,50 @@ class Git:
             "--verify",
             "--quiet",
             f"refs/remotes/{remote}/{branch}",
+            check=False,
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    async def fetch_remote_branch(
+        self, repo_dir: Path, remote: str, branch: str, *, timeout: float
+    ) -> str | None:
+        """Fetch `remote`'s branch to its tracking ref; return the fetched SHA if present."""
+        remote_ref = f"{_HEADS_REF_PREFIX}{branch}"
+        result = await self._run(
+            repo_dir,
+            "ls-remote",
+            _REMOTE_HEADS_OPTION,
+            remote,
+            remote_ref,
+            timeout=timeout,
+        )
+        matching_shas = [
+            fields[0]
+            for line in result.stdout.splitlines()
+            if len(fields := line.split()) == _REMOTE_REF_FIELDS and fields[1] == remote_ref
+        ]
+        if not matching_shas:
+            return None
+        if len(matching_shas) > 1:
+            message = f"git ls-remote returned multiple values for {remote_ref}"
+            raise InvariantError(message)
+        tracking_ref = f"{_REMOTE_TRACKING_REF_PREFIX}{remote}/{branch}"
+        await self.fetch(
+            repo_dir,
+            remote,
+            f"{_FORCE_REFSPEC_PREFIX}{remote_ref}{_REFSPEC_SEPARATOR}{tracking_ref}",
+            timeout=timeout,
+        )
+        return await self.remote_branch_sha(repo_dir, remote, branch)
+
+    async def local_branch_sha(self, repo_dir: Path, branch: str) -> str | None:
+        """Return the sha `branch` currently has locally, or `None` when that ref is missing."""
+        result = await self._run(
+            repo_dir,
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            f"{_HEADS_REF_PREFIX}{branch}",
             check=False,
         )
         return result.stdout.strip() if result.returncode == 0 else None

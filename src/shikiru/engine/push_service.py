@@ -28,12 +28,13 @@ REMOTE_CHECK_FAULT_SCOPE = "remote check"
 class PushService:
     """Registers integrated bases and pushes each when its deadline comes, on its own task.
 
-    Each base pushes behind its own `TickGuard`, and the remote is probed behind `remote_guard`, so
-    a failed probe, a rejected push or a timeout is recorded as a fault, keeps the work pending and
-    is retried on the fault backoff without holding back the other bases, the engine loop or task
-    dispatch. A remote that is not configured is not a fault: nothing is pushed, the work stays
-    pending, and the remote is checked again after `remote_recheck_seconds`. A push acknowledges
-    only the integrations that were registered when it started.
+    Each base's reconciliation and push use its own `TickGuard`, while remote configuration uses
+    `remote_guard`. A failed base check, rejected push or timeout is recorded and retried on fault
+    backoff without holding back other bases. While work is pending, the service refreshes remote
+    refs every `remote_recheck_seconds`; matching local and remote SHAs clear only the registrations
+    observed by that check. A remote that is not configured is not a fault: work stays pending and
+    the remote is checked again after `remote_recheck_seconds`. A push acknowledges only the
+    integrations that were registered when it started.
     """
 
     def __init__(
@@ -48,6 +49,7 @@ class PushService:
         remote: str,
         interval_seconds: int,
         remote_recheck_seconds: int,
+        fetch_timeout_seconds: float,
     ) -> None:
         """Push from `project_root` to `remote`, an interval of `interval_seconds` apart."""
         self._targets = targets
@@ -60,12 +62,18 @@ class PushService:
         self._remote = remote
         self._interval = interval_seconds
         self._remote_recheck = timedelta(seconds=remote_recheck_seconds)
+        self._fetch_timeout = fetch_timeout_seconds
         self._task: asyncio.Task[None] | None = None
         self._next_remote_check: datetime | None = None
+        self._remote_available: bool | None = None
 
     def register(self, base: str) -> None:
         """Record an integration of `base` that must reach the remote."""
+        current = self._targets.get(base)
         self._targets.register(base, now=self._clock.now(), interval=self._interval)
+        if current is None or not current.pending:
+            self._remote_available = None
+            self._next_remote_check = None
 
     def poll(self, logger: Logger) -> None:
         """Log a failed push task and start one when work is due and none is running."""
@@ -96,22 +104,59 @@ class PushService:
 
     def _due(self) -> bool:
         now = self._clock.now()
-        if self._next_remote_check is not None and now < self._next_remote_check:
+        pending = self._targets.pending()
+        if not pending:
             return False
-        return any(
-            is_due(target, now=now, interval=self._interval) for target in self._targets.pending()
-        )
+        remote_check_due = self._next_remote_check is None or now >= self._next_remote_check
+        if remote_check_due:
+            return True
+        if self._remote_available is False:
+            return False
+        return any(is_due(target, now=now, interval=self._interval) for target in pending)
 
     async def _push_due(self) -> None:
+        pending = self._targets.pending()
+        if not pending:
+            return
+        now = self._clock.now()
+        remote_check_due = self._next_remote_check is None or now >= self._next_remote_check
+        push_due = any(is_due(target, now=now, interval=self._interval) for target in pending)
+        if not remote_check_due and not push_due:
+            return
         configured = await self._remote_guard.attempt(self._remote_configured)
         if configured is None:
+            if remote_check_due:
+                self._next_remote_check = self._clock.now() + self._remote_recheck
             return
+        self._remote_available = configured
         if not configured:
             self._next_remote_check = self._clock.now() + self._remote_recheck
             return
+        if remote_check_due:
+            self._next_remote_check = self._clock.now() + self._remote_recheck
+            for target in pending:
+                await self._guard(target.base).attempt(
+                    lambda target=target: self._reconcile(target)
+                )
         for target in self._targets.pending():
             if is_due(target, now=self._clock.now(), interval=self._interval):
                 await self._guard(target.base).attempt(lambda target=target: self._push(target))
+
+    async def _reconcile(self, target: PushTarget) -> None:
+        remote_sha = await self._git.fetch_remote_branch(
+            self._project_root,
+            self._remote,
+            target.base,
+            timeout=self._fetch_timeout,
+        )
+        local_sha = await self._git.local_branch_sha(self._project_root, target.base)
+        if remote_sha is not None and remote_sha == local_sha:
+            self._targets.reconcile(
+                target.base,
+                registered=target.registered,
+                now=self._clock.now(),
+                interval=self._interval,
+            )
 
     async def _remote_configured(self) -> bool:
         return await self._git.remote_configured(self._project_root, self._remote)
