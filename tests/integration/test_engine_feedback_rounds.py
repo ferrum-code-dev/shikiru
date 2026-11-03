@@ -6,6 +6,8 @@ import asyncio
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import transition_for_resolution
 from shikiru.domain.events import EventKind
@@ -44,9 +46,8 @@ from tests.support.github import (
 from tests.support.waiting import wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
-
-    import pytest
 
     from shikiru.config.settings import Settings
     from shikiru.domain.tasks import Task
@@ -116,6 +117,7 @@ class _Pull:
         self.remote_dir = remote_dir
         self.task = task
         self.clock: FakeClock = env.clock  # type: ignore[assignment]
+        self.cleanup: Callable[[Task], Awaitable[None]]
         self.store = FeedbackStore(env.connection)
         self.events = EventLog(env.connection, env.clock)
         self.flow = self._start()
@@ -149,10 +151,12 @@ class _Pull:
                 project_root=env.project_root,
             ),
         )
-        flow = build_flow(
+        built = build_flow(
             env, self.settings, strategy=strategy, base_refs=fetched, feedback_store=self.store
-        ).flow
-        return asyncio.create_task(flow.run(self.task.id, resumed=True))
+        )
+        assert built.cleanup is not None
+        self.cleanup = built.cleanup
+        return asyncio.create_task(built.flow.run(self.task.id, resumed=True))
 
     async def stop(self) -> None:
         self.flow.cancel()
@@ -765,3 +769,162 @@ async def test_feedback_preparation_recovers_completed_conflict_resolution(
         event.data.get("role") == "implementer" and event.id > repair.id for event in turns
     )
     await pull.stop()
+
+
+_LOCAL_FILE = "local.txt"
+
+
+async def _script_round(pull: _Pull, tmux_server: TmuxServer) -> None:
+    await pull.request_changes()
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [
+            _analysis(_decision(_REVIEW, "disagree"), _decision(_THREAD, "address")),
+            _verdict("accept", _REVIEW, _THREAD),
+            _verdict("accept", _REVIEW, _THREAD),
+        ],
+    )
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
+    await pull.until(pull.flow.done)
+
+
+async def _publish_round(pull: _Pull, tmux_server: TmuxServer) -> None:
+    await _script_round(pull, tmux_server)
+    await pull.dispatch()
+    await wait_until(lambda: pull.handled() and pull.waiting(), _WAIT_SECONDS)
+
+
+async def _lose_checkpoint_of(pull: _Pull, column: str) -> None:
+    pull.env.connection.execute(f"""
+        CREATE TRIGGER lose_checkpoint BEFORE UPDATE OF {column} ON feedback_rounds
+        BEGIN SELECT RAISE(ABORT, 'checkpoint lost'); END
+    """)
+    await pull.dispatch()
+    await wait_until(pull.flow.done, _WAIT_SECONDS)
+    pull.env.connection.execute("DROP TRIGGER lose_checkpoint")
+
+
+async def _land_remotely(pull: _Pull, style: MergeStyle) -> None:
+    assert pull.task.repo is not None
+    merged = await merge_on_remote(pull.remote_dir, "main", pull.task.repo.branch, style)
+    pull.github.merge(1, merged)
+
+
+async def _task_state(pull: _Pull) -> tuple[bool, str | None]:
+    assert pull.task.repo is not None
+    root = pull.env.project_root
+    branch = pull.task.repo.branch
+    present = task_root(root, pull.task.id).exists()
+    exists = await _RUNNER.run(
+        ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+        timeout=10,
+        cwd=root,
+    )
+    return present, exists.stdout.strip() or None
+
+
+async def _on_remote_base(pull: _Pull, commit: str) -> bool:
+    result = await _RUNNER.run(
+        ["git", "merge-base", "--is-ancestor", commit, "main"], timeout=10, cwd=pull.remote_dir
+    )
+    return result.returncode == 0
+
+
+@pytest.mark.parametrize("lost_start_event", [False, True], ids=["recorded", "start-event-lost"])
+async def test_a_pull_request_merged_before_feedback_publication_keeps_the_local_feedback_commit(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmux_server: TmuxServer,
+    tmp_path_factory: pytest.TempPathFactory,
+    lost_start_event: bool,
+) -> None:
+    pull = await _open_pull(engine_env, fake_github, tmp_path_factory)
+    published = await pull.remote_branch()
+    await _script_round(pull, tmux_server)
+    await _lose_checkpoint_of(pull, "verified_sha")
+    stranded = await _git(engine_env.project_root, "rev-parse", pull.task.repo.branch)  # type: ignore[union-attr]
+    assert stranded != published
+    await _land_remotely(pull, MergeStyle.MERGE_COMMIT)
+    if lost_start_event:
+        engine_env.connection.execute(
+            "DELETE FROM events WHERE kind = ?", (EventKind.FEEDBACK_STARTED.value,)
+        )
+    pull.retry(EscalationReason.ENGINE_ERROR)
+    await pull.until(pull.flow.done)
+
+    done = engine_env.tasks.require(pull.task.id)
+    assert done.status is Status.DONE
+    [recorded] = pull.events.since(0, kinds=[EventKind.TASK_DONE], task_id=pull.task.id)
+    assert not any(stranded[:7] in commit for commit in recorded.data["commits"])
+    assert await pull.remote_branch() == published
+    assert pull.replies() == []
+    assert not await _on_remote_base(pull, stranded)
+    assert await _task_state(pull) == (True, stranded)
+
+    await pull.restart()
+    await pull.cleanup(done)
+    await pull.cleanup(done)
+    assert await _task_state(pull) == (True, stranded)
+    assert len(pull.events.since(0, kinds=[EventKind.TASK_DONE], task_id=pull.task.id)) == 1
+
+
+async def test_a_branch_advanced_after_verification_is_kept_when_the_pull_request_merges(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmux_server: TmuxServer,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await _open_pull(engine_env, fake_github, tmp_path_factory)
+    await _publish_round(pull, tmux_server)
+    worktree = task_root(engine_env.project_root, pull.task.id)
+    (worktree / _LOCAL_FILE).write_text("later\n")
+    await _git(worktree, "add", _LOCAL_FILE)
+    await _git(worktree, *COMMIT_IDENTITY_ARGS, "commit", "-m", "later work")
+    advanced = await _git(worktree, "rev-parse", "HEAD")
+    await _land_remotely(pull, MergeStyle.FAST_FORWARD)
+    await pull.until(pull.flow.done)
+
+    assert engine_env.tasks.require(pull.task.id).status is Status.DONE
+    assert await _task_state(pull) == (True, advanced)
+
+
+@pytest.mark.parametrize("head_reported", [True, False], ids=["head-proves-it", "unproven"])
+async def test_a_push_without_its_checkpoint_is_kept_unless_the_pull_request_head_proves_it(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmux_server: TmuxServer,
+    tmp_path_factory: pytest.TempPathFactory,
+    head_reported: bool,
+) -> None:
+    pull = await _open_pull(engine_env, fake_github, tmp_path_factory)
+    await _script_round(pull, tmux_server)
+    await _lose_checkpoint_of(pull, "published_sha")
+    pushed = await pull.remote_branch()
+    local = await _git(engine_env.project_root, "rev-parse", pull.task.repo.branch)  # type: ignore[union-attr]
+    assert pushed == local
+    assert not pull.events.since(0, kinds=[EventKind.FEEDBACK_PUBLISHED], task_id=pull.task.id)
+    await _land_remotely(pull, MergeStyle.FAST_FORWARD)
+    if head_reported:
+        fake_github.set_fields(1, headRefOid=pushed)
+    pull.retry(EscalationReason.ENGINE_ERROR)
+    await pull.until(pull.flow.done)
+
+    assert engine_env.tasks.require(pull.task.id).status is Status.DONE
+    present, branch = await _task_state(pull)
+    assert (present, branch) == ((False, None) if head_reported else (True, local))
+
+
+async def test_a_squashed_pull_request_with_published_feedback_is_cleaned_up(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmux_server: TmuxServer,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await _open_pull(engine_env, fake_github, tmp_path_factory)
+    await _publish_round(pull, tmux_server)
+    await _land_remotely(pull, MergeStyle.SQUASH)
+    await pull.until(pull.flow.done)
+
+    assert engine_env.tasks.require(pull.task.id).status is Status.DONE
+    assert await _task_state(pull) == (False, None)

@@ -184,7 +184,12 @@ to fixed items name the remote commit and the verified checks. `orchestration.ma
 bounds implementation attempts per batch with its own persisted count; exhaustion escalates with
 source links. A PR closed without merge raises the existing `pr_closed` escalation and keeps the
 branch and worktree; it is never reopened or replaced automatically, and an explicit Operator
-retry may open a new PR. A merged PR follows the normal remote merge verification. Planning PRs
+retry may open a new PR. A merged PR follows the normal remote merge verification. Feedback pushes and replies stop once the merge is
+observed. Completion still derives from the verified merge, but terminal cleanup keeps the task
+branch and worktree of a task with a persisted feedback round when its current branch tip is neither a tip
+recorded as pushed (PR opening or published round) nor the PR's final head; unreadable or missing
+evidence keeps it too. The decision is recomputed from events and Git, so restarts and repeated
+cleanup keep the work, which is never reported as landed. Planning PRs
 neither enqueue follow-ups nor implement product code.
 
 In merge and squash modes a push service publishes locally integrated bases to `repo.remote`. Each completed

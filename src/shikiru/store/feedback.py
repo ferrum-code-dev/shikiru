@@ -69,6 +69,15 @@ class FeedbackStore:
         ).fetchone()
         return None if row is None else _round(row)
 
+    def last_pull_request_url(self, task_id: str) -> str | None:
+        """Return the pull request of `task_id`'s latest round, or `None` without any round."""
+        row = self._connection.execute(
+            "SELECT pull_request_url FROM feedback_rounds WHERE task_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (task_id,),
+        ).fetchone()
+        return None if row is None else str(row["pull_request_url"])
+
     def seen_review_ids(self, task_id: str, pull_request_url: str) -> set[str]:
         """Return every review a round of `task_id` on `pull_request_url` was started for."""
         rows = self._connection.execute(

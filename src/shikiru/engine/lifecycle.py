@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.domain.tasks import Task
+    from shikiru.engine.feedback_audit import FeedbackWorkAudit
     from shikiru.engine.layout_guard import LayoutGuard
     from shikiru.engine.pull_request_closing import PullRequestClosing
     from shikiru.engine.sessions import SessionManager
@@ -25,11 +26,13 @@ class TaskFinisher:
         layout: LayoutGuard,
         roots: TaskRootBuilder,
         pull_requests: PullRequestClosing,
+        audit: FeedbackWorkAudit,
     ) -> None:
         self._sessions = sessions
         self._layout = layout
         self._roots = roots
         self._pull_requests = pull_requests
+        self._audit = audit
         self._finished_tasks: set[str] = set()
 
     async def finish_task(self, task: Task) -> Path | None:
@@ -38,7 +41,9 @@ class TaskFinisher:
         A cancelled task's open pull request is queued for closing off the calling loop, never
         awaited here. The worktree goes last, so a task root left behind marks unfinished
         cleanup.
-        Returns the task root when uncommitted work kept it in place.
+        A done task whose branch holds feedback commits the pull request never received keeps
+        its worktree and branch; the merged evidence still completes it.
+        Returns the task root when unintegrated work kept it in place.
         """
         if task.id in self._finished_tasks:
             return None
@@ -46,6 +51,10 @@ class TaskFinisher:
         await self._layout.close(task)
         if task.status is Status.CANCELLED:
             self._pull_requests.request(task.id)
-        kept = await self._roots.cleanup(task.id, task.repo, integrated=task.status is Status.DONE)
+        integrated = task.status is Status.DONE
+        keep_work = integrated and await self._audit.holds_unpublished_work(task)
+        kept = await self._roots.cleanup(
+            task.id, task.repo, integrated=integrated and not keep_work, keep_work=keep_work
+        )
         self._finished_tasks.add(task.id)
         return kept

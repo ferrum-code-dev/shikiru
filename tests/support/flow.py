@@ -15,6 +15,7 @@ from shikiru.engine.escalation_filing import EscalationFiler
 from shikiru.engine.escalations import EscalationRaiser
 from shikiru.engine.evidence import EvidenceCollector
 from shikiru.engine.feedback import FeedbackRounds
+from shikiru.engine.feedback_audit import FeedbackWorkAudit
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.handlers.base import HandlerContext
 from shikiru.engine.handlers.tasks import SetRungHandler
@@ -38,6 +39,7 @@ from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import transaction
 from shikiru.store.escalations import EscalationStore
+from shikiru.store.feedback import FeedbackStore
 from shikiru.store.quotas import QuotaStore
 from shikiru.tmux.session import SessionView
 from shikiru.workspace.base_refs import LocalBaseRefs
@@ -56,7 +58,7 @@ from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from shikiru.agents.registry import AgentRegistry
@@ -65,7 +67,6 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Mode, Task
     from shikiru.engine.titles import TaskTitles
     from shikiru.store.events import EventLog
-    from shikiru.store.feedback import FeedbackStore
     from shikiru.workspace.base_refs import BaseRefs
 
 
@@ -151,6 +152,7 @@ class FlowEnv:
     events: EventLog
     escalations: EscalationStore
     titles: TaskTitles
+    cleanup: Callable[[Task], Awaitable[None]] | None = None
 
 
 class CountingLock(asyncio.Lock):
@@ -202,17 +204,34 @@ def build_flow(
         settings=settings,
     )
     coordinator = _NoOpIntegrationCoordinator()
+    cleanup_task: Callable[[Task], Awaitable[None]] | None = None
     if local_integration or strategy is not None:
         builder = task_root_builder(SubprocessRunner(), env.project_root, settings.repo)
 
+        audit = FeedbackWorkAudit(
+            git=Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT),
+            github=GitHub(SubprocessRunner()),
+            events=system.events,
+            store=FeedbackStore(env.connection),
+            project_root=env.project_root,
+        )
+
+        async def cleanup(task: Task) -> None:
+            integrated = task.status is Status.DONE
+            keep_work = integrated and await audit.holds_unpublished_work(task)
+            await builder.cleanup(
+                task.id, task.repo, integrated=integrated and not keep_work, keep_work=keep_work
+            )
+
         async def finish_task(task: Task) -> None:
             system.sessions.close_task(task.id)
-            await builder.cleanup(task.id, task.repo, integrated=task.status is Status.DONE)
+            await cleanup(task)
             if task.window_id is None:
                 raise AssertionError
             await SessionView(env.tmux).close_task_window(task.window_id)
 
         git = Git(SubprocessRunner(), command_timeout=GIT_COMMAND_TIMEOUT)
+        cleanup_task = cleanup
         coordinator = Integrator(
             git=git,
             strategy=strategy
@@ -318,6 +337,7 @@ def build_flow(
         events=system.events,
         escalations=escalations_store,
         titles=system.titles,
+        cleanup=cleanup_task,
     )
 
 

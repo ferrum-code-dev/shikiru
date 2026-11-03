@@ -32,6 +32,7 @@ from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaise
 from shikiru.engine.evidence import EvidenceCollector
 from shikiru.engine.fault_reporter import FaultReporter
 from shikiru.engine.feedback import FeedbackRounds
+from shikiru.engine.feedback_audit import FeedbackWorkAudit
 from shikiru.engine.feedback_intake import FeedbackIntake
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.handlers import (
@@ -877,7 +878,19 @@ def build_engine(
         clock=resolved_clock,
         settings=resolved_settings.orchestration,
     )
-    task_finisher = TaskFinisher(sessions, layout, roots, pull_request_closing)
+    task_finisher = TaskFinisher(
+        sessions,
+        layout,
+        roots,
+        pull_request_closing,
+        FeedbackWorkAudit(
+            git=git,
+            github=GitHub(resolved_runner),
+            events=events,
+            store=FeedbackStore(connection),
+            project_root=project_root,
+        ),
+    )
     history = ReportHistory(project_root)
     task_facts = TaskFacts(
         git_facts=GitFacts(git), project_root=project_root, settings=resolved_settings

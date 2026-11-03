@@ -139,7 +139,12 @@ class TaskRootBuilder:
         return bool(await self._git.status_porcelain(root))
 
     async def cleanup(
-        self, task_id: str, repo: RepoState | None, *, integrated: bool = False
+        self,
+        task_id: str,
+        repo: RepoState | None,
+        *,
+        integrated: bool = False,
+        keep_work: bool = False,
     ) -> Path | None:
         """Remove the task's worktree, its merged branch, and last its task root.
 
@@ -151,15 +156,16 @@ class TaskRootBuilder:
         the task branch, one with tracked or untracked changes (git-ignored files excepted) and
         its branch stay, and so does a root that holds anything but the git link once its
         worktree metadata is gone (git cannot tell what is uncommitted there); the kept task
-        root is returned. A removal that began (it passed those checks) and was interrupted by a
-        failure or timeout leaves a half-deleted worktree that the next cleanup removes without
-        taking the deletions for uncommitted work.
+        root is returned. With `keep_work` the caller knows the branch holds commits that are
+        nowhere else: its worktree and branch stay. A removal that began (it passed those checks)
+        and was interrupted by a failure or timeout leaves a half-deleted worktree that the next
+        cleanup removes without taking the deletions for uncommitted work.
         """
         project = self._project_root
         root = task_root(project, task_id)
         if repo is not None:
             if await self._git.worktree_exists(project, root):
-                if await self._holds_unintegrated_work(root, repo):
+                if keep_work or await self._holds_unintegrated_work(root, repo):
                     return root
                 await self._git.worktree_remove(project, root)
             if await self._git.branch_exists(project, repo.branch) and (
