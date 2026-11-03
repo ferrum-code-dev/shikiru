@@ -19,6 +19,7 @@ from shikiru.config.settings import (
     Settings,
 )
 from shikiru.domain.reports import (
+    DECISION_ACCEPT,
     DECISION_ANSWER,
     DECISION_CHANGES_REQUESTED,
     DECISION_ESCALATE,
@@ -159,7 +160,7 @@ def make_triage_report(mode: Mode = Mode.IMPLEMENT, **overrides: Any) -> TriageR
 
 
 def make_plan_report(**overrides: Any) -> PlanReport:
-    fields: dict[str, Any] = {"summary": "Planned", "commits": []}
+    fields: dict[str, Any] = {"summary": "Planned", "commit_subject": "docs: plan", "commits": []}
     fields.update(overrides)
     return PlanReport(**fields)
 
@@ -189,6 +190,8 @@ def make_consult_answer(decision: str = "answer", **overrides: Any) -> ConsultAn
 
 def make_verdict(decision: str = "accept", **overrides: Any) -> Verdict:
     fields: dict[str, Any] = {"decision": decision, "summary": "Reviewed"}
+    if decision == DECISION_ACCEPT:
+        fields["commit_subject"] = "feat: reviewed change"
     if decision == DECISION_CHANGES_REQUESTED:
         fields["issues"] = [Issue(severity="major", description="Missing tests")]
     if decision == DECISION_SUPERSEDE:

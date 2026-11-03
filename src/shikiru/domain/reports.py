@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Annotated, Any, Final, Literal, Self
 
@@ -20,6 +21,8 @@ DECISION_ANSWER: Final = "answer"
 DECISION_ESCALATE: Final = "escalate"
 SEVERITY_BLOCKER: Final = "blocker"
 STATUS_COMPLETED: Final = "completed"
+REPORT_DECISION_FIELD: Final = "decision"
+COMMIT_SUBJECT_FIELD: Final = "commit_subject"
 
 REPORT_JSON_INDENT = 2
 CURRENT_TURN_LINK_NAME = "current_turn"
@@ -33,6 +36,9 @@ HELPER_REPORT_FILENAME = "helper.json"
 
 SIBLING_REFERENCE_PREFIX = "#"
 DEPENDS_ON_PATTERN = rf"^(T-\d+|{SIBLING_REFERENCE_PREFIX}\d+)$"
+
+COMMIT_SUBJECT_MAX_LENGTH: Final = 72
+_COMMIT_SUBJECT_LINE_BREAK = re.compile(r"[\r\n]")
 
 _TaskReference = Annotated[str, StringConstraints(pattern=DEPENDS_ON_PATTERN)]
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -51,6 +57,20 @@ def _require_iff(*, condition: bool, present: bool, field: str, rule: str) -> No
         raise ValueError(message)
     if not condition and present:
         message = f"{field}: must be empty unless {rule}"
+        raise ValueError(message)
+
+
+def _require_commit_subject(subject: str) -> None:
+    if (
+        not subject
+        or subject != subject.strip()
+        or _COMMIT_SUBJECT_LINE_BREAK.search(subject)
+        or len(subject) > COMMIT_SUBJECT_MAX_LENGTH
+    ):
+        message = (
+            f"commit_subject: {subject!r} must be a non-empty, single-line subject of at most "
+            f"{COMMIT_SUBJECT_MAX_LENGTH} characters"
+        )
         raise ValueError(message)
 
 
@@ -174,9 +194,20 @@ class PlanReport(DomainModel):
     """The Leader's `plan` report."""
 
     summary: str
+    commit_subject: str = Field(
+        description=(
+            "A concise subject for the whole change following the target project's documented "
+            "commit convention, or Conventional Commits when none is documented; no task reference."
+        )
+    )
     commits: list[Commit]
     new_tasks: list[NewTask] = Field(default_factory=list)
     scope_changes: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _commit_subject_is_valid(self) -> Self:
+        _require_commit_subject(self.commit_subject)
+        return self
 
     @model_validator(mode="after")
     def _sibling_references_in_range(self) -> Self:
@@ -221,6 +252,14 @@ class Verdict(DomainModel):
 
     decision: Literal["accept", "changes_requested", "escalate", "supersede"]
     summary: str
+    commit_subject: str = Field(
+        default="",
+        description=(
+            "Required and a concise subject following the target project's documented commit "
+            "convention, or Conventional Commits when none is documented, iff decision is 'accept' "
+            "(of the whole change; no task reference); otherwise empty."
+        ),
+    )
     issues: list[Issue] = Field(
         default_factory=list,
         description="Required and non-empty iff decision is 'changes_requested'; otherwise empty.",
@@ -234,6 +273,18 @@ class Verdict(DomainModel):
     escalation: EscalationRequest | None = Field(
         default=None, description="Required iff decision is 'escalate'; otherwise unset."
     )
+
+    @model_validator(mode="after")
+    def _commit_subject_required_iff_accept(self) -> Self:
+        _require_iff(
+            condition=self.decision == DECISION_ACCEPT,
+            present=bool(self.commit_subject),
+            field="commit_subject",
+            rule="decision is 'accept'",
+        )
+        if self.commit_subject:
+            _require_commit_subject(self.commit_subject)
+        return self
 
     @model_validator(mode="after")
     def _issues_non_empty_iff_changes_requested(self) -> Self:

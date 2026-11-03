@@ -117,6 +117,7 @@ def _verdict_step(decision: str, *reply_ids: str) -> dict[str, Any]:
         "report": {
             "decision": decision,
             "summary": "verified",
+            **({"commit_subject": "feat: verify feedback"} if decision == "accept" else {}),
             "replies": [{"source_id": source_id, "reply": "final"} for source_id in reply_ids],
         },
     }
@@ -416,7 +417,7 @@ def _request(task: Task, kind: ReportKind, feedback: FeedbackInput) -> TurnReque
         iteration=task.iteration,
         kind=kind,
         template=_TEMPLATES[kind],
-        context={},
+        context={"task_id": task.id},
         facts="",
         feedback=feedback,
     )

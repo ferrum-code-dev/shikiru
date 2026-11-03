@@ -86,6 +86,8 @@ def _verdict(decision: str, *reply_ids: str) -> FeedbackVerdict:
     }
     if decision == "changes_requested":
         fields["issues"] = [{"severity": "major", "description": "missing"}]
+    if decision == "accept":
+        fields["commit_subject"] = "feat: checked change"
     return FeedbackVerdict.model_validate(fields)
 
 
@@ -261,6 +263,8 @@ def test_a_feedback_verdict_rejects_unavailable_shapes(fields: dict[str, Any]) -
     fields = {"summary": "checked", "issues": [{"severity": "major", "description": "x"}], **fields}
     if fields["decision"] != "changes_requested":
         fields.pop("issues")
+    if fields["decision"] == "accept":
+        fields["commit_subject"] = "feat: checked change"
 
     with pytest.raises(ValidationError):
         FeedbackVerdict.model_validate(fields)

@@ -213,6 +213,7 @@ async def test_a_hold_set_just_before_the_agent_process_spawns_starts_no_process
         template=PromptName.IMPLEMENT,
         context={
             "request": task.request,
+            "task_id": task.id,
             "workspace": str(_worktree(engine_env, task)),
             "trackers": [],
             "reports": [],

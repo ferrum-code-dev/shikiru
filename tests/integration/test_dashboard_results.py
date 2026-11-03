@@ -75,7 +75,11 @@ def _running(
         )
     )
     report: ImplementationReport | PlanReport = (
-        PlanReport(summary=PLAN_SUMMARY, commits=[Commit(sha="9999999abc", subject="plan spec")])
+        PlanReport(
+            summary=PLAN_SUMMARY,
+            commit_subject="feat: change",
+            commits=[Commit(sha="9999999abc", subject="plan spec")],
+        )
         if plan
         else ImplementationReport(
             status="completed",
@@ -123,7 +127,12 @@ def _rework(*risks: str) -> Verdict:
 
 
 def _accept(*risks: str) -> Verdict:
-    return Verdict(decision="accept", summary="ok", residual_risks=list(risks))
+    return Verdict(
+        decision="accept",
+        summary="ok",
+        commit_subject="feat: change",
+        residual_risks=list(risks),
+    )
 
 
 def _turn(project_root: Path, task_id: str, name: str) -> Path:
@@ -197,7 +206,7 @@ async def test_results_show_what_exists_so_far_and_what_a_done_task_merged(
     emit_verdict(
         log,
         TaskStore(connection, clock).require(finished),
-        Verdict(decision="accept", summary="ok"),
+        Verdict(decision="accept", summary="ok", commit_subject="feat: change"),
         "ok",
     )
     log.append(

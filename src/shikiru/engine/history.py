@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 _LOGGER = logging.getLogger(__name__)
 ENGINE_VERDICT_FILENAME = _ENGINE_VERDICT_FILENAME
+FALLBACK_COMMIT_TYPE = "chore"
 
 
 class ReportHistory:
@@ -92,8 +93,12 @@ class ReportHistory:
         return history[-1][1] if history else None
 
     def integration_metadata(self, task: Task) -> IntegrationMetadata:
-        """Choose the accepted summary, falling back to the latest plan or task title."""
+        """Choose the accepted change's subject and summary, falling back to the latest plan.
+
+        A task with neither gets a `chore` subject named after its title, summarized by it.
+        """
         history = self.load(task.id)
+        fallback_subject = f"{FALLBACK_COMMIT_TYPE}: {' '.join(task.title.split())}"
         for _, report in reversed(history):
             if (
                 isinstance(report, Verdict)
@@ -101,10 +106,13 @@ class ReportHistory:
                 and report.decision == DECISION_ACCEPT
             ):
                 return IntegrationMetadata(
+                    subject=report.commit_subject or fallback_subject,
                     summary=report.summary,
                     residual_risks=tuple(report.residual_risks),
                 )
         for _, report in reversed(history):
             if isinstance(report, PlanReport):
-                return IntegrationMetadata(summary=report.summary)
-        return IntegrationMetadata(summary=task.title)
+                return IntegrationMetadata(
+                    subject=report.commit_subject or fallback_subject, summary=report.summary
+                )
+        return IntegrationMetadata(subject=fallback_subject, summary=task.title)

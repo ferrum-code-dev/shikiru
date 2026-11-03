@@ -51,9 +51,9 @@ def test_verdict_and_test_counts_tally_by_severity_and_result() -> None:
         issues=[Issue(severity=name, description="d") for name in ("major", "minor", "major")],
     )
     assert verdict_counts(verdict) == VerdictCounts("changes_requested", 0, 2, 1)
-    assert verdict_counts(Verdict(decision="accept", summary="s")) == VerdictCounts(
-        "accept", 0, 0, 0
-    )
+    assert verdict_counts(
+        Verdict(decision="accept", summary="s", commit_subject="feat: s")
+    ) == VerdictCounts("accept", 0, 0, 0)
     runs = [
         AgentTestRun(name=str(index), result=result)
         for index, result in enumerate(("passed", "failed", "passed", "skipped"))

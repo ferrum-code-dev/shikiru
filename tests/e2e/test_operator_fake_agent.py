@@ -151,9 +151,16 @@ async def _assert_base_commits(project: PreparedProject) -> None:
         cwd=project.root,
         check=True,
     )
+    message = await runner.run(
+        ["git", "log", "-1", "--format=%B"],
+        timeout=CLI_TIMEOUT_SECONDS,
+        cwd=project.root,
+        check=True,
+    )
     assert branch.stdout.strip() == BASE_BRANCH
     assert current.stdout.strip() != project.initial_sha
     assert subject.stdout.startswith("fake:")
+    assert f"Task: {TASK_ID}" in message.stdout
 
 
 async def _assert_task_window_closed(project: PreparedProject, tmux_server: TmuxServer) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,11 +13,22 @@ import pytest
 
 from shikiru.config.settings import RepoConfig
 from shikiru.domain.events import EventKind
-from shikiru.domain.reports import Commit
+from shikiru.domain.reports import (
+    REPORT_FILENAME,
+    REPORT_KIND_FILENAME,
+    Commit,
+    ImplementationReport,
+    Issue,
+    PlanReport,
+    Report,
+    ReportKind,
+    Verdict,
+)
 from shikiru.domain.results import ResultCommit, derive_task_results
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Mode, Status, Step
 from shikiru.engine.fault_reporter import FaultReporter
+from shikiru.engine.history import ReportHistory
 from shikiru.engine.integration import (
     IntegrationBlocked,
     IntegrationMetadata,
@@ -29,6 +41,7 @@ from shikiru.engine.integration import (
 )
 from shikiru.engine.push_service import PUSH_FAULT_SCOPE, REMOTE_CHECK_FAULT_SCOPE, PushService
 from shikiru.engine.tick_guard import TickGuard
+from shikiru.paths import turns_dir
 from shikiru.process import SubprocessRunner
 from shikiru.store.database import Database, transaction
 from shikiru.store.events import EventLog
@@ -89,7 +102,9 @@ class Rig:
         await commit_all(_RUNNER, root, f"add {filename}")
 
     async def integrate(self, task: Task) -> None:
-        await self.integrator.run(task, _resolve_nothing, IntegrationMetadata("summary"))
+        await self.integrator.run(
+            task, _resolve_nothing, IntegrationMetadata(subject="feat: change", summary="summary")
+        )
 
     def done_data(self, task: Task) -> dict[str, object]:
         done = self.events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
@@ -115,7 +130,7 @@ async def _resolve_nothing(
     task: Task, continue_rebase: Callable[[], Awaitable[None]], recovery: object
 ) -> tuple[Task, IntegrationMetadata]:
     del continue_rebase, recovery
-    return task, IntegrationMetadata("resolved")
+    return task, IntegrationMetadata(subject="feat: change", summary="resolved")
 
 
 async def _rig(
@@ -270,7 +285,7 @@ async def test_the_squash_commit_is_parented_by_the_previous_tip_and_keeps_the_c
     assert (rig.project_root / "a.txt").read_text() == "1\n2\n"
     assert rig.done_data(task)["changes"] == {"files": 2, "insertions": 3, "deletions": 0}
     message = await run_git(_RUNNER, rig.project_root, "log", "-1", "--format=%B", landed)
-    assert message.startswith(f"{task.id}: complete diff\n\nsummary")
+    assert message.startswith(f"feat: change ({task.id})\n\nsummary")
     assert f"Shikiru-Task: {task.id}" in message
 
 
@@ -303,7 +318,7 @@ async def test_completed_results_describe_the_landed_commit_after_cleanup(
     )
 
     assert [commit.sha for commit in results.commits] == [landed[:7]]
-    assert results.commits[0].subject.startswith(f"{task.id}: retained")
+    assert results.commits[0].subject == f"feat: change ({task.id})"
     assert results.produced is not None
     assert (results.produced.commits, results.produced.files) == (1, 2)
     assert (results.produced.insertions, results.produced.deletions) == (3, 0)
@@ -371,6 +386,7 @@ async def test_a_squash_applied_before_a_crash_is_recognised_without_another_com
         MergeRequest(
             task_id=task.id,
             title=task.title,
+            subject="feat: change",
             repo=task.repo,
             task_root=root,
             summary="summary",
@@ -407,6 +423,7 @@ async def test_a_local_merge_applied_before_sqlite_reopens_keeps_its_landed_evid
         MergeRequest(
             task_id=task.id,
             title=task.title,
+            subject="feat: change",
             repo=task.repo,
             task_root=root,
             summary="summary",
@@ -421,7 +438,11 @@ async def test_a_local_merge_applied_before_sqlite_reopens_keeps_its_landed_evid
         recovered = tasks.get(task.id)
         assert recovered is not None
 
-        await integrator.run(recovered, _resolve_nothing, IntegrationMetadata("summary"))
+        await integrator.run(
+            recovered,
+            _resolve_nothing,
+            IntegrationMetadata(subject="feat: change", summary="summary"),
+        )
 
         [done] = events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
         final = tasks.get(task.id)
@@ -449,6 +470,7 @@ async def test_a_new_task_commit_after_landing_survives_sqlite_restart(
         MergeRequest(
             task_id=task.id,
             title=task.title,
+            subject="feat: change",
             repo=task.repo,
             task_root=root,
             summary="summary",
@@ -467,7 +489,11 @@ async def test_a_new_task_commit_after_landing_survives_sqlite_restart(
         assert recovered is not None
 
         with pytest.raises(IntegrationBlocked):
-            await integrator.run(recovered, _resolve_nothing, IntegrationMetadata("summary"))
+            await integrator.run(
+                recovered,
+                _resolve_nothing,
+                IntegrationMetadata(subject="feat: change", summary="summary"),
+            )
 
         current = tasks.get(task.id)
         assert current is not None
@@ -594,3 +620,154 @@ async def test_an_empty_merged_task_stays_empty_despite_older_report_commits(
     assert results.produced is not None
     assert (results.produced.commits, results.produced.files) == (0, 0)
     assert not results.squashed
+
+
+def _implementation(summary: str) -> ImplementationReport:
+    return ImplementationReport(
+        status="completed", summary=summary, commits=[], tests=[], trackers_updated=True
+    )
+
+
+def _write_turn(
+    project_root: Path, task_id: str, index: int, kind: ReportKind, report: Report
+) -> None:
+    turn_dir = turns_dir(project_root, task_id) / f"{index:02d}-{kind.value}-i1"
+    turn_dir.mkdir(parents=True)
+    (turn_dir / REPORT_KIND_FILENAME).write_text(kind.value)
+    (turn_dir / REPORT_FILENAME).write_text(report.model_dump_json())
+
+
+_REWORKED_CHANGE: tuple[tuple[ReportKind, Report], ...] = (
+    (ReportKind.IMPLEMENTATION, _implementation("first pass")),
+    (
+        ReportKind.VERDICT,
+        Verdict(
+            decision="changes_requested",
+            summary="needs tests",
+            issues=[Issue(severity="major", description="no tests")],
+        ),
+    ),
+    (ReportKind.IMPLEMENTATION, _implementation("rework adds the tests")),
+    (
+        ReportKind.VERDICT,
+        Verdict(
+            decision="accept",
+            summary="Adds retries, with tests, across both rounds.",
+            commit_subject="feat: add retries",
+        ),
+    ),
+)
+_PLANNED_CHANGE: tuple[tuple[ReportKind, Report], ...] = (
+    (
+        ReportKind.PLAN,
+        PlanReport(summary="Plans the retries.", commit_subject="docs: plan retries", commits=[]),
+    ),
+)
+_MESSAGE_CASES = {
+    "accepted-after-rework": (
+        _REWORKED_CHANGE,
+        "feat: add retries",
+        "Adds retries, with tests, across both rounds.",
+    ),
+    "planned": (_PLANNED_CHANGE, "docs: plan retries", "Plans the retries."),
+    "unreported": ((), "chore: add retries", "add retries"),
+}
+
+
+@pytest.mark.parametrize(
+    ("reports", "subject", "summary"), _MESSAGE_CASES.values(), ids=_MESSAGE_CASES.keys()
+)
+async def test_the_squash_message_names_the_accepted_change_across_its_turns(
+    connection: Connection,
+    tmp_path: Path,
+    reports: tuple[tuple[ReportKind, Report], ...],
+    subject: str,
+    summary: str,
+) -> None:
+    rig = await _rig(connection, tmp_path)
+    task, root = await rig.start_task("add retries")
+    await rig.commit(root, "retries.txt", "retries\n")
+    assert task.repo is not None
+    tip = await rig.sha(task.repo.branch)
+    for index, (kind, report) in enumerate(reports, start=1):
+        _write_turn(rig.project_root, task.id, index, kind, report)
+    metadata = ReportHistory(rig.project_root).integration_metadata(task)
+
+    await rig.integrator.run(task, _resolve_nothing, metadata)
+
+    message = await run_git(
+        _RUNNER, rig.project_root, "log", "-1", "--format=%B", await rig.sha("main")
+    )
+    assert message == (
+        f"{subject} ({task.id})\n\n{summary}\n\nShikiru-Task: {task.id}\n"
+        f"Shikiru-Squashed-Tip: {tip}"
+    )
+
+
+@dataclass(frozen=True)
+class _LegacyReportCase:
+    kind: ReportKind
+    data: dict[str, object]
+    summary: str
+    residual_risks: tuple[str, ...]
+
+
+_LEGACY_REPORT_CASES = [
+    _LegacyReportCase(
+        ReportKind.PLAN,
+        {"summary": "Plans retries across the parser.", "commits": []},
+        "Plans retries across the parser.",
+        (),
+    ),
+    _LegacyReportCase(
+        ReportKind.VERDICT,
+        {
+            "decision": "accept",
+            "summary": "Adds retries and tests across the implementation and rework.",
+            "residual_risks": ["Retry timing depends on the configured timeout."],
+        },
+        "Adds retries and tests across the implementation and rework.",
+        ("Retry timing depends on the configured timeout.",),
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "legacy",
+    _LEGACY_REPORT_CASES,
+    ids=["legacy-plan", "legacy-acceptance"],
+)
+async def test_history_integrates_legacy_reports_without_losing_their_change_context(
+    connection: Connection,
+    tmp_path: Path,
+    legacy: _LegacyReportCase,
+) -> None:
+    rig = await _rig(connection, tmp_path)
+    task, root = await rig.start_task("add retries")
+    await rig.commit(root, "retries.txt", "retry on failure\n")
+    assert task.repo is not None
+    tip = await rig.sha(task.repo.branch)
+    turn_dir = turns_dir(rig.project_root, task.id) / f"01-{legacy.kind.value}-i1"
+    turn_dir.mkdir(parents=True)
+    (turn_dir / REPORT_KIND_FILENAME).write_text(legacy.kind.value)
+    (turn_dir / REPORT_FILENAME).write_text(json.dumps(legacy.data))
+    history = ReportHistory(rig.project_root)
+
+    report = history.latest_report(task.id)
+    metadata = history.integration_metadata(task)
+
+    assert isinstance(report, PlanReport | Verdict)
+    assert report.summary == legacy.summary
+    assert metadata.subject == "chore: add retries"
+    assert metadata.summary == legacy.summary
+    assert metadata.residual_risks == legacy.residual_risks
+
+    await rig.integrator.run(task, _resolve_nothing, metadata)
+
+    message = await run_git(
+        _RUNNER, rig.project_root, "log", "-1", "--format=%B", await rig.sha("main")
+    )
+    assert message == (
+        f"chore: add retries ({task.id})\n\n{legacy.summary}\n\nShikiru-Task: {task.id}\n"
+        f"Shikiru-Squashed-Tip: {tip}"
+    )

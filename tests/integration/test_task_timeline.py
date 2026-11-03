@@ -596,7 +596,9 @@ async def test_terminal_detail_keeps_results_and_decisions_after_workspace_clean
     turn = "02-verify-i1"
     turn_dir = run_dir(project_root, task.id) / "turns" / turn
     turn_dir.mkdir(parents=True)
-    verdict = Verdict(decision="accept", summary="Validated completion")
+    verdict = Verdict(
+        decision="accept", summary="Validated completion", commit_subject="feat: change"
+    )
     (turn_dir / REPORT_KIND_FILENAME).write_text("verdict")
     (turn_dir / REPORT_FILENAME).write_text(verdict.model_dump_json())
     (turn_dir / FACTS_FILENAME).write_text("branch shikiru/T-1\nworking tree clean\n")

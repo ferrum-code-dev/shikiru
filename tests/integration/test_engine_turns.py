@@ -149,7 +149,15 @@ async def test_helper_rebuilds_after_both_report_nudges(
         update={
             "agents": {
                 FAKE_AGENT_NAME: AgentConfig(
-                    options={"asks": [{"summary": "rebuilt by helper", "commits": []}]}
+                    options={
+                        "asks": [
+                            {
+                                "summary": "rebuilt by helper",
+                                "commit_subject": "docs: rebuild the plan",
+                                "commits": [],
+                            }
+                        ]
+                    }
                 )
             }
         }

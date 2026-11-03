@@ -44,7 +44,11 @@ async def _run_report(env: dict[str, str], file_path: Path) -> tuple[int, str, s
 @pytest.mark.asyncio
 async def test_a_valid_report_is_written_atomically_and_exits_zero(tmp_path: Path) -> None:
     run_dir, turn_dir = _make_turn_dir(tmp_path, kind="verdict")
-    payload = {"decision": "accept", "summary": "Looks good"}
+    payload = {
+        "decision": "accept",
+        "summary": "Looks good",
+        "commit_subject": "feat: finish the change",
+    }
     file_path = tmp_path / "report.json"
     file_path.write_text(json.dumps(payload))
 
@@ -74,6 +78,28 @@ async def test_an_invalid_report_exits_two_and_names_the_offending_field(tmp_pat
 
     assert returncode == EXIT_USAGE_ERROR
     assert "issues" in stderr
+    assert not (turn_dir / "report.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [
+        ("plan", {"summary": "Plan retries", "commits": []}),
+        ("verdict", {"decision": "accept", "summary": "Retry handling is complete"}),
+    ],
+    ids=["plan", "accepted-verdict"],
+)
+async def test_new_reports_without_a_commit_subject_are_rejected(
+    tmp_path: Path, kind: str, payload: dict[str, object]
+) -> None:
+    run_dir, turn_dir = _make_turn_dir(tmp_path, kind=kind)
+    file_path = tmp_path / "report.json"
+    file_path.write_text(json.dumps(payload))
+
+    returncode, _, stderr = await _run_report(_env(run_dir), file_path)
+
+    assert returncode == EXIT_USAGE_ERROR
+    assert "commit_subject" in stderr
     assert not (turn_dir / "report.json").exists()
 
 
@@ -134,7 +160,11 @@ async def test_unknown_report_kind_exits_two(tmp_path: Path) -> None:
 async def test_running_report_twice_replaces_the_stale_report_json(tmp_path: Path) -> None:
     run_dir, turn_dir = _make_turn_dir(tmp_path, kind="verdict")
     (turn_dir / "report.json").write_text("stale")
-    payload = {"decision": "accept", "summary": "Replaces the stale report"}
+    payload = {
+        "decision": "accept",
+        "summary": "Replaces the stale report",
+        "commit_subject": "feat: replace the report",
+    }
     file_path = tmp_path / "report.json"
     file_path.write_text(json.dumps(payload))
 

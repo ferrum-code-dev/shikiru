@@ -11,4 +11,13 @@ catch up before doing anything else.
 {% else %}
 Continue the task from here.
 {% endif %}
+
+For commits you make, check the target project's instructions and documentation for its
+commit-message convention. Follow that convention when one is documented; use Conventional Commits
+if none is documented. Keep each subject concise and summarizing its commit. End every commit message
+with the trailer `Task: {{ task_id }}` on its own line.
+
+For a plan or an accepted review, give `commit_subject` and `summary` for the whole planned or
+accepted change. Keep the summary short. For an accepted review, draw on every implementation and
+rework report above, not only the latest review.
 {% endblock %}

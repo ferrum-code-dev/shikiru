@@ -100,6 +100,8 @@ def _verdict(decision: str, *reply_ids: str) -> dict[str, Any]:
         "summary": "verified",
         "replies": [{"source_id": source_id, "reply": "final"} for source_id in reply_ids],
     }
+    if decision == "accept":
+        report["commit_subject"] = "feat: verify feedback"
     if decision == "changes_requested":
         report["issues"] = [{"severity": "major", "description": "still wrong"}]
     return {"kind": "report", "report": report}

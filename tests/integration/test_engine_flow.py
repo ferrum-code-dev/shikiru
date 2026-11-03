@@ -422,8 +422,13 @@ async def test_different_agent_rung_hands_off_prior_reports_in_a_fresh_session(
     assert implementer_runs[0].session_id != implementer_runs[1].session_id
     current = role_dir(run_dir(engine_env.project_root, task.id), Role.IMPLEMENTER.value)
     handoff_turn = current / "current_turn"
-    assert "fresh session" in handoff_turn.resolve().joinpath("prompt.md").read_text()
-    assert "fake-agent" in handoff_turn.resolve().joinpath("prompt.md").read_text()
+    prompt = handoff_turn.resolve().joinpath("prompt.md").read_text()
+    assert "fresh session" in prompt
+    assert "fake-agent" in prompt
+    assert "target project's instructions and documentation" in prompt
+    assert "Conventional Commits" in prompt
+    assert f"Task: {task.id}" in prompt
+    assert "every implementation and rework report" in " ".join(prompt.split())
 
 
 async def test_scope_change_on_an_unknown_task_escalates_without_creating_tasks(
@@ -594,6 +599,16 @@ async def test_triage_persists_title_and_complexity_for_the_next_turn(
     assert final.title == "Triaged title"
     assert final.complexity == expected_complexity
     assert _implementer_models(flow_env, task.id) == [expected_model]
+    implementer_prompts = sorted(
+        (run_dir(engine_env.project_root, task.id) / "turns").glob("*-implement-i1/prompt.md")
+    )
+    assert len(implementer_prompts) == 1
+    implementer_prompt = implementer_prompts[0].read_text()
+    assert "fresh session" in implementer_prompt
+    assert "target project's instructions and documentation" in implementer_prompt
+    assert "Conventional Commits" in implementer_prompt
+    assert f"Task: {task.id}" in implementer_prompt
+    assert "every implementation and rework report" in " ".join(implementer_prompt.split())
 
 
 async def test_a_rung_set_during_a_turn_is_kept_and_used_by_the_next_turn(

@@ -93,7 +93,9 @@ class Rig:
         await commit_all(_RUNNER, root, name)
         current = self.tasks.get(task.id)
         assert current is not None
-        await self.integrator.run(current, _resolve_nothing, IntegrationMetadata(name))
+        await self.integrator.run(
+            current, _resolve_nothing, IntegrationMetadata(subject="feat: change", summary=name)
+        )
         return current
 
     async def push_due(self) -> None:
@@ -125,7 +127,7 @@ async def _resolve_nothing(
     task: Task, continue_rebase: Callable[[], Awaitable[None]], recovery: object
 ) -> tuple[Task, IntegrationMetadata]:
     del continue_rebase, recovery
-    return task, IntegrationMetadata("resolved")
+    return task, IntegrationMetadata(subject="feat: change", summary="resolved")
 
 
 def _service(
@@ -257,7 +259,9 @@ async def test_zero_interval_pushes_after_each_integration_and_never_for_a_faile
     current = rig.tasks.get(task.id)
     assert current is not None
     with pytest.raises(UncommittedWork):
-        await rig.integrator.run(current, _resolve_nothing, IntegrationMetadata("dirty"))
+        await rig.integrator.run(
+            current, _resolve_nothing, IntegrationMetadata(subject="feat: change", summary="dirty")
+        )
 
     await rig.push_due()
 
@@ -331,7 +335,9 @@ async def test_an_integration_applied_before_a_crash_is_still_published_when_rec
 
     current = rig.tasks.get(task.id)
     assert current is not None
-    await rig.integrator.run(current, _resolve_nothing, IntegrationMetadata("landed"))
+    await rig.integrator.run(
+        current, _resolve_nothing, IntegrationMetadata(subject="feat: change", summary="landed")
+    )
     await rig.push_due()
 
     assert await rig.remote_sha("main") == await rig.local_sha("main")

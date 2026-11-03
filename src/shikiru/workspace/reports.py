@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import ValidationError
 
 from shikiru.domain.reports import (
+    COMMIT_SUBJECT_FIELD,
+    DECISION_ACCEPT,
     HELPER_REPORT_FILENAME,
+    REPORT_DECISION_FIELD,
     REPORT_FILENAME,
     REPORT_KIND_FILENAME,
     FeedbackVerdict,
+    PlanReport,
     Report,
     ReportKind,
     Verdict,
@@ -25,6 +29,7 @@ if TYPE_CHECKING:
 
 _REPORT_FILENAMES = (REPORT_FILENAME, HELPER_REPORT_FILENAME)
 ENGINE_VERDICT_FILENAME = "engine-verdict.json"
+LEGACY_COMMIT_SUBJECT = "chore: legacy report"
 
 
 class InvalidTurnReportError(ShikiruError):
@@ -122,7 +127,19 @@ def _read_report(path: Path, model: type[Report]) -> Report | None:
         message = f"invalid JSON in report {path}: {error}"
         raise InvalidTurnReportError(message) from error
     try:
-        return model.model_validate(data)
+        return _validate_stored_report(data, model)
     except ValidationError as error:
         message = f"invalid report {path}: {error}"
         raise InvalidTurnReportError(message) from error
+
+
+def _validate_stored_report(data: object, model: type[Report]) -> Report:
+    if not isinstance(data, dict) or COMMIT_SUBJECT_FIELD in data:
+        return model.model_validate(data)
+    fields = cast("dict[str, object]", data)
+    if model is PlanReport or (
+        model in (Verdict, FeedbackVerdict) and fields.get(REPORT_DECISION_FIELD) == DECISION_ACCEPT
+    ):
+        normalized = model.model_validate({**fields, COMMIT_SUBJECT_FIELD: LEGACY_COMMIT_SUBJECT})
+        return normalized.model_copy(update={COMMIT_SUBJECT_FIELD: ""})
+    return model.model_validate(data)

@@ -57,6 +57,7 @@ _A1_CHECKED = "- [x] A1"
 _GIT_TIMEOUT_SECONDS = 10.0
 _REPORT_TIMEOUT_SECONDS = 10.0
 _MAX_COMMIT_SUBJECT_LENGTH = 72
+FAKE_COMMIT_SUBJECT = "feat: fake change"
 _COMMIT_IDENTITY_ARGS = ("-c", "user.name=Fake Agent", "-c", "user.email=fake-agent@shikiru.test")
 _OTHER_BRANCH = "feature/agent-chose-this"
 _KINDS_WITH_COMMITS = (ReportKind.IMPLEMENTATION, ReportKind.PLAN, ReportKind.FEEDBACK_REWORK)
@@ -217,7 +218,15 @@ async def _commit_changes(runner: SubprocessRunner, cwd: Path, prompt_text: str)
         marker.write_text(previous + prompt_text + "\n")
         await runner.run(["git", "add", "-A"], timeout=_GIT_TIMEOUT_SECONDS, cwd=repository)
         await runner.run(
-            ["git", *_COMMIT_IDENTITY_ARGS, "commit", "-m", subject],
+            [
+                "git",
+                *_COMMIT_IDENTITY_ARGS,
+                "commit",
+                "-m",
+                subject,
+                "-m",
+                f"Task: {_require_env(TASK_ENV_VAR)}",
+            ],
             timeout=_GIT_TIMEOUT_SECONDS,
             cwd=repository,
         )
@@ -263,7 +272,10 @@ def _plan_report(step: TurnStep, prompt_text: str, commits: list[Commit]) -> Rep
     if not isinstance(step, AcceptStep):
         _unsupported(ReportKind.PLAN, step)
     return PlanReport(
-        summary=f"planned: {prompt_text}", commits=commits, new_tasks=_new_tasks(step.new_tasks)
+        summary=f"planned: {prompt_text}",
+        commit_subject=FAKE_COMMIT_SUBJECT,
+        commits=commits,
+        new_tasks=_new_tasks(step.new_tasks),
     )
 
 
@@ -283,7 +295,11 @@ def _consult_report(step: TurnStep, prompt_text: str) -> Report:
 
 def _verdict_report(step: TurnStep, prompt_text: str) -> Report:
     if isinstance(step, AcceptStep):
-        return Verdict(decision="accept", summary=f"verified: {prompt_text}")
+        return Verdict(
+            decision="accept",
+            summary=f"verified: {prompt_text}",
+            commit_subject=FAKE_COMMIT_SUBJECT,
+        )
     if isinstance(step, ChangesRequestedStep):
         return Verdict(
             decision="changes_requested",

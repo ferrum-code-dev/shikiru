@@ -215,8 +215,9 @@ class Landing:
 
 @dataclass(frozen=True, slots=True)
 class IntegrationMetadata:
-    """Accepted Leader context carried into the terminal task event."""
+    """Accepted Leader context carried into the terminal task event and its commit message."""
 
+    subject: str
     summary: str
     residual_risks: tuple[str, ...] = ()
 
@@ -227,6 +228,7 @@ class MergeRequest:
 
     task_id: str
     title: str
+    subject: str
     repo: RepoState
     task_root: Path
     summary: str
@@ -584,7 +586,7 @@ def _tip_trailer(branch_sha: str) -> str:
 
 
 def _squash_message(request: MergeRequest, branch_sha: str) -> str:
-    subject = f"{request.task_id}: {' '.join(request.title.split())}"
+    subject = f"{request.subject} ({request.task_id})"
     trailers = f"{SQUASH_TASK_TRAILER}: {request.task_id}\n{_tip_trailer(branch_sha)}"
     body = request.summary.strip()
     return "\n\n".join(part for part in (subject, body, trailers) if part)
@@ -1022,6 +1024,7 @@ class Integrator:
                 MergeRequest(
                     task_id=current.id,
                     title=current.title,
+                    subject=current_metadata.subject,
                     repo=repo,
                     task_root=task_dir,
                     summary=current_metadata.summary,

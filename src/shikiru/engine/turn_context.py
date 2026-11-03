@@ -46,6 +46,7 @@ class ContextKey(StrEnum):
     """The variables the prompt templates read from a turn's context."""
 
     REQUEST = "request"
+    TASK_ID = "task_id"
     WORKSPACE = "workspace"
     TRACKERS = "trackers"
     REPORTS = "reports"
@@ -123,6 +124,7 @@ class TurnContextPreparer:
             kind = kind_override
         context: dict[str, object] = {
             ContextKey.REQUEST: task.request,
+            ContextKey.TASK_ID: task.id,
             ContextKey.WORKSPACE: str(task_root(self._project_root, task.id)),
             ContextKey.TRACKERS: list(self._settings.project.trackers),
             ContextKey.REPORTS: self._history.context(history),

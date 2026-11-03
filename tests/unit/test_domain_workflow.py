@@ -319,7 +319,11 @@ def test_plan_integration_verdict_does_not_invent_a_verify_stage() -> None:
     report = WorkflowReport(
         turn="post-rebase-verify",
         kind=ReportKind.VERDICT,
-        data=Verdict(decision=DECISION_ACCEPT, summary="Conflicts verified."),
+        data=Verdict(
+            decision=DECISION_ACCEPT,
+            summary="Conflicts verified.",
+            commit_subject="fix: resolve conflicts",
+        ),
     )
 
     progress = project_workflow(task, events, (report,), event_window_complete=False)

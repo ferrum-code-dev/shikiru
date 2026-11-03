@@ -237,9 +237,17 @@ def _seed_export_task(
         (
             "3-verify-i1",
             ReportKind.VERDICT,
-            Verdict(decision="accept", summary="Leader's recorded verdict."),
+            Verdict(
+                decision="accept",
+                summary="Leader's recorded verdict.",
+                commit_subject="feat: change",
+            ),
             "verification facts",
-            Verdict(decision="accept", summary=f"Engine override\n{HOSTILE_CONTENT}"),
+            Verdict(
+                decision="accept",
+                summary=f"Engine override\n{HOSTILE_CONTENT}",
+                commit_subject="feat: change",
+            ),
         ),
     )
     for turn, kind, report, facts, engine_verdict in reports:

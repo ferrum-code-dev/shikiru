@@ -144,11 +144,19 @@ with an expected-old-value check. Dirty paths overlapping the incoming changes b
 blocked prerequisites are retried within a limit and then escalated. Task worktrees are checked
 before integration so off-branch or uncommitted work is not silently discarded.
 
+Task commits follow the target project's documented commit-message convention, using Conventional
+Commits when none is documented, summarize each commit and carry a `Task: T-n` trailer. The merge
+strategy preserves those commits and their fast-forward history. Squash uses the accepted Leader
+report's whole-change subject and summary, adds the task ID to the subject and keeps the
+`Shikiru-Task` and `Shikiru-Squashed-Tip` recovery trailers.
+
 Local **squash** shares those preconditions, the serialized integration boundary and conflict
 consultation. After the rebase it creates one commit of the task branch's complete tree on the
-current base tip, titled with the task ID and title and carrying `Shikiru-Task` and
-`Shikiru-Squashed-Tip` trailers, then fast-forwards a checked-out base or updates its ref with the
-same expected-old-value check; a task whose tree equals the base's lands nothing. The original
+current base tip, titled with the accepted change's subject following the target project's
+documented convention (or Conventional Commits when none is documented) and task ID, with its
+whole-change summary in the body and carrying `Shikiru-Task` and `Shikiru-Squashed-Tip` trailers,
+then fast-forwards a checked-out base or updates its ref with the same expected-old-value check; a
+task whose tree equals the base's lands nothing. The original
 branch is no longer an ancestor of the base, so the engine records the proposed landing before its
 ref update and confirms it is on the base after restart. The checkpoint also records the task
 branch tip used to build that landing; recovery verifies the branch still has that tip before it

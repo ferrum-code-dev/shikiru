@@ -14,4 +14,9 @@ The latest conflict or verification guidance is:
 Resolve the conflict, keeping the intent of both sides, then commit. Report `completed` only
 when the rebase can proceed cleanly; report `needs_decision` or `blocked` with a concrete
 `question` otherwise.
+
+Before committing, check the target project's instructions and documentation for its commit-message
+convention. Follow that convention when one is documented; use Conventional Commits if none is
+documented. Keep the subject concise and summarizing the conflict resolution, and end the commit
+message with the trailer `Task: {{ task_id }}` on its own line.
 {% endblock %}

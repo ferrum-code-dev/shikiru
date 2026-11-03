@@ -76,7 +76,7 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
             ReportRow(
                 turn="02-verify-i1",
                 kind=ReportKind.VERDICT,
-                data=Verdict(decision="accept", summary="Reviewed"),
+                data=Verdict(decision="accept", summary="Reviewed", commit_subject="feat: change"),
             )
         ],
     )

@@ -54,7 +54,7 @@ from tests.support.clock import FakeClock
 from tests.support.engine import set_role_script
 from tests.support.factories import TASK_CREATED_AT
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
-from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo
+from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo, run_git
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 from tests.support.workspace import task_root_builder
@@ -128,6 +128,7 @@ def _request(task: Task, state: RepoState, task_root: Path) -> MergeRequest:
     return MergeRequest(
         task_id=task.id,
         title=task.title,
+        subject="feat: change",
         repo=state,
         task_root=task_root,
         summary=task.title,
@@ -174,6 +175,48 @@ async def test_local_merge_fast_forwards_base_and_reports_commits(
         await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).current_branch(project_root)
         == "main"
     )
+
+
+async def test_local_merge_preserves_conventional_task_commit_messages_across_rework(
+    connection: Connection, tmp_path: Path
+) -> None:
+    project_root = await _repo(tmp_path / "project")
+    task, _state = await _task_with_worktree(connection, project_root)
+    task_root = project_root / ".shikiru" / "worktrees" / task.id
+    expected = (
+        ("feat(parser): add retry handling", "retry.py"),
+        ("test(parser): cover retry rework", "test_retry.py"),
+    )
+    for subject, filename in expected:
+        (task_root / filename).write_text(f"{subject}\n")
+        await run_git(_RUNNER, task_root, "add", "-A")
+        await run_git(
+            _RUNNER,
+            task_root,
+            "commit",
+            "-m",
+            subject,
+            "-m",
+            f"Task: {task.id}",
+        )
+
+    await _integrator(connection, project_root).run(
+        task,
+        _resolve_nothing,
+        IntegrationMetadata(
+            subject="feat(parser): add retry handling",
+            summary="Adds retry handling and coverage.",
+        ),
+    )
+
+    hashes = (
+        await run_git(_RUNNER, project_root, "log", "--reverse", "--format=%H", "main~2..main")
+    ).splitlines()
+    messages = [
+        await run_git(_RUNNER, project_root, "show", "-s", "--format=%B", commit)
+        for commit in hashes
+    ]
+    assert messages == [f"{subject}\n\nTask: {task.id}" for subject, _ in expected]
 
 
 async def test_local_merge_updates_a_base_branch_that_is_not_checked_out(
@@ -398,7 +441,11 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
         task_path.write_text("resolved\n")
         await commit_all(_RUNNER, task_root, "resolve conflict")
         await continue_rebase()
-        return task_value, IntegrationMetadata("accepted summary", ("residual risk",))
+        return task_value, IntegrationMetadata(
+            subject="feat: accepted change",
+            summary="accepted summary",
+            residual_risks=("residual risk",),
+        )
 
     result = await Integrator(
         git=Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT),
@@ -409,7 +456,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
         tasks=tasks,
         events=events,
         finish_task=finish_task,
-    ).run(task, resolve, IntegrationMetadata("stale summary"))
+    ).run(task, resolve, IntegrationMetadata(subject="feat: change", summary="stale summary"))
 
     final = TaskStore(connection, SystemClock()).get(task.id)
     assert final is not None
@@ -456,7 +503,7 @@ async def _resolve_nothing(
     recovery: ConflictRecovery,
 ) -> tuple[Task, IntegrationMetadata]:
     del continue_rebase, recovery
-    return task, IntegrationMetadata("resolved")
+    return task, IntegrationMetadata(subject="feat: change", summary="resolved")
 
 
 async def _dirty_task_worktree(
@@ -487,7 +534,7 @@ async def test_integrator_refuses_uncommitted_work_and_keeps_the_worktree(
 
     with pytest.raises(UncommittedWork) as refused:
         await _integrator(connection, project_root).run(
-            task, _resolve_nothing, IntegrationMetadata("summary")
+            task, _resolve_nothing, IntegrationMetadata(subject="feat: change", summary="summary")
         )
 
     assert refused.value.reason is EscalationReason.UNCOMMITTED_WORK
@@ -527,7 +574,7 @@ async def test_integrator_refuses_a_worktree_that_left_its_task_branch_and_keeps
 
     with pytest.raises(OffTaskBranch) as refused:
         await _integrator(connection, project_root).run(
-            task, _resolve_nothing, IntegrationMetadata("summary")
+            task, _resolve_nothing, IntegrationMetadata(subject="feat: change", summary="summary")
         )
 
     assert refused.value.reason is EscalationReason.OFF_TASK_BRANCH
@@ -600,7 +647,9 @@ async def test_integrator_finishes_a_clean_no_op_task_as_done(
     task, _ = await _task_with_worktree(connection, project_root)
 
     result = await _integrator(connection, project_root).run(
-        task, _resolve_nothing, IntegrationMetadata("nothing to change")
+        task,
+        _resolve_nothing,
+        IntegrationMetadata(subject="feat: change", summary="nothing to change"),
     )
 
     final = TaskStore(connection, SystemClock()).get(task.id)
@@ -1227,7 +1276,7 @@ async def test_a_rebase_that_timed_out_is_undone_and_not_mistaken_for_a_conflict
     ) -> tuple[Task, IntegrationMetadata]:
         del continue_rebase, recovery
         conflicts_resolved.append(task_value.id)
-        return task_value, IntegrationMetadata("resolved")
+        return task_value, IntegrationMetadata(subject="feat: change", summary="resolved")
 
     async def keep_worktree(task_value: Task) -> None:
         del task_value
@@ -1245,13 +1294,17 @@ async def test_a_rebase_that_timed_out_is_undone_and_not_mistaken_for_a_conflict
         )
 
     with pytest.raises(CommandTimeoutError):
-        await integrator().run(task, resolve, IntegrationMetadata("summary"))
+        await integrator().run(
+            task, resolve, IntegrationMetadata(subject="feat: change", summary="summary")
+        )
 
     assert not await git.is_rebase_in_progress(task_root)
     assert await git.head_branch(task_root) == state.branch
     assert await git.rev_parse(task_root, "HEAD") == task_sha
 
-    result = await integrator().run(task, resolve, IntegrationMetadata("summary"))
+    result = await integrator().run(
+        task, resolve, IntegrationMetadata(subject="feat: change", summary="summary")
+    )
 
     assert result.commits
     assert conflicts_resolved == []
@@ -1294,10 +1347,12 @@ class _RebaseScenario:
     ) -> tuple[Task, IntegrationMetadata]:
         del continue_rebase, recovery
         self.conflicts_resolved.append(task_value.id)
-        return task_value, IntegrationMetadata("resolved")
+        return task_value, IntegrationMetadata(subject="feat: change", summary="resolved")
 
     async def integrate(self) -> IntegrationSummary:
-        return await self.integrator().run(self.task, self.resolve, IntegrationMetadata("summary"))
+        return await self.integrator().run(
+            self.task, self.resolve, IntegrationMetadata(subject="feat: change", summary="summary")
+        )
 
     async def assert_rebased_without_a_conflict_turn(self) -> None:
         result = await self.integrate()
@@ -1386,12 +1441,14 @@ async def test_a_rebase_stopped_on_conflicts_is_still_handed_to_the_conflict_tur
             ["git", "add", "README.md"], cwd=task_root, timeout=_SCENARIO_WAIT_SECONDS
         )
         await continue_rebase()
-        return task_value, IntegrationMetadata("resolved")
+        return task_value, IntegrationMetadata(subject="feat: change", summary="resolved")
 
     scenario = _RebaseScenario(
         connection, project_root, task, task_root, tmp_path, "", _git(), conflicts_resolved
     )
-    await scenario.integrator().run(task, resolve, IntegrationMetadata("summary"))
+    await scenario.integrator().run(
+        task, resolve, IntegrationMetadata(subject="feat: change", summary="summary")
+    )
 
     assert conflicts_resolved == [task.id]
     assert (project_root / "README.md").read_text() == "resolved\n"

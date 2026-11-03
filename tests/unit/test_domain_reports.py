@@ -62,6 +62,14 @@ def _escalation(**overrides: Any) -> dict[str, Any]:
 def _verdict(**overrides: Any) -> dict[str, Any]:
     fields: dict[str, Any] = {"decision": "accept", "summary": "Looks good"}
     fields.update(overrides)
+    if fields["decision"] == "accept":
+        fields.setdefault("commit_subject", "feat: looks good")
+    return fields
+
+
+def _plan(**overrides: Any) -> dict[str, Any]:
+    fields: dict[str, Any] = {"summary": "P", "commit_subject": "docs: plan", "commits": []}
+    fields.update(overrides)
     return fields
 
 
@@ -87,15 +95,19 @@ _INVALID_CASES: list[tuple[type[BaseModel], dict[str, Any], str]] = [
         "options",
     ),
     (TriageReport, _triage(title="x" * 61), "title"),
+    (PlanReport, _plan(new_tasks=[_new_task(depends_on=["#2"])]), "new_tasks"),
+    (PlanReport, _plan(new_tasks=[_new_task(depends_on=["#0"])]), "new_tasks"),
+    (PlanReport, _plan(commit_subject="Plan\nthe change"), "commit_subject"),
+    (Verdict, _verdict(commit_subject=""), "commit_subject"),
+    (Verdict, _verdict(commit_subject="Looks\ngood"), "commit_subject"),
     (
-        PlanReport,
-        {"summary": "P", "commits": [], "new_tasks": [_new_task(depends_on=["#2"])]},
-        "new_tasks",
-    ),
-    (
-        PlanReport,
-        {"summary": "P", "commits": [], "new_tasks": [_new_task(depends_on=["#0"])]},
-        "new_tasks",
+        Verdict,
+        _verdict(
+            decision="changes_requested",
+            issues=[{"severity": "minor", "description": "x"}],
+            commit_subject="feat: x",
+        ),
+        "commit_subject",
     ),
     (
         Verdict,
@@ -153,6 +165,54 @@ def test_invalid_reports_fail_on_the_expected_field(
     assert any(
         field in str(error["loc"]) or field in error["msg"] for error in excinfo.value.errors()
     )
+
+
+_VALID_SUBJECTS = [
+    "feat: add retries",
+    "fix(parser): handle empty input",
+    "refactor!: drop the legacy API",
+    "security(parser): reject unsafe input",
+    "docs: " + "x" * 66,
+    "[PROJ-123] Add retry handling",
+]
+_INVALID_SUBJECTS = [
+    "",
+    "  ",
+    "feat: first line\nsecond line",
+    "feat: " + "x" * 67,
+    " feat: leading whitespace",
+    "feat: trailing whitespace ",
+]
+
+
+@pytest.mark.parametrize("subject", _VALID_SUBJECTS)
+def test_a_project_convention_subject_is_accepted_by_plans_and_accepting_verdicts(
+    subject: str,
+) -> None:
+    assert PlanReport(**_plan(commit_subject=subject)).commit_subject == subject
+    assert Verdict(**_verdict(commit_subject=subject)).commit_subject == subject
+
+
+@pytest.mark.parametrize("subject", _INVALID_SUBJECTS)
+def test_an_invalid_subject_is_rejected_by_plans_and_accepting_verdicts(
+    subject: str,
+) -> None:
+    with pytest.raises(ValidationError, match="commit_subject"):
+        PlanReport(**_plan(commit_subject=subject))
+    with pytest.raises(ValidationError, match="commit_subject"):
+        Verdict(**_verdict(commit_subject=subject))
+
+
+def test_new_plans_and_accepting_verdicts_require_a_subject() -> None:
+    plan = _plan()
+    plan.pop("commit_subject")
+    verdict = _verdict()
+    verdict.pop("commit_subject")
+
+    with pytest.raises(ValidationError, match="commit_subject"):
+        PlanReport(**plan)
+    with pytest.raises(ValidationError, match="commit_subject"):
+        Verdict(**verdict)
 
 
 @pytest.mark.parametrize("reference", ["T-1", "#1"], ids=["task-id", "sibling"])

@@ -490,7 +490,7 @@ def _write_report_turn(
     turn_dir = turns_root / turn
     turn_dir.mkdir(parents=True)
     report = (
-        Verdict(decision="accept", summary=summary)
+        Verdict(decision="accept", summary=summary, commit_subject="feat: change")
         if kind is ReportKind.VERDICT
         else ImplementationReport(
             status="completed",
@@ -1294,7 +1294,7 @@ async def test_turn_cost_basis_requires_comparable_recorded_cumulative_amounts(
         run_id=run.id,
         turn=turn,
     )
-    report = PlanReport(summary="Turn complete", commits=[])
+    report = PlanReport(summary="Turn complete", commit_subject="feat: change", commits=[])
     execution = TurnExecution(
         result=Completed(report),
         task_id=task.id,

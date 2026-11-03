@@ -29,6 +29,7 @@ _FENCING_REPORT_JSON = '{"note": "closes a ```` fence early"}'
 def _full_context(name: PromptName) -> dict[str, Any]:
     context: dict[str, Any] = {
         "request": _REQUEST,
+        "task_id": "T-7",
         "workspace": _WORKSPACE,
         "trackers": ["tasks/plan.md", "tasks/todo.md"],
         "reports": [{"label": "Implementation", "json": _FENCING_REPORT_JSON}],
@@ -84,6 +85,33 @@ def test_verify_points_the_leader_at_the_diff_against_the_base(tmp_path: Path) -
     rendered = PromptRenderer(tmp_path).render(PromptName.VERIFY, _full_context(PromptName.VERIFY))
 
     assert f"git diff {_BASE}...HEAD" in rendered
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        PromptName.IMPLEMENT,
+        PromptName.REWORK,
+        PromptName.FEEDBACK_REWORK,
+        PromptName.CONFLICTS,
+        PromptName.PLAN,
+        PromptName.VERIFY,
+        PromptName.FEEDBACK_VERIFY,
+    ],
+)
+def test_committing_turns_follow_project_convention_or_default_to_conventional_commits(
+    tmp_path: Path, name: PromptName
+) -> None:
+    rendered = " ".join(PromptRenderer(tmp_path).render(name, _full_context(name)).split())
+
+    assert "target project's" in rendered
+    assert "documented" in rendered
+    assert "Conventional Commits" in rendered
+    assert "if none is" in rendered
+    if name is PromptName.FEEDBACK_VERIFY:
+        assert "no task reference" in rendered
+    else:
+        assert "Task: T-7" in rendered
 
 
 def test_a_project_override_replaces_the_packaged_template(tmp_path: Path) -> None:

@@ -234,9 +234,13 @@ invalid config keeps the last valid values and shows an alert in the header.
 **Integration:** `orchestration.integration = "merge"` rebases and applies accepted work to the
 local base. `"squash"` ("Local squash and merge") lands the rebased task as a single commit parented
 by the current base and carrying the task's complete tree; an empty task adds no commit. It shares
-every local-merge guard, and the Result and Results of the completed task show that commit's SHA and
-subject, its destination and the integrated file and line totals, which stay accurate after the task
-branch and worktree are cleaned up. `"pr"` pushes the task branch, opens/adopts a GitHub PR and waits for it to merge;
+every local-merge guard. Task commits follow the target project's documented subject convention, or
+Conventional Commits when none is documented, and carry a `Task: T-n` trailer; merge preserves them,
+while squash uses the accepted whole-change subject and summary and adds the task ID and recovery
+trailers. The Result and Results of a completed task show the landed commit's
+SHA and subject, its destination and the integrated file and line totals, which stay accurate after
+the task branch and worktree are cleaned up. `"pr"` pushes the task branch, opens/adopts a GitHub PR
+and waits for it to merge;
 conflicting/closed/failed or overdue PRs require recovery or a decision. Shikiru does not bypass
 repository review policy. A newly submitted changes-requested review starts a feedback round: the
 Leader analyses it, the Implementer edits, the Leader verifies, and the engine pushes with a lease

@@ -11,6 +11,13 @@ When you fill `new_tasks`, restructure the tracker entries so each new task has 
 entry and together they replace this task's entry; each new task ticks its own entry when done.
 Record any tracker changes outside the plan itself in `scope_changes`.
 
+Check the target project's instructions and documentation for its commit-message convention. Give
+`commit_subject` a concise subject for the whole plan change using that convention, or Conventional
+Commits if none is documented (no task reference). Keep `summary` short and describe the whole
+committed plan change.
+Use that subject for the plan commit, and end the commit message with the trailer
+`Task: {{ task_id }}` on its own line.
+
 Give each tracker entry for a task, and each `new_tasks` request, an acceptance-criteria section
 in exactly this form: the heading verbatim, then one independently verifiable criterion per bullet.
 
