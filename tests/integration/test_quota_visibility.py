@@ -55,6 +55,7 @@ _NARROW_WIDTH = 24
 _WIDE_WIDTH = 100
 _HEIGHT = 20
 _SHORT_HEIGHT = 10
+_LOGGED_ROWS = 40
 _TURN = "01-implement"
 _RUNG = {"agent": "beta", "model": "impl-1", "effort": None}
 
@@ -497,13 +498,25 @@ async def test_the_strip_reflows_at_narrow_widths_and_follows_a_resize(
     assert sum(_STRIP_PHRASE in line for line in screen) == 1
 
 
+async def _wait_for_replay_without_strip(tmux_server: TmuxServer, pane: str) -> None:
+    async def strip_gone_and_every_marker_replayed() -> bool:
+        if any(_STRIP_PHRASE in line for line in await _screen(tmux_server, pane)):
+            return False
+        history = "\n".join(await _history(tmux_server, pane))
+        return all(f"M{index:03}" in history for index in range(_LOGGED_ROWS))
+
+    await wait_until(strip_gone_and_every_marker_replayed, timeout=_TIMEOUT_SECONDS)
+
+
 async def test_width_resize_and_clear_preserve_all_pane_output_history(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
     wait = await _wait(engine_env)
     log = view_log_path(run_dir(engine_env.project_root, wait.task.id), Role.IMPLEMENTER.value)
     log.parent.mkdir(parents=True, exist_ok=True)
-    log.write_text("".join(_row("Message", text=f"M{index:03}") + "\n" for index in range(40)))
+    log.write_text(
+        "".join(_row("Message", text=f"M{index:03}") + "\n" for index in range(_LOGGED_ROWS))
+    )
     pane = wait.current().panes[Role.IMPLEMENTER]
     await tmux_server.run("set-option", "-w", "-t", pane, "window-size", "manual")
     await tmux_server.run("resize-window", "-t", pane, "-x", str(_WIDE_WIDTH), "-y", str(_HEIGHT))
@@ -511,7 +524,7 @@ async def test_width_resize_and_clear_preserve_all_pane_output_history(
 
     async def all_initial_output_rendered() -> bool:
         history = await _history(tmux_server, pane)
-        return all(f"M{index:03}" in "\n".join(history) for index in range(40))
+        return all(f"M{index:03}" in "\n".join(history) for index in range(_LOGGED_ROWS))
 
     await wait_until(all_initial_output_rendered, timeout=_TIMEOUT_SECONDS)
 
@@ -541,17 +554,14 @@ async def test_width_resize_and_clear_preserve_all_pane_output_history(
 
     await wait_until(strip_reflows_wide, timeout=_TIMEOUT_SECONDS)
     active_history = "\n".join(await _history(tmux_server, pane))
-    assert all(active_history.count(f"M{index:03}") == 1 for index in range(40))
+    assert all(active_history.count(f"M{index:03}") == 1 for index in range(_LOGGED_ROWS))
     wait.quotas.clear_block(_IMPLEMENTER_AGENT)
     engine_env.tasks.set_wait_reason(wait.task.id, None)
     await wait.sync()
 
-    async def strip_removed_from_screen() -> bool:
-        return not any(_STRIP_PHRASE in line for line in await _screen(tmux_server, pane))
-
-    await wait_until(strip_removed_from_screen, timeout=_TIMEOUT_SECONDS)
+    await _wait_for_replay_without_strip(tmux_server, pane)
     history = "\n".join(await _history(tmux_server, pane))
-    counts = {f"M{index:03}": history.count(f"M{index:03}") for index in range(40)}
+    counts = {f"M{index:03}": history.count(f"M{index:03}") for index in range(_LOGGED_ROWS)}
     assert all(count == 1 for count in counts.values()), {
         marker: count for marker, count in counts.items() if count != 1
     }
@@ -564,7 +574,9 @@ async def test_height_resize_and_clear_preserve_all_pane_output_history(
     wait = await _wait(engine_env)
     log = view_log_path(run_dir(engine_env.project_root, wait.task.id), Role.IMPLEMENTER.value)
     log.parent.mkdir(parents=True, exist_ok=True)
-    log.write_text("".join(_row("Message", text=f"M{index:03}") + "\n" for index in range(40)))
+    log.write_text(
+        "".join(_row("Message", text=f"M{index:03}") + "\n" for index in range(_LOGGED_ROWS))
+    )
     pane = wait.current().panes[Role.IMPLEMENTER]
     await tmux_server.run("set-option", "-w", "-t", pane, "window-size", "manual")
     await tmux_server.run("resize-window", "-t", pane, "-x", str(_WIDE_WIDTH), "-y", str(_HEIGHT))
@@ -572,7 +584,7 @@ async def test_height_resize_and_clear_preserve_all_pane_output_history(
 
     async def all_initial_output_rendered() -> bool:
         history = "\n".join(await _history(tmux_server, pane))
-        return all(f"M{index:03}" in history for index in range(40))
+        return all(f"M{index:03}" in history for index in range(_LOGGED_ROWS))
 
     await wait_until(all_initial_output_rendered, timeout=_TIMEOUT_SECONDS)
 
@@ -596,18 +608,15 @@ async def test_height_resize_and_clear_preserve_all_pane_output_history(
 
     await wait_until(strip_visible_after_resize, timeout=_TIMEOUT_SECONDS)
     active_history = "\n".join(await _history(tmux_server, pane))
-    assert all(active_history.count(f"M{index:03}") == 1 for index in range(40))
+    assert all(active_history.count(f"M{index:03}") == 1 for index in range(_LOGGED_ROWS))
 
     wait.quotas.clear_block(_IMPLEMENTER_AGENT)
     engine_env.tasks.set_wait_reason(wait.task.id, None)
     await wait.sync()
 
-    async def strip_removed_from_screen() -> bool:
-        return not any(_STRIP_PHRASE in line for line in await _screen(tmux_server, pane))
-
-    await wait_until(strip_removed_from_screen, timeout=_TIMEOUT_SECONDS)
+    await _wait_for_replay_without_strip(tmux_server, pane)
     history = "\n".join(await _history(tmux_server, pane))
-    counts = {f"M{index:03}": history.count(f"M{index:03}") for index in range(40)}
+    counts = {f"M{index:03}": history.count(f"M{index:03}") for index in range(_LOGGED_ROWS)}
     assert all(count == 1 for count in counts.values()), {
         marker: count for marker, count in counts.items() if count != 1
     }
@@ -620,7 +629,9 @@ async def test_status_growth_and_clear_preserve_all_pane_output_history(
     wait = await _wait(engine_env)
     log = view_log_path(run_dir(engine_env.project_root, wait.task.id), Role.IMPLEMENTER.value)
     log.parent.mkdir(parents=True, exist_ok=True)
-    log.write_text("".join(_row("Message", text=f"M{index:03}") + "\n" for index in range(40)))
+    log.write_text(
+        "".join(_row("Message", text=f"M{index:03}") + "\n" for index in range(_LOGGED_ROWS))
+    )
     pane = wait.current().panes[Role.IMPLEMENTER]
     await tmux_server.run("set-option", "-w", "-t", pane, "window-size", "manual")
     await tmux_server.run("resize-window", "-t", pane, "-x", str(_NARROW_WIDTH), "-y", str(_HEIGHT))
@@ -628,7 +639,7 @@ async def test_status_growth_and_clear_preserve_all_pane_output_history(
 
     async def all_initial_output_rendered() -> bool:
         history = "\n".join(await _history(tmux_server, pane))
-        return all(f"M{index:03}" in history for index in range(40))
+        return all(f"M{index:03}" in history for index in range(_LOGGED_ROWS))
 
     await wait_until(all_initial_output_rendered, timeout=_TIMEOUT_SECONDS)
     wait.queue_on_quota()
@@ -652,12 +663,9 @@ async def test_status_growth_and_clear_preserve_all_pane_output_history(
     engine_env.tasks.set_wait_reason(wait.task.id, None)
     await wait.sync()
 
-    async def strip_removed_from_screen() -> bool:
-        return not any(_STRIP_PHRASE in line for line in await _screen(tmux_server, pane))
-
-    await wait_until(strip_removed_from_screen, timeout=_TIMEOUT_SECONDS)
+    await _wait_for_replay_without_strip(tmux_server, pane)
     history = "\n".join(await _history(tmux_server, pane))
-    counts = {f"M{index:03}": history.count(f"M{index:03}") for index in range(40)}
+    counts = {f"M{index:03}": history.count(f"M{index:03}") for index in range(_LOGGED_ROWS)}
     assert all(count == 1 for count in counts.values()), {
         marker: count for marker, count in counts.items() if count != 1
     }
