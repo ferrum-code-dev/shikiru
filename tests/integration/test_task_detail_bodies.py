@@ -706,6 +706,9 @@ async def test_a_pause_and_an_intervention_hold_share_one_blockers_label_and_one
             await wait_until(
                 lambda: "Recorded takeover" in _raw_events_text(panel), timeout=UI_WAIT_SECONDS
             )
+            await wait_until(
+                lambda: "Held by operator" in _briefing_text(panel), timeout=UI_WAIT_SECONDS
+            )
             briefing = _briefing_text(panel)
             assert briefing.count(BLOCKERS_LABEL) == 1
             assert "Paused by operator" in briefing
