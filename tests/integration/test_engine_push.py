@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
     from pathlib import Path
 
+    from shikiru.config.settings import FaultsConfig
     from shikiru.domain.tasks import Task
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
@@ -60,6 +61,10 @@ _REMOTE = "origin"
 _FOUR_HOURS = 14400
 _HOUR = 3600
 _LOGGER = logging.getLogger("push-test")
+_UNEXPECTED_FAULT_LIMIT = 2
+_FAST_BACKOFF_INITIAL_SECONDS = 1
+_FAST_BACKOFF_MAX_SECONDS = 2
+_FAST_REPEAT_NOTIFY_SECONDS = 0.5
 
 
 @dataclass
@@ -124,10 +129,16 @@ async def _resolve_nothing(
 
 
 def _service(
-    connection: Connection, events: EventLog, clock: FakeClock, project_root: Path, interval: int
+    connection: Connection,
+    events: EventLog,
+    clock: FakeClock,
+    project_root: Path,
+    interval: int,
+    *,
+    faults_config: FaultsConfig | None = None,
 ) -> PushService:
     orchestration = engine_settings().orchestration
-    faults = orchestration.faults
+    faults = faults_config or orchestration.faults
     reporter = FaultReporter(events=events, clock=clock, settings=faults, logger=_LOGGER)
     return PushService(
         targets=PushTargets(connection),
@@ -155,7 +166,12 @@ def _service(
 
 
 async def _rig(
-    connection: Connection, tmp_path: Path, *, interval: int, branches: tuple[str, ...] = ()
+    connection: Connection,
+    tmp_path: Path,
+    *,
+    interval: int,
+    branches: tuple[str, ...] = (),
+    faults_config: FaultsConfig | None = None,
 ) -> Rig:
     project_root = tmp_path / "project"
     await init_repo(_RUNNER, project_root)
@@ -168,7 +184,9 @@ async def _rig(
     clock = FakeClock(TASK_CREATED_AT)
     events = EventLog(connection, clock)
     tasks = TaskStore(connection, clock)
-    service = _service(connection, events, clock, project_root, interval)
+    service = _service(
+        connection, events, clock, project_root, interval, faults_config=faults_config
+    )
 
     async def keep_worktree(task: Task) -> None:
         del task
@@ -396,6 +414,42 @@ async def test_a_failed_remote_probe_is_backed_off_and_recovers_when_git_works_a
     await rig.push_due()
 
     assert await rig.remote_sha("main") == await rig.local_sha("main")
+    assert not PushTargets(connection).pending()
+    assert EventKind.ENGINE_RECOVERED in rig.kinds()
+
+
+async def test_background_remote_check_continues_after_unexpected_fault_limit(
+    connection: Connection, tmp_path: Path
+) -> None:
+    faults_config = engine_settings().orchestration.faults.model_copy(
+        update={
+            "unexpected_fault_limit": _UNEXPECTED_FAULT_LIMIT,
+            "backoff_initial_seconds": _FAST_BACKOFF_INITIAL_SECONDS,
+            "backoff_max_seconds": _FAST_BACKOFF_MAX_SECONDS,
+            "repeat_notify_seconds": _FAST_REPEAT_NOTIFY_SECONDS,
+        }
+    )
+    rig = await _rig(connection, tmp_path, interval=0, faults_config=faults_config)
+    await rig.integrate("stranded")
+    config = rig.project_root / ".git" / "config"
+    valid_config = config.read_bytes()
+    config.write_bytes(valid_config + b'\n[remote "invalid\xff"]\n\turl = invalid\n')
+
+    for attempt in range(4):
+        if attempt:
+            delay = _FAST_BACKOFF_INITIAL_SECONDS if attempt == 1 else _FAST_BACKOFF_MAX_SECONDS
+            rig.clock.advance(delay)
+        await rig.push_due()
+
+    failures = [event for event in rig.events.since(0) if event.kind is EventKind.ENGINE_FAULT]
+    assert len(failures) == 4
+    assert {event.data["error"] for event in failures} == {"UnicodeDecodeError"}
+    assert PushTargets(connection).pending()
+
+    config.write_bytes(valid_config)
+    rig.clock.advance(_FAST_BACKOFF_MAX_SECONDS)
+    await rig.push_due()
+
     assert not PushTargets(connection).pending()
     assert EventKind.ENGINE_RECOVERED in rig.kinds()
 

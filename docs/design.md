@@ -272,14 +272,15 @@ for a failed command its exit code and stderr rather than its argv; it reads unk
 text was recorded. Statuses keep the real retry policies apart: automatic backoff (base pushes and
 remote checks), a bounded number of attempts and then the next engine start (pull request close),
 the next engine start only (startup reconciliation) and unknown retry timing (any other
-scope). Whether the error was recoverable is stated separately from that policy and never replaces
-it: the tick guard retries an unexpected error with backoff too, and stops the engine after the
-configured number of consecutive unexpected failures, so an unrecoverable fault is flagged as
-needing the Operator while still naming its scope's real retries and that stop limit. A scope the
-view does not know says its impact is not recorded rather than guessing. A collapsed `▸ Details`
-disclosure per card adds, without repeating the impact or next step, the full error; the failed command, exit code and stderr; first and latest
-occurrence and the failure count; the retry policy with its configured backoff numbers and the next
-retry time, which is `not recorded` because the engine does not persist it; the traceback; and the
+scope). Error classification is stated separately from retry policy. For base pushes and remote
+checks, the background push service logs unexpected errors and continues retrying with backoff while
+the engine runs; the foreground tick guard's unexpected fault limit does not stop that service. An
+unrecoverable fault is flagged as needing the Operator while its card still names its scope's actual
+retry policy. A scope the view does not know says its impact is not recorded rather than guessing.
+A collapsed `▸ Details` disclosure per card adds, without repeating the impact or next step, the full
+error; the failed command, exit code and stderr; first and latest occurrence and the failure count;
+its environmental or unexpected classification; the retry policy with its configured backoff
+numbers; the next retry time, which is `not recorded` because the engine does not persist it; the traceback; and the
 state-database event reference with its path (plus the engine log for scopes that log). Each
 `engine_fault` event carries that evidence itself, so the card shows the recorded content rather than
 only a path; evidence an older event lacks reads `not recorded`. Repeated failures of the same task

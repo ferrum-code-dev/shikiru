@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shlex
 from dataclasses import dataclass
 from enum import StrEnum
@@ -36,12 +37,15 @@ _STATUS = {
     Recovery.STARTUP_ONLY: "Retried only at the next engine start",
     Recovery.UNKNOWN: "Retry timing unknown",
 }
-_UNEXPECTED_BACKOFF_STATUS = "Retrying automatically; persistent unexpected errors stop the engine"
-_UNRECOVERABLE_STEP = "Fix the code the traceback points to, then restart the engine"
+_UNEXPECTED_BACKOFF_STATUS = "Unexpected error · retrying automatically"
+_UNRECOVERABLE_STEP = "Inspect the traceback and fix the unexpected error"
 _UNKNOWN_CAUSE = "unknown: no error text was recorded"
 _UNKNOWN_IMPACT = "not recorded for this kind of fault"
 _UNKNOWN_STEP = "Read the cause in Details; no retry is known for this fault"
 _RESTART_STEP = "Fix the cause, then restart the engine to retry sooner"
+_LEGACY_COMMAND_FAILURE = re.compile(
+    r"(?:CommandFailed: )?command .*?\) exited (-?\d+):\s*(.*)\Z", re.DOTALL
+)
 
 
 @dataclass(frozen=True)
@@ -51,7 +55,6 @@ class RetryPolicy:
     backoff_initial_seconds: float
     backoff_max_seconds: float
     close_attempts: int
-    unexpected_fault_limit: int
 
 
 def _target(scope: str, prefix: str) -> str | None:
@@ -93,10 +96,13 @@ def _impact_and_step(scope: str) -> tuple[str, str] | None:
     return None
 
 
-def _policy_text(recovery: Recovery, policy: RetryPolicy, *, recoverable: bool) -> str:
+def _policy_text(recovery: Recovery, policy: RetryPolicy) -> str:
     backoff = f"{policy.backoff_initial_seconds:g}s doubling up to {policy.backoff_max_seconds:g}s"
-    text = {
-        Recovery.BACKOFF: f"retried with backoff, {backoff}, while the engine runs",
+    return {
+        Recovery.BACKOFF: (
+            f"background push service logs failures and retries with backoff ({backoff}) "
+            "while the engine runs, even if the guard reaches its unexpected fault limit"
+        ),
         Recovery.BOUNDED: (
             f"up to {policy.close_attempts} attempts with backoff, {backoff}; "
             "then again only at the next engine start"
@@ -104,15 +110,6 @@ def _policy_text(recovery: Recovery, policy: RetryPolicy, *, recoverable: bool) 
         Recovery.STARTUP_ONLY: "attempted again only at the next engine start",
         Recovery.UNKNOWN: "not recorded for this kind of fault",
     }[recovery]
-    if recoverable:
-        return text
-    stop = (
-        f"; an unexpected (non-environmental) error stops the engine after "
-        f"{policy.unexpected_fault_limit} consecutive failures"
-        if recovery is Recovery.BACKOFF
-        else "; the error is unexpected, not an environmental failure"
-    )
-    return text + stop
 
 
 def _is_logged(scope: str) -> bool:
@@ -134,21 +131,29 @@ def _recorded_error(fault: FaultStreak) -> str:
     return fault.message.removeprefix(f"{fault.scope} failed: ")
 
 
+def _legacy_command_cause(error: str) -> str | None:
+    match = _LEGACY_COMMAND_FAILURE.fullmatch(error)
+    if match is None:
+        return None
+    exit_code, stderr = match.groups()
+    return f"exit {exit_code}: {stderr.strip()}" if stderr.strip() else f"exit {exit_code}"
+
+
 def _cause(fault: FaultStreak) -> str:
     if fault.exit_code is not None:
         stderr = (fault.stderr or "").strip()
         return _shorten(
             f"exit {fault.exit_code}: {stderr}" if stderr else f"exit {fault.exit_code}"
         )
-    return _shorten(_recorded_error(fault)) or _UNKNOWN_CAUSE
+    error = _recorded_error(fault)
+    return _shorten(_legacy_command_cause(error) or error) or _UNKNOWN_CAUSE
 
 
 def _command_rows(fault: FaultStreak) -> tuple[FaultDetailRow, ...]:
-    if fault.command is None:
-        return (FaultDetailRow("Command", _NOT_RECORDED),)
+    command = _NOT_RECORDED if fault.command is None else shlex.join(fault.command)
     exit_code = _NOT_RECORDED if fault.exit_code is None else str(fault.exit_code)
     return (
-        FaultDetailRow("Command", shlex.join(fault.command)),
+        FaultDetailRow("Command", command),
         FaultDetailRow("Exit code", exit_code),
         FaultDetailRow("Stderr", _NOT_RECORDED if fault.stderr is None else fault.stderr.strip()),
     )
@@ -174,8 +179,10 @@ def _details(
         FaultDetailRow("Latest", fault.last_seen.isoformat()),
         FaultDetailRow("Failures", str(fault.repeat)),
         FaultDetailRow(
-            "Retry policy", _policy_text(recovery, policy, recoverable=fault.recoverable)
+            "Classification",
+            "environmental failure" if fault.recoverable else "unexpected software error",
         ),
+        FaultDetailRow("Retry policy", _policy_text(recovery, policy)),
         FaultDetailRow("Next retry", _NOT_RECORDED),
         FaultDetailRow("Traceback", _NOT_RECORDED if fault.traceback is None else fault.traceback),
         FaultDetailRow("Event", f"#{fault.event_id} in {state_path}"),

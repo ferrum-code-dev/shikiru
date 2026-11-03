@@ -5,9 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-import pytest
-
 from shikiru.domain.events import EventKind
+from shikiru.errors import CommandFailed
 from shikiru.store.events import EventLog
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
@@ -24,6 +23,16 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 PUSH = "base push main"
 REJECTION = "! [rejected] main -> main (non-fast-forward)"
 PUSH_ARGV = ["git", "push", "origin", "main"]
+LEGACY_PUSH_ARGV = (
+    "git",
+    "push",
+    "--no-follow-tags",
+    "origin",
+    (
+        "refs/heads/release/2026-11-faults-and-quota-replay:"
+        "refs/heads/release/2026-11-faults-and-quota-replay"
+    ),
+)
 
 
 def _record(connection: Connection, scope: str, message: str, **data: object) -> None:
@@ -74,6 +83,25 @@ def test_a_failed_command_shows_the_rejection_and_keeps_the_full_evidence(
     assert REJECTION in _detail(fault, "Stderr")
 
 
+def test_a_legacy_command_message_summarizes_stderr_before_shortening(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    stderr = f"To github.com:org/repository\n{REJECTION}\nerror: failed to push some refs\n"
+    error = CommandFailed(LEGACY_PUSH_ARGV, 1, stderr)
+    _record(connection, PUSH, f"{PUSH} failed: CommandFailed: {error}")
+
+    fault = _cards(reader, tmp_path)[PUSH]
+
+    assert fault.cause.startswith("exit 1: ")
+    assert REJECTION in fault.cause
+    assert len(fault.cause) <= 160
+    assert "refs/heads/release" not in fault.cause
+    assert f"CommandFailed: {error}".strip() == _detail(fault, "Error")
+    assert _detail(fault, "Command") == "not recorded"
+    assert _detail(fault, "Exit code") == "not recorded"
+    assert _detail(fault, "Stderr") == "not recorded"
+
+
 def test_a_fault_with_no_recorded_text_says_its_cause_is_unknown(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
@@ -82,20 +110,23 @@ def test_a_fault_with_no_recorded_text_says_its_cause_is_unknown(
     assert fault.cause.startswith("unknown")
 
 
-@pytest.mark.parametrize("scope", [PUSH, "remote check main", "pull request close"])
-def test_recoverability_never_replaces_the_scopes_own_retry_policy(
-    connection: Connection, reader: StateReader, tmp_path: Path, scope: str
+def test_recoverability_is_separate_from_the_background_push_retry_policy(
+    connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
-    _record(connection, scope, f"{scope} failed: ValueError: x", recoverable=True)
-    _record(connection, f"{scope} other", f"{scope} other failed: ValueError: x", recoverable=False)
-    cards = _cards(reader, tmp_path)
-    recoverable, unrecoverable = cards[scope], cards[f"{scope} other"]
-    assert unrecoverable.needs_action
-    if scope == PUSH:
-        assert recoverable.status != unrecoverable.status
-        assert "Retrying automatically" in unrecoverable.status
-        assert not recoverable.needs_action
-        assert "stop" in _detail(unrecoverable, "Retry policy")
+    _record(connection, PUSH, f"{PUSH} failed: ValueError: x", recoverable=True)
+    environmental_project = tmp_path / "environmental"
+    environmental_project.mkdir()
+    environmental = _cards(reader, environmental_project)[PUSH]
+    _record(connection, PUSH, f"{PUSH} failed: ValueError: x", recoverable=False)
+    unexpected_project = tmp_path / "unexpected"
+    unexpected_project.mkdir()
+    unexpected = _cards(reader, unexpected_project)[PUSH]
+
+    assert not environmental.needs_action
+    assert unexpected.needs_action
+    assert _detail(environmental, "Classification") != _detail(unexpected, "Classification")
+    assert environmental.status != unexpected.status
+    assert _detail(environmental, "Retry policy") == _detail(unexpected, "Retry policy")
 
 
 def test_recovery_kinds_have_distinct_statuses_and_action_needed_cards_come_first(
