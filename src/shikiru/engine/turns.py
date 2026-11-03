@@ -22,7 +22,7 @@ from shikiru.agents.contracts import (
     TurnSpec as AgentTurnSpec,
 )
 from shikiru.domain.events import EventKind
-from shikiru.domain.feedback import FeedbackContractError, check_feedback_report
+from shikiru.domain.feedback import FeedbackContractError, FeedbackInput, check_feedback_report
 from shikiru.domain.recovery import Completed, Failed, ProtocolError, Stalled, TurnResult
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
@@ -50,7 +50,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.config.settings import Settings
-    from shikiru.domain.feedback import FeedbackInput
     from shikiru.domain.reports import Report, ReportKind
     from shikiru.domain.tasks import Role, Step, Task
     from shikiru.engine.agents import AgentPool
@@ -232,7 +231,8 @@ class TurnRunner:
             last_message = terminal.last_message
             try:
                 report = read_turn_report(turn_dir)
-            except InvalidTurnReportError:
+                _require_feedback_contract(request, report)
+            except InvalidTurnReportError, FeedbackContractError:
                 _LOGGER.exception("invalid report in completed turn %s", turn_dir)
                 report = None
             if report is not None:
@@ -260,9 +260,13 @@ class TurnRunner:
         link = role_dir(run_dir(self._project_root, task_id), role.value) / CURRENT_TURN_LINK_NAME
         if not link.is_symlink() or link.readlink() != turn_dir:
             return None
+        if not _turn_matches_request(turn_dir, request):
+            return None
         try:
             report = read_turn_report(turn_dir)
-        except InvalidTurnReportError:
+            if report is not None:
+                _require_feedback_contract(request, report)
+        except InvalidTurnReportError, FeedbackContractError:
             _LOGGER.exception("invalid report in interrupted turn %s", turn_dir)
             return None
         if report is None:
@@ -410,6 +414,27 @@ class TurnRunner:
             turn_dir / HELPER_REPORT_FILENAME, report.model_dump_json(indent=REPORT_JSON_INDENT)
         )
         return Completed(report=report, rebuilt=True)
+
+
+def _turn_matches_request(turn_dir: Path, request: TurnRequest) -> bool:
+    kind_path = turn_dir / REPORT_KIND_FILENAME
+    if not kind_path.is_file() or kind_path.read_text().strip() != request.kind.value:
+        return False
+    feedback_path = turn_dir / FEEDBACK_FILENAME
+    if request.feedback is None:
+        return not feedback_path.exists()
+    if not feedback_path.is_file():
+        return False
+    try:
+        recorded = FeedbackInput.model_validate_json(feedback_path.read_text())
+    except ValueError:
+        return False
+    return recorded == request.feedback
+
+
+def _require_feedback_contract(request: TurnRequest, report: Report | None) -> None:
+    if request.feedback is not None and report is not None:
+        check_feedback_report(request.feedback, report)
 
 
 def _turn_count(turns_root: Path) -> int:

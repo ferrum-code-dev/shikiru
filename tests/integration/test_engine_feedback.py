@@ -14,6 +14,7 @@ from shikiru.domain.feedback import (
     FeedbackSourceKind,
 )
 from shikiru.domain.reports import (
+    REPORT_FILENAME,
     REPORT_KIND_FILENAME,
     FeedbackAnalysis,
     FeedbackRework,
@@ -23,6 +24,7 @@ from shikiru.domain.reports import (
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Mode, Role, Status, Step
 from shikiru.engine.history import ReportHistory
+from shikiru.engine.turns import TurnRequest
 from shikiru.prompts.renderer import PromptName
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import set_role_script
@@ -392,3 +394,74 @@ async def test_feedback_reports_stay_readable_and_apart_from_integration_evidenc
         ReportKind.FEEDBACK_VERDICT.value,
     ]
     assert history.integration_metadata(task).summary != "verified"
+
+
+async def _recorded_analysis_turn(
+    engine_env: EngineEnv, tmux_server: TmuxServer, feedback: FeedbackInput
+) -> tuple[Task, FeedbackAnalysis]:
+    task = await _integrating(engine_env, await build_flow_task(engine_env, mode=Mode.IMPLEMENT))
+    flow_env = build_flow(engine_env, flow_settings())
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [_analysis_step(*(_decision(s.id, "disagree") for s in feedback.snapshot.sources))],
+    )
+    analysis = await _run(flow_env, task, Role.LEADER, ReportKind.FEEDBACK_ANALYSIS, feedback)
+    return task, analysis
+
+
+def _request(task: Task, kind: ReportKind, feedback: FeedbackInput) -> TurnRequest:
+    return TurnRequest(
+        step=Step.INTEGRATE,
+        iteration=task.iteration,
+        kind=kind,
+        template=_TEMPLATES[kind],
+        context={},
+        facts="",
+        feedback=feedback,
+    )
+
+
+async def test_a_recovered_feedback_report_is_reused_only_for_the_same_request(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    feedback = _feedback(_REVIEW, _THREAD)
+    task, analysis = await _recorded_analysis_turn(engine_env, tmux_server, feedback)
+    turns = engine_env.turn_system.turns
+
+    same = turns.completed_turn(
+        task.id, Role.LEADER, _request(task, ReportKind.FEEDBACK_ANALYSIS, feedback)
+    )
+    other_kind = turns.completed_turn(
+        task.id,
+        Role.LEADER,
+        _request(task, ReportKind.FEEDBACK_VERDICT, _feedback(_REVIEW, _THREAD, analysis=analysis)),
+    )
+    other_snapshot = turns.completed_turn(
+        task.id, Role.LEADER, _request(task, ReportKind.FEEDBACK_ANALYSIS, _feedback(_ECHO))
+    )
+
+    assert same is not None
+    assert isinstance(same[0].report, FeedbackAnalysis)
+    assert other_kind is None
+    assert other_snapshot is None
+
+
+async def test_a_recovered_feedback_report_that_breaks_its_contract_is_not_reused(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    feedback = _feedback(_REVIEW, _THREAD)
+    task, _ = await _recorded_analysis_turn(engine_env, tmux_server, feedback)
+    turn_dir = max((run_dir(engine_env.project_root, task.id) / "turns").iterdir())
+    incomplete = FeedbackAnalysis.model_validate(
+        {"summary": "s", "work": [], "decisions": [_decision(_REVIEW, "disagree")]}
+    )
+    (turn_dir / REPORT_FILENAME).write_text(incomplete.model_dump_json())
+
+    found = engine_env.turn_system.turns.completed_turn(
+        task.id, Role.LEADER, _request(task, ReportKind.FEEDBACK_ANALYSIS, feedback)
+    )
+
+    assert found is None
