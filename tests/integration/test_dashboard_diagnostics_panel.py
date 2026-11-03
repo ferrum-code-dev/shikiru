@@ -65,6 +65,10 @@ pytestmark = pytest.mark.usefixtures("colour_terminal", "connection")
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 _WIDE = (60, 30)
 _POPUP = (100, 50)
+_SHORT_POPUP = (100, 30)
+_MANY_FAULTS = 12
+_URGENT_FAULTS = 3
+_FOCUSED_CARD = 7
 _TINY = (20, 8)
 _WAIT_SECONDS = 5
 _REFRESH_SECONDS = 0.05
@@ -594,11 +598,13 @@ async def test_each_fault_is_a_card_whose_details_open_independently(
         assert "Failures 6" in " ".join(_faults_lines(app))
 
 
-async def test_a_refresh_keeps_cards_in_order_with_their_disclosure_state(
+async def test_a_refresh_keeps_a_scrolled_cards_state_focus_and_visibility(
     reader: StateReader, tmp_path: Path, connection: Connection
 ) -> None:
     clock = FakeClock(_START)
-    _record_fault(connection, clock, None, scope="base push main", error="CommandFailed")
+    scopes = [f"base push b{index}" for index in range(_MANY_FAULTS)]
+    for scope in scopes:
+        _record_fault(connection, clock, None, scope=scope, error="CommandFailed")
     app = dashboard_app(
         reader,
         write_minimal_project(tmp_path),
@@ -606,20 +612,39 @@ async def test_a_refresh_keeps_cards_in_order_with_their_disclosure_state(
         widget_names=["queue", "resources", "faults"],
         services=_Services(_SAMPLE),
     )
-    async with app.run_test(size=_POPUP) as pilot:
+    async with app.run_test(size=_SHORT_POPUP) as pilot:
         await _open_popup(app, pilot)
-        faults = app.screen.query_one("#faults")
-        await wait_until(lambda: faults.region.height > 0, timeout=_WAIT_SECONDS)
-        await _toggle_details(app, pilot, 0)
-        push_card = app.screen.query_one(FaultCard)
-        clock.advance(1)
-        _record_fault(connection, clock, None, scope="merge", error="ValueError", recoverable=False)
-        _record_fault(connection, clock, None, scope="base push main", error="CommandFailed")
-        await wait_until(lambda: len(app.screen.query(FaultCard)) == 2, timeout=_WAIT_SECONDS)
+        await wait_until(
+            lambda: len(app.screen.query(FaultCard)) == _MANY_FAULTS, timeout=_WAIT_SECONDS
+        )
+        await _toggle_details(app, pilot, _FOCUSED_CARD)
+        focused_card = app.screen.query(FaultCard)[_FOCUSED_CARD]
+        focused = focused_card.query_one("CollapsibleTitle")
+        assert app.focused is focused
+        scroller = app.screen.query_one("#context-widget-content")
+        scroller.scroll_to_widget(focused, animate=False)
         await pilot.pause()
-        assert _scope_order(app, "base push main", "merge") == ["merge", "base push main"]
+        clock.advance(1)
+        for index in range(_URGENT_FAULTS):
+            _record_fault(
+                connection,
+                clock,
+                None,
+                scope=f"merge m{index}",
+                error="ValueError",
+                recoverable=False,
+            )
+        await wait_until(
+            lambda: len(app.screen.query(FaultCard)) == _MANY_FAULTS + _URGENT_FAULTS,
+            timeout=_WAIT_SECONDS,
+        )
+        await pilot.pause()
+        await pilot.pause()
         cards = list(app.screen.query(FaultCard))
-        assert cards[1] is push_card
-        assert cards[0].query_one(Collapsible).collapsed is True
-        assert push_card.query_one(Collapsible).collapsed is False
-        assert app.focused is push_card.query_one("CollapsibleTitle")
+        assert [card.query_one(Collapsible).collapsed for card in cards[:_URGENT_FAULTS]] == [
+            True
+        ] * _URGENT_FAULTS
+        assert cards[_URGENT_FAULTS + _FOCUSED_CARD] is focused_card
+        assert focused_card.query_one(Collapsible).collapsed is False
+        assert app.focused is focused
+        assert scroller.region.contains_region(focused.region)

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 _RECONCILE_SCOPE_PREFIX = "reconcile "
 _NOT_RECORDED = "not recorded"
 _KEY_SEPARATOR = "\x00"
-_CAUSE_LIMIT = 120
+_CAUSE_LIMIT = 160
 _ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 
 
@@ -28,7 +28,6 @@ class Recovery(StrEnum):
     BOUNDED = "bounded"
     STARTUP_ONLY = "startup-only"
     UNKNOWN = "unknown"
-    UNRECOVERABLE = "unrecoverable"
 
 
 _STATUS = {
@@ -36,9 +35,10 @@ _STATUS = {
     Recovery.BOUNDED: "Retrying a few times, then waiting for an engine restart",
     Recovery.STARTUP_ONLY: "Retried only at the next engine start",
     Recovery.UNKNOWN: "Retry timing unknown",
-    Recovery.UNRECOVERABLE: "Not retried",
 }
+_UNEXPECTED_BACKOFF_STATUS = "Retrying automatically; persistent unexpected errors stop the engine"
 _UNRECOVERABLE_STEP = "Fix the code the traceback points to, then restart the engine"
+_UNKNOWN_CAUSE = "unknown: no error text was recorded"
 _UNKNOWN_IMPACT = "not recorded for this kind of fault"
 _UNKNOWN_STEP = "Read the cause in Details; no retry is known for this fault"
 _RESTART_STEP = "Fix the cause, then restart the engine to retry sooner"
@@ -51,6 +51,7 @@ class RetryPolicy:
     backoff_initial_seconds: float
     backoff_max_seconds: float
     close_attempts: int
+    unexpected_fault_limit: int
 
 
 def _target(scope: str, prefix: str) -> str | None:
@@ -59,13 +60,15 @@ def _target(scope: str, prefix: str) -> str | None:
 
 
 def recovery_of(scope: str, *, recoverable: bool) -> Recovery:
-    """Return how `scope` is retried; a scope this view does not know retries at unknown times."""
-    if not recoverable:
-        return Recovery.UNRECOVERABLE
+    """Return how `scope` is retried; a scope this view does not know retries at unknown times.
+
+    Whether the error is `recoverable` (environmental) does not change who schedules the retry,
+    except that the pull request close loop only retries environmental errors.
+    """
     if _target(scope, PUSH_FAULT_SCOPE) is not None or _target(scope, REMOTE_CHECK_FAULT_SCOPE):
         return Recovery.BACKOFF
     if scope == CLOSE_FAULT_SCOPE:
-        return Recovery.BOUNDED
+        return Recovery.BOUNDED if recoverable else Recovery.UNKNOWN
     if scope.startswith(_RECONCILE_SCOPE_PREFIX):
         return Recovery.STARTUP_ONLY
     return Recovery.UNKNOWN
@@ -90,9 +93,9 @@ def _impact_and_step(scope: str) -> tuple[str, str] | None:
     return None
 
 
-def _policy_text(recovery: Recovery, policy: RetryPolicy) -> str:
+def _policy_text(recovery: Recovery, policy: RetryPolicy, *, recoverable: bool) -> str:
     backoff = f"{policy.backoff_initial_seconds:g}s doubling up to {policy.backoff_max_seconds:g}s"
-    return {
+    text = {
         Recovery.BACKOFF: f"retried with backoff, {backoff}, while the engine runs",
         Recovery.BOUNDED: (
             f"up to {policy.close_attempts} attempts with backoff, {backoff}; "
@@ -100,8 +103,16 @@ def _policy_text(recovery: Recovery, policy: RetryPolicy) -> str:
         ),
         Recovery.STARTUP_ONLY: "attempted again only at the next engine start",
         Recovery.UNKNOWN: "not recorded for this kind of fault",
-        Recovery.UNRECOVERABLE: "none; a programming fault retrying cannot fix",
     }[recovery]
+    if recoverable:
+        return text
+    stop = (
+        f"; an unexpected (non-environmental) error stops the engine after "
+        f"{policy.unexpected_fault_limit} consecutive failures"
+        if recovery is Recovery.BACKOFF
+        else "; the error is unexpected, not an environmental failure"
+    )
+    return text + stop
 
 
 def _is_logged(scope: str) -> bool:
@@ -112,12 +123,24 @@ def _is_logged(scope: str) -> bool:
     )
 
 
+def _shorten(text: str) -> str:
+    one_line = " ".join(text.split())
+    return one_line if len(one_line) <= _CAUSE_LIMIT else one_line[: _CAUSE_LIMIT - 1] + _ELLIPSIS
+
+
+def _recorded_error(fault: FaultStreak) -> str:
+    if fault.detail is not None:
+        return fault.detail
+    return fault.message.removeprefix(f"{fault.scope} failed: ")
+
+
 def _cause(fault: FaultStreak) -> str:
-    if fault.detail is None:
-        return f"{fault.error} (error text {_NOT_RECORDED})"
-    lines = fault.detail.strip().splitlines()
-    first = lines[0] if lines else fault.detail
-    return first if len(first) <= _CAUSE_LIMIT else first[: _CAUSE_LIMIT - 1] + _ELLIPSIS
+    if fault.exit_code is not None:
+        stderr = (fault.stderr or "").strip()
+        return _shorten(
+            f"exit {fault.exit_code}: {stderr}" if stderr else f"exit {fault.exit_code}"
+        )
+    return _shorten(_recorded_error(fault)) or _UNKNOWN_CAUSE
 
 
 def _command_rows(fault: FaultStreak) -> tuple[FaultDetailRow, ...]:
@@ -145,12 +168,14 @@ def _details(
         else ()
     )
     return (
-        FaultDetailRow("Error", fault.message if fault.detail is None else fault.detail.strip()),
+        FaultDetailRow("Error", _recorded_error(fault).strip() or _UNKNOWN_CAUSE),
         *_command_rows(fault),
         FaultDetailRow("First seen", fault.first_seen.isoformat()),
         FaultDetailRow("Latest", fault.last_seen.isoformat()),
         FaultDetailRow("Failures", str(fault.repeat)),
-        FaultDetailRow("Retry policy", _policy_text(recovery, policy)),
+        FaultDetailRow(
+            "Retry policy", _policy_text(recovery, policy, recoverable=fault.recoverable)
+        ),
         FaultDetailRow("Next retry", _NOT_RECORDED),
         FaultDetailRow("Traceback", _NOT_RECORDED if fault.traceback is None else fault.traceback),
         FaultDetailRow("Event", f"#{fault.event_id} in {state_path}"),
@@ -165,16 +190,20 @@ def engine_fault_view(
     recovery = recovery_of(fault.scope, recoverable=fault.recoverable)
     known = _impact_and_step(fault.scope)
     impact, step = known if known is not None else (_UNKNOWN_IMPACT, _UNKNOWN_STEP)
-    if recovery is Recovery.UNRECOVERABLE:
+    if not fault.recoverable:
         step = _UNRECOVERABLE_STEP
     return EngineFaultView(
         key=f"{fault.task_id or ''}{_KEY_SEPARATOR}{fault.scope}",
         task_id=fault.task_id,
         scope=fault.scope,
-        status=_STATUS[recovery],
+        status=(
+            _UNEXPECTED_BACKOFF_STATUS
+            if recovery is Recovery.BACKOFF and not fault.recoverable
+            else _STATUS[recovery]
+        ),
         impact=impact,
         cause=_cause(fault),
         next_step=step,
-        needs_action=recovery is not Recovery.BACKOFF,
+        needs_action=recovery is not Recovery.BACKOFF or not fault.recoverable,
         details=_details(fault, recovery, policy, log_path=log_path, state_path=state_path),
     )

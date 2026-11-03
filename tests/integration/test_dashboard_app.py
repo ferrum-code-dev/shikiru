@@ -610,7 +610,7 @@ async def test_dashboard_mounts_the_default_widgets_and_fits_the_pane(
     EventLog(connection, clock).append(
         EventKind.ENGINE_FAULT,
         task_id=task.id,
-        message="resource sample failed",
+        message="resource sample failed: host sample failed",
         data={
             "scope": "resource sample",
             "error": "host sample failed",
@@ -679,7 +679,7 @@ async def test_home_status_keeps_stopped_engine_fault_context_without_escalation
     EventLog(connection, clock).append(
         EventKind.ENGINE_FAULT,
         task_id=task.id,
-        message="recorded host sampling failure",
+        message="resource sample failed: host sample failed",
         data={
             "scope": "resource sample",
             "error": "host sample failed",

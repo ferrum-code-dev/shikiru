@@ -267,12 +267,17 @@ a provider reset, and no evidence promises execution at a block's expiry.
 The Faults popup section is titled with the open-fault count (`Faults · 3`) and takes no room
 while none is open. Each open fault is one compact card: its task (or `project`) and scope, a
 recovery status, the practical impact, the latest recorded cause shortened to one line and one
-specific next step. Statuses keep the real retry policies apart: automatic backoff (base pushes and
+specific next step. The cause is the recorded error text: the event's detail, else its message, and
+for a failed command its exit code and stderr rather than its argv; it reads unknown only when no
+text was recorded. Statuses keep the real retry policies apart: automatic backoff (base pushes and
 remote checks), a bounded number of attempts and then the next engine start (pull request close),
-the next engine start only (startup reconciliation), unknown retry timing (any other recoverable
-scope) and not retried (unrecoverable). A scope the view does not know says its impact is not
-recorded rather than guessing. A collapsed `▸ Details` disclosure per card adds, without repeating
-the impact or next step, the full error; the failed command, exit code and stderr; first and latest
+the next engine start only (startup reconciliation) and unknown retry timing (any other
+scope). Whether the error was recoverable is stated separately from that policy and never replaces
+it: the tick guard retries an unexpected error with backoff too, and stops the engine after the
+configured number of consecutive unexpected failures, so an unrecoverable fault is flagged as
+needing the Operator while still naming its scope's real retries and that stop limit. A scope the
+view does not know says its impact is not recorded rather than guessing. A collapsed `▸ Details`
+disclosure per card adds, without repeating the impact or next step, the full error; the failed command, exit code and stderr; first and latest
 occurrence and the failure count; the retry policy with its configured backoff numbers and the next
 retry time, which is `not recorded` because the engine does not persist it; the traceback; and the
 state-database event reference with its path (plus the engine log for scopes that log). Each

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from rich.console import Group
 from rich.text import Text
-from textual.containers import Vertical
+from textual.containers import ScrollableContainer, Vertical
 from textual.widgets import Collapsible, Static
 
 from shikiru.dashboard.contract import WidgetPlacement
@@ -144,7 +144,28 @@ class FaultsPanel(Vertical):
         for key in [key for key in self._cards if key not in open_keys]:
             self._cards.pop(key).remove()
         cards = [self._card(fault) for fault in faults]
+        anchor = self._anchor()
         self._arrange(cards)
+        if anchor is not None:
+            self.call_after_refresh(self._restore, *anchor)
+
+    def _anchor(self) -> tuple[Widget, ScrollableContainer, int] | None:
+        focused = self.screen.focused
+        if focused is None or self not in focused.ancestors:
+            return None
+        scroller = next(
+            (node for node in focused.ancestors if isinstance(node, ScrollableContainer)), None
+        )
+        if scroller is None:
+            return None
+        return focused, scroller, focused.region.y
+
+    def _restore(self, focused: Widget, scroller: ScrollableContainer, old_y: int) -> None:
+        if not focused.is_attached:
+            return
+        shift = focused.region.y - old_y
+        if shift:
+            scroller.scroll_to(y=scroller.scroll_y + shift, animate=False)
 
     def _card(self, fault: EngineFaultView) -> FaultCard:
         card = self._cards.get(fault.key)

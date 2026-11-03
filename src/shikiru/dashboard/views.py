@@ -1072,6 +1072,7 @@ class StateDashboardViews:
             backoff_initial_seconds=settings.faults.backoff_initial_seconds,
             backoff_max_seconds=settings.faults.backoff_max_seconds,
             close_attempts=settings.network.pr_close_attempts,
+            unexpected_fault_limit=settings.faults.unexpected_fault_limit,
         )
         log_path = self._queries.engine_log_location()
         state_path = self._queries.state_database_location()
