@@ -56,9 +56,13 @@ class FakeGitHub:
             os.close(descriptor)
         hold.unlink()
 
-    def fail_next(self, subcommand: str, calls: int) -> None:
-        """Make the next `calls` calls of `gh pr <subcommand>` fail like a network blip."""
-        (self.state / f"{fake_gh.FAIL_PREFIX}{subcommand}").write_text(str(calls))
+    def fail_next(self, operation: str, calls: int) -> None:
+        """Make the next `calls` calls of `operation` fail like a network blip.
+
+        Operations are `pr <subcommand>` names, `graphql`, `post` (fails before recording the
+        comment) and `lost-post` (records the comment, then fails).
+        """
+        (self.state / f"{fake_gh.FAIL_PREFIX}{operation}").write_text(str(calls))
 
     def merge(self, number: int, commit: str) -> None:
         """Record pull request `number` as merged by `commit`, as gh reports a merged PR."""
@@ -173,3 +177,63 @@ async def merge_on_remote(remote_dir: Path, base: str, head: str, style: MergeSt
         landed = await git("commit-tree", tree, *parents, "-m", f"merge {head}")
     await git("update-ref", f"refs/heads/{base}", landed, base_sha)
     return landed
+
+
+def review_node(
+    number: int,
+    review_id: str,
+    state: str,
+    *,
+    body: str = "",
+    author: str | None = "reviewer",
+    submitted_at: str | None = fake_gh.FAKE_TIMESTAMP,
+) -> dict[str, Any]:
+    """A review of pull request `number` as GraphQL reports it; `submitted_at` None is pending."""
+    return {
+        "id": review_id,
+        "url": f"{fake_gh.URL_PREFIX}{number}#pullrequestreview-{review_id}",
+        "state": state,
+        "body": body,
+        "submittedAt": submitted_at,
+        "author": None if author is None else {"login": author},
+    }
+
+
+def comment_node(
+    number: int,
+    comment_id: int,
+    body: str,
+    *,
+    author: str | None = "reviewer",
+    review_id: str | None = None,
+) -> dict[str, Any]:
+    """An inline review comment of pull request `number`, opening or within a review thread."""
+    return {
+        "id": f"PRRC_{comment_id}",
+        "databaseId": comment_id,
+        "url": f"{fake_gh.URL_PREFIX}{number}#discussion_r{comment_id}",
+        "body": body,
+        "createdAt": fake_gh.FAKE_TIMESTAMP,
+        "author": None if author is None else {"login": author},
+        "pullRequestReview": None if review_id is None else {"id": review_id},
+    }
+
+
+def thread_node(
+    thread_id: str,
+    comments: list[dict[str, Any]],
+    *,
+    path: str = "src/module.py",
+    line: int | None = 1,
+    outdated: bool = False,
+    resolved: bool = False,
+) -> dict[str, Any]:
+    """An inline discussion holding `comments` in order, as the fake keeps it in its record."""
+    return {
+        "id": thread_id,
+        "path": path,
+        "line": line,
+        "isOutdated": outdated,
+        "isResolved": resolved,
+        "comments": comments,
+    }
