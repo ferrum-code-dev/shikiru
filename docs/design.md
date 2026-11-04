@@ -178,10 +178,15 @@ base, and handles conflicts, failed checks, closure and timeout explicitly. Repo
 merge policy remain in force. Integration progress is recorded for restart reconciliation.
 
 **PR feedback rounds.** While the PR waits (status `integrating`, wait reason `PR open`, no slot),
-a newly submitted `CHANGES_REQUESTED` review ID starts a round. Ordinary comments, approvals,
-pending or dismissed reviews, our own replies, edits to handled reviews and re-polls of the same
-review never do. All reviews present at round start form one batch; later ones wait for the next
-round. The Leader analyses the batch, the Implementer edits, the Leader verifies the result and
+a newly submitted `CHANGES_REQUESTED` review ID starts a round, and so does a new comment in an
+inline discussion that holds a comment of a `CHANGES_REQUESTED` review, whether or not the
+discussion is resolved. Conversation comments, approvals, pending or dismissed reviews, our own
+replies (recognised by their marker), edits to handled reviews and comments, and re-polls of the
+same review or comment never do. A discussion whose `CHANGES_REQUESTED` review is dismissed is no
+longer followed. All new reviews and comments present at round start form one batch; later ones
+wait for the next round. A discussion enters the batch whole, with its new comments marked, so the
+Leader sees its own earlier answers. Handled review and comment IDs are persisted with the round.
+The Leader analyses the batch, the Implementer edits, the Leader verifies the result and
 the replies, and the Engine alone publishes and replies. A round needs a scheduler-owned slot: the
 task becomes `queued` and is dispatched like any other, then returns to the PR wait. The Engine
 never dismisses reviews, resolves threads, approves or merges. Before edits it records the remote

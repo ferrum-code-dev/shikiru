@@ -242,10 +242,11 @@ SHA and subject, its destination and the integrated file and line totals, which 
 the task branch and worktree are cleaned up. `"pr"` pushes the task branch, opens/adopts a GitHub PR
 and waits for it to merge;
 conflicting/closed/failed or overdue PRs require recovery or a decision. Shikiru does not bypass
-repository review policy. A newly submitted changes-requested review starts a feedback round: the
+repository review policy. A newly submitted changes-requested review, or a new reply in one of its
+inline discussions, starts a feedback round: the
 Leader analyses it, the Implementer edits, the Leader verifies, and the engine pushes with a lease
-and replies per item, then returns to the PR wait. Comments, approvals, pending or dismissed
-reviews and edits to handled reviews do not start rounds, and Shikiru never dismisses reviews,
+and replies per item, then returns to the PR wait. Conversation comments, approvals, pending or dismissed
+reviews, Shikiru's own replies and edits to handled reviews do not start rounds, and Shikiru never dismisses reviews,
 resolves threads, approves or merges. `orchestration.max_iterations` bounds attempts per batch. A
 PR closed without merge escalates and keeps the branch and worktree; only an explicit Operator
 retry opens a new PR. Dirty overlapping changes in the main checkout block local integration;
