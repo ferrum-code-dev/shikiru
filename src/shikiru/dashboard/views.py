@@ -1386,7 +1386,7 @@ class StateDashboardViews:
         running_wait = self._running_quota_wait(task, now)
         if running_wait is None:
             return None
-        parts = self._running_quota_parts(task, running_wait)
+        parts = self._running_quota_parts(task, running_wait, now)
         return _FoundBlocker(WaitReason.QUOTA.value, parts, running_wait.block)
 
     def _quota_wait_view(self, quota_block: AgentBlock, now: datetime) -> QuotaWaitView:
@@ -1474,15 +1474,20 @@ class StateDashboardViews:
             exhausted_text=_QUOTA_WAITS_NO_OTHER_AGENT,
         )
 
-    def _running_quota_parts(self, task: Task, running_wait: _RunningQuotaWait) -> _BlockerParts:
+    def _running_quota_parts(
+        self, task: Task, running_wait: _RunningQuotaWait, now: datetime
+    ) -> _BlockerParts:
         settings = self._settings.current()
         until = running_wait.block.until
+        blocked_agents = frozenset(block.agent for block in self._active_blocks(now))
         return _quota_parts(
             until,
             quotas=(running_wait.quota,),
             raw=running_wait.raw,
             budget_ends=running_wait.budget_ends,
-            moves=running_quota_wait_moves(task, settings, until, running_wait.budget_ends),
+            moves=running_quota_wait_moves(
+                task, settings, until, running_wait.budget_ends, blocked_agents
+            ),
             exhausted_text=_QUOTA_ESCALATES_AT_LIMIT,
         )
 

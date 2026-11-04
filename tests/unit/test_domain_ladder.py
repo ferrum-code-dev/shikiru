@@ -84,6 +84,7 @@ class _MoveUpCase:
     expected_index: int | None
     expected_cleared: dict[Role, Rung]
     expected_counters: Counters
+    blocked_agents: frozenset[str] = frozenset()
 
 
 @pytest.mark.parametrize(
@@ -127,11 +128,34 @@ class _MoveUpCase:
                 make_task(rung_index={Role.IMPLEMENTER: len(IMPLEMENTER_RUNGS) - 1}),
                 Role.IMPLEMENTER,
                 True,
+                0,
+                {},
+                Counters(),
+            ),
+            id="different-agent-falls-back-below-the-current-rung",
+        ),
+        pytest.param(
+            _MoveUpCase(
+                make_task(rung_index={Role.IMPLEMENTER: len(IMPLEMENTER_RUNGS) - 1}),
+                Role.IMPLEMENTER,
+                False,
                 None,
                 {},
                 Counters(),
             ),
-            id="no-different-agent-remains",
+            id="same-agent-escalation-stays-upward-only",
+        ),
+        pytest.param(
+            _MoveUpCase(
+                make_task(rung_index={Role.IMPLEMENTER: 0}),
+                Role.IMPLEMENTER,
+                True,
+                None,
+                {},
+                Counters(),
+                frozenset({"claude"}),
+            ),
+            id="no-unblocked-different-agent",
         ),
         pytest.param(
             _MoveUpCase(
@@ -141,8 +165,8 @@ class _MoveUpCase:
                 ),
                 Role.IMPLEMENTER,
                 True,
-                None,
-                {},
+                0,
+                {Role.IMPLEMENTER: _ACTIVE_OVERRIDE},
                 Counters(),
             ),
             id="different-agent-compares-with-active-override",
@@ -179,7 +203,13 @@ class _MoveUpCase:
     ],
 )
 def test_move_up_selects_the_next_allowed_rung_and_updates_role_state(case: _MoveUpCase) -> None:
-    move = move_up(case.task, case.role, _SETTINGS, different_agent=case.different_agent)
+    move = move_up(
+        case.task,
+        case.role,
+        _SETTINGS,
+        different_agent=case.different_agent,
+        blocked_agents=case.blocked_agents,
+    )
 
     if case.expected_index is None:
         assert move is None

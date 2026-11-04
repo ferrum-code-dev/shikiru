@@ -74,13 +74,19 @@ def move_up(
     For the Implementer, `rejections_on_rung` also resets, since it counts rework at one rung.
     Agents in `blocked_agents` are skipped when selecting the destination rung.
 
-    Returns `None` once no further rung satisfies `different_agent` above the current one; the
-    caller then keeps the task on its current rung.
+    With `different_agent=True` the move is a quota fallback: rungs above the current one come
+    first, then the rungs from the bottom of the ladder up, so a role parked on the last rung can
+    return to an earlier agent that is no longer blocked.
+
+    Returns `None` once no rung satisfies the constraints; the caller then keeps the task on its
+    current rung.
     """
     ladder = _ladder_for(role, task, settings)
     current_rung = pick_rung(task, role, settings)
     current_index = task.rung_index.get(role, 0)
-    for index in range(current_index + 1, len(ladder)):
+    above = range(current_index + 1, len(ladder))
+    below = range(current_index + 1) if different_agent else range(0)
+    for index in (*above, *below):
         candidate = ladder[index]
         if candidate.agent in blocked_agents:
             continue

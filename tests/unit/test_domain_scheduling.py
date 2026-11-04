@@ -14,9 +14,11 @@ from shikiru.domain.scheduling import (
     pick_ready,
     quota_blocked_agents,
     quota_blocking_agent,
+    running_quota_wait_moves,
 )
-from shikiru.domain.tasks import Hold, Status
-from tests.support.factories import make_task
+from shikiru.domain.steps import Step
+from shikiru.domain.tasks import Hold, Role, Status
+from tests.support.factories import make_settings, make_task
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -293,3 +295,25 @@ def test_each_blocked_agent_of_a_task_is_listed_once_leader_first(
     expected: list[str],
 ) -> None:
     assert quota_blocked_agents(agents, blocked_until) == expected
+
+
+_BUDGET_ENDS = _EARLIER
+_RUNNING_IMPLEMENTER = make_task(step=Step.IMPLEMENT, rung_index={Role.IMPLEMENTER: 2})
+
+
+@pytest.mark.parametrize(
+    ("block_until", "blocked_agents", "expected"),
+    [
+        pytest.param(_EARLIER, frozenset[str](), False, id="block-ends-within-budget"),
+        pytest.param(_LATER, frozenset({"claude"}), True, id="another-agent-unblocked"),
+        pytest.param(_LATER, frozenset({"codex", "claude"}), False, id="every-other-agent-blocked"),
+    ],
+)
+def test_a_running_quota_wait_moves_only_to_an_unblocked_other_agent(
+    block_until: datetime, blocked_agents: frozenset[str], expected: bool
+) -> None:
+    moves = running_quota_wait_moves(
+        _RUNNING_IMPLEMENTER, make_settings(), block_until, _BUDGET_ENDS, blocked_agents
+    )
+
+    assert moves is expected

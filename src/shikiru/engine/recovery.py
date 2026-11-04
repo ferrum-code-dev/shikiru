@@ -122,7 +122,9 @@ class TurnRecovery:
 
     def _policy(self, task: Task, role: Role, *, quota_wait_exhausted: bool) -> RecoveryPolicy:
         current = move_up(task, role, self._settings)
-        different = move_up(task, role, self._settings, different_agent=True)
+        different = move_up(
+            task, role, self._settings, different_agent=True, blocked_agents=self._blocked_agents()
+        )
         retries = self._settings.orchestration.retries
         return RecoveryPolicy(
             now=self._clock.now(),
@@ -202,7 +204,13 @@ class TurnRecovery:
         different_agent: bool,
         result: TurnResult,
     ) -> Task | None:
-        move = move_up(task, role, self._settings, different_agent=different_agent)
+        move = move_up(
+            task,
+            role,
+            self._settings,
+            different_agent=different_agent,
+            blocked_agents=self._blocked_agents() if different_agent else frozenset(),
+        )
         if move is None:
             return None
         old_rung = pick_rung(task, role, self._settings)
@@ -227,6 +235,9 @@ class TurnRecovery:
             },
         )
         return updated
+
+    def _blocked_agents(self) -> frozenset[str]:
+        return frozenset(block.agent for block in self._quota.active_blocks(self._clock.now()))
 
     def _block_quota(self, task: Task, role: Role, resets_at: datetime | None) -> None:
         agent = pick_rung(task, role, self._settings).agent

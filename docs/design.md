@@ -76,8 +76,9 @@ The scheduler respects dependency completion, task priority, available parallel 
 CPU/free-RAM dispatch gates and provider quota blocks. A cancelled prerequisite cancels dependent
 queued work. Limits on dispatch do not cap resources already-running agent processes can consume.
 When a queued task's selected agent has a quota block beyond `max_quota_wait` (in seconds),
-the scheduler advances that role to the next unblocked agent in its ladder. Shorter blocks wait
-for reset; without an available later agent, the task stays queued until the block expires.
+the scheduler advances that role to an unblocked different agent in its ladder: a later rung
+first, otherwise the earliest suitable rung below. Shorter blocks wait for reset; without an
+available different agent, the task stays queued until the block expires.
 
 A persisted quota block is a prediction, not a lock. While a task waits on a block, in a turn's
 quota wait or queued, including after an engine restart, the engine revalidates it every
@@ -112,7 +113,8 @@ a fresh session with handoff context from recorded work. Plugins own the actual 
 compaction behavior.
 
 Recovery is explicit and bounded by failure type: unavailable providers receive backoff/retries,
-quota failures wait for reset within policy or move to a later different-provider rung, and stalls
+quota failures wait for reset within policy or move to an unblocked different-provider rung (a
+later one first, else an earlier one) and escalate only when none exists, and stalls
 receive limited continuation attempts. A quota failure's reset comes from, in order, the provider's
 explicit reset value, its date text (`try again at Nov 4th, 2026 7:52 AM`, read in the host's local
 zone because the provider prints local time; with no zone to establish it stays unknown), then the

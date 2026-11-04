@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import os
 from contextlib import suppress
@@ -17,7 +18,7 @@ from shikiru.dashboard.contract import TaskBrowserFilter
 from shikiru.domain.commands import SetRung
 from shikiru.domain.events import EventKind
 from shikiru.domain.recovery import QUOTA_MARGIN, QUOTA_PROBE
-from shikiru.domain.steps import Step
+from shikiru.domain.steps import Step, Transition
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
@@ -108,9 +109,18 @@ async def _start_flow(
     script: list[dict[str, object]],
     clock: FakeClock,
     mode: Mode = Mode.IMPLEMENT,
+    implementer_rung: int = 0,
 ) -> tuple[asyncio.Task[None], str]:
     await init_project_repo(engine_env.project_root)
     task = await build_flow_task(engine_env, mode=mode)
+    if implementer_rung:
+        engine_env.tasks.apply_transition(
+            task.id,
+            dataclasses.replace(
+                Transition.stay(task, step=task.step, status=task.status),
+                rung_index={Role.IMPLEMENTER: implementer_rung},
+            ),
+        )
     role = Role.LEADER if mode is Mode.PLAN else Role.IMPLEMENTER
     await set_role_script(tmux_server, role, script)
     flow_env = build_flow(
@@ -432,6 +442,51 @@ async def test_quota_wait_deadline_moves_to_a_different_agent(
     assert [run.agent for run in runs] == [FAKE_AGENT_ALIAS, FAKE_AGENT_NAME]
     assert runs[0].session_id != runs[1].session_id
     assert quota.block_for(FAKE_AGENT_NAME) is not None
+
+
+async def test_quota_exhaustion_falls_back_to_an_earlier_unblocked_agent(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    base = _rung_settings(Rung(agent=FAKE_AGENT_ALIAS, model="fake-2", effort=None))
+    implementer = base.roles.implementer.model_copy(
+        update={"ladder": [Rung(agent=FAKE_AGENT_ALIAS, model="fake-2", effort=None), FAKE_RUNG]}
+    )
+    roles = base.roles.model_copy(update={"implementer": implementer})
+    timeouts = base.orchestration.timeouts.model_copy(update={"max_quota_wait": 120})
+    settings = base.model_copy(
+        update={
+            "roles": roles,
+            "orchestration": base.orchestration.model_copy(update={"timeouts": timeouts}),
+        }
+    )
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=[
+            {
+                "kind": "fail",
+                "failure_kind": "quota",
+                "resets_at": (TASK_CREATED_AT + timedelta(hours=9)).isoformat(),
+            }
+        ],
+        implementer_rung=1,
+    )
+
+    await wait_until(
+        lambda: (
+            len([run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER])
+            == 2
+        ),
+        timeout=10,
+    )
+    await _drive(flow_task, clock)
+
+    runs = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
+    assert [run.agent for run in runs] == [FAKE_AGENT_ALIAS, FAKE_AGENT_NAME]
+    assert not fetch_open_escalations(engine_env.connection)
 
 
 _KNOWN_RESET = TASK_CREATED_AT + timedelta(minutes=40)

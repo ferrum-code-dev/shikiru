@@ -119,8 +119,9 @@ def quota_wait_reroutes(
 ) -> bool:
     """Return whether the scheduler moves `task` to another agent: its block outlasts `wait_limit`.
 
-    A role moves when its resolved agent is blocked beyond `wait_limit` and a higher rung on a
-    different, unblocked agent exists; this is the rule the scheduler applies to queued tasks.
+    A role moves when its resolved agent is blocked beyond `wait_limit` and a rung on a different,
+    unblocked agent exists, a higher one first, else one below; this is the rule the scheduler
+    applies to queued tasks.
     """
     blocked_agents = frozenset(blocked_until)
     for role in (Role.LEADER, Role.IMPLEMENTER):
@@ -138,16 +139,24 @@ def running_quota_wait_moves(
     settings: Settings,
     block_until: datetime,
     budget_ends: datetime,
+    blocked_agents: frozenset[str],
 ) -> bool:
     """Return whether a running turn's quota wait moves `task` to another agent when it gives up.
 
     The engine fixes the wait's deadline at `budget_ends` when the wait starts. It gives up only
     if the block still outlasts that deadline, and then moves the acting role to a different agent
-    when one exists. Unlike `quota_wait_reroutes`, it does not skip blocked agents.
+    when one exists that is not in `blocked_agents`, the rule the engine's recovery applies.
     """
     if block_until <= budget_ends:
         return False
-    return move_up(task, task_acting_role(task), settings, different_agent=True) is not None
+    moved = move_up(
+        task,
+        task_acting_role(task),
+        settings,
+        different_agent=True,
+        blocked_agents=blocked_agents,
+    )
+    return moved is not None
 
 
 def _group_queued_tasks(
