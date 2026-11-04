@@ -163,6 +163,7 @@ class CodexTurnParser:
         self._failure: Mapping[str, Any] | None = None
         self._malformed = False
         self._terminal = False
+        self._did_start_thread = False
         self._did_complete = False
         self._context_exceeded = False
         self._rollout = rollout_path or _rollout_path(home, session_id)
@@ -218,12 +219,16 @@ class CodexTurnParser:
         )
         return []
 
-    def finish(self, exit_code: int, stderr: str) -> list[AgentSignal]:
+    def finish(
+        self, exit_code: int, stderr: str, *, interrupted: bool = False
+    ) -> list[AgentSignal]:
         if self._terminal:
             return []
         self._terminal = True
         if self._malformed:
             return [TurnFailed(FailureKind.UNKNOWN, _MALFORMED_STREAM_MESSAGE, None)]
+        if interrupted and not self._did_start_thread:
+            return self._finish_interrupted_before_session(exit_code, stderr)
         if self._rollout is None:
             self._rollout = _rollout_path(self._home, self._session_id)
         entries = _read_rollout(self._rollout)
@@ -247,30 +252,53 @@ class CodexTurnParser:
         elif self._did_complete:
             signals.append(TurnEnded(self._last_message))
         else:
-            failure = _classify_error(stderr, None, "")
-            if failure is None:
-                signals.append(
-                    TurnFailed(
-                        FailureKind.UNKNOWN,
-                        f"{_UNKNOWN_ERROR_MESSAGE}; process exited with status {exit_code}; "
-                        f"stderr tail: {stderr or EMPTY_OUTPUT}",
-                        None,
-                    )
-                )
-            else:
-                self._context_exceeded = failure.context_exceeded
-                reset = (
-                    self._reset_time.parse(stderr) or exhausted_reset(quota, self._clock.now())
-                    if failure.kind is FailureKind.QUOTA
-                    else None
-                )
-                signals.append(TurnFailed(failure.kind, stderr.strip(), reset))
+            signals.extend(
+                self._finish_without_result(exit_code, stderr, quota, interrupted=interrupted)
+            )
         return signals
+
+    def _finish_interrupted_before_session(self, exit_code: int, stderr: str) -> list[AgentSignal]:
+        if self._failure is not None:
+            return [self._failed_signal(self._failure, stderr, self._latest_streamed_quota)]
+        if self._did_complete:
+            return [TurnEnded(self._last_message)]
+        return self._finish_without_result(
+            exit_code, stderr, self._latest_streamed_quota, interrupted=True
+        )
+
+    def _finish_without_result(
+        self,
+        exit_code: int,
+        stderr: str,
+        quota: Sequence[QuotaWindow],
+        *,
+        interrupted: bool,
+    ) -> list[AgentSignal]:
+        failure = _classify_error(stderr, None, "")
+        if failure is None:
+            if interrupted:
+                return []
+            return [
+                TurnFailed(
+                    FailureKind.UNKNOWN,
+                    f"{_UNKNOWN_ERROR_MESSAGE}; process exited with status {exit_code}; "
+                    f"stderr tail: {stderr or EMPTY_OUTPUT}",
+                    None,
+                )
+            ]
+        self._context_exceeded = failure.context_exceeded
+        reset = (
+            self._reset_time.parse(stderr) or exhausted_reset(quota, self._clock.now())
+            if failure.kind is FailureKind.QUOTA
+            else None
+        )
+        return [TurnFailed(failure.kind, stderr.strip(), reset)]
 
     def _thread_started(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         session_id = payload.get(_THREAD_ID_FIELD)
         if not isinstance(session_id, str) or not session_id.strip():
             return []
+        self._did_start_thread = True
         self._session_id = session_id
         self._rollout = self._rollout_override or _rollout_path(self._home, session_id)
         return [SessionStarted(session_id)]

@@ -270,7 +270,9 @@ class ClaudeTurnParser:
         handler = handlers.get(cast("str", payload.get(_TYPE_FIELD)))
         return handler(payload) if handler is not None else []
 
-    def finish(self, exit_code: int, stderr: str) -> list[AgentSignal]:
+    def finish(
+        self, exit_code: int, stderr: str, *, interrupted: bool = False
+    ) -> list[AgentSignal]:
         if self._terminal:
             return []
         if self._malformed_line is not None:
@@ -289,7 +291,7 @@ class ClaudeTurnParser:
             if exit_code != 0:
                 return self._finish_failed_process(exit_code, stderr)
             return self._finish_success(self._success_payload)
-        return self._finish_without_result(exit_code, stderr)
+        return self._finish_without_result(exit_code, stderr, interrupted=interrupted)
 
     def _finish_success(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         compaction_problem = self._compaction_problem()
@@ -311,13 +313,18 @@ class ClaudeTurnParser:
         signals.append(TurnEnded(last_message))
         return signals
 
-    def _finish_without_result(self, exit_code: int, stderr: str) -> list[AgentSignal]:
+    def _finish_without_result(
+        self, exit_code: int, stderr: str, *, interrupted: bool = False
+    ) -> list[AgentSignal]:
         failure = self._classify_failure(None, stderr)
         if failure is not None:
             kind, message, resets_at = failure
             self._terminal = True
             return [TurnFailed(kind, _stderr_message(exit_code, stderr, message), resets_at)]
         compaction_problem = self._compaction_problem()
+        if interrupted and compaction_problem is None:
+            self._terminal = True
+            return []
         message = compaction_problem or _UNKNOWN_ERROR_MESSAGE
         kind = FailureKind.OTHER if compaction_problem is not None else FailureKind.UNKNOWN
         self._terminal = True

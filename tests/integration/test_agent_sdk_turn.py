@@ -31,7 +31,7 @@ from shikiru.agents.sdk.turn import (
     stream_log_path,
 )
 from shikiru.plugins.agents.claude.turn import CONTINUE_PROMPT, ClaudeTurnParser, ClaudeTurnSequence
-from shikiru.plugins.agents.codex.turn import CodexTurnSequence
+from shikiru.plugins.agents.codex.turn import CodexTurnParser, CodexTurnSequence
 from shikiru.process import SubprocessRunner
 from tests.support.clock import FakeClock
 from tests.support.waiting import wait_until
@@ -41,6 +41,15 @@ _CLAUDE_FIXTURES = Path(__file__).parents[1] / "fixtures" / "agents" / "claude"
 _CONTEXT_FAILURE_FIXTURE = "turn_context_failure.jsonl"
 _TEST_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _TURN_STOP_TIMEOUT_SECONDS = 10
+_CODEX_SESSION_ID = "session-a"
+_CODEX_SESSION_STARTED = f'{{"type":"thread.started","thread_id":"{_CODEX_SESSION_ID}"}}\n'.encode()
+_CODEX_STOP_DIAGNOSTIC = "Reading additional input from stdin..."
+_CODEX_MESSAGE_BEFORE_SESSION = (
+    b'{"type":"item.completed","item":{"type":"agent_message","text":"early"}}\n'
+)
+_CODEX_FAILURE_BEFORE_SESSION = (
+    b'{"type":"turn.failed","error":{"message":"provider rejected turn"}}\n'
+)
 
 
 @dataclass
@@ -53,8 +62,11 @@ class _Parser:
             return [SessionStarted(entry["session_id"])]
         return [TurnEnded("finished")]
 
-    def finish(self, exit_code: int, stderr: str) -> list[AgentSignal]:
+    def finish(
+        self, exit_code: int, stderr: str, *, interrupted: bool = False
+    ) -> list[AgentSignal]:
         del exit_code, stderr
+        del interrupted
         return []
 
 
@@ -86,6 +98,14 @@ def _spec(tmp_path: Path, *, session_id: str | None) -> TurnSpec:
     )
 
 
+def _process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 def _process(tmp_path: Path, program: str) -> TurnProcess:
     return TurnProcess(
         argv=(sys.executable, "-c", program),
@@ -93,6 +113,37 @@ def _process(tmp_path: Path, program: str) -> TurnProcess:
         env={},
         parser=_Parser(),
     )
+
+
+def _codex_process(
+    tmp_path: Path,
+    program: str,
+    *,
+    session_id: str | None = None,
+    home: Path | None = None,
+) -> TurnProcess:
+    clock = FakeClock(_TEST_NOW)
+    parser = CodexTurnParser(
+        session_id=session_id,
+        initial_usage=None,
+        home=tmp_path / "codex-home" if home is None else home,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+    return TurnProcess(
+        argv=(sys.executable, "-c", program),
+        cwd=tmp_path,
+        env={},
+        parser=parser,
+    )
+
+
+def _write_codex_rollout(home: Path, session_id: str) -> None:
+    rollout = (
+        home / "sessions" / "2030" / "01" / "01" / f"rollout-2030-01-01T00-00-00-{session_id}.jsonl"
+    )
+    rollout.parent.mkdir(parents=True)
+    rollout.write_bytes((_CODEX_FIXTURES / "rollout_first.jsonl").read_bytes())
 
 
 @pytest.mark.asyncio
@@ -199,6 +250,208 @@ async def test_process_exit_without_a_result_yields_unknown_with_exit_and_stderr
     assert signals[-1].kind is FailureKind.UNKNOWN
     assert "status 7" in signals[-1].message
     assert diagnostic in signals[-1].message
+
+
+@pytest.mark.asyncio
+async def test_codex_intentional_stop_does_not_report_a_missing_result(
+    tmp_path: Path,
+) -> None:
+    ready = tmp_path / "codex-ready"
+    program = (
+        "import pathlib, signal, sys; "
+        f"sys.stdout.buffer.write({_CODEX_SESSION_STARTED!r}); sys.stdout.flush(); "
+        f"pathlib.Path({str(ready)!r}).touch(); "
+        f"sys.stderr.write({_CODEX_STOP_DIAGNOSTIC!r}); sys.stderr.flush(); "
+        "signal.pause()"
+    )
+    spec = replace(_spec(tmp_path, session_id=None), rung=Rung("codex", "test"))
+    turn = await StreamingTurn.start(
+        spec,
+        SubprocessRunner(),
+        _SingleProcessSequence(_codex_process(tmp_path, program)),
+    )
+    signals = turn.signals()
+
+    try:
+        assert await anext(signals) == SessionStarted("session-a")
+        await wait_until(ready.is_file, _TURN_STOP_TIMEOUT_SECONDS)
+        await turn.stop()
+        remaining = [signal async for signal in signals]
+    finally:
+        await turn.stop()
+
+    assert not any(isinstance(signal, TurnFailed) for signal in remaining), remaining
+
+
+@pytest.mark.asyncio
+async def test_codex_unexpected_exit_without_a_result_remains_visible(tmp_path: Path) -> None:
+    program = (
+        f"import sys; sys.stdout.buffer.write({_CODEX_SESSION_STARTED!r}); "
+        f"sys.stderr.write({_CODEX_STOP_DIAGNOSTIC!r}); sys.exit(7)"
+    )
+    spec = replace(_spec(tmp_path, session_id=None), rung=Rung("codex", "test"))
+    turn = await StreamingTurn.start(
+        spec,
+        SubprocessRunner(),
+        _SingleProcessSequence(_codex_process(tmp_path, program)),
+    )
+
+    signals = [signal async for signal in turn.signals()]
+
+    assert signals[0] == SessionStarted("session-a")
+    assert isinstance(signals[-1], TurnFailed)
+    assert signals[-1].kind is FailureKind.UNKNOWN
+    assert "without a structured result" in signals[-1].message
+    assert "status 7" in signals[-1].message
+    assert _CODEX_STOP_DIAGNOSTIC in signals[-1].message
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_resumed_start_with_rollout_evidence_keeps_session_available(
+    tmp_path: Path,
+) -> None:
+    ready = tmp_path / "resumed-start-ready"
+    program = f"import pathlib, signal; pathlib.Path({str(ready)!r}).touch(); signal.pause()"
+    home = tmp_path / "codex-home"
+    _write_codex_rollout(home, _CODEX_SESSION_ID)
+    spec = replace(_spec(tmp_path, session_id=_CODEX_SESSION_ID), rung=Rung("codex", "test"))
+    turn = await StreamingTurn.start(
+        spec,
+        SubprocessRunner(),
+        _SingleProcessSequence(
+            _codex_process(tmp_path, program, session_id=_CODEX_SESSION_ID, home=home)
+        ),
+    )
+    signals = turn.signals()
+
+    try:
+        await wait_until(ready.is_file, _TURN_STOP_TIMEOUT_SECONDS)
+        await turn.stop()
+        assert [signal async for signal in signals] == []
+    finally:
+        await turn.stop()
+
+    resumed_spec = replace(spec, turn_dir=tmp_path / "resumed-turn")
+    resumed_program = f"import sys; sys.stdout.buffer.write({_CODEX_SESSION_STARTED!r}); "
+    resumed_program += 'sys.stdout.buffer.write(b\'{"type":"turn.completed"}\\n\')'
+    resumed = await StreamingTurn.start(
+        resumed_spec,
+        SubprocessRunner(),
+        _SingleProcessSequence(
+            _codex_process(
+                tmp_path,
+                resumed_program,
+                session_id=_CODEX_SESSION_ID,
+                home=home,
+            )
+        ),
+    )
+
+    resumed_signals = [signal async for signal in resumed.signals()]
+    assert resumed_signals[0] == SessionStarted(_CODEX_SESSION_ID)
+    assert resumed_signals[-1] == TurnEnded("")
+
+
+@pytest.mark.asyncio
+async def test_interrupted_resumed_start_preserves_explicit_codex_failure(
+    tmp_path: Path,
+) -> None:
+    ready = tmp_path / "resumed-failure-ready"
+    home = tmp_path / "codex-home"
+    _write_codex_rollout(home, _CODEX_SESSION_ID)
+    program = (
+        "import pathlib, signal, sys; "
+        f"sys.stdout.buffer.write({_CODEX_FAILURE_BEFORE_SESSION!r}); sys.stdout.flush(); "
+        f"pathlib.Path({str(ready)!r}).touch(); "
+        "signal.pause()"
+    )
+    spec = replace(_spec(tmp_path, session_id=_CODEX_SESSION_ID), rung=Rung("codex", "test"))
+    turn = await StreamingTurn.start(
+        spec,
+        SubprocessRunner(),
+        _SingleProcessSequence(
+            _codex_process(tmp_path, program, session_id=_CODEX_SESSION_ID, home=home)
+        ),
+    )
+    signals = turn.signals()
+
+    try:
+        await wait_until(ready.is_file, _TURN_STOP_TIMEOUT_SECONDS)
+        await turn.stop()
+        remaining = [signal async for signal in signals]
+    finally:
+        await turn.stop()
+
+    assert len(remaining) == 1
+    assert isinstance(remaining[0], TurnFailed)
+    assert "provider rejected turn" in remaining[0].message
+
+
+@pytest.mark.asyncio
+async def test_intentional_stop_preserves_protocol_failure_before_session(
+    tmp_path: Path,
+) -> None:
+    ready = tmp_path / "invalid-start-ready"
+    program = (
+        "import pathlib, signal, sys; "
+        f"sys.stdout.buffer.write({_CODEX_MESSAGE_BEFORE_SESSION!r}); sys.stdout.flush(); "
+        f"pathlib.Path({str(ready)!r}).touch(); "
+        "signal.pause()"
+    )
+    spec = replace(_spec(tmp_path, session_id="session-a"), rung=Rung("codex", "test"))
+    turn = await StreamingTurn.start(
+        spec,
+        SubprocessRunner(),
+        _SingleProcessSequence(_codex_process(tmp_path, program)),
+    )
+    signals = turn.signals()
+
+    try:
+        await wait_until(ready.is_file, _TURN_STOP_TIMEOUT_SECONDS)
+        await turn.stop()
+        remaining = [signal async for signal in signals]
+    finally:
+        await turn.stop()
+
+    assert len(remaining) == 1
+    assert isinstance(remaining[0], TurnFailed)
+    assert remaining[0].kind is FailureKind.UNKNOWN
+    assert "signal before SessionStarted" in remaining[0].message
+
+
+@pytest.mark.asyncio
+async def test_stop_after_process_exit_keeps_missing_result_failure(tmp_path: Path) -> None:
+    ready = tmp_path / "unexpected-exit-ready"
+    session_output = b'{"event":"session","session_id":"session-a"}\n'
+    diagnostic = "agent stopped before a result"
+    program = (
+        "import pathlib, sys; "
+        f"sys.stdout.buffer.write({session_output!r}); sys.stdout.flush(); "
+        f"sys.stderr.write({diagnostic!r}); sys.stderr.flush(); "
+        f"pathlib.Path({str(ready)!r}).touch(); sys.exit(7)"
+    )
+    spec = _spec(tmp_path, session_id=None)
+    turn = await StreamingTurn.start(
+        spec,
+        SubprocessRunner(),
+        _SingleProcessSequence(_process(tmp_path, program)),
+    )
+    signals = turn.signals()
+
+    try:
+        assert await anext(signals) == SessionStarted("session-a")
+        await wait_until(lambda: not _process_exists(turn.pid), _TURN_STOP_TIMEOUT_SECONDS)
+        await turn.stop()
+        remaining = [signal async for signal in signals]
+    finally:
+        await turn.stop()
+
+    assert len(remaining) == 1
+    assert isinstance(remaining[0], TurnFailed)
+    assert remaining[0].kind is FailureKind.UNKNOWN
+    assert "without a turn result" in remaining[0].message
+    assert "status 7" in remaining[0].message
+    assert diagnostic in remaining[0].message
 
 
 @pytest.mark.asyncio

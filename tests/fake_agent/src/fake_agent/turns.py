@@ -97,7 +97,10 @@ class FakeTurnParser:
         self.compacted |= isinstance(signal, Compacted)
         return [signal]
 
-    def finish(self, exit_code: int, stderr: str) -> list[AgentSignal]:
+    def finish(
+        self, exit_code: int, stderr: str, *, interrupted: bool = False
+    ) -> list[AgentSignal]:
+        del interrupted
         if exit_code != 0:
             return [
                 TurnFailed(

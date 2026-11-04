@@ -49,8 +49,10 @@ class TurnParser(Protocol):
         """Map one newline-free stdout line to zero or more signals."""
         ...
 
-    def finish(self, exit_code: int, stderr: str) -> list[AgentSignal]:
-        """Map process exit and captured stderr to final signals."""
+    def finish(
+        self, exit_code: int, stderr: str, *, interrupted: bool = False
+    ) -> list[AgentSignal]:
+        """Map process exit and captured stderr, marking an intentional stop as interrupted."""
         ...
 
 
@@ -103,6 +105,7 @@ class StreamingTurn:
         self._process = process
         self._signal_reader_started = False
         self._stopped = False
+        self._interrupted = False
         self._session_id: str | None = None
         self._session_started = False
         self._process_session_started = False
@@ -138,34 +141,24 @@ class StreamingTurn:
             while True:
                 self._process_session_started = False
                 execution = _ProcessExecution(
-                    self._current_process_spec.parser,
-                    self._stream_path,
-                    self._stderr_path,
-                    self._normalize,
-                    process,
+                    parser=self._current_process_spec.parser,
+                    stream_path=self._stream_path,
+                    stderr_path=self._stderr_path,
+                    normalize=self._normalize,
+                    process=process,
+                    interrupted=lambda: self._interrupted,
                 )
                 async for signal in execution.signals():
                     yield signal
                 outcome = execution.outcome
-                if execution.protocol_problem is not None:
-                    yield self._unknown_failure(
-                        execution.protocol_problem, outcome.exit_code, process.stderr_tail
-                    )
+                protocol_failure = self._protocol_failure(execution, outcome, process)
+                if protocol_failure is not None:
+                    yield protocol_failure
                     return
-                if not self._session_started:
-                    yield self._unknown_failure(
-                        "agent stream omitted SessionStarted",
-                        outcome.exit_code,
-                        process.stderr_tail,
-                    )
-                    return
-                if self._stopped:
-                    terminal = execution.terminal or self._unknown_failure(
-                        "agent process ended without a turn result",
-                        outcome.exit_code,
-                        process.stderr_tail,
-                    )
-                    yield terminal
+                if not self._session_started or self._stopped:
+                    terminal = self._stopped_or_start_failure(execution, outcome, process)
+                    if terminal is not None:
+                        yield terminal
                     return
                 next_process = self._sequence.advance(self._spec, outcome)
                 if next_process is None:
@@ -191,6 +184,7 @@ class StreamingTurn:
     async def stop(self) -> None:
         """Stop the process running now, allowing a later turn to resume its session."""
         self._stopped = True
+        self._interrupted = self._interrupted or self._process.returncode is None
         await self._process.stop()
 
     @classmethod
@@ -199,6 +193,34 @@ class StreamingTurn:
             kind=FailureKind.UNKNOWN,
             message=cls._unknown_message(reason, exit_code, stderr_tail),
             resets_at=None,
+        )
+
+    def _protocol_failure(
+        self, execution: _ProcessExecution, outcome: TurnProcessResult, process: SpawnedProcess
+    ) -> TurnFailed | None:
+        if execution.protocol_problem is None:
+            return None
+        return self._unknown_failure(
+            execution.protocol_problem, outcome.exit_code, process.stderr_tail
+        )
+
+    def _stopped_or_start_failure(
+        self, execution: _ProcessExecution, outcome: TurnProcessResult, process: SpawnedProcess
+    ) -> TurnEnded | TurnFailed | None:
+        if not self._session_started:
+            if self._interrupted and not outcome.signals:
+                return None
+            if isinstance(execution.terminal, TurnFailed):
+                return execution.terminal
+            return self._unknown_failure(
+                "agent stream omitted SessionStarted", outcome.exit_code, process.stderr_tail
+            )
+        if execution.terminal is not None:
+            return execution.terminal
+        if self._interrupted:
+            return None
+        return self._unknown_failure(
+            "agent process ended without a turn result", outcome.exit_code, process.stderr_tail
         )
 
     def _normalize(self, signal: AgentSignal) -> tuple[AgentSignal | None, str | None]:
@@ -251,17 +273,20 @@ class StreamingTurn:
 class _ProcessExecution:
     def __init__(
         self,
+        *,
         parser: TurnParser,
         stream_path: Path,
         stderr_path: Path,
         normalize: Callable[[AgentSignal], tuple[AgentSignal | None, str | None]],
         process: SpawnedProcess,
+        interrupted: Callable[[], bool],
     ) -> None:
         self._parser = parser
         self._stream_path = stream_path
         self._stderr_path = stderr_path
         self._normalize = normalize
         self._process = process
+        self._interrupted = interrupted
         self._signals: list[AgentSignal] = []
         self.terminal: TurnEnded | TurnFailed | None = None
         self.protocol_problem: str | None = None
@@ -282,7 +307,13 @@ class _ProcessExecution:
                 yield signal
         exit_code = await self._process.wait()
         _append_raw(self._stderr_path, self._process.stderr_bytes)
-        async for signal in self._parsed(self._parser.finish(exit_code, self._process.stderr)):
+        async for signal in self._parsed(
+            self._parser.finish(
+                exit_code,
+                self._process.stderr,
+                interrupted=self._interrupted(),
+            )
+        ):
             yield signal
         self._outcome = TurnProcessResult(tuple(self._signals), exit_code, self._process.stderr)
 
