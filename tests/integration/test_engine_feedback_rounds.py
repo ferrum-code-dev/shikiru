@@ -35,7 +35,7 @@ from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.store.feedback import FeedbackStore
-from shikiru.workspace.base_refs import FetchedBaseRefs
+from shikiru.workspace.base_refs import FetchedBaseRefs, LocalBaseSync
 from shikiru.workspace.git import Git
 from shikiru.workspace.github import GitHub, PullRequestState
 from tests.support.engine import build_fault_reporter, pr_poll_seconds, set_role_script
@@ -151,6 +151,9 @@ class _Pull:
             project_root=env.project_root,
             remote=self.settings.repo.remote,
             base_refs=fetched,
+            local_base=LocalBaseSync(
+                Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT), env.project_root
+            ),
             faults=faults,
             settings=self.settings.orchestration,
             feedback=FeedbackIntake(

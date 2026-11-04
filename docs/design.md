@@ -173,9 +173,17 @@ an empty integration shows zero commits rather than falling back to earlier repo
 records without these fields keep the previous derivation.
 
 **Pull-request** mode pushes the rebased task branch and creates or adopts a GitHub PR through
-`gh`. The engine polls its state, requires the merge to land, fetches and verifies the resulting
-base, and handles conflicts, failed checks, closure and timeout explicitly. Repository review and
-merge policy remain in force. Integration progress is recorded for restart reconciliation.
+`gh`. The engine polls its state, requires the merge to land, fetches the base from `repo.remote`
+and verifies the merge commit is on it. Before the task is marked done, the local base is synced to
+that verified tip and `refs/remotes/<remote>/<base>` is advanced to the same tip. The sync only
+fast-forwards: a checked-out base advances with `merge --ff-only --no-autostash` in its own
+worktree, ignoring the branch's inherited merge options, and the advance is verified to reach the
+tip; a base checked out nowhere moves by a compare-and-swap ref update. Local commits the remote base lacks, or
+uncommitted changes in files the merge changes, block the sync, so nothing is reset or overwritten;
+the task escalates as integration blocked, and an Operator retry completes the sync before done.
+Dependent tasks start from the synced remote base. Conflicts, failed checks, closure and timeout are
+handled explicitly. Repository review and merge policy remain in force. Integration progress is
+recorded for restart reconciliation.
 
 **PR feedback rounds.** While the PR waits (status `integrating`, wait reason `PR open`, no slot),
 a newly submitted `CHANGES_REQUESTED` review ID starts a round, and so does a new comment in an

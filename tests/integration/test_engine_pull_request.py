@@ -20,7 +20,7 @@ from shikiru.engine.integration import PullRequest
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
-from shikiru.workspace.base_refs import BaseFetchFailed, FetchedBaseRefs
+from shikiru.workspace.base_refs import BaseFetchFailed, FetchedBaseRefs, LocalBaseSync
 from shikiru.workspace.git import Git
 from shikiru.workspace.github import GitHub, PullRequestState
 from shikiru.workspace.roots import task_root
@@ -43,6 +43,8 @@ if TYPE_CHECKING:
 _WAIT_SECONDS = 60
 _RETRY_SLOT = 1
 _BASE_CHANGE_FILENAME = "base_moved.txt"
+_LOCAL_ONLY = "local_only.txt"
+_LOCAL_EDIT = "my notes\n"
 _RUNNER = SubprocessRunner()
 
 
@@ -53,6 +55,10 @@ def _fetched(settings: Settings, project_root: Path) -> FetchedBaseRefs:
         settings.repo.remote,
         fetch_timeout=settings.orchestration.network.fetch_timeout_seconds,
     )
+
+
+def _local_base(project_root: Path) -> LocalBaseSync:
+    return LocalBaseSync(Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT), project_root)
 
 
 @dataclass(frozen=True)
@@ -107,6 +113,7 @@ class _Run:
             project_root=env.project_root,
             remote=self._settings.repo.remote,
             base_refs=_fetched(self._settings, env.project_root),
+            local_base=_local_base(env.project_root),
             faults=build_fault_reporter(events, env.clock, self._settings),
             settings=self._settings.orchestration,
         )
@@ -143,10 +150,13 @@ async def _land(clock: FakeClock, running: asyncio.Task[None]) -> None:
     await running
 
 
-async def _retry_closed(env: EngineEnv, run: _Run, task_id: str, case: _Case) -> None:
+async def _retry_closed(
+    env: EngineEnv, run: _Run, task_id: str, case: _Case, remote_dir: Path
+) -> None:
     if case.base_moves_after_close:
         (env.project_root / _BASE_CHANGE_FILENAME).write_text("base moved\n")
         await commit_all(_RUNNER, env.project_root, "move the base")
+        await _git(env.project_root, "push", str(remote_dir), "main")
     _retry(env, run, task_id, EscalationReason.PR_CLOSED)
 
 
@@ -190,16 +200,15 @@ async def _local_branch_exists(project_root: Path, branch: str) -> bool:
     return result.returncode == 0
 
 
+async def _changed_paths(remote_dir: Path, base_sha: str, commit: str) -> list[str]:
+    return (await _git(remote_dir, "diff", "--name-only", f"{base_sha}..{commit}")).splitlines()
+
+
 async def _merge_remotely(
     github: FakeGitHub, remote_dir: Path, number: int, style: MergeStyle
 ) -> None:
     pull = github.pull_requests()[number - 1]
     github.merge(number, await merge_on_remote(remote_dir, pull["base"], pull["head"], style))
-
-
-async def _checkout_state(project_root: Path, base: str) -> tuple[str, str]:
-    heads = await _git(project_root, "rev-parse", "HEAD", base)
-    return heads, await _git(project_root, "diff", "--cached", "--name-only")
 
 
 async def _assert_landed(
@@ -337,7 +346,7 @@ async def test_pull_request_lands_through_the_done_path(
             fake_github.set_state(number, outcome)
         await _land(clock, run.flow)
         if outcome is PullRequestState.CLOSED:
-            await _retry_closed(engine_env, run, task.id, case)
+            await _retry_closed(engine_env, run, task.id, case, remote_dir)
 
     await _assert_landed(engine_env, fake_github, remote_dir, task, len(case.outcomes))
 
@@ -388,7 +397,6 @@ async def test_dependents_start_from_the_merged_remote_base(
     await add_bare_remote(project_root, remote_dir, settings.repo.remote)
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     assert task.repo is not None
-    checkout_before = await _checkout_state(project_root, task.repo.base)
     run = _Run(engine_env, settings, task.id)
     await _await_poll(fake_github, clock, 1)
     await _merge_remotely(fake_github, remote_dir, 1, style)
@@ -409,7 +417,11 @@ async def test_dependents_start_from_the_merged_remote_base(
     for path in delivered.splitlines():
         assert (task_root(project_root, "T-2") / path).exists()
     assert dependent.base == task.repo.base
-    assert await _checkout_state(project_root, task.repo.base) == checkout_before
+    remote_tip = await _git(remote_dir, "rev-parse", task.repo.base)
+    assert await _git(project_root, "rev-parse", task.repo.base) == remote_tip
+    assert await _git(project_root, "rev-parse", "HEAD") == remote_tip
+    tracking = f"refs/remotes/{settings.repo.remote}/{task.repo.base}"
+    assert await _git(project_root, "rev-parse", tracking) == remote_tip
 
 
 async def test_a_merged_pull_request_missing_from_the_remote_base_blocks_done(
@@ -436,6 +448,79 @@ async def test_a_merged_pull_request_missing_from_the_remote_base_blocks_done(
     blocked = engine_env.tasks.get(task.id)
     assert blocked is not None
     assert blocked.status is Status.ESCALATED
+
+
+async def test_uncommitted_work_that_blocks_the_base_sync_escalates_and_completes_once_moved(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = flow_settings()
+    clock = engine_env.clock
+    assert isinstance(clock, FakeClock)
+    project_root = engine_env.project_root
+    await init_project_repo(project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(project_root, remote_dir, settings.repo.remote)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    assert task.repo is not None
+    run = _Run(engine_env, settings, task.id)
+    await _await_poll(fake_github, clock, 1)
+    await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
+    merge_commit = fake_github.pull_requests()[0]["mergeCommit"]["oid"]
+    delivered = (await _changed_paths(remote_dir, task.repo.base_sha, merge_commit))[0]
+    (project_root / delivered).write_text(_LOCAL_EDIT)
+    base_before = await _git(project_root, "rev-parse", task.repo.base)
+    await _land(clock, run.flow)
+
+    [escalation] = fetch_open_escalations(engine_env.connection)
+    assert escalation.reason is EscalationReason.INTEGRATION_BLOCKED
+    blocked = engine_env.tasks.get(task.id)
+    assert blocked is not None
+    assert blocked.status is Status.ESCALATED
+    assert await _git(project_root, "rev-parse", task.repo.base) == base_before
+    assert (project_root / delivered).read_text() == _LOCAL_EDIT
+
+    moved_aside = project_root / f"{delivered}.mine"
+    (project_root / delivered).rename(moved_aside)
+    _retry(engine_env, run, task.id, EscalationReason.INTEGRATION_BLOCKED)
+    await _land(clock, run.flow)
+
+    await _assert_landed(engine_env, fake_github, remote_dir, task, 1)
+    remote_tip = await _git(remote_dir, "rev-parse", task.repo.base)
+    assert await _git(project_root, "rev-parse", task.repo.base) == remote_tip
+    assert moved_aside.read_text() == _LOCAL_EDIT
+
+
+async def test_an_unpushed_local_commit_blocks_done_and_is_kept(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = flow_settings()
+    clock = engine_env.clock
+    assert isinstance(clock, FakeClock)
+    project_root = engine_env.project_root
+    await init_project_repo(project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(project_root, remote_dir, settings.repo.remote)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    assert task.repo is not None
+    run = _Run(engine_env, settings, task.id)
+    await _await_poll(fake_github, clock, 1)
+    (project_root / _LOCAL_ONLY).write_text(_LOCAL_EDIT)
+    await commit_all(_RUNNER, project_root, "local work")
+    local_base = await _git(project_root, "rev-parse", task.repo.base)
+    await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
+    await _land(clock, run.flow)
+
+    [escalation] = fetch_open_escalations(engine_env.connection)
+    assert escalation.reason is EscalationReason.INTEGRATION_BLOCKED
+    blocked = engine_env.tasks.get(task.id)
+    assert blocked is not None
+    assert blocked.status is Status.ESCALATED
+    assert await _git(project_root, "rev-parse", task.repo.base) == local_base
+    assert (project_root / _LOCAL_ONLY).read_text() == _LOCAL_EDIT
 
 
 async def test_a_paused_pull_request_stops_polling_and_never_escalates_until_resumed(

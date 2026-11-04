@@ -133,7 +133,7 @@ from shikiru.telemetry.resources import ResourceSampler
 from shikiru.tmux.client import FORMAT_SESSION_NAME, Tmux, exact_target, tmux_key_label
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR, SessionView, session_name
-from shikiru.workspace.base_refs import BaseRefs, FetchedBaseRefs, LocalBaseRefs
+from shikiru.workspace.base_refs import BaseRefs, FetchedBaseRefs, LocalBaseRefs, LocalBaseSync
 from shikiru.workspace.caches import CacheCloner, default_cow_args
 from shikiru.workspace.facts import GitFacts, TaskWorkObserver
 from shikiru.workspace.git import Git
@@ -1232,6 +1232,7 @@ def _build_integrator(
                 project_root=project_root,
                 remote=settings.repo.remote,
                 base_refs=fetched_bases,
+                local_base=LocalBaseSync(git, project_root),
                 faults=faults,
                 settings=settings.orchestration,
                 feedback=feedback,

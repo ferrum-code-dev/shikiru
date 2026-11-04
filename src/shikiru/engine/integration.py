@@ -29,7 +29,7 @@ from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, RepoState, Status, Task
 from shikiru.errors import CommandFailed, CommandTimeoutError, InvariantError, ShikiruError
 from shikiru.paths import task_root
-from shikiru.workspace.base_refs import BaseFetchFailed, MergedBaseUnavailable
+from shikiru.workspace.base_refs import BaseFetchFailed, LocalBaseBlocked, MergedBaseUnavailable
 from shikiru.workspace.facts import describe_off_branch
 from shikiru.workspace.github import PullRequestState
 
@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from shikiru.engine.fault_reporter import FaultReporter
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
-    from shikiru.workspace.base_refs import BaseRefs, FetchedBaseRefs
+    from shikiru.workspace.base_refs import BaseRefs, FetchedBaseRefs, LocalBaseSync
     from shikiru.workspace.git import Git
     from shikiru.workspace.github import GitHub, PullRequestStatus
 
@@ -617,6 +617,7 @@ class PullRequest:
         project_root: Path,
         remote: str,
         base_refs: FetchedBaseRefs,
+        local_base: LocalBaseSync,
         faults: FaultReporter,
         settings: OrchestrationConfig,
         feedback: FeedbackIntake | None = None,
@@ -625,7 +626,8 @@ class PullRequest:
 
         With `feedback`, an open PR that has review feedback ends its wait with `FeedbackPending`.
 
-        A merged PR's base is fetched and verified through `base_refs` before the task is done.
+        A merged PR's base is fetched and verified through `base_refs`, and the local base is
+        fast-forwarded through `local_base`, before the task is done.
         An open PR that stays unmerged for `timeouts.pr_wait` seconds escalates. A failed poll is
         recorded through `faults` and retried `network.poll_attempts` times on the
         `faults` backoff before it escalates.
@@ -638,6 +640,7 @@ class PullRequest:
         self._project_root = project_root
         self._remote = remote
         self._base_refs = base_refs
+        self._local_base = local_base
         self._faults = faults
         self._settings = settings
         self._feedback = feedback
@@ -695,12 +698,14 @@ class PullRequest:
     async def settle(
         self, task_id: str, repo: RepoState, held: Callable[[], bool]
     ) -> Landing | None:
-        """Poll the open pull request until it is merged or closed, then verify the merged base.
+        """Poll the open pull request until it is merged or closed, then sync the base to it.
 
-        Return evidence read from the verified landing commit.
+        The remote base is verified to hold the merged commit, and the local base is
+        fast-forwarded to the remote tip, before this returns evidence read from the landing commit.
         Raises `PullRequestClosed` for a closed one, `PullRequestConflicting` when the open PR
         conflicts with its base, `IntegrationBlocked` when the merged commit cannot be fetched
-        from and verified on the remote base, when the open PR has failing, settled checks, or
+        from and verified on the remote base, when the local base cannot fast-forward to it
+        without losing work, when the open PR has failing, settled checks, or
         when it stays unmerged for `pr_wait` seconds (counted from the start of each wait), and
         `IntegrationHeld` before any poll once `held()` is true, and `FeedbackPending` when review
         feedback awaits a round.
@@ -734,8 +739,9 @@ class PullRequest:
             raise IntegrationBlocked(_MERGED_PR_WITHOUT_COMMIT)
         base_sha = opened.base_sha or await self._git.rev_parse(self._project_root, repo.base_ref)
         try:
-            await self._base_refs.sync(repo.base, merge_commit)
-        except (BaseFetchFailed, MergedBaseUnavailable) as error:
+            tip = await self._base_refs.sync(repo.base, merge_commit)
+            await self._local_base.advance(repo.base, tip)
+        except (BaseFetchFailed, LocalBaseBlocked, MergedBaseUnavailable) as error:
             raise IntegrationBlocked(str(error)) from error
         return await self._landed_with_prepared(opened, merge_commit, base_sha)
 

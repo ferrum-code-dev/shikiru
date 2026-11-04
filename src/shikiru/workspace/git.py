@@ -24,6 +24,7 @@ _FORCE_REFSPEC_PREFIX = "+"
 _PUSH_TIMEOUT_SECONDS = 300.0
 GIT_STOP_GRACE = 10.0
 _WORKTREE_LIST_PREFIX = "worktree "
+_WORKTREE_BRANCH_PREFIX = "branch "
 _WORKTREE_LOCKED_PREFIX = "locked"
 _REMOVAL_LOCK_REASON = "shikiru: removal in progress"
 _STATUS_IGNORED_PREFIX = "!! "
@@ -291,6 +292,23 @@ class Git:
         """Fast-forward the checked-out base branch to `branch` only."""
         await self._run(repo_dir, "merge", "--ff-only", branch, mutating=True)
 
+    async def fast_forward_checked_out(self, repo_dir: Path, base: str, target: str) -> None:
+        """Fast-forward the checked-out `base` to `target`, ignoring inherited merge options.
+
+        Autostash is off, and the branch's configured `mergeOptions` are blanked, so no
+        configured flag or strategy can turn the update into a squash or a real merge.
+        """
+        await self._run(
+            repo_dir,
+            "-c",
+            f"branch.{base}.mergeOptions=",
+            "merge",
+            "--ff-only",
+            "--no-autostash",
+            target,
+            mutating=True,
+        )
+
     async def update_ref(
         self, repo_dir: Path, branch: str, new_sha: str, expected_old_sha: str
     ) -> None:
@@ -407,14 +425,14 @@ class Git:
         )
         return result.stdout.strip() if result.returncode == 0 else None
 
-    async def fetch(self, repo_dir: Path, remote: str, refspec: str, *, timeout: float) -> None:
-        """Fetch `refspec` from `remote` within `timeout` seconds; only the refs it names change."""
+    async def fetch(self, repo_dir: Path, remote: str, *refspecs: str, timeout: float) -> None:
+        """Fetch `refspecs` from `remote` within `timeout` seconds, changing only the refs named."""
         await self._run(
             repo_dir,
             "fetch",
             "--no-tags",
             remote,
-            refspec,
+            *refspecs,
             timeout=timeout,
             mutating=True,
         )
@@ -519,6 +537,19 @@ class Git:
             elif line.startswith(_WORKTREE_LOCKED_PREFIX) and current is not None:
                 reasons[current] = line[len(_WORKTREE_LOCKED_PREFIX) :].strip()
         return reasons
+
+    async def branch_checkouts(self, repo_dir: Path, branch: str) -> list[Path]:
+        """Return the worktrees whose `HEAD` is on `branch`, main checkout first."""
+        result = await self._run(repo_dir, "worktree", "list", "--porcelain")
+        checked_out_ref = f"{_WORKTREE_BRANCH_PREFIX}{_HEADS_REF_PREFIX}{branch}"
+        checkouts: list[Path] = []
+        current: Path | None = None
+        for line in result.stdout.splitlines():
+            if line.startswith(_WORKTREE_LIST_PREFIX):
+                current = Path(line[len(_WORKTREE_LIST_PREFIX) :]).resolve()
+            elif line == checked_out_ref and current is not None:
+                checkouts.append(current)
+        return checkouts
 
     async def _run(
         self,

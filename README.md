@@ -241,7 +241,11 @@ trailers. The Result and Results of a completed task show the landed commit's
 SHA and subject, its destination and the integrated file and line totals, which stay accurate after
 the task branch and worktree are cleaned up. `"pr"` pushes the task branch, opens/adopts a GitHub PR
 and waits for it to merge;
-conflicting/closed/failed or overdue PRs require recovery or a decision. Shikiru does not bypass
+conflicting/closed/failed or overdue PRs require recovery or a decision. After a merge, the local
+base is fast-forwarded to the merged remote tip before the task is done. If it cannot be (local
+commits the remote lacks, or uncommitted changes in files the merge changes), the task escalates as
+integration blocked and leaves your work untouched; resolve it, then retry to finish the sync.
+Shikiru does not bypass
 repository review policy. A newly submitted changes-requested review, or a new reply in one of its
 inline discussions, starts a feedback round: the
 Leader analyses it, the Implementer edits, the Leader verifies, and the engine pushes with a lease
