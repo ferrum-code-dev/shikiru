@@ -11,7 +11,13 @@ import pytest
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import transition_for_resolution
 from shikiru.domain.events import EventKind
-from shikiru.domain.feedback_rounds import FeedbackStage
+from shikiru.domain.feedback import (
+    FeedbackMessage,
+    FeedbackSnapshot,
+    FeedbackSource,
+    FeedbackSourceKind,
+)
+from shikiru.domain.feedback_rounds import FeedbackStage, reply_marker
 from shikiru.domain.reports import (
     REPORT_FILENAME,
     REPORT_KIND_FILENAME,
@@ -33,12 +39,14 @@ from shikiru.workspace.base_refs import FetchedBaseRefs
 from shikiru.workspace.git import Git
 from shikiru.workspace.github import GitHub, PullRequestState
 from tests.support.engine import build_fault_reporter, pr_poll_seconds, set_role_script
+from tests.support.fake_gh import URL_PREFIX
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import COMMIT_IDENTITY_ARGS, GIT_COMMAND_TIMEOUT
 from tests.support.github import (
     MergeStyle,
     add_bare_remote,
     comment_node,
+    conversation_node,
     merge_on_remote,
     review_node,
     thread_node,
@@ -365,6 +373,100 @@ async def test_only_new_changes_requested_reviews_start_a_round(
     assert pull.waiting()
     started = pull.events.since(0, kinds=[EventKind.FEEDBACK_STARTED], task_id=pull.task.id)
     assert started == []
+    await pull.stop()
+
+
+async def _handled_round(pull: _Pull) -> None:
+    url = f"{URL_PREFIX}1"
+    round_ = pull.store.start(
+        task_id=pull.task.id,
+        pull_request_url=url,
+        review_ids=[_REVIEW],
+        comment_ids=["PRRC_11"],
+        snapshot=FeedbackSnapshot(
+            pull_request_url=url,
+            head_sha="sha",
+            sources=[
+                FeedbackSource(
+                    id=_THREAD,
+                    kind=FeedbackSourceKind.DISCUSSION,
+                    url="u",
+                    messages=[FeedbackMessage(author="reviewer", body="rename it", url="u")],
+                )
+            ],
+        ),
+        expected_remote_sha="sha",
+    )
+    pull.store.set_stage(round_.id, FeedbackStage.HANDLED)
+
+
+async def _discuss(
+    pull: _Pull, *comments: dict[str, Any], review_state: str, resolved: bool
+) -> None:
+    pull.github.set_fields(
+        1,
+        headRefOid=await pull.remote_branch(),
+        reviews=[review_node(1, _REVIEW, review_state, body="please fix")],
+        reviewThreads=[
+            thread_node(
+                _THREAD,
+                [comment_node(1, 11, "rename it", review_id=_REVIEW), *comments],
+                resolved=resolved,
+            )
+        ],
+    )
+
+
+async def test_a_new_reply_in_a_change_request_discussion_starts_a_round_with_the_discussion_whole(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await _open_pull(engine_env, fake_github, tmp_path_factory)
+    await _handled_round(pull)
+    ours = comment_node(1, 12, reply_marker(pull.task.id, 1, _THREAD))
+
+    await _discuss(pull, ours, review_state="CHANGES_REQUESTED", resolved=True)
+    fake_github.set_fields(1, conversationComments=[conversation_node(1, 90, "also, thanks")])
+    for _ in range(3):
+        await pull.poll_again()
+    assert pull.store.active(pull.task.id) is None
+
+    await _discuss(
+        pull,
+        ours,
+        comment_node(1, 13, "still wrong"),
+        review_state="CHANGES_REQUESTED",
+        resolved=True,
+    )
+    await pull.until(lambda: pull.store.active(pull.task.id) is not None)
+
+    started = pull.store.active(pull.task.id)
+    assert started is not None
+    assert started.review_ids == []
+    assert started.comment_ids == ["PRRC_13"]
+    [source] = started.snapshot.sources
+    assert source.resolved
+    assert [message.new for message in source.messages] == [False, False, True]
+    await pull.stop()
+
+
+async def test_a_reply_in_a_discussion_whose_review_was_dismissed_starts_no_round(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await _open_pull(engine_env, fake_github, tmp_path_factory)
+    await _handled_round(pull)
+
+    await _discuss(
+        pull, comment_node(1, 13, "still wrong"), review_state="DISMISSED", resolved=False
+    )
+    for _ in range(3):
+        await pull.poll_again()
+
+    assert pull.store.active(pull.task.id) is None
+    assert pull.waiting()
     await pull.stop()
 
 

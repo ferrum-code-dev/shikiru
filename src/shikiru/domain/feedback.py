@@ -39,11 +39,16 @@ class FeedbackStep(StrEnum):
 
 
 class FeedbackMessage(DomainModel):
-    """One comment of a source item, in the order it was written."""
+    """One comment of a source item, in the order it was written.
+
+    `new` marks a comment this round must answer; the others were handled by earlier rounds
+    or are our own replies.
+    """
 
     author: str | None
     body: str
     url: str
+    new: bool = False
 
 
 class FeedbackSource(DomainModel):

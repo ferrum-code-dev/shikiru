@@ -1,4 +1,4 @@
-"""Choose the reviews that start a feedback round and freeze them into a snapshot."""
+"""Choose the reviews and discussion comments that start a feedback round and freeze them."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from shikiru.domain.feedback import (
     FeedbackSource,
     FeedbackSourceKind,
 )
+from shikiru.domain.feedback_rounds import is_own_reply
 from shikiru.workspace.github import ReviewState
 
 if TYPE_CHECKING:
@@ -36,10 +37,38 @@ def new_change_requests(feedback: PullRequestFeedback, seen: set[str]) -> list[R
     ]
 
 
-def build_snapshot(feedback: PullRequestFeedback, reviews: Sequence[Review]) -> FeedbackSnapshot:
-    """Freeze `reviews` with their inline discussions, each discussion once and whole."""
+def new_discussion_comments(
+    feedback: PullRequestFeedback, seen: set[str]
+) -> list[PullRequestComment]:
+    """Return the comments no round covered in discussions holding a changes-requested comment.
+
+    A discussion is followed while any of its comments belongs to a review that still requests
+    changes, resolved or not; a dismissed review no longer qualifies. Our own replies never count.
+    """
+    requesting = {
+        review.id for review in feedback.reviews if review.state is ReviewState.CHANGES_REQUESTED
+    }
+    return [
+        comment
+        for thread in feedback.threads
+        if any(comment.review_id in requesting for comment in thread.comments)
+        for comment in thread.comments
+        if comment.id not in seen and not is_own_reply(comment.body)
+    ]
+
+
+def build_snapshot(
+    feedback: PullRequestFeedback,
+    reviews: Sequence[Review],
+    comments: Sequence[PullRequestComment],
+) -> FeedbackSnapshot:
+    """Freeze `reviews` and the discussions of `reviews` and `comments`, each discussion whole.
+
+    The `comments` are marked new in their discussions.
+    """
     sources: list[FeedbackSource] = []
     listed: set[str] = set()
+    fresh = {comment.id for comment in comments}
     for review in reviews:
         threads = [
             thread
@@ -51,7 +80,11 @@ def build_snapshot(feedback: PullRequestFeedback, reviews: Sequence[Review]) -> 
         for thread in threads:
             if thread.id not in listed:
                 listed.add(thread.id)
-                sources.append(_thread_source(thread))
+                sources.append(_thread_source(thread, fresh))
+    for thread in feedback.threads:
+        if thread.id not in listed and any(comment.id in fresh for comment in thread.comments):
+            listed.add(thread.id)
+            sources.append(_thread_source(thread, fresh))
     return FeedbackSnapshot(
         pull_request_url=feedback.url, head_sha=feedback.head_sha, sources=sources
     )
@@ -66,7 +99,7 @@ def _review_source(review: Review) -> FeedbackSource:
     )
 
 
-def _thread_source(thread: ReviewThread) -> FeedbackSource:
+def _thread_source(thread: ReviewThread, fresh: set[str]) -> FeedbackSource:
     location = thread.path
     if thread.line is not None:
         location = f"{thread.path}{LOCATION_SEPARATOR}{thread.line}"
@@ -77,9 +110,11 @@ def _thread_source(thread: ReviewThread) -> FeedbackSource:
         location=location,
         outdated=thread.is_outdated,
         resolved=thread.is_resolved,
-        messages=[_message(comment) for comment in thread.comments],
+        messages=[_message(comment, fresh) for comment in thread.comments],
     )
 
 
-def _message(comment: PullRequestComment) -> FeedbackMessage:
-    return FeedbackMessage(author=comment.author, body=comment.body, url=comment.url)
+def _message(comment: PullRequestComment, fresh: set[str]) -> FeedbackMessage:
+    return FeedbackMessage(
+        author=comment.author, body=comment.body, url=comment.url, new=comment.id in fresh
+    )

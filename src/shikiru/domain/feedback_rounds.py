@@ -79,7 +79,8 @@ class FeedbackRound(DomainModel):
     id: int
     task_id: str
     pull_request_url: str
-    review_ids: list[str] = Field(min_length=1)
+    review_ids: list[str]
+    comment_ids: list[str] = Field(default_factory=list)
     snapshot: FeedbackSnapshot
     stage: FeedbackStage
     analysis: FeedbackAnalysis | None = None
@@ -108,6 +109,11 @@ def reply_marker(task_id: str, round_id: int, source_id: str) -> str:
     """Return the stable marker that identifies the reply to `source_id` in `round_id`."""
     parts = (MARKER_PREFIX, task_id, str(round_id), source_id)
     return f"<!-- {MARKER_SEPARATOR.join(parts)} -->"
+
+
+def is_own_reply(body: str) -> bool:
+    """Return whether a comment `body` carries the marker of a reply this engine posted."""
+    return MARKER_PREFIX in body
 
 
 def reply_body(

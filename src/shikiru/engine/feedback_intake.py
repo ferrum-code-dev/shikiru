@@ -1,11 +1,15 @@
-"""Notice new changes-requested reviews on a waiting pull request and start a round for them."""
+"""Notice new changes-requested feedback on a waiting pull request and start a round for it."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from shikiru.domain.events import EventKind
-from shikiru.engine.feedback_snapshot import build_snapshot, new_change_requests
+from shikiru.engine.feedback_snapshot import (
+    build_snapshot,
+    new_change_requests,
+    new_discussion_comments,
+)
 from shikiru.errors import ShikiruError
 from shikiru.workspace.github import PullRequestState
 
@@ -21,7 +25,7 @@ FEEDBACK_FAULT_SCOPE = "pull request feedback poll"
 
 
 class FeedbackIntake:
-    """Turns the reviews found while a pull request waits into a persisted round."""
+    """Turns the reviews and discussion comments found on a waiting pull request into a round."""
 
     def __init__(
         self,
@@ -46,7 +50,8 @@ class FeedbackIntake:
         """Return whether `task_id`'s pull request at `url` has feedback awaiting a round.
 
         A round that is already unfinished counts. Otherwise the submitted changes-requested
-        reviews no earlier round covered are frozen into a new one.
+        reviews and the new comments in their discussions, which no earlier round covered, are
+        frozen into a new one.
         """
         if self._store.active(task_id) is not None:
             return True
@@ -59,19 +64,26 @@ class FeedbackIntake:
         if feedback.state is not PullRequestState.OPEN:
             return False
         reviews = new_change_requests(feedback, self._store.seen_review_ids(task_id, url))
-        if not reviews:
+        comments = new_discussion_comments(feedback, self._store.seen_comment_ids(task_id, url))
+        if not reviews and not comments:
             return False
         started = self._store.start(
             task_id=task_id,
             pull_request_url=url,
             review_ids=[review.id for review in reviews],
-            snapshot=build_snapshot(feedback, reviews),
+            comment_ids=[comment.id for comment in comments],
+            snapshot=build_snapshot(feedback, reviews, comments),
             expected_remote_sha=feedback.head_sha,
         )
         self._events.append(
             EventKind.FEEDBACK_STARTED,
             task_id=task_id,
             message=f"{task_id} received review feedback on {url}",
-            data={"url": url, "round": started.id, "reviews": list(started.review_ids)},
+            data={
+                "url": url,
+                "round": started.id,
+                "reviews": list(started.review_ids),
+                "comments": list(started.comment_ids),
+            },
         )
         return True

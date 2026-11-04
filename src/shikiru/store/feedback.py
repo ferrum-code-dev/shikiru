@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 
 _ROUND_COLUMNS = (
     "id, task_id, pull_request_url, review_ids, snapshot, stage, analysis, attempts, blocked, "
-    "expected_remote_sha, verified_sha, published_sha, checks, verified_replies"
+    " expected_remote_sha, verified_sha, published_sha, checks, verified_replies"
 )
 _REPLY_COLUMNS = "round_id, source_id, kind, marker, body, state, posted_url"
 _UNFINISHED = tuple(stage.value for stage in sorted(UNFINISHED_STAGES))
@@ -41,24 +41,31 @@ class FeedbackStore:
         task_id: str,
         pull_request_url: str,
         review_ids: Sequence[str],
+        comment_ids: Sequence[str],
         snapshot: FeedbackSnapshot,
         expected_remote_sha: str,
     ) -> FeedbackRound:
         """Record a new round over `snapshot`, starting at its analysis."""
-        cursor = self._connection.execute(
-            "INSERT INTO feedback_rounds "
-            "(task_id, pull_request_url, review_ids, snapshot, stage, expected_remote_sha) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                task_id,
-                pull_request_url,
-                json.dumps(list(review_ids)),
-                snapshot.model_dump_json(),
-                FeedbackStage.ANALYSIS.value,
-                expected_remote_sha,
-            ),
-        )
-        return self._require(_row_id(cursor))
+        with transaction(self._connection):
+            cursor = self._connection.execute(
+                "INSERT INTO feedback_rounds "
+                "(task_id, pull_request_url, review_ids, snapshot, stage, expected_remote_sha) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    task_id,
+                    pull_request_url,
+                    json.dumps(list(review_ids)),
+                    snapshot.model_dump_json(),
+                    FeedbackStage.ANALYSIS.value,
+                    expected_remote_sha,
+                ),
+            )
+            round_id = _row_id(cursor)
+            self._connection.executemany(
+                "INSERT INTO feedback_round_comments (round_id, comment_id) VALUES (?, ?)",
+                [(round_id, comment_id) for comment_id in comment_ids],
+            )
+        return self._require(round_id)
 
     def active(self, task_id: str) -> FeedbackRound | None:
         """Return `task_id`'s unfinished round, if it has one."""
@@ -67,7 +74,7 @@ class FeedbackStore:
             f"AND stage IN ({_marks(_UNFINISHED)}) ORDER BY id LIMIT 1",
             (task_id, *_UNFINISHED),
         ).fetchone()
-        return None if row is None else _round(row)
+        return None if row is None else self._load(row)
 
     def last_pull_request_url(self, task_id: str) -> str | None:
         """Return the pull request of `task_id`'s latest round, or `None` without any round."""
@@ -85,6 +92,15 @@ class FeedbackStore:
             (task_id, pull_request_url),
         ).fetchall()
         return {review for row in rows for review in json.loads(row["review_ids"])}
+
+    def seen_comment_ids(self, task_id: str, pull_request_url: str) -> set[str]:
+        """Return every discussion comment a round of `task_id` on `pull_request_url` covered."""
+        rows = self._connection.execute(
+            "SELECT comment_id FROM feedback_round_comments WHERE round_id IN "
+            "(SELECT id FROM feedback_rounds WHERE task_id = ? AND pull_request_url = ?)",
+            (task_id, pull_request_url),
+        ).fetchall()
+        return {str(row["comment_id"]) for row in rows}
 
     def set_stage(self, round_id: int, stage: FeedbackStage) -> None:
         """Move the round to `stage`."""
@@ -190,7 +206,14 @@ class FeedbackStore:
         if row is None:
             message = f"feedback round {round_id} vanished"
             raise LookupError(message)
-        return _round(row)
+        return self._load(row)
+
+    def _load(self, row: sqlite3.Row) -> FeedbackRound:
+        comments = self._connection.execute(
+            "SELECT comment_id FROM feedback_round_comments WHERE round_id = ? ORDER BY rowid",
+            (row["id"],),
+        ).fetchall()
+        return _round(row, [str(comment["comment_id"]) for comment in comments])
 
     def _set(self, round_id: int, column: str, value: str | int) -> None:
         self._connection.execute(
@@ -210,13 +233,14 @@ def _marks(values: Sequence[str]) -> str:
     return ", ".join("?" for _ in values)
 
 
-def _round(row: sqlite3.Row) -> FeedbackRound:
+def _round(row: sqlite3.Row, comment_ids: list[str]) -> FeedbackRound:
     analysis = row["analysis"]
     return FeedbackRound(
         id=row["id"],
         task_id=row["task_id"],
         pull_request_url=row["pull_request_url"],
         review_ids=json.loads(row["review_ids"]),
+        comment_ids=comment_ids,
         snapshot=FeedbackSnapshot.model_validate_json(row["snapshot"]),
         stage=FeedbackStage(row["stage"]),
         analysis=None if analysis is None else FeedbackAnalysis.model_validate_json(analysis),

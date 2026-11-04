@@ -9,7 +9,9 @@ You are the Leader analysing the pull request review feedback below for this tas
 
 {{ feedback_snapshot | fenced("json") }}
 
-Decide every source item exactly once, by its `id`. Each item may raise several points: list all of
+Decide every source item exactly once, by its `id`. A discussion is given whole, with the earlier
+answers that were already posted in it. Its messages marked `"new": true` are the ones to answer;
+the unmarked ones are context, and `reply` answers only the marked ones. Each item may raise several points: list all of
 them in `points` and cover each in `detail` and `reply`. Choose `address` for a request to accept,
 `already_addressed` when the Git facts or files show it is done (a moved or outdated location is
 not proof), `disagree` for a request to decline with a specific reason, and `needs_operator`

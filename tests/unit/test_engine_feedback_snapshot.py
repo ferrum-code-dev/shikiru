@@ -5,7 +5,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from shikiru.domain.feedback import FeedbackSourceKind
-from shikiru.engine.feedback_snapshot import build_snapshot, new_change_requests
+from shikiru.domain.feedback_rounds import reply_marker
+from shikiru.engine.feedback_snapshot import (
+    build_snapshot,
+    new_change_requests,
+    new_discussion_comments,
+)
 from shikiru.workspace.github import (
     PullRequestComment,
     PullRequestFeedback,
@@ -31,14 +36,14 @@ def _review(
     )
 
 
-def _comment(comment_id: int, review_id: str | None) -> PullRequestComment:
+def _comment(comment_id: int, review_id: str | None, body: str = "b") -> PullRequestComment:
     return PullRequestComment(
         id=f"c{comment_id}",
         database_id=comment_id,
         review_id=review_id,
         url=f"https://x/c{comment_id}",
         author="r",
-        body="b",
+        body=body,
         created_at=_MOMENT,
     )
 
@@ -83,8 +88,50 @@ def test_a_discussion_shared_by_two_reviews_is_one_source() -> None:
         _review("r2", ReviewState.CHANGES_REQUESTED, body="also this"),
     ]
 
-    snapshot = build_snapshot(_feedback(reviews, [thread]), reviews)
+    snapshot = build_snapshot(_feedback(reviews, [thread]), reviews, list(thread.comments))
 
     assert snapshot.source_ids == ["t", "r2"]
     assert snapshot.sources[0].kind is FeedbackSourceKind.DISCUSSION
     assert snapshot.sources[0].location == "a.py:3"
+
+
+def _thread(*comments: PullRequestComment, resolved: bool = False) -> ReviewThread:
+    return ReviewThread(
+        id="t",
+        path="a.py",
+        line=3,
+        is_outdated=False,
+        is_resolved=resolved,
+        comments=comments,
+    )
+
+
+def test_new_comments_of_followed_discussions_start_a_round() -> None:
+    own = _comment(3, None, reply_marker("T-1", 1, "t"))
+    cases: list[tuple[ReviewState, bool, set[str], list[str]]] = [
+        (ReviewState.CHANGES_REQUESTED, False, {"c1"}, ["c2"]),
+        (ReviewState.CHANGES_REQUESTED, True, {"c1"}, ["c2"]),
+        (ReviewState.CHANGES_REQUESTED, False, {"c1", "c2"}, []),
+        (ReviewState.DISMISSED, False, set(), []),
+        (ReviewState.COMMENTED, False, set(), []),
+        (ReviewState.APPROVED, False, set(), []),
+    ]
+    for state, resolved, seen, expected in cases:
+        thread = _thread(_comment(1, "r"), _comment(2, None), own, resolved=resolved)
+        feedback = _feedback([_review("r", state)], [thread])
+
+        found = [c.id for c in new_discussion_comments(feedback, seen)]
+
+        assert found == expected, (state, resolved, seen)
+
+
+def test_a_discussion_enters_whole_with_only_its_new_comments_marked() -> None:
+    own = _comment(2, None, reply_marker("T-1", 1, "t"))
+    thread = _thread(_comment(1, "r"), own, _comment(3, None))
+    feedback = _feedback([_review("r", ReviewState.CHANGES_REQUESTED)], [thread])
+
+    comments = new_discussion_comments(feedback, {"c1"})
+    snapshot = build_snapshot(feedback, [], comments)
+
+    assert snapshot.source_ids == ["t"]
+    assert [message.new for message in snapshot.sources[0].messages] == [False, False, True]
