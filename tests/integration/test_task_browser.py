@@ -316,11 +316,17 @@ async def test_home_rows_preserve_stage_and_recorded_wait_state(
     verifying = seed_task(connection, clock, title="Verify request", mode=Mode.IMPLEMENT)
     waiting = seed_task(connection, clock, title="Wait for dependency", mode=Mode.IMPLEMENT)
     queued = seed_task(connection, clock, title="Queued without a blocker")
+    awaiting_merge = seed_task(connection, clock, title="Await the pull request")
     for task, step in ((implementing, Step.IMPLEMENT), (verifying, Step.VERIFY)):
         tasks.apply_transition(
             task.id,
             Transition.stay(task, step=step, status=Status.RUNNING),
         )
+    tasks.apply_transition(
+        awaiting_merge.id,
+        Transition.stay(awaiting_merge, step=Step.INTEGRATE, status=Status.INTEGRATING),
+    )
+    tasks.set_wait_reason(awaiting_merge.id, WaitReason.PR_OPEN)
     tasks.set_depends_on(waiting.id, (implementing.id,))
     tasks.set_wait_reason(waiting.id, WaitReason.DEPENDENCY)
     context = replace(
@@ -333,10 +339,11 @@ async def test_home_rows_preserve_stage_and_recorded_wait_state(
         list_view = widget.query_one("#task-browser-list", ListView)
         recent_block = widget.query_one("#task-browser-recent", Vertical)
         recent_list = widget.query_one("#task-browser-recent-list", ListView)
+        row_ids = (implementing.id, verifying.id, waiting.id, queued.id, awaiting_merge.id)
         await wait_until(
             lambda: all(
                 f"task-row-{task_id}" in {item.id for item in list_view.children}
-                for task_id in (implementing.id, verifying.id, waiting.id, queued.id)
+                for task_id in row_ids
             ),
             timeout=5.0,
         )
@@ -344,13 +351,14 @@ async def test_home_rows_preserve_stage_and_recorded_wait_state(
         assert not recent_list.children
         rendered_rows = {
             task_id: _static_text(widget.query_one(f"#task-row-{task_id} > Static", Static))
-            for task_id in (implementing.id, verifying.id, waiting.id, queued.id)
+            for task_id in row_ids
         }
 
         assert "Implementing" in rendered_rows[implementing.id]
         assert "Verifying" in rendered_rows[verifying.id]
         assert "waiting on dependency" in rendered_rows[waiting.id]
         assert implementing.id in rendered_rows[waiting.id]
+        assert "waiting on PR merge" in rendered_rows[awaiting_merge.id]
         assert "queued" in rendered_rows[queued.id]
         assert "ready" not in rendered_rows[queued.id]
 

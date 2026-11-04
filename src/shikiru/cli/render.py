@@ -1268,6 +1268,12 @@ def _task_section(title: str, tasks: list[TaskSummary], *, width: int) -> Sectio
     )
 
 
+def _wait_label(wait_reason: str) -> str:
+    if wait_reason == WaitReason.PR_OPEN.value:
+        return "PR merge"
+    return wait_reason.replace("_", " ")
+
+
 def _task_state(task: TaskSummary | Task) -> tuple[str, str]:
     if task.status is Status.DONE:
         return "Done", SAGE
@@ -1276,7 +1282,7 @@ def _task_state(task: TaskSummary | Task) -> tuple[str, str]:
     if Hold.INTERVENTION.value in task.holds:
         return STATUS_OPERATOR_CONTROL_LABEL, AMBER
     if task.wait_reason is not None:
-        return f"Waiting on {task.wait_reason.replace('_', ' ')}", AMBER
+        return f"Waiting on {_wait_label(task.wait_reason)}", AMBER
     if task.status is Status.RUNNING and task.step is not None:
         step = task.step if isinstance(task.step, Step) else Step(task.step)
         return STATUS_STEP_LABELS[step], STEEL_BLUE

@@ -102,7 +102,7 @@ WAIT_REASON_LABELS = {
     "slot": "slot",
     "resources": "resources",
     "quota": "quota",
-    "PR open": "PR open",
+    "PR open": "PR merge",
 }
 SEARCH_INPUT_ID = "task-browser-search"
 TASK_LIST_ID = "task-browser-list"

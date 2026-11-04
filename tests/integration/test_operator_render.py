@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from shikiru.agents.contracts import QuotaWindow
 from shikiru.cli.render import ack_renderable, error_renderable, status_renderable
 from shikiru.domain.escalation import Escalation, EscalationStatus
 from shikiru.domain.reports import ReportKind, Verdict
+from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step
 from shikiru.domain.tasks import EscalationReason, Mode, Status
 from shikiru.errors import NotInitialisedError
@@ -197,3 +200,45 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
     assert "T-queued" not in task_output
     assert "codex" not in task_output
     assert "5h" not in task_output
+
+
+@pytest.mark.parametrize(
+    ("status", "wait_reason", "expected"),
+    [
+        pytest.param(Status.INTEGRATING, WaitReason.PR_OPEN.value, "Waiting on PR merge", id="pr"),
+        pytest.param(Status.QUEUED, WaitReason.PAUSED.value, "Paused", id="paused"),
+        pytest.param(Status.QUEUED, WaitReason.DEPENDENCY.value, "Waiting on dependency", id="dep"),
+        pytest.param(Status.QUEUED, WaitReason.SLOT.value, "Waiting on slot", id="slot"),
+        pytest.param(Status.QUEUED, WaitReason.RESOURCES.value, "Waiting on resources", id="res"),
+        pytest.param(Status.QUEUED, WaitReason.QUOTA.value, "Waiting on quota", id="quota"),
+    ],
+)
+def test_task_rows_word_each_wait_reason_for_the_operator(
+    status: Status, wait_reason: str, expected: str
+) -> None:
+    task = _summary("T-wait", status, wait_reason=wait_reason)
+    view = StatusView(
+        project="demo",
+        engine_up=True,
+        slots=SlotView(active=0, maximum=2),
+        active_tasks=[],
+        queued_tasks=[],
+        escalations=[],
+        usage=[],
+        quotas={},
+        faults=[],
+        oldest_escalation_age_seconds=None,
+        run_directories=RunDirectoryUsage(directories=0, size_bytes=0),
+    )
+
+    output = plain_text(
+        status_renderable(
+            HumanStatusView(status=view, task_rows=(task,)),
+            width=RENDER_WIDTH,
+            uptime_seconds=None,
+            quota_warn_pct=50,
+            quota_alert_pct=90,
+        )
+    )
+
+    assert expected in output
