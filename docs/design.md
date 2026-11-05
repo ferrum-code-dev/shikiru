@@ -258,7 +258,8 @@ turn. Retry re-runs the current step, and prioritization changes dispatch order.
 the same queued-command path from dashboard or MCP.
 
 Take over holds task automation, interrupts its active flow and opens an existing role session
-interactively in its tmux pane. Other eligible tasks keep running. Hand back restores engine
+interactively in its tmux pane. Other eligible tasks keep running. A task waiting on an open pull
+request has no slot; its session still opens, without taking one. Hand back restores engine
 ownership and queues notice that the Operator worked in the session; an independent pause remains
 until resumed. Ownership changes and their command IDs are recorded together so command replay
 does not duplicate the transition. A lost takeover pane is released and reported.

@@ -108,13 +108,22 @@ def turn_environment(
     if task.slot is None:
         message = f"{task.id} has no assigned slot; a turn needs a dispatched task"
         raise InvariantError(message)
-    return {
+    return session_environment(task, role, run_dir_path, project_name)
+
+
+def session_environment(
+    task: Task, role: Role, run_dir_path: Path, project_name: str
+) -> dict[str, str]:
+    """Return the environment of `task`'s `role` process, with the slot only when it has one."""
+    environment = {
         RUN_DIR_ENV_VAR: str(run_dir_path),
         ROLE_ENV_VAR: role.value,
         PROJECT_ENV_VAR: project_name,
         TASK_ENV_VAR: task.id,
-        SLOT_ENV_VAR: str(task.slot),
     }
+    if task.slot is not None:
+        environment[SLOT_ENV_VAR] = str(task.slot)
+    return environment
 
 
 class TurnRunner:

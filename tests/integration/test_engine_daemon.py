@@ -48,6 +48,7 @@ from shikiru.domain.commands import (
 from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
+from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import (
     Counters,
@@ -91,12 +92,14 @@ from tests.support.engine import (
     build_registry,
     build_tmux,
     engine_settings,
+    pr_poll_seconds,
     set_role_script,
     set_script,
     wait_for_command,
 )
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
+from tests.support.github import MergeStyle, add_bare_remote, merge_on_remote
 from tests.support.permissions import requires_enforced_permissions
 from tests.support.store import reopen_command, seed_task
 from tests.support.waiting import wait_until, wait_until_advancing
@@ -1206,6 +1209,67 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
         connection.close()
 
 
+async def test_take_over_repeats_while_the_pull_request_waits_for_its_merge(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
+    settings = settings.model_copy(
+        update={"orchestration": settings.orchestration.model_copy(update={"integration": "pr"})}
+    )
+    async with _operator_session(
+        tmp_path,
+        tmux_server,
+        settings=settings,
+        remote_dir=remote_dir,
+        implementer_script=[{"kind": "accept"}, {"kind": "stall"}],
+    ) as (operator, task_id, run):
+
+        def waiting_on_pull_request() -> bool:
+            task = operator.task(task_id)
+            return (
+                len(fake_github.pull_requests()) == 1
+                and task.status is Status.INTEGRATING
+                and task.slot is None
+                and task.wait_reason == WaitReason.PR_OPEN.value
+            )
+
+        await operator.advance_until(waiting_on_pull_request)
+        pane = operator.task(task_id).panes[Role.IMPLEMENTER]
+
+        for handbacks in (1, 2):
+            taken = await operator.send(TakeOver(task_id=task_id, role=Role.IMPLEMENTER))
+            assert taken.status is CommandStatus.DONE
+            assert Hold.INTERVENTION in operator.task(task_id).holds
+            owned = operator.runs.get_taken_over(task_id, Role.IMPLEMENTER)
+            assert owned is not None
+            assert (owned.id, owned.session_id) == (run.id, run.session_id)
+            await _wait_for_repl(operator.tmux_server, pane)
+
+            handed = await operator.send(HandBack(task_id=task_id, role=Role.IMPLEMENTER))
+            assert handed.status is CommandStatus.DONE
+            assert Hold.INTERVENTION not in operator.task(task_id).holds
+            assert operator.runs.get_taken_over(task_id, Role.IMPLEMENTER) is None
+            assert len(operator.message_files(task_id, HAND_BACK_MESSAGE)) == handbacks
+            resumed = operator.runs.get_live(task_id, Role.IMPLEMENTER)
+            assert resumed is not None
+            assert (resumed.id, resumed.session_id) == (run.id, run.session_id)
+
+        pull = fake_github.pull_requests()[0]
+        fake_github.merge(
+            1, await merge_on_remote(remote_dir, pull["base"], pull["head"], MergeStyle.SQUASH)
+        )
+        await wait_until_advancing(
+            operator.clock,
+            lambda: operator.task(task_id).status is Status.DONE,
+            60,
+            step_seconds=pr_poll_seconds(),
+        )
+
+
 @pytest.mark.parametrize("case", _TAKEOVER_RUNG_CASES)
 async def test_an_escalated_rung_change_reaches_the_interactive_and_next_turn_processes(
     tmp_path: Path,
@@ -1682,6 +1746,7 @@ async def _operator_session(
     tmux_override: Tmux | None = None,
     titled: bool = False,
     settings: Settings | None = None,
+    remote_dir: Path | None = None,
     implementer_script: list[dict[str, object]] | None = None,
     leader_script: list[dict[str, object]] | None = None,
 ) -> AsyncGenerator[tuple[_Operator, str, Run]]:
@@ -1699,6 +1764,8 @@ async def _operator_session(
     tmux = tmux_override if tmux_override is not None else build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     resolved_settings = settings or engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
+    if remote_dir is not None:
+        await add_bare_remote(tmp_path, remote_dir, resolved_settings.repo.remote)
     if titled:
         packaged_titles = validate_project_config_text(MINIMAL_PROJECT_CONFIG).dashboard.titles
         resolved_settings = resolved_settings.model_copy(

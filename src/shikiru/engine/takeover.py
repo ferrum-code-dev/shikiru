@@ -10,7 +10,7 @@ from shikiru.domain.commands import COMMAND_ID_KEY
 from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.tasks import Hold, Role, Status, Task
-from shikiru.engine.turns import turn_environment
+from shikiru.engine.turns import session_environment
 from shikiru.errors import PROCESS_FAILURES, CommandRejectedError
 from shikiru.paths import run_dir, task_root
 from shikiru.tmux.client import FORMAT_PANE_PID
@@ -134,7 +134,7 @@ class Takeover:
         root = task_root(self._project_root, task.id)
         task_run_dir = run_dir(self._project_root, task.id)
         argv = self._agents.get(run.agent).interactive_command(session_id, task_run_dir, rung)
-        env = turn_environment(task, role, task_run_dir, self._project_name)
+        env = session_environment(task, role, task_run_dir, self._project_name)
         await self._tmux.respawn_pane(pane, argv, env=env, cwd=root)
         pid = await self._tmux.display(pane, FORMAT_PANE_PID)
         with self._atomically():
