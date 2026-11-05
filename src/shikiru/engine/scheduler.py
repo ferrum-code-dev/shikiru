@@ -144,7 +144,7 @@ class Scheduler:
 
     def _advance_quota_blocked(self, tasks: list[Task], schedule: ReadySchedule) -> bool:
         now = self._clock.now()
-        blocks = {block.agent: block.until for block in self._quotas.active_blocks(now)}
+        blocks = {block.agent: block for block in self._quotas.active_blocks(now)}
         blocked_agents = frozenset(blocks)
         wait_limit = now + timedelta(seconds=self._settings.orchestration.timeouts.max_quota_wait)
         changed = False
@@ -154,8 +154,10 @@ class Scheduler:
             task = queued
             for role in (Role.LEADER, Role.IMPLEMENTER):
                 old_rung = pick_rung(task, role, self._settings)
-                until = blocks.get(old_rung.agent)
-                if until is None or until <= wait_limit:
+                block = blocks.get(old_rung.agent)
+                if block is None or block.until <= wait_limit:
+                    continue
+                if self._reconciler.awaiting_demanded_probe(block):
                     continue
                 move = move_up(
                     task, role, self._settings, different_agent=True, blocked_agents=blocked_agents

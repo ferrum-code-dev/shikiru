@@ -77,8 +77,11 @@ CPU/free-RAM dispatch gates and provider quota blocks. A cancelled prerequisite 
 queued work. Limits on dispatch do not cap resources already-running agent processes can consume.
 When a queued task's selected agent has a quota block beyond `max_quota_wait` (in seconds),
 the scheduler advances that role to an unblocked different agent in its ladder: a later rung
-first, otherwise the earliest suitable rung below. Shorter blocks wait for reset; without an
-available different agent, the task stays queued until the block expires.
+first, otherwise the earliest suitable rung below. The move waits while a probe that a requeue
+demanded for that block is running, so a reading that releases the block keeps the task on its
+rung. Routine refreshes never hold a move back, so a block that a completed probe confirmed still
+falls back. Shorter blocks wait for reset; without an available different agent, the task stays
+queued until the block expires.
 
 A persisted quota block is a prediction, not a lock. While a task waits on a block, in a turn's
 quota wait or queued, including after an engine restart, the engine revalidates it every

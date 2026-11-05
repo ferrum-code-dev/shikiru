@@ -34,6 +34,7 @@ QUOTA_RELEASE_REASON = "newer quota reading shows available quota"
 class _Probe:
     blocked_at: datetime
     task: asyncio.Task[None]
+    demanded: bool
 
 
 class QuotaReconciler:
@@ -101,27 +102,31 @@ class QuotaReconciler:
         """Start a supervised probe of `agent`'s plugin while its block is in effect.
 
         Never waits for the probe. Probes at most once per interval, unless `demanded_at`, such
-        as a task requeue, is later than the last probe, and never twice at once for the same
-        block; a probe of a block since replaced is cancelled. Returns the running probe, or
-        `None` when nothing was started or the block is not examined.
+        as a task requeue, is later than the last probe; a demanded probe is not delayed by the
+        interval, and a requeue that arrives during a running probe of the same block makes that
+        probe demanded. Never twice at once for the same block; a probe of a block since replaced
+        is cancelled. Returns the running probe, or `None` when nothing was started or the block is
+        not examined.
         """
         now = self._clock.now()
         block = self._quotas.block_for(agent)
         if block is None or block.until <= now:
             return None
+        last = self._probed_at.get(agent)
+        demanded = demanded_at is not None and (last is None or demanded_at > last)
         running = self._probes.get(agent)
         if running is not None and not running.task.done():
             if running.blocked_at == block.blocked_at:
+                if demanded and not running.demanded:
+                    self._probes[agent] = _Probe(running.blocked_at, running.task, demanded=True)
                 return running.task
             running.task.cancel()
-        last = self._probed_at.get(agent)
         interval = timedelta(seconds=self._settings.interval_seconds)
-        demanded = demanded_at is not None and (last is None or demanded_at > last)
         if last is not None and now - last < interval and not demanded:
             return None
         self._probed_at[agent] = now
         task = asyncio.Task(self._probe(agent, block, now + interval), eager_start=True)
-        self._probes[agent] = _Probe(block.blocked_at, task)
+        self._probes[agent] = _Probe(block.blocked_at, task, demanded=demanded)
         return task
 
     async def refresh(self, agent: str, *, demanded_at: datetime | None = None) -> None:
@@ -134,6 +139,16 @@ class QuotaReconciler:
     def probing(self) -> bool:
         """Return whether any probe is still running."""
         return any(not probe.task.done() for probe in self._probes.values())
+
+    def awaiting_demanded_probe(self, block: AgentBlock) -> bool:
+        """Return whether a requeue-demanded probe of `block` is still running."""
+        probe = self._probes.get(block.agent)
+        return (
+            probe is not None
+            and probe.demanded
+            and probe.blocked_at == block.blocked_at
+            and not probe.task.done()
+        )
 
     async def shutdown(self) -> None:
         """Cancel every probe in flight and wait until each has ended."""

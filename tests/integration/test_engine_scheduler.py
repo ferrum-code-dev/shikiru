@@ -1343,6 +1343,7 @@ def quota_probe(scheduler_env: SchedulerFixture, tmp_path: Path) -> Iterator[Quo
     settings = scheduler_env.settings.model_copy(
         update={
             "agents": {
+                **scheduler_env.settings.agents,
                 "fake": AgentConfig(options={"quota_file": str(source)}),
                 _INDEPENDENT_AGENT: AgentConfig(),
             }
@@ -1393,6 +1394,109 @@ async def test_a_newer_available_reading_dispatches_a_task_queued_behind_a_futur
         "5h": 2.0,
         "7d": 0.0,
     }
+
+
+@pytest.mark.parametrize(
+    "scheduler_env",
+    [_quota_settings(Role.IMPLEMENTER, [_FAKE_RUNG, _FALLBACK_RUNG])],
+    indirect=True,
+)
+@pytest.mark.parametrize(
+    ("five_hour", "weekly", "expected_rung"),
+    [
+        pytest.param(2, 0, _FAKE_RUNG, id="block-released"),
+        pytest.param(100, 100, _FALLBACK_RUNG, id="block-confirmed"),
+    ],
+)
+async def test_a_requeued_task_keeps_its_rung_until_the_demanded_probe_finishes(
+    quota_probe: QuotaProbeFixture,
+    connection: Connection,
+    five_hour: float,
+    weekly: float,
+    expected_rung: Rung,
+) -> None:
+    env = quota_probe.env
+    settings = quota_probe.settings
+    task = _submit(connection, env.clock, title="requeued behind a stale block")
+    env.tasks.set_requeued(task.id)
+    quota_probe.advance(1)
+    quota_probe.publish(five_hour=five_hour, weekly=weekly, observed_at=env.clock.now())
+    scheduler = quota_probe.restart()
+
+    held = await scheduler.run_once()
+
+    assert held.dispatches == ()
+    assert pick_rung(env.tasks.require(task.id), Role.IMPLEMENTER, settings) == _FAKE_RUNG
+    await quota_probe.settle()
+
+    schedule = await scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in schedule.dispatches] == [task.id]
+    assert pick_rung(env.tasks.require(task.id), Role.IMPLEMENTER, settings) == expected_rung
+
+
+@pytest.mark.parametrize(
+    "scheduler_env",
+    [_quota_settings(Role.IMPLEMENTER, [_FAKE_RUNG, _FALLBACK_RUNG])],
+    indirect=True,
+)
+async def test_routine_refreshes_do_not_hold_back_fallback_after_a_probe_confirms_exhaustion(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    settings = quota_probe.settings
+    task = _submit(connection, env.clock, title="exhausted, then fallback")
+    env.tasks.set_requeued(task.id)
+    quota_probe.advance(1)
+    quota_probe.publish(five_hour=100, weekly=100, observed_at=env.clock.now())
+    scheduler = quota_probe.restart()
+    assert (await scheduler.run_once()).dispatches == ()
+    await quota_probe.settle()
+    assert pick_rung(env.tasks.require(task.id), Role.IMPLEMENTER, settings) == _FAKE_RUNG
+
+    quota_probe.advance(quota_probe.refresh_interval)
+    quota_probe.publish(five_hour=100, weekly=100, observed_at=env.clock.now())
+    schedule = await scheduler.run_once()
+    await quota_probe.settle()
+
+    assert [dispatch.task_id for dispatch in schedule.dispatches] == [task.id]
+    assert pick_rung(env.tasks.require(task.id), Role.IMPLEMENTER, settings) == _FALLBACK_RUNG
+
+
+@pytest.mark.parametrize(
+    "scheduler_env",
+    [_quota_settings(Role.IMPLEMENTER, [_FAKE_RUNG, _FALLBACK_RUNG])],
+    indirect=True,
+)
+async def test_a_requeue_during_a_routine_probe_waits_for_a_probe_started_after_the_requeue(
+    quota_probe: QuotaProbeFixture, connection: Connection
+) -> None:
+    env = quota_probe.env
+    settings = quota_probe.settings
+    task = _submit(connection, env.clock, title="requeued while a routine probe runs")
+    quota_probe.advance(1)
+    quota_probe.publish(five_hour=100, weekly=100, observed_at=env.clock.now())
+    scheduler = quota_probe.restart()
+    assert quota_probe.reconciler is not None
+    quota_probe.reconciler.request_refresh(_RESTART_AGENT)
+    quota_probe.advance(1)
+    env.tasks.set_requeued(task.id)
+
+    held = await scheduler.run_once()
+
+    assert held.dispatches == ()
+    assert pick_rung(env.tasks.require(task.id), Role.IMPLEMENTER, settings) == _FAKE_RUNG
+    await quota_probe.settle()
+
+    still_held = await scheduler.run_once()
+
+    assert still_held.dispatches == ()
+    await quota_probe.settle()
+
+    schedule = await scheduler.run_once()
+
+    assert [dispatch.task_id for dispatch in schedule.dispatches] == [task.id]
+    assert pick_rung(env.tasks.require(task.id), Role.IMPLEMENTER, settings) == _FALLBACK_RUNG
 
 
 async def test_a_block_persisted_before_a_restart_is_revalidated_on_the_first_tick(
