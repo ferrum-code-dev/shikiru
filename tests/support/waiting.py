@@ -60,18 +60,25 @@ async def wait_until_advancing(
     timeout: float,
     *,
     step_seconds: float = 1.0,
-    jump_to_next_sleeper: bool = False,
+    jump_while: Callable[[], bool] | None = None,
 ) -> None:
     """Like `wait_until`, moving the fake clock whenever a task is sleeping on it.
 
-    The clock moves `step_seconds` per poll. With `jump_to_next_sleeper` it moves straight to the
-    next pending deadline instead, which fires a long timeout early if that timeout is the earliest
-    sleeper while real subprocesses are still running.
+    The clock moves `step_seconds` per poll. With `jump_while` it moves straight to the next
+    pending deadline instead, but only while `jump_while()` is true: the caller states that no real
+    subprocess work is outstanding, so the earliest sleeper is the wait under test and no long
+    timeout can fire early. While it is false the clock stays where it is.
     """
 
     async def advanced() -> bool:
-        if jump_to_next_sleeper:
-            clock.advance_to_next_sleeper()
+        result = predicate()
+        if isinstance(result, Awaitable):
+            result = await result
+        if result:
+            return True
+        if jump_while is not None:
+            if jump_while():
+                clock.advance_to_next_sleeper()
         elif clock.has_pending_sleep():
             clock.advance(step_seconds)
         result = predicate()

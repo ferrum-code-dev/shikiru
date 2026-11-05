@@ -7,6 +7,7 @@ import dataclasses
 import errno
 import json
 import os
+import shlex
 import stat
 import threading
 from dataclasses import dataclass
@@ -79,6 +80,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_sett
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import add_bare_remote
+from tests.support.handshake import fifo_writer, release_fifo
 from tests.support.permissions import EXECUTABLE_MODE
 from tests.support.quota_waits import record_quota_wait
 from tests.support.store import seed_task
@@ -1037,7 +1039,7 @@ async def test_a_dispatch_escalation_whose_packet_cannot_be_written_still_escala
 
 _HUNG_UPLOAD_PACK = """#!/bin/sh
 echo started >> '{calls}'
-while [ ! -e '{release}' ]; do sleep 0.05; done
+cat {release} > /dev/null
 exec git upload-pack "$@"
 """
 _HANDS_OFF_TASKS = 3
@@ -1088,7 +1090,8 @@ async def _hung_remote(
     await add_bare_remote(tmp_path, remote_dir, settings.repo.remote)
     hang_dir = tmp_path_factory.mktemp("hang")
     calls, release, hang = hang_dir / "calls", hang_dir / "go", hang_dir / "upload-pack"
-    hang.write_text(_HUNG_UPLOAD_PACK.format(calls=calls, release=release))
+    os.mkfifo(release)
+    hang.write_text(_HUNG_UPLOAD_PACK.format(calls=calls, release=shlex.quote(str(release))))
     hang.chmod(EXECUTABLE_MODE)
     uploadpack = ["git", "config", f"remote.{settings.repo.remote}.uploadpack", str(hang)]
     await runner.run(uploadpack, timeout=10, cwd=tmp_path, check=True)
@@ -1131,19 +1134,26 @@ async def test_a_hung_remote_cannot_hold_the_tick_for_every_ready_task(
     tasks = [
         _submit(connection, clock, title=f"ready {number}") for number in range(_HANDS_OFF_TASKS)
     ]
+    writer: int | None = None
     try:
-        assert (await _tick(scheduler, clock, remote.settings)).dispatches == ()
+        first = asyncio.create_task(scheduler.run_once())
+        writer = await fifo_writer(remote.release, _REAL_SECONDS)
+        await wait_until(clock.has_pending_sleep, _REAL_SECONDS)
+        clock.advance(remote.settings.orchestration.dispatch_budget_seconds)
+        assert (await asyncio.wait_for(first, _REAL_SECONDS)).dispatches == ()
         assert (await asyncio.wait_for(scheduler.run_once(), _REAL_SECONDS)).dispatches == ()
         await wait_until(remote.calls.exists, _REAL_SECONDS)
         assert remote.fetches() == 1
         assert [_status(scheduler_env, task) for task in tasks] == [Status.QUEUED] * len(tasks)
 
-        remote.release.touch()
+        release_fifo(writer, remote.release)
+        writer = None
 
         landed = await _land_every_dispatch(scheduler, _HANDS_OFF_TASKS)
         assert sorted(landed) == sorted(task.id for task in tasks)
     finally:
-        remote.release.touch()
+        if writer is not None:
+            release_fifo(writer, remote.release)
         await scheduler.shutdown()
 
 
@@ -1158,8 +1168,13 @@ async def test_the_build_of_a_task_cancelled_meanwhile_does_not_hold_up_the_next
     clock = scheduler_env.clock
     assert isinstance(clock, FakeClock)
     first, _second = (_submit(connection, clock, title=f"ready {n}") for n in range(2))
+    writer: int | None = None
     try:
-        await _tick(scheduler, clock, remote.settings)
+        initial_tick = asyncio.create_task(scheduler.run_once())
+        writer = await fifo_writer(remote.release, _REAL_SECONDS)
+        await wait_until(clock.has_pending_sleep, _REAL_SECONDS)
+        clock.advance(remote.settings.orchestration.dispatch_budget_seconds)
+        await asyncio.wait_for(initial_tick, _REAL_SECONDS)
         await wait_until(lambda: remote.fetches() == 1, _REAL_SECONDS)
         cancelled = scheduler_env.tasks.require(first.id)
         scheduler_env.tasks.apply_transition(
@@ -1172,7 +1187,8 @@ async def test_the_build_of_a_task_cancelled_meanwhile_does_not_hold_up_the_next
 
         await wait_until(next_build_started, _REAL_SECONDS)
     finally:
-        remote.release.touch()
+        if writer is not None:
+            release_fifo(writer, remote.release)
         await scheduler.shutdown()
 
 
@@ -1180,7 +1196,7 @@ _SLOW_COPY = """#!/bin/sh
 case "$1" in
 *.shikiru-cow-probe-*) exec cp "$1" "$2";;
 esac
-while [ ! -e '{release}' ]; do sleep 0.05; done
+cat {release} > /dev/null
 exec cp -R "$1" "$2"
 """
 
@@ -1197,8 +1213,9 @@ async def test_a_slow_cache_copy_runs_beside_the_tick_and_completes_the_dispatch
     (tmp_path / "node_modules" / "pkg.js").write_text("cached\n")
     await commit_all(runner, tmp_path, "ignore the cache")
     release = tmp_path_factory.mktemp("copy") / "go"
+    os.mkfifo(release)
     slow = release.parent / "slow-cp"
-    slow.write_text(_SLOW_COPY.format(release=release))
+    slow.write_text(_SLOW_COPY.format(release=shlex.quote(str(release))))
     slow.chmod(EXECUTABLE_MODE)
     settings = scheduler_env.settings
     repo = settings.repo.model_copy(update={"caches": ["node_modules"]})
@@ -1214,19 +1231,23 @@ async def test_a_slow_cache_copy_runs_beside_the_tick_and_completes_the_dispatch
     clock = scheduler_env.clock
     assert isinstance(clock, FakeClock)
     task = _submit(connection, clock, title="warm cache")
+    writer: int | None = None
     try:
         first = asyncio.create_task(scheduler.run_once())
+        writer = await fifo_writer(release, _REAL_SECONDS)
         await wait_until(clock.has_pending_sleep, _REAL_SECONDS)
         clock.advance(settings.orchestration.dispatch_budget_seconds)
         assert (await asyncio.wait_for(first, _REAL_SECONDS)).dispatches == ()
         assert _status(scheduler_env, task) is Status.QUEUED
 
-        release.touch()
+        release_fifo(writer, release)
+        writer = None
 
         assert await _land_every_dispatch(scheduler, 1) == [task.id]
         assert (task_root(tmp_path, task.id) / "node_modules" / "pkg.js").read_text() == "cached\n"
     finally:
-        release.touch()
+        if writer is not None:
+            release_fifo(writer, release)
         await scheduler.shutdown()
 
 

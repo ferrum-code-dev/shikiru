@@ -51,7 +51,7 @@ from tests.support.cells import CYAN_BOLD, GREY, GREY_BOLD, Cell, foregrounds, s
 from tests.support.cells import rendered_lines as painted_lines
 from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import ManualFocusHost, widget_context
+from tests.support.dashboard import ManualFocusHost, focus, widget_context
 from tests.support.render import plain_text, rendered_lines
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, WaitTimeoutError, wait_until
@@ -370,7 +370,7 @@ async def test_dependencies_align_colour_a_cancelled_blocker_and_open_on_enter(
             assert rows[0].index("\N{BALLOT X} cancelled") == rows[1].index("\N{MIDDLE DOT} queued")
             first_title = panel.query(".row-list-row").first(Static)
             assert set(foregrounds(first_title, "Add database")) == {ALERT_COLOR}
-            panel.query_one(f"#{TASK_DETAIL_RELATED_LIST}").focus()
+            await focus(pilot, panel.query_one(f"#{TASK_DETAIL_RELATED_LIST}"))
             await pilot.press("enter")
             await wait_until(lambda: opened == [blocker.id], timeout=UI_WAIT_SECONDS)
     finally:

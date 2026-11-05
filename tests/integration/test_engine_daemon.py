@@ -64,6 +64,7 @@ from shikiru.domain.tasks import (
 )
 from shikiru.engine.daemon import EngineAlreadyRunningError, EngineLock, engine_is_running
 from shikiru.engine.notifier import Notifier
+from shikiru.engine.quota_reconciler import QUOTA_REFRESH_SCOPE
 from shikiru.engine.takeover import HAND_BACK_MESSAGE
 from shikiru.errors import CommandTimeoutError
 from shikiru.paths import engine_lock_path
@@ -205,7 +206,13 @@ async def test_in_process_engine_acknowledges_commands_and_stops_before_dispatch
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     registry: AgentRegistry = build_registry()
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=registry)
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=registry,
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
@@ -269,7 +276,13 @@ async def test_unexpected_flow_error_escalates_without_stopping_engine(
     tmux = build_tmux(tmux_server)
     await init_project_repo(tmp_path)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
@@ -311,7 +324,13 @@ async def test_stop_before_first_pass_prevents_same_batch_dispatch(
     settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     queue = CommandQueue(connection, clock)
     submitted = queue.append(Submit(title="stop batch", request="stop batch"))
@@ -353,7 +372,11 @@ async def test_an_engine_started_while_a_liveness_probe_holds_the_lock_waits_and
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(
-        tmp_path, engine_settings(), clock=clock, tmux=tmux, registry=build_registry()
+        tmp_path,
+        engine_settings(),
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
     )
     lock_path = engine_lock_path(tmp_path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -405,7 +428,13 @@ async def test_an_engine_error_in_a_task_escalates_it_and_the_daemon_keeps_runni
     settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
@@ -449,7 +478,13 @@ async def test_a_restarted_engine_gives_every_escalated_task_one_actionable_esca
     settings = engine_settings()
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
@@ -560,7 +595,13 @@ async def test_resolution_commands_persist_task_and_escalation_outcomes(
     settings = engine_settings()
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
@@ -660,7 +701,11 @@ async def _escalated_task(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGener
 
     def start_engine() -> asyncio.Task[None]:
         engine = build_engine(
-            tmp_path, engine_settings(), clock=clock, tmux=tmux, registry=build_registry()
+            tmp_path,
+            engine_settings(),
+            clock=clock,
+            tmux=tmux,
+            registry=build_registry(),
         )
         return asyncio.create_task(engine.run())
 
@@ -764,14 +809,12 @@ async def test_a_pending_quota_probe_neither_delays_commands_nor_an_independent_
     source = tmp_path / "quota-source.fifo"
     os.mkfifo(source)
     base = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=2)
-    refresh = base.orchestration.quota_refresh.model_copy(update={"timeout_seconds": 3600})
     settings = base.model_copy(
         update={
             "agents": {
                 "fake": AgentConfig(options={"quota_file": str(source)}),
                 "fake2": AgentConfig(),
             },
-            "orchestration": base.orchestration.model_copy(update={"quota_refresh": refresh}),
         }
     )
     tmux = build_tmux(tmux_server)
@@ -784,7 +827,13 @@ async def test_a_pending_quota_probe_neither_delays_commands_nor_an_independent_
     blocked = seed_task(connection, clock, title="behind the block")
     free = Rung(agent="fake2", model="fake-1", effort=None)
     independent = seed_task(connection, clock, title="independent", leader=free, implementer=free)
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     engine_task = asyncio.create_task(engine.run())
     writer: int | None = None
 
@@ -811,6 +860,19 @@ async def test_a_pending_quota_probe_neither_delays_commands_nor_an_independent_
             _TAKEOVER_REPL_WAIT_SECONDS,
         )
         assert _required_task(tasks, blocked.id).status is Status.QUEUED
+        faults = EventLog(connection, clock).since(0, kinds=[EventKind.ENGINE_FAULT])
+        assert not any(event.data.get("scope") == f"{QUOTA_REFRESH_SCOPE} fake" for event in faults)
+        assert writer is not None
+        reading = {
+            "observed_at": clock.now().isoformat(),
+            "windows": [{"name": "weekly", "used_pct": 0, "resets_at": None}],
+        }
+        os.write(writer, json.dumps(reading).encode())
+        os.close(writer)
+        writer = None
+        await wait_until_advancing(
+            clock, lambda: quotas.block_for("fake") is None, _TAKEOVER_REPL_WAIT_SECONDS
+        )
     finally:
         if writer is not None:
             os.close(writer)
@@ -954,7 +1016,13 @@ async def test_retry_resolution_drops_only_cancelled_dependencies(
     settings = engine_settings()
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     queue = CommandQueue(connection, clock)
     tasks = TaskStore(connection, clock)
@@ -1034,7 +1102,13 @@ async def test_superseded_task_uses_shared_terminal_cleanup(
     settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     queue = CommandQueue(connection, clock)
@@ -1082,7 +1156,13 @@ async def test_engine_observes_two_in_process_flows_in_parallel(
     settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=2)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     queue = CommandQueue(connection, clock)
     first = queue.append(Submit(title="parallel one", request="parallel one", mode=Mode.IMPLEMENT))
@@ -1147,7 +1227,13 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
     settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=2)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     runs = RunStore(connection, clock)
@@ -1579,7 +1665,13 @@ async def test_failed_report_command_stays_live_until_targeted_takeover_and_same
     settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT, max_parallel=2)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)
     runs = RunStore(connection, clock)
@@ -1653,7 +1745,10 @@ async def test_hand_back_clears_the_operator_colour_from_the_pane(
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
     engine = build_engine(
-        tmp_path, engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT), clock=clock, tmux=tmux
+        tmp_path,
+        engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT),
+        clock=clock,
+        tmux=tmux,
     )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     tasks = TaskStore(connection, clock)

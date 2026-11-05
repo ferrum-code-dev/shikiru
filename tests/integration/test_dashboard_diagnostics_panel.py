@@ -44,6 +44,7 @@ from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
     dashboard_app,
+    focus,
     state_views,
 )
 from tests.support.store import seed_task
@@ -565,7 +566,7 @@ def _scope_order(app: DashboardApp, *scopes: str) -> list[str]:
 
 
 async def _toggle_details(app: DashboardApp, pilot: Pilot[None], card: int) -> None:
-    app.screen.query(FaultCard)[card].query_one("CollapsibleTitle").focus()
+    await focus(pilot, app.screen.query(FaultCard)[card].query_one("CollapsibleTitle"))
     await pilot.press("enter")
     await pilot.pause()
 

@@ -19,13 +19,21 @@ if TYPE_CHECKING:
 PID_WAIT_SECONDS = 10.0
 
 _DESCENDANT = (
-    "import signal, threading; "
+    "import pathlib, signal, sys, threading; "
     "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+    "pathlib.Path(sys.argv[1]).write_text('ready'); "
     "threading.Event().wait()"
 )
 _PARENT = (
     "import pathlib, subprocess, sys, threading; "
-    f"child = subprocess.Popen([sys.executable, '-c', {_DESCENDANT!r}]); "
+    f"child = subprocess.Popen([sys.executable, '-c', {_DESCENDANT!r}, sys.argv[2]]); "
+    "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
+    "threading.Event().wait()"
+)
+_PARENT_IGNORING_TERM = (
+    "import pathlib, signal, subprocess, sys, threading; "
+    "signal.signal(signal.SIGTERM, lambda *_: pathlib.Path(sys.argv[3]).write_text('received')); "
+    f"child = subprocess.Popen([sys.executable, '-c', {_DESCENDANT!r}, sys.argv[2]]); "
     "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
     "threading.Event().wait()"
 )
@@ -36,11 +44,27 @@ class ProcessTree:
 
     def __init__(self, pid_file: Path) -> None:
         self._pid_file = pid_file
+        self._ready_file = pid_file.with_suffix(".ready")
+        self._signal_file = pid_file.with_suffix(".signal")
         self.parent_pid: int | None = None
 
     @property
     def argv(self) -> list[str]:
-        return [sys.executable, "-c", _PARENT, str(self._pid_file)]
+        return [sys.executable, "-c", _PARENT, str(self._pid_file), str(self._ready_file)]
+
+    @property
+    def ignoring_term_argv(self) -> list[str]:
+        return [
+            sys.executable,
+            "-c",
+            _PARENT_IGNORING_TERM,
+            str(self._pid_file),
+            str(self._ready_file),
+            str(self._signal_file),
+        ]
+
+    def received_term(self) -> bool:
+        return self._signal_file.exists()
 
     @property
     def descendant_pid(self) -> int:
@@ -48,7 +72,12 @@ class ProcessTree:
 
     async def descendant_started(self) -> int:
         await wait_until(
-            lambda: self._pid_file.exists() and bool(self._pid_file.read_text()), PID_WAIT_SECONDS
+            lambda: (
+                self._pid_file.exists()
+                and bool(self._pid_file.read_text())
+                and self._ready_file.exists()
+            ),
+            PID_WAIT_SECONDS,
         )
         return self.descendant_pid
 

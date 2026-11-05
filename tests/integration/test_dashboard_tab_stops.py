@@ -35,6 +35,7 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     fixed_settings,
+    focus,
     ignore_palette_action,
     pick_details_entry,
     state_views,
@@ -205,12 +206,12 @@ async def test_tab_visits_only_visible_stops_and_highlights_the_readouts(
         assert reached == set(_READOUTS)
         for stop in stops:
             if isinstance(stop, _READOUTS):
-                stop.focus()
+                await focus(pilot, stop)
                 await pilot.pause()
                 assert {_SELECTED_SURFACE} == set().union(*_surface_rows(stop))
         resources = decision_home.query_one("#resources", ResourcesPanel)
         rule = decision_home.query_one("#resources-rule")
-        resources.focus()
+        await focus(pilot, resources)
         await pilot.pause()
         assert resources.gutter.top == 0
         assert rule.region.bottom == resources.region.y

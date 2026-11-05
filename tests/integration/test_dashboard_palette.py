@@ -53,6 +53,7 @@ from tests.support.cells import (
     rendered_select_label,
 )
 from tests.support.clock import FakeClock
+from tests.support.dashboard import enter_text, focus
 from tests.support.escalations import (
     operator_services,
 )
@@ -281,7 +282,7 @@ async def test_applied_message_feedback_keeps_next_turn_guidance(
         await wait_until(lambda: app.focused is message, timeout=UI_WAIT_SECONDS)
         await _wait_for_confirmation(screen, shown=False)
 
-        await pilot.press(*"Second note.")
+        await enter_text(pilot, "Second note.")
         await _wait_for_hint_key(submit, CYAN_BOLD)
         assert _hint_key_style(submit, "Enter") == {CYAN_BOLD}
         await pilot.press("ctrl+s")
@@ -766,7 +767,7 @@ async def _fill_submit(pilot: Pilot[None], screen: PaletteScreen) -> None:
     assert complexity.value == ""
     assert rendered_select_label(mode) == "Auto detect"
     assert rendered_select_label(complexity) == "Triage decides"
-    mode.focus()
+    await focus(pilot, mode)
     await pilot.press("enter", "down", "enter")
     await wait_until(lambda: rendered_select_label(mode) == "Implement", timeout=UI_WAIT_SECONDS)
     await pilot.resize_terminal(*_TINY_APP_SIZE)
@@ -774,12 +775,12 @@ async def _fill_submit(pilot: Pilot[None], screen: PaletteScreen) -> None:
         lambda: screen.size.width == _TINY_APP_SIZE[0] and screen.size.height == _TINY_APP_SIZE[1],
         timeout=UI_WAIT_SECONDS,
     )
-    mode.focus()
+    await focus(pilot, mode)
     await wait_until(
         lambda: rendered_select_label(mode) == "Implement",
         timeout=UI_WAIT_SECONDS,
     )
-    complexity.focus()
+    await focus(pilot, complexity)
     await wait_until(
         lambda: rendered_select_label(complexity) == "Triage decides",
         timeout=UI_WAIT_SECONDS,

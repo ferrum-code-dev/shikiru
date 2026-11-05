@@ -54,6 +54,7 @@ from tests.support.dashboard import (
     ManualFocusHost,
     StubServices,
     WidgetHostApp,
+    focus,
     fold_headline,
     list_rows,
     pick_details_entry,
@@ -122,6 +123,7 @@ TIMELINE_CONCURRENT_IMPLEMENTER_MESSAGE = "timeline-concurrent-implementer"
 class _TimelineUITest:
     connection: Connection
     clock: FakeClock
+    reader_clock: FakeClock
     task: Task
     context: WidgetContext
     settings: Settings
@@ -706,7 +708,8 @@ async def test_following_tracks_the_latest_entry_and_pauses_when_the_reader_move
             message=f"timeline-entry-{index}",
             data={"role": Role.LEADER.value, "turn": f"turn-{index}"},
         )
-    reader = StateReader(database, clock)
+    reader_clock = FakeClock(clock.now())
+    reader = StateReader(database, reader_clock)
     context = widget_context(reader, project_root, clock)
     panel = TaskDetailPanel(context, task.id, fixed=False)
     app = ManualFocusHost(panel)
@@ -715,7 +718,9 @@ async def test_following_tracks_the_latest_entry_and_pauses_when_the_reader_move
     try:
         async with app.run_test(size=(100, 40)) as pilot:
             await _open_timeline_view(panel, pilot)
-            case = _TimelineUITest(connection, clock, task, context, settings, panel, pilot)
+            case = _TimelineUITest(
+                connection, clock, reader_clock, task, context, settings, panel, pilot
+            )
             latest = f"timeline-entry-{TIMELINE_ROW_COUNT - 1}"
             await wait_until(
                 lambda: bool(_rows(panel)) and latest in _rows(panel)[0],
@@ -869,7 +874,7 @@ async def test_shown_timelines_keep_their_own_paging_filters_and_refresh(
         newest_signals = _identities(signals)
         assert newest_events != newest_signals
 
-        app.query_one(f"#{activity.ids.list}").focus()
+        await focus(pilot, app.query_one(f"#{activity.ids.list}"))
         await pilot.press("pagedown")
         await wait_until(lambda: _identities(activity) != newest_events, timeout=UI_WAIT_SECONDS)
         older_events = _identities(activity)
@@ -888,7 +893,7 @@ async def test_shown_timelines_keep_their_own_paging_filters_and_refresh(
         assert _identities(activity) == older_events
         assert _turns(signals)[0] == "signal-turn-fresh"
 
-        app.query_one(f"#{signals.ids.list}").focus()
+        await focus(pilot, app.query_one(f"#{signals.ids.list}"))
         await pilot.press("f", "t")
         await wait_until(lambda: set(_turns(signals)) == {"signal-turn-0"}, timeout=UI_WAIT_SECONDS)
         assert _identities(activity) == older_events
@@ -998,7 +1003,7 @@ async def test_activity_tables_show_status_columns_full_text_block_filter_and_ol
 
             agent_ids = AGENT_TIMELINE_IDS
             section = panel.query_one(f"#{agent_ids.root}", TimelineSection)
-            panel.query_one(f"#{agent_ids.list}").focus()
+            await focus(pilot, panel.query_one(f"#{agent_ids.list}"))
             await pilot.press("f", "r")
             await wait_until(
                 lambda: (
@@ -1137,7 +1142,12 @@ async def _append_and_wake(case: _TimelineUITest, message: str, turn: str) -> No
         message=message,
         data={"role": Role.LEADER.value, "turn": turn},
     )
-    await _wake_clock(case.clock, case.settings.dashboard.timeline_refresh_seconds)
+    seconds = case.settings.dashboard.timeline_refresh_seconds
+    await wait_until(
+        case.reader_clock.has_pending_sleep, timeout=TIMELINE_UI_REFRESH_TIMEOUT_SECONDS
+    )
+    case.reader_clock.advance(seconds)
+    await _wake_clock(case.clock, seconds)
 
 
 async def _focus_list(case: _TimelineUITest) -> None:

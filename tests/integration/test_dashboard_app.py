@@ -120,6 +120,7 @@ from shikiru.ui.tokens import PRIMARY_TEXT_COLOR, STEEL_BLUE
 from tests.support.actions import (
     actions_screen,
     assert_role_focus_and_tab_order,
+    is_composed,
     open_row,
     popup_screen,
     structure,
@@ -132,7 +133,9 @@ from tests.support.dashboard import (
     StubServices,
     choose_details_entry,
     choose_inspector_details_entry,
+    enter_text,
     fixed_settings,
+    focus,
     focus_inspector_details,
     fold_headline,
     ignore_palette_action,
@@ -483,7 +486,10 @@ _PROJECT_ONLY_ROWS = [
 
 
 async def _wait_for_actions(app: DashboardApp) -> ActionsListScreen:
-    await wait_until(lambda: isinstance(app.screen, ActionsListScreen), timeout=UI_WAIT_SECONDS)
+    await wait_until(
+        lambda: isinstance(app.screen, ActionsListScreen) and is_composed(app.screen),
+        timeout=UI_WAIT_SECONDS,
+    )
     return cast("ActionsListScreen", app.screen)
 
 
@@ -492,7 +498,11 @@ async def _open_popup(
 ) -> PaletteScreen:
     await open_row(pilot, listing, label)
     await wait_until(
-        lambda: isinstance(app.screen, PaletteScreen) and app.screen.is_mounted,
+        lambda: (
+            isinstance(app.screen, PaletteScreen)
+            and is_composed(app.screen)
+            and bool(app.screen.query("#palette-submit"))
+        ),
         timeout=UI_WAIT_SECONDS,
     )
     return cast("PaletteScreen", app.screen)
@@ -634,7 +644,7 @@ async def test_dashboard_mounts_the_default_widgets_and_fits_the_pane(
             home_screen = app.screen
             attention = app.query_one("#escalations", EscalationsPanel)
             await wait_until(lambda: attention.display, timeout=UI_WAIT_SECONDS)
-            attention.focus()
+            await focus(pilot, attention)
             attention_row = attention.query_one("#escalation-panels", VerticalScroll).query_one(
                 Static
             )
@@ -1130,11 +1140,12 @@ async def _assert_mixed_home_task_rows(
         assert app.query_one("#focus-main", Horizontal).has_class("wide")
         if size == _SHORT_WIDE_HOME_SIZE:
             assert app.query_one("#task-detail-panel", TaskDetailPanel).display
-        task_list.scroll_to_widget(active_rows[-1], animate=False, immediate=True)
-        await wait_until(
-            lambda: active_rows[-1].region.overlaps(task_list.scrollable_content_region),
-            timeout=UI_WAIT_SECONDS,
-        )
+
+        def last_row_is_scrolled_into_view() -> bool:
+            task_list.scroll_to_widget(active_rows[-1], animate=False, immediate=True)
+            return active_rows[-1].region.overlaps(task_list.scrollable_content_region)
+
+        await wait_until(last_row_is_scrolled_into_view, timeout=UI_WAIT_SECONDS)
         assert task_list.highlighted_child is selected_item
     else:
         assert all(
@@ -1185,7 +1196,7 @@ async def test_wide_home_keeps_usage_resources_and_attention_visible_above_the_t
         async with app.run_test(size=size) as pilot:
             await _assert_mixed_home_readouts(app)
             task_list = app.query_one("#task-browser-list", ListView)
-            task_list.focus()
+            await focus(pilot, task_list)
             await pilot.press("down")
             await wait_until(
                 lambda: (
@@ -1373,7 +1384,7 @@ async def _assert_cached_resource_views(
     if size == _COMPACT_HOME_SIZE:
         readouts = app.query_one("#focus-readouts", VerticalScroll)
         assert not readouts.allow_focus()
-        home_resources.focus()
+        await focus(pilot, home_resources)
         await pilot.press("pagedown")
         await wait_until(
             lambda: (
@@ -1777,7 +1788,7 @@ async def _assert_compact_home_selection_and_clear(
         if item.id is not None and item.id.startswith("task-row-")
     )
     assert second.id in task_ids
-    list_view.focus()
+    await focus(pilot, list_view)
     await pilot.press("down")
     await wait_until(lambda: task_ids[0] in _rendered_text(identity), timeout=UI_WAIT_SECONDS)
     await pilot.press("enter")
@@ -2435,7 +2446,7 @@ async def _assert_command_feedback_footer(
     if mono:
         await pilot.click(status)
     else:
-        status.focus()
+        await focus(pilot, status)
         await pilot.press("enter")
     await wait_until(lambda: app.screen is not home_screen, timeout=UI_WAIT_SECONDS)
     history_copy = app.screen.query_one("#command-history-copy", Static)
@@ -2573,7 +2584,7 @@ async def _assert_command_history_initial_shortcuts(
     await wait_until(lambda: "page 2" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
-    next_button.focus()
+    await focus(pilot, next_button)
     await pilot.press("left")
     await wait_until(lambda: "page 1" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
     assert history_frame.region == preferred_region
@@ -2606,7 +2617,7 @@ async def _assert_command_history_filter_shortcuts(
         timeout=UI_WAIT_SECONDS,
     )
     previous_button = app.screen.query_one("#command-history-previous", Button)
-    previous_button.focus()
+    await focus(pilot, previous_button)
     await pilot.press("left")
     await wait_until(lambda: "page 1" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
     await wait_until(
@@ -2619,7 +2630,7 @@ async def _assert_command_history_filter_shortcuts(
         ),
         timeout=UI_WAIT_SECONDS,
     )
-    history_filter.focus()
+    await focus(pilot, history_filter)
     await pilot.press("enter")
     await wait_until(lambda: history_filter.expanded, timeout=UI_WAIT_SECONDS)
     assert history_frame.region == preferred_region
@@ -2681,14 +2692,14 @@ async def _assert_command_history_last_page_and_refresh(
 ) -> None:
     page = app.screen.query_one("#command-history-page", Static)
     history_copy = app.screen.query_one("#command-history-copy", Static)
-    app.screen.query_one("#command-history-next", Button).focus()
+    await focus(pilot, app.screen.query_one("#command-history-next", Button))
     await pilot.press("right")
     await wait_until(lambda: "page 2" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
     next_button = app.screen.query_one("#command-history-next", Button)
     assert not next_button.disabled, _rendered_text(page)
-    next_button.focus()
+    await focus(pilot, next_button)
     await pilot.press("left")
     await wait_until(lambda: "page 1" in _rendered_text(page), timeout=UI_WAIT_SECONDS)
     await pilot.press("right")
@@ -2768,7 +2779,7 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
             history_controls = app.screen.query_one("#command-history-controls")
             history_copy = app.screen.query_one("#command-history-copy", Static)
             history_scroll = app.screen.query_one("#command-history-scroll", VerticalScroll)
-            _assert_command_history_controls_reachable(
+            await _assert_command_history_controls_reachable(
                 app.screen,
                 history_frame,
                 history_controls,
@@ -2877,7 +2888,7 @@ async def _assert_initial_history_pages(
     copy = screen.query_one("#command-history-copy", Static)
     next_page = screen.query_one("#command-history-next", Button)
     await wait_until(lambda: body.virtual_size.height > 1, timeout=UI_WAIT_SECONDS)
-    _assert_command_history_controls_reachable(screen, frame, controls)
+    await _assert_command_history_controls_reachable(screen, frame, controls)
     _assert_command_history_title_visible(screen, frame)
     await _assert_popup_close_reachable(
         screen,
@@ -2890,7 +2901,7 @@ async def _assert_initial_history_pages(
     initial_content_height = body.virtual_size.height
     while not next_page.disabled:
         previous_content = _rendered_text(copy)
-        next_page.focus()
+        await focus(pilot, next_page)
         await pilot.press("right")
         await wait_until(
             lambda previous_content=previous_content: _rendered_text(copy) != previous_content,
@@ -2898,7 +2909,7 @@ async def _assert_initial_history_pages(
         )
         assert frame.region == initial_region
         assert controls.region.y == initial_controls_y
-        _assert_command_history_controls_reachable(screen, frame, controls)
+        await _assert_command_history_controls_reachable(screen, frame, controls)
         _assert_command_history_title_visible(screen, frame)
     assert body.virtual_size.height < initial_content_height
     return initial_region, initial_controls_y, initial_content_height
@@ -2939,7 +2950,7 @@ async def _assert_initial_history_empty_size_restoration(
         timeout=UI_WAIT_SECONDS,
     )
     assert frame.region == preferred_region
-    _assert_command_history_controls_reachable(screen, frame, controls)
+    await _assert_command_history_controls_reachable(screen, frame, controls)
     _assert_command_history_title_visible(screen, frame)
     await pilot.resize_terminal(*initial_size)
     await wait_until(
@@ -3008,7 +3019,7 @@ async def _assert_initial_history_live_restoration(
         ),
         timeout=UI_WAIT_SECONDS,
     )
-    _assert_command_history_controls_reachable(screen, frame, controls)
+    await _assert_command_history_controls_reachable(screen, frame, controls)
     _assert_command_history_title_visible(screen, frame)
 
 
@@ -3023,7 +3034,7 @@ async def _assert_list_paging(
     resumed: str,
 ) -> None:
     list_widget = app.screen.query_one(f"#{list_id}")
-    list_widget.focus()
+    await focus(pilot, list_widget)
     await wait_until(
         lambda: first in " ".join(list_rows(app.screen, list_id)), timeout=UI_WAIT_SECONDS
     )
@@ -3194,13 +3205,19 @@ async def _resize_command_history_to_compact_and_close(
     await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
 
 
-def _assert_command_history_controls_reachable(
+async def _assert_command_history_controls_reachable(
     screen: Widget,
     frame: Widget,
     controls: Widget,
 ) -> None:
-    assert frame.content_region.contains_region(controls.region)
-    assert screen.region.contains_region(controls.region)
+    await wait_until(
+        lambda: (
+            frame.has_class("stable")
+            and frame.content_region.contains_region(controls.region)
+            and screen.region.contains_region(controls.region)
+        ),
+        timeout=UI_WAIT_SECONDS,
+    )
 
 
 def _assert_command_history_title_visible(screen: Widget, frame: Widget) -> None:
@@ -3293,7 +3310,7 @@ async def _assert_home_resize_matrix(
     search = app.query_one("#task-browser-search", Input)
     await pilot.press("/")
     search.value = task.id
-    search.focus()
+    await focus(pilot, search)
     list_view = app.query_one("#task-browser-list", ListView)
     await wait_until(
         lambda: (
@@ -3358,7 +3375,7 @@ async def _assert_tiny_home_task_routes(
     root = app.query_one("#focus-root", VerticalScroll)
     list_view = app.query_one("#task-browser-list", ListView)
     selected_item = app.query_one(f"#task-row-{task.id}", ListItem)
-    list_view.focus()
+    await focus(pilot, list_view)
     await wait_until(
         lambda: (
             task.id in _rendered_text(selected_item.query_one(Static))
@@ -3389,7 +3406,7 @@ async def _assert_tiny_home_task_routes(
     await wait_until(lambda: bool(palette_requests), timeout=UI_WAIT_SECONDS)
     assert palette_requests[0].task_id == task.id
     assert app.screen is home_screen
-    list_view.focus()
+    await focus(pilot, list_view)
     await pilot.press("enter")
     await pilot.pause()
     assert app.screen is home_screen
@@ -3499,7 +3516,7 @@ async def test_home_row_click_and_enter_keep_the_shared_inspector_on_home(
                 == before_commands
             )
 
-            list_view.focus()
+            await focus(pilot, list_view)
             await pilot.press("down")
             await wait_until(
                 lambda: (
@@ -3585,11 +3602,11 @@ async def _exercise_contextual_draft_and_evidence_route(
         timeout=UI_WAIT_SECONDS,
     )
     await _select_home_task(app, task.id)
-    list_view.focus()
+    await focus(pilot, list_view)
     await pilot.click("#focus-footer-actions")
     listing = await _wait_for_actions(app)
+    await wait_until(lambda: task.id in title_text(listing), timeout=UI_WAIT_SECONDS)
     context = title_text(listing)
-    assert task.id in context
     assert "Leader" not in context
     await wait_until(
         lambda: {"Command history", "Diagnostics"} <= set(structure(listing)),
@@ -3599,7 +3616,7 @@ async def _exercise_contextual_draft_and_evidence_route(
     palette = await _open_popup(app, pilot, listing, "Message")
     await _focus_message_editor(app, pilot, palette)
     guidance = "Retain this task scoped guidance after closing."
-    await pilot.press(*guidance)
+    await enter_text(pilot, guidance)
     await _resize_contextual_message_form(app, pilot, palette, guidance)
     await pilot.press("escape")
     await wait_until(lambda: app.screen is listing, timeout=UI_WAIT_SECONDS)
@@ -3614,7 +3631,7 @@ async def _exercise_contextual_draft_and_evidence_route(
         )
     assert task.id in _rendered_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
     assert queue.pending() == []
-    list_view.focus()
+    await focus(pilot, list_view)
     await pilot.press("ctrl+p")
     listing = await _wait_for_actions(app)
     assert task.id in title_text(listing)
@@ -3737,7 +3754,7 @@ async def _resize_blank_palette_text_area(
             assert button.region.bottom < _TINY_HOME_SIZE[1]
             if text_area.id == "message":
                 role = cast("Select[str]", palette.query_one("#role", Select))
-                role.focus()
+                await focus(pilot, role)
                 await pilot.press("enter")
                 await wait_until(
                     lambda target=role: target.expanded,
@@ -3749,7 +3766,7 @@ async def _resize_blank_palette_text_area(
                     timeout=UI_WAIT_SECONDS,
                 )
                 assert app.screen is palette
-                text_area.focus()
+                await focus(pilot, text_area)
 
 
 async def _exercise_home_help_route(app: DashboardApp, pilot: Pilot[None], task: Task) -> None:
@@ -3783,7 +3800,7 @@ async def _exercise_inspector_mouse_and_native_escape(
     assert task.id in title_text(listing)
     palette = await _open_popup(app, pilot, listing, "Message")
     role = cast("Select[str]", palette.query_one("#role", Select))
-    role.focus()
+    await focus(pilot, role)
     await pilot.press("enter")
     await wait_until(lambda: role.expanded, timeout=UI_WAIT_SECONDS)
     await pilot.press("ctrl+p")
@@ -3816,7 +3833,7 @@ async def _open_task_context_menu(
     pilot: Pilot[None],
     list_view: ListView,
 ) -> ActionsListScreen:
-    list_view.focus()
+    await focus(pilot, list_view)
     await pilot.press("ctrl+p")
     listing = await _wait_for_actions(app)
     await _assert_popup_close_reachable(
@@ -3941,7 +3958,7 @@ async def _open_and_close_task_message_draft(
         timeout=UI_WAIT_SECONDS,
     )
     await _select_home_task(app, task.id)
-    list_view.focus()
+    await focus(pilot, list_view)
     await pilot.press("ctrl+p")
     listing = await _wait_for_actions(app)
     assert task.id in title_text(listing)
@@ -3949,7 +3966,7 @@ async def _open_and_close_task_message_draft(
     guidance = "Keep this task's message after a different decision route."
     message = palette.query_one("#message", TextArea)
     await _focus_message_editor(app, pilot, palette)
-    await pilot.press(*guidance)
+    await enter_text(pilot, guidance)
     await wait_until(lambda: message.text == guidance, timeout=UI_WAIT_SECONDS)
     await pilot.press("escape")
     await wait_until(lambda: app.screen is listing, timeout=UI_WAIT_SECONDS)
@@ -3964,7 +3981,7 @@ async def _open_home_task_action_menu(
     task: Task,
 ) -> ActionsListScreen:
     await _select_home_task(app, task.id)
-    app.query_one("#task-browser-list", ListView).focus()
+    await focus(pilot, app.query_one("#task-browser-list", ListView))
     await pilot.press("ctrl+p")
     return await _wait_for_actions(app)
 
@@ -4030,7 +4047,7 @@ async def test_contextual_message_draft_survives_back_and_action_change(
                 timeout=UI_WAIT_SECONDS,
             )
             await _select_home_task(app, task.id)
-            list_view.focus()
+            await focus(pilot, list_view)
             await pilot.press("ctrl+p")
             listing = await _wait_for_actions(app)
             message_palette = await _open_popup(app, pilot, listing, "Message")
@@ -4068,18 +4085,18 @@ async def _exercise_back_and_action_change_draft(
     listing = await _open_home_task_action_menu(app, pilot, task)
     palette = await _open_popup(app, pilot, listing, "Message")
     role = cast("Select[str]", palette.query_one("#role", Select))
-    role.focus()
+    await focus(pilot, role)
     role.value = Role.IMPLEMENTER.value
     await wait_until(
         lambda: role.value == Role.IMPLEMENTER.value,
         timeout=UI_WAIT_SECONDS,
     )
     message = palette.query_one("#message", TextArea)
-    message.focus()
+    await focus(pilot, message)
     await _resize_blank_palette_text_area(app, pilot, palette, message, queue)
     assert role.value == Role.IMPLEMENTER.value
     guidance = "Keep the explicitly selected implementer message."
-    await pilot.press(*guidance)
+    await enter_text(pilot, guidance)
     await wait_until(lambda: message.text == guidance, timeout=UI_WAIT_SECONDS)
     assert queue.pending() == []
 
@@ -4152,7 +4169,7 @@ async def test_empty_home_footer_actions_are_mouse_reachable_and_read_only(
             home = app.screen
             search = app.query_one("#task-browser-search", Input)
             search.value = "no matching task"
-            search.focus()
+            await focus(pilot, search)
             await pilot.pause()
             detach = app.query_one("#focus-footer-detach", Button)
             assert detach.disabled
@@ -4545,6 +4562,17 @@ def _active_help_tabs_are(screen: Widget, expected: list[str]) -> bool:
     return [str(label.content) for label in labels] == expected
 
 
+def _frame_is_laid_out(frame: Widget) -> bool:
+    width = frame.styles.width
+    height = frame.styles.height
+    return (
+        frame.has_class("stable")
+        and width is not None
+        and height is not None
+        and frame.region.size == (width.cells, height.cells)
+    )
+
+
 async def _assert_help_frame_keeps_its_size_across_sections(
     app: DashboardApp, pilot: Pilot[None], size: tuple[int, int]
 ) -> None:
@@ -4552,9 +4580,7 @@ async def _assert_help_frame_keeps_its_size_across_sections(
     frame = screen.query_one("#workspace-help-frame")
     body = screen.query_one("#workspace-help-scroll", VerticalScroll)
     hint = screen.query_one("#workspace-help-hint")
-    await wait_until(
-        lambda: frame.region.height > 0 and frame.has_class("stable"), timeout=UI_WAIT_SECONDS
-    )
+    await wait_until(lambda: _frame_is_laid_out(frame), timeout=UI_WAIT_SECONDS)
     region = frame.region
     scrolls = body.max_scroll_y > 0
     assert body.region.y - hint.region.y == _HELP_HINT_AND_BLANK_ROWS
@@ -4570,7 +4596,9 @@ async def _assert_help_frame_keeps_its_size_across_sections(
             partial(_active_help_tabs_are, screen, [tab.value]), timeout=UI_WAIT_SECONDS
         )
         await pilot.wait_for_scheduled_animations()
-        assert frame.region == region
+        await wait_until(
+            lambda: frame.has_class("stable") and frame.region == region, timeout=UI_WAIT_SECONDS
+        )
         assert (body.max_scroll_y > 0) is scrolls
 
 
@@ -4714,7 +4742,7 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
             home = app.screen
             search = app.query_one("#task-browser-search", Input)
             search.value = task.id
-            search.focus()
+            await focus(pilot, search)
             await pilot.press("enter")
             count = home.query_one("#task-browser-count", Static)
             await wait_until(
@@ -4799,7 +4827,7 @@ async def test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions
             )
             await _select_home_task(app, task.id)
             search = home.query_one("#task-browser-search", Input)
-            search.focus()
+            await focus(pilot, search)
 
             await pilot.press("f12")
             palette = await _wait_for_actions(app)
@@ -4946,7 +4974,7 @@ async def test_home_selection_discards_detail_result_from_an_in_flight_report_re
                 lambda: f"task-row-{second.id}" in {item.id for item in list_view.children},
                 timeout=UI_WAIT_SECONDS,
             )
-            list_view.focus()
+            await focus(pilot, list_view)
             await pilot.press("down")
             await wait_until(
                 lambda: _rendered_text(identity) == f"{second.id} · loading selected task",
@@ -5020,7 +5048,7 @@ async def test_home_selection_clears_rendered_task_sections_while_next_report_lo
                 lambda: f"task-row-{second.id}" in {item.id for item in list_view.children},
                 timeout=UI_WAIT_SECONDS,
             )
-            list_view.focus()
+            await focus(pilot, list_view)
             await pilot.press("down")
             await wait_until(
                 lambda: _rendered_text(identity) == f"{second.id} · loading selected task",
@@ -5248,7 +5276,7 @@ async def test_dashboard_palette_lists_and_opens_external_widgets_under_extensio
                 timeout=UI_WAIT_SECONDS,
             )
             extension_panel = app.screen.query_one("#external-widget-panel", Static)
-            assert extension_panel.region.width > 0
+            await wait_until(lambda: extension_panel.region.width > 0, timeout=UI_WAIT_SECONDS)
             assert _rendered_text(extension_panel) == '{"stopping": true}'
             await pilot.press("escape")
             await wait_until(lambda: app.screen is workspace_screen, timeout=UI_WAIT_SECONDS)

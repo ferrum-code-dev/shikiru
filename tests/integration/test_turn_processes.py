@@ -13,9 +13,9 @@ import pytest
 from shikiru.domain.tasks import Role
 from shikiru.engine.turn_processes import TurnProcesses, turn_pid_path
 from shikiru.paths import run_dir
-from shikiru.process import START_TIME_TOLERANCE_SECONDS, SubprocessRunner
+from shikiru.process import START_TIME_TOLERANCE_SECONDS, TURN_STOP_GRACE, SubprocessRunner
 from tests.support.clock import FakeClock
-from tests.support.waiting import wait_until, wait_until_advancing
+from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,20 +25,25 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.asyncio
 
 _WAIT_SECONDS = 10.0
-_ADVANCE_SECONDS = 1.0
 _STOP_GRACE_SECONDS = 0.5
 _REUSE_SHIFT_SECONDS = START_TIME_TOLERANCE_SECONDS + 1.0
 _TASK_ID = "T-1"
 _START = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-async def _end_orphans(processes: TurnProcesses, clock: FakeClock) -> None:
+async def _end_orphans(
+    processes: TurnProcesses, clock: FakeClock, runner: SubprocessRunner, parent_pid: int
+) -> None:
     running = asyncio.create_task(processes.end_orphans())
-
-    def finished() -> bool:
-        return running.done()
-
-    await wait_until_advancing(clock, finished, _WAIT_SECONDS, step_seconds=_ADVANCE_SECONDS)
+    await wait_until(
+        lambda: (
+            running.done() or (runner.identify(parent_pid) is None and clock.has_pending_sleep())
+        ),
+        _WAIT_SECONDS,
+    )
+    if not running.done():
+        clock.advance(TURN_STOP_GRACE)
+    await wait_until(running.done, _WAIT_SECONDS)
     await running
 
 
@@ -54,11 +59,41 @@ async def test_orphan_cleanup_ends_the_leftover_group(
     assert descendant is not None
     processes.record(run_dir(tmp_path, _TASK_ID), Role.IMPLEMENTER, turn.pid)
 
-    await _end_orphans(processes, clock)
+    await _end_orphans(processes, clock, runner, turn.pid)
 
     assert [line async for line in turn.stdout_lines()] == []
     await wait_until(lambda: not runner.is_running(descendant), _WAIT_SECONDS)
     assert not turn_pid_path(run_dir(tmp_path, _TASK_ID), Role.IMPLEMENTER).exists()
+
+
+async def test_orphan_cleanup_waits_for_grace_when_the_parent_ignores_sigterm(
+    tmp_path: Path, process_tree: ProcessTree
+) -> None:
+    runner = SubprocessRunner()
+    clock = FakeClock(_START)
+    processes = TurnProcesses(runner=runner, clock=clock, project_root=tmp_path)
+    turn = await runner.spawn(process_tree.ignoring_term_argv)
+    process_tree.parent_pid = turn.pid
+    descendant = runner.identify(await process_tree.descendant_started())
+    parent = runner.identify(turn.pid)
+    assert descendant is not None
+    assert parent is not None
+    processes.record(run_dir(tmp_path, _TASK_ID), Role.IMPLEMENTER, turn.pid)
+
+    running = asyncio.create_task(processes.end_orphans())
+    await wait_until(
+        lambda: process_tree.received_term() and clock.has_pending_sleep(), _WAIT_SECONDS
+    )
+    assert runner.is_running(parent)
+    assert runner.is_running(descendant)
+    assert not running.done()
+    clock.advance(TURN_STOP_GRACE)
+    await wait_until(running.done, _WAIT_SECONDS)
+    await running
+    await wait_until(lambda: not runner.is_running(descendant), _WAIT_SECONDS)
+    await wait_until(lambda: not runner.is_running(parent), _WAIT_SECONDS)
+    assert not turn_pid_path(run_dir(tmp_path, _TASK_ID), Role.IMPLEMENTER).exists()
+    await turn.stop(grace=_STOP_GRACE_SECONDS)
 
 
 async def test_orphan_cleanup_never_signals_a_reused_pid(
@@ -80,7 +115,7 @@ async def test_orphan_cleanup_never_signals_a_reused_pid(
         json.dumps(asdict(replace(identity, started_at=identity.started_at - _REUSE_SHIFT_SECONDS)))
     )
 
-    await _end_orphans(processes, clock)
+    await _end_orphans(processes, clock, runner, unrelated.pid)
 
     assert runner.is_running(identity)
     assert runner.is_running(descendant)
@@ -103,7 +138,7 @@ async def test_orphan_cleanup_ends_a_group_whose_leader_died_before_it_was_recor
     await wait_until(lambda: runner.identify(turn.pid) is None, _WAIT_SECONDS)
     processes.record(run_dir(tmp_path, _TASK_ID), Role.IMPLEMENTER, turn.pid)
 
-    await _end_orphans(processes, clock)
+    await _end_orphans(processes, clock, runner, turn.pid)
 
     await wait_until(lambda: not runner.is_running(descendant), _WAIT_SECONDS)
     assert not turn_pid_path(run_dir(tmp_path, _TASK_ID), Role.IMPLEMENTER).exists()

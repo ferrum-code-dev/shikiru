@@ -442,6 +442,9 @@ def pr_poll_seconds() -> float:
     return engine_settings().orchestration.network.pr_poll_seconds
 
 
+UNREACHABLE_DEADLINE_SECONDS = 10**9
+
+
 def engine_settings(*, max_cpu_pct: int = 0, max_parallel: int = 1) -> Settings:
     settings = make_settings(
         leader_ladder=[FAKE_RUNG],
@@ -452,6 +455,12 @@ def engine_settings(*, max_cpu_pct: int = 0, max_parallel: int = 1) -> Settings:
     orchestration = settings.orchestration.model_copy(
         update={
             "max_parallel": max_parallel,
+            "timeouts": settings.orchestration.timeouts.model_copy(
+                update={"stall": UNREACHABLE_DEADLINE_SECONDS, "tool": UNREACHABLE_DEADLINE_SECONDS}
+            ),
+            "quota_refresh": settings.orchestration.quota_refresh.model_copy(
+                update={"timeout_seconds": UNREACHABLE_DEADLINE_SECONDS}
+            ),
             "resources": settings.orchestration.resources.model_copy(
                 update={"max_cpu_pct": max_cpu_pct, "min_free_ram_gb": 0}
             ),
@@ -469,10 +478,12 @@ async def wait_for_command(
     queued: QueuedCommand, queue: CommandQueue, clock: FakeClock
 ) -> CommandOutcome:
     async def completed() -> bool:
+        outcome = queue.status(queued.id)
+        if outcome is not None and outcome.status is not CommandStatus.PENDING:
+            return True
         if clock.has_pending_sleep():
             clock.advance(COMMAND_POLL_SECONDS)
-        outcome = queue.status(queued.id)
-        return outcome is not None and outcome.status is not CommandStatus.PENDING
+        return False
 
     await wait_until(completed, timeout=_COMMAND_WAIT_SECONDS)
     outcome = queue.status(queued.id)

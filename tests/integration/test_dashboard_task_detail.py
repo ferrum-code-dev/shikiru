@@ -122,7 +122,9 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     choose_details_entry,
+    enter_text,
     fixed_settings,
+    focus,
     focus_inspector_details,
     fold_headline,
     ignore_palette_action,
@@ -1958,7 +1960,7 @@ async def test_enter_keeps_inline_selection_and_popup_close_restores_browser_scr
         )
         async with app.run_test(size=(80, 40)) as pilot:
             list_view = app.query_one("#task-browser-list", ListView)
-            list_view.focus()
+            await focus(pilot, list_view)
             for _ in range(8):
                 await pilot.press("down")
             await wait_until(lambda: list_view.index == 8, timeout=UI_WAIT_SECONDS)
@@ -2210,8 +2212,8 @@ async def test_compact_palette_form_keeps_visible_text_cursor_and_run_after_resi
             )
             request = palette.query_one("#request", TextArea)
             request.text = ""
-            request.focus()
-            await pilot.press(*"visible request text")
+            await focus(pilot, request)
+            await enter_text(pilot, "visible request text")
             await pilot.press("end", "enter", *"second line")
             await pilot.pause()
             assert request.text == "visible request text\nsecond line"
@@ -2250,7 +2252,7 @@ async def test_task_evidence_filter_and_reading_position_survive_resize_and_refr
             )
             await _open_task_view(app, pilot, TASK_VIEW_AGENT)
             detail_screen = app.screen
-            detail_screen.query_one(f"#{TASK_DETAIL_AGENT_LIST}").focus()
+            await focus(pilot, detail_screen.query_one(f"#{TASK_DETAIL_AGENT_LIST}"))
             await pilot.press("f")
             bar = detail_screen.query_one(f"#{AGENT_TIMELINE_IDS.filters}", TimelineFilterBar)
             detail_body = detail_screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
@@ -2808,7 +2810,7 @@ async def _open_escape_base(app: DashboardApp, pilot: Pilot[None], task_id: str)
     row = f"#task-row-{task_id}"
     await wait_until(lambda: bool(app.query(row)), timeout=UI_WAIT_SECONDS)
     task_list = cast("ListView", app.query_one(row).parent)
-    task_list.focus()
+    await focus(pilot, task_list)
     task_list.index = tuple(task_list.children).index(app.query_one(row))
     await wait_until(
         lambda: task_id in _text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),

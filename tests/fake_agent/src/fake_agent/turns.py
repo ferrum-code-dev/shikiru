@@ -47,6 +47,11 @@ FAKE_SESSION_ID_ENV_VAR = "SHIKIRU_FAKE_SESSION_ID"
 FAKE_COMPACT_AT_PCT_ENV_VAR = "SHIKIRU_FAKE_COMPACT_AT_PCT"
 FAKE_PROCESS_CAPTURE_FILENAME = ".fake-processes.jsonl"
 FAKE_PROCESS_CAPTURE_MARKER = ".fake-process-capture"
+CONTRACT_REPORT_INPUT_FILENAME = "contract-report-input.json"
+CONTRACT_RESUME_RECALL_PROMPT = (
+    "What nonce did I ask you to remember earlier in this session? Reply with only the nonce."
+)
+_COVERAGE_STARTUP_ENV_VARS = frozenset({"COVERAGE_PROCESS_START", "COVERAGE_PROCESS_CONFIG"})
 _CLI_MODULE = "fake_agent.turn_cli"
 _TURN_SUBCOMMAND = "turn"
 _COMPACT_SUBCOMMAND = "compact"
@@ -185,7 +190,11 @@ class FakeTurnSequence(TurnProcessSequence):
     ) -> None:
         self._session_id = spec.session_id or new_session_id or str(uuid.uuid4())
         self._compact_at_pct = compact_at_pct
-        self._base_env = {**os.environ, **spec.env, FAKE_SESSION_ID_ENV_VAR: self._session_id}
+        inherited = {**os.environ, **spec.env}
+        self._base_env = {
+            **{k: v for k, v in inherited.items() if k not in _COVERAGE_STARTUP_ENV_VARS},
+            FAKE_SESSION_ID_ENV_VAR: self._session_id,
+        }
         self._parser = FakeTurnParser()
         self._then: str | None = None
         self._recovered = False

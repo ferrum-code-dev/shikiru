@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, cast
 
+import pytest
 from fake_agent.agent import FakeAgent, create
 from fake_agent.turns import (
     CONTINUE_PROMPT,
+    CONTRACT_REPORT_INPUT_FILENAME,
+    CONTRACT_RESUME_RECALL_PROMPT,
     FAKE_COMPACT_AT_PCT_ENV_VAR,
     FAKE_SESSION_ID_ENV_VAR,
     FakeTurnParser,
 )
 from pydantic import BaseModel
 
+import shikiru.operator.probe as probe_module
 from shikiru.agents.contracts import (
     Agent,
     AgentFactory,
@@ -40,11 +46,14 @@ from shikiru.agents.testing import (
     RecordedStream,
     ReplayedProcess,
 )
+from shikiru.agents.testing.resume import RESUME_RECALL_PROMPT
+from shikiru.process import SubprocessRunner
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from shikiru.agents.sdk.turn import TurnParser, TurnProcessSequence
+    from tests.support.tmux import TmuxServer
 
 _FIXTURE_DIR = Path(__file__).parents[1] / "fixtures" / "agents" / "fake"
 _ROLE = "implementer"
@@ -87,6 +96,14 @@ _PROMPT_ARGUMENT = "--prompt"
 _MODEL_ARGUMENT = "--model"
 
 
+async def test_tmux_server_does_not_capture_inherited_task_environment(
+    tmux_server: TmuxServer,
+) -> None:
+    for name in ("SHIKIRU_TASK", "SHIKIRU_PROJECT", "SHIKIRU_SLOT", "SHIKIRU_FAKE_SCRIPT"):
+        result = await tmux_server.run("show-environment", "-g", name, check=False)
+        assert result.returncode != 0
+
+
 class _AskResult(BaseModel):
     ok: bool
 
@@ -95,6 +112,54 @@ class TestFakeAgentContract(AgentContractSuite):
     """Run the fake plugin's offline checks and its inexpensive live checks by default."""
 
     runs_live_checks_in_default_gate: ClassVar[bool] = True
+
+    @pytest.mark.parametrize("task_id", [None, "T-42"])
+    @pytest.mark.parametrize("explicit_report", [False, True])
+    async def test_task_report_requires_identity_and_commits_with_trailer(
+        self, tmp_path: Path, task_id: str | None, *, explicit_report: bool
+    ) -> None:
+        spec = await self._prepare_live_report_spec(
+            self.build_spec(tmp_path, resume_session_id=None)
+        )
+        environment = {**spec.env, "SHIKIRU_PROJECT": "test", "SHIKIRU_SLOT": "1"}
+        if explicit_report:
+            environment["SHIKIRU_FAKE_SCRIPT"] = json.dumps(
+                [
+                    {
+                        "kind": "report",
+                        "commit": True,
+                        "report": {
+                            "status": "completed",
+                            "summary": "finished",
+                            "commits": [],
+                            "tests": [],
+                            "trackers_updated": False,
+                        },
+                    }
+                ]
+            )
+        if task_id is not None:
+            environment["SHIKIRU_TASK"] = task_id
+        signals = await self._run_turn(replace(spec, env=environment))
+
+        if task_id is None:
+            assert isinstance(signals[-1], TurnFailed)
+            assert "SHIKIRU_TASK" in signals[-1].message
+        else:
+            assert isinstance(signals[-1], TurnEnded)
+            result = await SubprocessRunner().run(
+                ["git", "log", "-1", "--format=%B"], cwd=spec.cwd, timeout=10, check=True
+            )
+            assert f"Task: {task_id}" in result.stdout
+
+    async def test_task_script_configuration_requires_task_identity(self, tmp_path: Path) -> None:
+        spec = await self._prepare_live_report_spec(
+            self.build_spec(tmp_path, resume_session_id=None)
+        )
+        environment = {**spec.env, "SHIKIRU_FAKE_TASK_DIR": str(tmp_path)}
+        signals = await self._run_turn(replace(spec, env=environment))
+        assert isinstance(signals[-1], TurnFailed)
+        assert "SHIKIRU_TASK" in signals[-1].message
 
     def agent_factory(self) -> AgentFactory:
         return create
@@ -428,3 +493,8 @@ def _turn_argv(prompt: str, model: str) -> tuple[str, ...]:
         _MODEL_ARGUMENT,
         model,
     )
+
+
+def test_fake_agent_protocol_constants_equal_the_production_values() -> None:
+    assert CONTRACT_REPORT_INPUT_FILENAME == probe_module.REPORT_INPUT_FILENAME
+    assert CONTRACT_RESUME_RECALL_PROMPT == RESUME_RECALL_PROMPT

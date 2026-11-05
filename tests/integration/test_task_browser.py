@@ -45,6 +45,7 @@ from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
     fixed_settings,
+    focus,
     ignore_palette_action,
     state_views,
     widget_context,
@@ -669,7 +670,7 @@ async def test_home_search_preserves_matching_terminal_tasks_across_loaded_pages
         )
         assert len(first_page_ids) == PAGE_SIZE
 
-        task_list.focus()
+        await focus(pilot, task_list)
         task_list.index = 0
         first_task_id = first_page_ids[0]
         await pilot.press("enter")
@@ -716,7 +717,7 @@ async def test_history_load_more_reconciles_a_new_task_before_watch_poll(
             await widget.activate_filter(TaskBrowserFilter.HISTORY)
             list_view = widget.query_one("#task-browser-list", ListView)
             await wait_until(lambda: len(list_view.children) == PAGE_SIZE, timeout=5.0)
-            list_view.focus()
+            await focus(pilot, list_view)
             await pilot.pause()
             list_view.index = READING_INDEX
             await pilot.pause()

@@ -192,6 +192,11 @@ async def open_action(pilot: Pilot[None], screen: ActionsListScreen, action: str
     await open_row(pilot, screen, label)
 
 
+def is_composed(screen: ModalScreen[Any]) -> bool:
+    """Return whether the popup has mounted its title, as the user sees a drawn popup."""
+    return bool(screen.query(".popup-title"))
+
+
 def title_text(screen: ModalScreen[Any]) -> str:
     """Return the popup title text of an Actions list or preset popup."""
     return str(screen.query_one(".popup-title", Label).content)

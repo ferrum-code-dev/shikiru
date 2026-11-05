@@ -26,6 +26,7 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
     fixed_settings,
+    focus,
     ignore_palette_action,
     state_views,
     with_dashboard,
@@ -339,7 +340,7 @@ async def test_the_bar_ignores_keys_that_once_switched_or_opened_decisions(
         )
         screen = home.app.screen
         shown = home.text()
-        home.bar.focus()
+        await focus(pilot, home.bar)
         for key in ("left", "right", "r", "o"):
             await pilot.press(key)
             await pilot.pause()

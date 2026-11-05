@@ -44,6 +44,7 @@ from tests.support.actions import (
     action_list,
     actions_screen,
     assert_role_focus_and_tab_order,
+    is_composed,
     open_row,
     row_line,
     selected_label,
@@ -52,6 +53,7 @@ from tests.support.actions import (
 )
 from tests.support.cli_project import prepare_project, tmux_environment
 from tests.support.clock import FakeClock
+from tests.support.dashboard import enter_text
 from tests.support.escalations import operator_services, resolution_factory, seed_escalation
 from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
@@ -370,12 +372,18 @@ def _popup(app: PaletteApp) -> PaletteScreen | None:
 
 
 async def _wait_for_list(app: PaletteApp) -> ActionsListScreen:
-    await wait_until(lambda: isinstance(app.screen, ActionsListScreen), timeout=UI_WAIT_SECONDS)
+    await wait_until(
+        lambda: isinstance(app.screen, ActionsListScreen) and is_composed(app.screen),
+        timeout=UI_WAIT_SECONDS,
+    )
     return cast("ActionsListScreen", app.screen)
 
 
 async def _wait_for_popup(app: PaletteApp) -> PaletteScreen:
-    await wait_until(lambda: _popup(app) is not None, timeout=UI_WAIT_SECONDS)
+    await wait_until(
+        lambda: (popup := _popup(app)) is not None and bool(popup.query("#palette-submit")),
+        timeout=UI_WAIT_SECONDS,
+    )
     popup = _popup(app)
     assert popup is not None
     return popup
@@ -391,12 +399,14 @@ async def _keep_a_message_draft(
     await wait_until(lambda: app.focused is role, timeout=UI_WAIT_SECONDS)
     await pilot.press("tab")
     await wait_until(lambda: app.focused is message, timeout=UI_WAIT_SECONDS)
-    await pilot.press(*"draft")
+    await enter_text(pilot, "draft")
     await pilot.press("escape")
     assert await _wait_for_list(app) is listing
     await open_row(pilot, listing, "Message")
     popup = await _wait_for_popup(app)
-    assert title_text(popup) == f"Message {_DOT} {task_id}"
+    await wait_until(
+        lambda: title_text(popup) == f"Message {_DOT} {task_id}", timeout=UI_WAIT_SECONDS
+    )
     role = cast("Select[str]", popup.query_one("#role", Select))
     await wait_until(
         lambda: "draft" in popup.query_one("#message", TextArea).text and app.focused is role,
@@ -474,7 +484,7 @@ async def test_actions_list_opens_popups_returns_to_the_list_and_switches_task(
         assert await _wait_for_list(app) is listing
         await wait_until(lambda: "Take over" in structure(listing), timeout=UI_WAIT_SECONDS)
         assert title_text(listing).startswith(f"Actions {_DOT} {second.id} ")
-        assert selected_label(listing) == "Message"
+        await wait_until(lambda: selected_label(listing) == "Message", timeout=UI_WAIT_SECONDS)
 
         await pilot.press("escape")
         await wait_until(lambda: not app.is_running, timeout=UI_WAIT_SECONDS)
@@ -567,6 +577,7 @@ async def _refuse_stale_stop(
 ) -> None:
     await open_row(pilot, listing, "Stop engine")
     popup = await _wait_for_popup(app)
+    await wait_until(lambda: bool(popup.query("#palette-submit")), timeout=UI_WAIT_SECONDS)
     button = popup.query_one("#palette-submit", Button)
     await wait_until(lambda: not button.disabled, timeout=UI_WAIT_SECONDS)
     await pilot.press("enter")

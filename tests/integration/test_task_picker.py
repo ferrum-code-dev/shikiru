@@ -14,6 +14,7 @@ from shikiru.dashboard.task_picker import (
 )
 from shikiru.ui.theme import install_theme
 from tests.support.clock import FakeClock
+from tests.support.dashboard import enter_text
 from tests.support.escalations import operator_services
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
@@ -69,7 +70,7 @@ def _selected(host: _Host) -> str:
 async def _type_search(pilot: Pilot[None], host: _Host, text: str) -> None:
     await pilot.press("/")
     await wait_until(lambda: bool(host.picker.query(f"#{PICKER_SEARCH}")), UI_WAIT_SECONDS)
-    await pilot.press(*text)
+    await enter_text(pilot, text)
 
 
 async def test_task_picker_searches_pages_and_chooses_a_task(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -34,7 +35,13 @@ from shikiru.store.runs import RunStore
 from shikiru.ui.gated_static import GatedStatic
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import ManualFocusHost, dashboard_app, list_rows, widget_context
+from tests.support.dashboard import (
+    ManualFocusHost,
+    dashboard_app,
+    is_hit_at_center,
+    list_rows,
+    widget_context,
+)
 from tests.support.factories import LEADER_RUNG
 from tests.support.render import plain_text
 from tests.support.store import seed_task
@@ -191,7 +198,8 @@ async def test_open_folds_stay_live_and_folded_ones_cost_nothing(
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task_id, signals = _seed(connection, project_root, clock, "Live folds")
-    reader = StateReader(database, clock)
+    reader_clock = FakeClock(START)
+    reader = StateReader(database, reader_clock)
     context = widget_context(reader, project_root, clock)
     views = _CountingViews(context.views)
     seconds = load_settings(project_root).dashboard.timeline_refresh_seconds
@@ -218,6 +226,8 @@ async def test_open_folds_stay_live_and_folded_ones_cost_nothing(
             )
             append_event(connection, clock, task_id, "second-event")
             append_signal(signals, clock, "second-signal")
+            await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+            reader_clock.advance(seconds)
             await _wake(clock, seconds)
             await wait_until(
                 lambda: (
@@ -340,9 +350,9 @@ async def test_clicking_fold_header_enters_its_list_and_closes_back_to_the_heade
                 timeout=UI_WAIT_SECONDS,
             )
             header = _fold_header(panel, EVENTS_FOLD)
-            await wait_until(
-                lambda: header.visible and header.is_on_screen, timeout=UI_WAIT_SECONDS
-            )
+            await wait_until(partial(is_hit_at_center, pilot.app, header), timeout=UI_WAIT_SECONDS)
+            await pilot.pause()
+            await wait_until(partial(is_hit_at_center, pilot.app, header), timeout=UI_WAIT_SECONDS)
             click_offset = (header.size.width // 2, header.size.height // 2)
             assert await pilot.click(header, offset=click_offset)
             await wait_until(lambda: EVENTS_FOLD in panel.open_views, timeout=UI_WAIT_SECONDS)
@@ -350,6 +360,9 @@ async def test_clicking_fold_header_enters_its_list_and_closes_back_to_the_heade
                 lambda: _focused_stop(pilot) == TASK_DETAIL_TIMELINE_LIST,
                 timeout=UI_WAIT_SECONDS,
             )
+            await wait_until(partial(is_hit_at_center, pilot.app, header), timeout=UI_WAIT_SECONDS)
+            await pilot.pause()
+            await wait_until(partial(is_hit_at_center, pilot.app, header), timeout=UI_WAIT_SECONDS)
             assert await pilot.click(header, offset=click_offset)
             await wait_until(lambda: EVENTS_FOLD not in panel.open_views, timeout=UI_WAIT_SECONDS)
             await wait_until(lambda: _focused_stop(pilot) == EVENTS_FOLD, timeout=UI_WAIT_SECONDS)

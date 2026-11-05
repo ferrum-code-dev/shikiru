@@ -21,8 +21,19 @@ from fake_agent.script import (
     SupersedeStep,
     TurnStep,
 )
-from fake_agent.turns import FAKE_SESSION_ID_ENV_VAR, INITIAL_CONTEXT_USAGE_PERCENT
-from shikiru.agents.contracts import ROLE_ENV_VAR, RUN_DIR_ENV_VAR, role_dir, shikiru_command
+from fake_agent.turns import (
+    CONTRACT_REPORT_INPUT_FILENAME,
+    FAKE_SESSION_ID_ENV_VAR,
+    INITIAL_CONTEXT_USAGE_PERCENT,
+)
+from shikiru.agents.contracts import (
+    PROJECT_ENV_VAR,
+    ROLE_ENV_VAR,
+    RUN_DIR_ENV_VAR,
+    SLOT_ENV_VAR,
+    role_dir,
+    shikiru_command,
+)
 from shikiru.cli.report import resolve_current_turn_dir
 from shikiru.domain.reports import (
     REPORT_KIND_FILENAME,
@@ -164,7 +175,7 @@ def _task_script_for(role: str) -> str | None:
     directory = os.environ.get(TASK_SCRIPT_DIR_ENV_VAR)
     if not directory:
         return None
-    path = task_script_path(directory, os.environ[TASK_ENV_VAR])
+    path = task_script_path(directory, _require_env(TASK_ENV_VAR))
     if not path.is_file():
         return None
     steps = json.loads(path.read_text()).get(role)
@@ -205,11 +216,12 @@ def _repository_directories(cwd: Path) -> tuple[Path, ...]:
 
 def _change_filename() -> str:
     if os.environ.get(TASK_SCRIPT_DIR_ENV_VAR):
-        return task_change_filename(os.environ[TASK_ENV_VAR])
+        return task_change_filename(_require_env(TASK_ENV_VAR))
     return FAKE_CHANGE_FILENAME
 
 
 async def _commit_changes(runner: SubprocessRunner, cwd: Path, prompt_text: str) -> list[Commit]:
+    task_id = _require_env(TASK_ENV_VAR)
     subject = f"fake: {prompt_text}"[:_MAX_COMMIT_SUBJECT_LENGTH]
     commits: list[Commit] = []
     for repository in await asyncio.to_thread(_repository_directories, cwd):
@@ -225,7 +237,7 @@ async def _commit_changes(runner: SubprocessRunner, cwd: Path, prompt_text: str)
                 "-m",
                 subject,
                 "-m",
-                f"Task: {_require_env(TASK_ENV_VAR)}",
+                f"Task: {task_id}",
             ],
             timeout=_GIT_TIMEOUT_SECONDS,
             cwd=repository,
@@ -390,7 +402,7 @@ async def submit_scripted_report(ctx: ScriptContext, step: TurnStep, prompt_text
         await _leave_branch(ctx, step.leave_branch)
     commits = (
         await _commit_changes(ctx.runner, ctx.cwd, prompt_text)
-        if isinstance(step, AcceptStep) and kind in _KINDS_WITH_COMMITS
+        if isinstance(step, AcceptStep) and kind in _KINDS_WITH_COMMITS and _commits_for_turn(ctx)
         else []
     )
     if isinstance(step, AcceptStep | SupersedeStep) and step.uncommitted:
@@ -406,3 +418,15 @@ async def submit_scripted_report(ctx: ScriptContext, step: TurnStep, prompt_text
         )
     finally:
         await asyncio.to_thread(report_path.unlink, missing_ok=True)
+
+
+def _commits_for_turn(ctx: ScriptContext) -> bool:
+    if os.environ.get(TASK_ENV_VAR):
+        return True
+    if any(
+        os.environ.get(name) for name in (PROJECT_ENV_VAR, SLOT_ENV_VAR, TASK_SCRIPT_DIR_ENV_VAR)
+    ):
+        _require_env(TASK_ENV_VAR)
+    if (ctx.run_dir / CONTRACT_REPORT_INPUT_FILENAME).is_file():
+        return False
+    return bool(_require_env(TASK_ENV_VAR))

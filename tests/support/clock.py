@@ -34,10 +34,16 @@ class FakeClock:
         loop = asyncio.get_running_loop()
         future: asyncio.Future[None] = loop.create_future()
         if deadline <= self._now:
-            loop.call_soon(future.set_result, None)
-        else:
-            self._sleepers.append((deadline, future))
-        await future
+            loop.call_soon(_wake, future)
+            await future
+            return
+        sleeper = (deadline, future)
+        self._sleepers.append(sleeper)
+        try:
+            await future
+        finally:
+            if sleeper in self._sleepers:
+                self._sleepers.remove(sleeper)
 
     def has_pending_sleep(self) -> bool:
         """Return whether any caller is currently blocked in `sleep()`.
@@ -46,7 +52,7 @@ class FakeClock:
         reach its `sleep()` call, instead of guessing how many `yield_control()` calls that
         takes.
         """
-        return bool(self._sleepers)
+        return any(not future.done() for _, future in self._sleepers)
 
     def advance(self, seconds: float) -> None:
         self._move_to(self._now + timedelta(seconds=seconds))
@@ -70,3 +76,8 @@ class FakeClock:
 
 
 LONG_AGO = datetime(2000, 1, 1, tzinfo=UTC)
+
+
+def _wake(future: asyncio.Future[None]) -> None:
+    if not future.done():
+        future.set_result(None)

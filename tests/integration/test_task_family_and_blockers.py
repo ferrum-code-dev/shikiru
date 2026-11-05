@@ -41,8 +41,10 @@ from tests.support.dashboard import (
     WidgetHostApp,
     choose_details_entry,
     fixed_settings,
+    focus,
     focus_inspector_details,
     ignore_palette_action,
+    is_hit_at_center,
     list_rows,
     state_views,
     widget_context,
@@ -227,6 +229,13 @@ def _assert_relationship_pages(
     assert [item.id for item in last_page.replacements] == [tasks.replacements[-1].id]
 
 
+def _search_filter_applied(app: DashboardApp, title: str, task_id: str) -> bool:
+    rows = list(app.screen.query("ListItem"))
+    return any(row.id == f"task-row-{task_id}" for row in rows) and all(
+        title in " ".join(_static_text(label) for label in row.query(Static)) for row in rows
+    )
+
+
 async def _open_browser_task(
     app: DashboardApp,
     pilot: Pilot[None],
@@ -236,7 +245,9 @@ async def _open_browser_task(
     home = app.screen
     search = app.query_one("#task-browser-search", Input)
     search.value = title
-    await pilot.pause()
+    await wait_until(lambda: _search_filter_applied(app, title, task_id), timeout=5.0)
+    row = app.screen.query_one(f"#task-row-{task_id}")
+    await wait_until(lambda: is_hit_at_center(app, row), timeout=5.0)
     await pilot.click(f"#task-row-{task_id}")
     await wait_until(
         lambda: task_id in _static_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
@@ -284,7 +295,7 @@ def _related_rows(panel: TaskDetailPanel) -> list[str]:
 
 async def _select_related_row(panel: TaskDetailPanel, pilot: Pilot[None], task_id: str) -> None:
     related = panel.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList)
-    related.focus()
+    await focus(pilot, related)
     await wait_until(
         lambda: any(task_id in row for row in _related_rows(panel)), timeout=UI_WAIT_SECONDS
     )
@@ -339,7 +350,7 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
             lambda: f"task-row-{first.id}" in [child.id for child in task_list.children],
             timeout=5.0,
         )
-        search.focus()
+        await focus(pilot, search)
         await pilot.press("enter", "down")
         await wait_until(lambda: first.id in _static_text(identity), timeout=5.0)
         panel = await _open_relationships(panel, pilot)
@@ -362,7 +373,7 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
             lambda: f"task-row-{second.id}" in [child.id for child in task_list.children],
             timeout=5.0,
         )
-        search.focus()
+        await focus(pilot, search)
         await pilot.press("enter", "down")
         await wait_until(
             lambda: (

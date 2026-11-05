@@ -5,6 +5,7 @@ import shutil
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -53,6 +54,7 @@ from tests.support.actions import ScreenHost, popup_screen
 from tests.support.cells import rendered_select_label
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
+from tests.support.dashboard import focus, is_clickable
 from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG, LEADER_RUNG_2
 from tests.support.store import seed_task
 from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, wait_until
@@ -423,7 +425,7 @@ async def _choose_export_format(
             option_index = 0 if value == EXPORT_FORMAT_MARKDOWN else 1
             await pilot.click(overlay, offset=(2, option_index + 1))
         else:
-            field.focus()
+            await focus(pilot, field)
             await pilot.press("enter")
             await wait_until(lambda: field.expanded, timeout=EXPORT_WAIT_SECONDS)
             direction = "down" if value == EXPORT_FORMAT_JSON else "up"
@@ -455,7 +457,7 @@ async def _reach_export_controls(
         (cast("Select[str]", screen.query_one("#export-signals", Select)), "Exclude"),
     )
     for control, label in controls:
-        control.focus()
+        await focus(pilot, control)
         await wait_until(
             lambda control=control: _contains_nonempty_region(
                 _form_viewport(screen), control.region
@@ -542,6 +544,11 @@ async def test_palette_export_controls_and_full_result_remain_reachable(
             if write_succeeds and index == 0:
                 await pilot.press("enter")
             else:
+                submit = screen.query_one("#palette-submit")
+                await wait_until(
+                    partial(is_clickable, pilot.app, submit),
+                    timeout=EXPORT_WAIT_SECONDS,
+                )
                 await pilot.click("#palette-submit")
             await wait_until(
                 lambda result=result, previous=previous_result: (

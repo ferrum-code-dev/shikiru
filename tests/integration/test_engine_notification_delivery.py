@@ -82,7 +82,13 @@ async def _engine(
     if not restart:
         await init_project_repo(tmp_path)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     harness = _Harness(tmp_path, engine, clock)
     try:
         await harness.until(lambda: harness.events.latest_id() > 0)

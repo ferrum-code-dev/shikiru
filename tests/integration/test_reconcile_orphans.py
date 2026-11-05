@@ -27,7 +27,7 @@ from shikiru.tmux.session import SessionView, session_name
 from tests.support.clock import FakeClock
 from tests.support.engine import build_fault_reporter, build_titles, build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
-from tests.support.waiting import wait_until_advancing
+from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -41,7 +41,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.asyncio
 
 _WAIT_SECONDS = 10.0
-_ADVANCE_SECONDS = 1.0
 _STOP_GRACE_SECONDS = 0.5
 _TASK_ID = "T-1"
 _FAKE_RUNG = Rung(agent="fake", model="fake-1", effort=None)
@@ -119,11 +118,8 @@ async def _reconciler(
     )
 
 
-async def _until_done(reconciling: asyncio.Task[None], clock: FakeClock) -> None:
-    def finished() -> bool:
-        return reconciling.done()
-
-    await wait_until_advancing(clock, finished, _WAIT_SECONDS, step_seconds=_ADVANCE_SECONDS)
+async def _until_done(reconciling: asyncio.Task[None]) -> None:
+    await wait_until(reconciling.done, _WAIT_SECONDS)
     await reconciling
 
 
@@ -137,7 +133,7 @@ async def test_a_reconcile_retried_after_a_late_fault_never_ends_a_turn_started_
     runner = SubprocessRunner()
     reconciler = await _reconciler(connection, clock, tmux_server, tmp_path, fail_on_read=2)
     with pytest.raises(OperationalDatabaseError):
-        await _until_done(asyncio.create_task(reconciler.reconcile()), clock)
+        await _until_done(asyncio.create_task(reconciler.reconcile()))
     turn = await runner.spawn(process_tree.argv)
     process_tree.parent_pid = turn.pid
     descendant = runner.identify(await process_tree.descendant_started())
@@ -146,7 +142,7 @@ async def test_a_reconcile_retried_after_a_late_fault_never_ends_a_turn_started_
         run_dir(tmp_path, _TASK_ID), Role.IMPLEMENTER, turn.pid
     )
 
-    await _until_done(asyncio.create_task(reconciler.reconcile()), clock)
+    await _until_done(asyncio.create_task(reconciler.reconcile()))
 
     assert runner.is_running(descendant)
     await turn.stop(grace=_STOP_GRACE_SECONDS)

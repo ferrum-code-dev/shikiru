@@ -91,7 +91,13 @@ async def _engine(
     clock = FakeClock(TASK_CREATED_AT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(tmp_path / ".shikiru" / "state.db").connect()
     engine_task = asyncio.create_task(engine.run())
     try:

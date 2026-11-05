@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import shlex
+import stat
 from contextlib import suppress
 from typing import TYPE_CHECKING
 
@@ -25,8 +28,8 @@ from tests.support.engine import (
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.github import add_bare_remote
+from tests.support.handshake import fifo_writer, release_fifo
 from tests.support.permissions import EXECUTABLE_MODE
-from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,7 +40,7 @@ if TYPE_CHECKING:
 
 _HUNG_UPLOAD_PACK = """#!/bin/sh
 echo started >> '{calls}'
-while [ ! -e '{release}' ]; do sleep 0.05; done
+cat {release} > /dev/null
 exec git upload-pack "$@"
 """
 _WAIT_SECONDS = 10.0
@@ -58,36 +61,46 @@ async def test_commands_are_processed_while_a_task_root_build_hangs_on_the_remot
     await add_bare_remote(tmp_path, remote_dir, settings.repo.remote)
     hang_dir = tmp_path_factory.mktemp("hang")
     calls, release, hang = hang_dir / "calls", hang_dir / "go", hang_dir / "up"
-    hang.write_text(_HUNG_UPLOAD_PACK.format(calls=calls, release=release))
+    os.mkfifo(release)
+    hang.write_text(_HUNG_UPLOAD_PACK.format(calls=calls, release=shlex.quote(str(release))))
     hang.chmod(EXECUTABLE_MODE)
     uploadpack = ["git", "config", f"remote.{settings.repo.remote}.uploadpack", str(hang)]
     await runner.run(uploadpack, timeout=_WAIT_SECONDS, cwd=tmp_path, check=True)
     clock = FakeClock(TASK_CREATED_AT)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(state_db_path(tmp_path)).connect()
     queue = CommandQueue(connection, clock)
     running = asyncio.create_task(engine.run())
+    writer: int | None = None
     try:
         submitted = await wait_for_command(
             queue.append(Submit(title="hung", request="hung")), queue, clock
         )
         assert submitted.result is not None
         task_id = str(submitted.result["task_id"])
-        await wait_until(calls.exists, _WAIT_SECONDS)
+        writer = await fifo_writer(release, _WAIT_SECONDS)
+        assert calls.exists()
 
         outcome = await wait_for_command(
             queue.append(Prioritize(task_id=task_id, priority=_NEW_PRIORITY)), queue, clock
         )
 
         assert outcome.status is CommandStatus.DONE
-        assert not release.exists()
+        assert stat.S_ISFIFO(release.stat().st_mode)
         task = TaskStore(connection, clock).get(task_id)
         assert task is not None
         assert task.priority == _NEW_PRIORITY
     finally:
-        release.touch()
+        if writer is not None:
+            release_fifo(writer, release)
         running.cancel()
         with suppress(asyncio.CancelledError):
             await running

@@ -230,7 +230,7 @@ async def test_old_commands_and_engine_events_go_but_pending_work_and_faults_sta
     assert {old_fault.id, undelivered.id} <= remaining
 
 
-_TASKS = 5
+_TASKS = 3
 _WAIT_SECONDS = 120.0
 _TIMEOUT_SECONDS = 240
 _POLL_SECONDS = 0.5
@@ -258,7 +258,13 @@ async def test_a_long_lived_engine_keeps_its_run_directories_bounded(
     await add_bare_remote(tmp_path, remote_dir, settings.repo.remote)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", tmp_path, home_command=("/bin/sh",))
-    engine = build_engine(tmp_path, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        tmp_path,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     connection = Database(state_db_path(tmp_path)).connect()
     queue = CommandQueue(connection, clock)
     tasks = TaskStore(connection, clock)

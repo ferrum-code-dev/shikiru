@@ -22,6 +22,7 @@ from shikiru.domain.steps import Step, Transition
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
+from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
 from shikiru.store.reader import StateReader
 from shikiru.workspace.roots import run_dir
@@ -37,10 +38,13 @@ from tests.support.flow import (
     init_project_repo,
 )
 from tests.support.git_repo import commit_all
+from tests.support.handshake import fifo_writer
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from shikiru.config.settings import Settings
     from shikiru.dashboard.views import StateDashboardViews
     from shikiru.store.database import Database
@@ -61,11 +65,27 @@ class _RecordingClock(FakeClock):
         await super().sleep(seconds)
 
 
-async def _drive(flow_task: asyncio.Task[None], clock: FakeClock) -> None:
-    def done() -> bool:
-        return flow_task.done()
+_TURN_ENDED_KINDS = [EventKind.TURN_COMPLETED, EventKind.TURN_FAILED, EventKind.TURN_STOPPED]
 
-    await wait_until_advancing(clock, done, _FLOW_TIMEOUT_SECONDS, jump_to_next_sleeper=True)
+
+def _no_turn_outstanding(engine_env: EngineEnv, clock: FakeClock) -> Callable[[], bool]:
+    events = EventLog(engine_env.connection, clock)
+
+    def idle() -> bool:
+        started = events.since(0, kinds=[EventKind.TURN_STARTED])
+        ended = events.since(0, kinds=_TURN_ENDED_KINDS)
+        return len(started) == len(ended)
+
+    return idle
+
+
+async def _drive(flow_task: asyncio.Task[None], clock: FakeClock, engine_env: EngineEnv) -> None:
+    await wait_until_advancing(
+        clock,
+        flow_task.done,
+        _FLOW_TIMEOUT_SECONDS,
+        jump_while=_no_turn_outstanding(engine_env, clock),
+    )
     await flow_task
 
 
@@ -139,6 +159,46 @@ async def _start_flow(
     return flow_task, task.id
 
 
+async def test_retry_clock_does_not_expire_a_running_fake_turn(
+    engine_env: EngineEnv, tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    release = tmp_path / "release-turn"
+    os.mkfifo(release)
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = flow_settings()
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=[{"kind": "accept", "release_fifo": str(release)}],
+    )
+    writer: int | None = None
+    try:
+        writer = await fifo_writer(release, _FLOW_TIMEOUT_SECONDS)
+        clock.advance(timedelta(hours=2).total_seconds())
+        await apply_set_rung(
+            engine_env,
+            build_flow(engine_env, settings, clock=clock),
+            SetRung(task_id=task_id, role=Role.IMPLEMENTER, rung=FAKE_RUNG),
+        )
+        assert not flow_task.done()
+        assert writer is not None
+        os.write(writer, b"continue")
+        os.close(writer)
+        writer = None
+        await wait_until(flow_task.done, _FLOW_TIMEOUT_SECONDS)
+        await flow_task
+        assert engine_env.tasks.require(task_id).step is Step.INTEGRATE
+    finally:
+        if writer is not None:
+            os.close(writer)
+        if not flow_task.done():
+            flow_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await flow_task
+
+
 async def test_quota_failure_blocks_then_continues_on_the_same_session(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
@@ -158,7 +218,7 @@ async def test_quota_failure_blocks_then_continues_on_the_same_session(
         ],
     )
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     final = engine_env.tasks.get(task_id)
     assert final is not None
@@ -208,7 +268,7 @@ async def test_a_quota_wait_ends_early_when_a_newer_reading_shows_the_quota_is_a
         script=[{"kind": "fail", "failure_kind": "quota", "resets_at": reset.isoformat()}],
     )
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     final = engine_env.tasks.require(task_id)
     assert final.step is Step.INTEGRATE
@@ -291,7 +351,10 @@ async def test_live_fake_agent_quota_wait_is_shown_for_its_running_task(
             return len(started) > 1
 
         await wait_until_advancing(
-            clock, continued_turn_started, _FLOW_TIMEOUT_SECONDS, jump_to_next_sleeper=True
+            clock,
+            continued_turn_started,
+            _FLOW_TIMEOUT_SECONDS,
+            jump_while=_no_turn_outstanding(engine_env, clock),
         )
         await _assert_task_is_not_quota_waiting(
             views,
@@ -301,7 +364,7 @@ async def test_live_fake_agent_quota_wait_is_shown_for_its_running_task(
         )
 
         await asyncio.to_thread(release.write_text, "continue")
-        await _drive(flow_task, clock)
+        await _drive(flow_task, clock, engine_env)
         current = engine_env.tasks.require(task_id)
         await _assert_task_is_not_quota_waiting(
             views,
@@ -338,7 +401,13 @@ async def test_quota_wait_during_integration_conflict_is_reported(
         ],
     )
     await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
-    flow_env = build_flow(engine_env, settings, clock=clock, local_integration=True)
+    flow_env = build_flow(
+        engine_env,
+        settings,
+        clock=clock,
+        turn_clock=FakeClock(clock.now()),
+        local_integration=True,
+    )
     flow_task = asyncio.create_task(flow_env.flow.run(task.id))
     quota = QuotaStore(engine_env.connection)
 
@@ -384,7 +453,7 @@ async def test_quota_wait_during_integration_conflict_is_reported(
         assert summary.running == 0
         assert summary.waiting == 1
         assert [row.task_id for row in waiting.rows] == [task.id]
-        await _drive(flow_task, clock)
+        await _drive(flow_task, clock, engine_env)
     finally:
         reader.close()
         if not flow_task.done():
@@ -436,7 +505,7 @@ async def test_quota_wait_deadline_moves_to_a_different_agent(
         ),
         timeout=10,
     )
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     runs = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
     assert [run.agent for run in runs] == [FAKE_AGENT_ALIAS, FAKE_AGENT_NAME]
@@ -482,7 +551,7 @@ async def test_quota_exhaustion_falls_back_to_an_earlier_unblocked_agent(
         ),
         timeout=10,
     )
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     runs = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
     assert [run.agent for run in runs] == [FAKE_AGENT_ALIAS, FAKE_AGENT_NAME]
@@ -573,7 +642,7 @@ async def test_quota_failure_without_reset_uses_the_stored_window(
         script=script,
     )
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     events = build_flow(engine_env, settings, clock=clock).events
     [failed] = events.since(0, task_id=task_id, kinds=[EventKind.TURN_FAILED])
@@ -600,7 +669,7 @@ async def test_stored_quota_reset_beyond_max_quota_wait_escalates(
         script=_NO_RESET_FAILURE,
     )
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     final = engine_env.tasks.get(task_id)
     assert final is not None
@@ -622,7 +691,7 @@ async def test_unavailable_failure_uses_backoff_then_resumes_the_session(
         script=[{"kind": "fail", "failure_kind": "unavailable"}],
     )
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     final = engine_env.tasks.get(task_id)
     assert final is not None
@@ -660,7 +729,7 @@ async def test_unavailable_retries_end_with_the_next_ladder_rung(
         script=[*[failure for _ in range(retries + 1)], {"kind": "accept"}],
     )
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     final = engine_env.tasks.require(task_id)
     assert final.status is Status.INTEGRATING
@@ -703,7 +772,7 @@ async def test_custom_unavailable_retry_settings_are_used_by_engine_recovery(
         script=[failure, failure, failure, {"kind": "accept"}],
     )
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     final = engine_env.tasks.require(task_id)
     assert final.status is Status.INTEGRATING
@@ -729,7 +798,7 @@ async def test_auth_failure_escalates_with_the_agent_auth_reason(
         script=[{"kind": "fail", "failure_kind": "auth"}],
     )
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     final = engine_env.tasks.get(task_id)
     assert final is not None
@@ -752,7 +821,7 @@ async def test_other_failure_retries_once_on_the_same_session(
         script=[{"kind": "fail", "failure_kind": "other"}],
     )
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     [run] = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
     assert run.usage.input_tokens == 120
@@ -807,7 +876,7 @@ async def test_unknown_failure_with_high_confidence_retries(
         script=[{"kind": "crash"}, {"kind": "accept"}],
     )
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     final = engine_env.tasks.get(task_id)
     assert final is not None
@@ -842,7 +911,7 @@ async def test_unknown_failure_below_confidence_escalates_without_retry(
         script=[{"kind": "crash"}],
     )
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     final = engine_env.tasks.get(task_id)
     assert final is not None
@@ -877,7 +946,7 @@ async def test_unrecoverable_report_escalates_as_agent_protocol(
         mode=Mode.PLAN,
     )
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     final = engine_env.tasks.get(task_id)
     assert final is not None
@@ -916,7 +985,7 @@ async def test_a_hold_set_during_a_quota_wait_stops_the_continue_turn_until_resu
     engine_env.tasks.set_holds(task_id, frozenset({hold}))
     turns_before = len(list((run_dir(engine_env.project_root, task_id) / "turns").iterdir()))
 
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     held = engine_env.tasks.get(task_id)
     assert held is not None
@@ -925,9 +994,14 @@ async def test_a_hold_set_during_a_quota_wait_stops_the_continue_turn_until_resu
         len(list((run_dir(engine_env.project_root, task_id) / "turns").iterdir())) == turns_before
     )
     engine_env.tasks.set_holds(task_id, frozenset())
-    flow_env = build_flow(engine_env, flow_settings(), clock=clock)
+    flow_env = build_flow(
+        engine_env,
+        flow_settings(),
+        clock=clock,
+        turn_clock=FakeClock(clock.now()),
+    )
     resumed = asyncio.create_task(flow_env.flow.run(task_id))
-    await _drive(resumed, clock)
+    await _drive(resumed, clock, engine_env)
 
     final = engine_env.tasks.get(task_id)
     assert final is not None
@@ -994,14 +1068,19 @@ async def test_a_rung_set_during_a_failing_turn_survives_the_recovery_move(
         started = flow_env.events.since(0, kinds=[EventKind.TURN_STARTED], task_id=task_id)
         return len(started) == len(failures)
 
-    await wait_until_advancing(clock, gated_turn_running, 20, jump_to_next_sleeper=True)
+    await wait_until_advancing(
+        clock,
+        gated_turn_running,
+        20,
+        jump_while=_no_turn_outstanding(engine_env, clock),
+    )
     await apply_set_rung(
         engine_env,
         flow_env,
         SetRung(task_id=task_id, role=pinned_role, rung=_PINNED_RUNG),
     )
     await asyncio.to_thread(release.write_text, "go")
-    await _drive(flow_task, clock)
+    await _drive(flow_task, clock, engine_env)
 
     final = engine_env.tasks.require(task_id)
     assert final.overrides == {pinned_role: _PINNED_RUNG}

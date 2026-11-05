@@ -42,10 +42,25 @@ def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
 
 
 @pytest.fixture(autouse=True)
-def clear_fake_cli_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in tuple(os.environ):
-        if name.startswith("SHIKIRU_FAKE_SCRIPT") or name == "SHIKIRU_FAKE_TICK_A1":
-            monkeypatch.delenv(name)
+def clear_fake_cli_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    def isolated(name: str) -> bool:
+        return name.startswith("SHIKIRU_FAKE_") or name in {
+            "SHIKIRU_TASK",
+            "SHIKIRU_PROJECT",
+            "SHIKIRU_SLOT",
+        }
+
+    inherited = {name: value for name, value in os.environ.items() if isolated(name)}
+    for name in inherited:
+        del os.environ[name]
+    try:
+        yield
+    finally:
+        monkeypatch.undo()
+        for name in tuple(os.environ):
+            if isolated(name):
+                del os.environ[name]
+        os.environ.update(inherited)
 
 
 _DEFAULT_LOCAL_ZONE = "UTC"

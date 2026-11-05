@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import os
 import shlex
 import signal
 from contextlib import asynccontextmanager
@@ -40,11 +41,13 @@ from tests.support.engine import (
     build_registry,
     build_tmux,
     engine_settings,
+    set_role_script,
     set_script,
     wait_for_command,
 )
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
+from tests.support.handshake import fifo_writer
 from tests.support.waiting import wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
@@ -164,7 +167,13 @@ async def _engine(
         tmux = _FlakyTmux(tmux_server, *flaky)
     if tmux_override is not None:
         tmux = tmux_override
-    engine = build_engine(project, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        project,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     if seed is not None:
         await seed(Database(project / ".shikiru" / "state.db"), clock, project)
     harness = _Harness(project, engine, clock)
@@ -330,6 +339,30 @@ async def test_a_failing_cleanup_does_not_stop_dispatch_or_resume(
         faults = harness.events.since(0, kinds=[EventKind.ENGINE_FAULT])
         assert [fault.task_id for fault in faults] == ["T-1"]
         assert not harness.task.done()
+
+
+async def test_scheduler_time_does_not_stall_a_held_agent_turn(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    release = tmp_path / "release-turn"
+    os.mkfifo(release)
+    await set_role_script(
+        tmux_server, Role.IMPLEMENTER, [{"kind": "accept", "release_fifo": str(release)}]
+    )
+    async with _engine(tmp_path, tmux_server) as harness:
+        task_id = await _submit_running(harness)
+        writer = await fifo_writer(release, _WAIT_SECONDS)
+        try:
+            harness.clock.advance(3600)
+            queued = harness.queue.append(Submit(title="independent", request="independent"))
+            outcome = await wait_for_command(queued, harness.queue, harness.clock)
+            assert outcome.status is CommandStatus.DONE
+            assert harness.tasks.require(task_id).status is Status.RUNNING
+            assert harness.runs.get_live(task_id, Role.IMPLEMENTER) is not None
+            os.write(writer, b"continue")
+        finally:
+            os.close(writer)
+        await harness.until(lambda: harness.tasks.require(task_id).status is Status.DONE)
 
 
 async def _seed_held_running_with_resume(database: Database, clock: FakeClock, _: Path) -> None:

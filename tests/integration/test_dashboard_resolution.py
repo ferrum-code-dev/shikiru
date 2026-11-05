@@ -42,7 +42,7 @@ from tests.support.actions import actions_screen, open_row
 from tests.support.cells import CYAN_BOLD, GREY, foregrounds, painted_backgrounds, styles
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
-from tests.support.dashboard import dashboard_app
+from tests.support.dashboard import dashboard_app, enter_text
 from tests.support.escalations import (
     ResolutionHost,
     assert_engine_applies_resolution,
@@ -167,7 +167,7 @@ async def _opened(app: ResolutionHost) -> ResolutionScreen:
 
 
 async def _type(pilot: Pilot[None], text: str) -> None:
-    await pilot.press(*text)
+    await enter_text(pilot, text)
 
 
 def _row_above_answer(screen: ResolutionScreen) -> Widget:

@@ -55,6 +55,7 @@ from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     StubServices,
+    enter_text,
     fixed_settings,
     live_work_service,
     open_command_history,
@@ -239,7 +240,7 @@ class WorkspaceRuntime:
             focus_task=focus_task,
             views=views,
             on_change=self.reader.watch,
-            clock=self.clock,
+            clock=FakeClock(self.clock.now()),
             motion_interval_seconds=None,
             settings=fixed_settings(self.reader, self.settings),
             open_palette=open_palette,
@@ -506,23 +507,21 @@ async def test_fake_agent_escalation_disables_an_open_resolution_resolved_by_ano
             answer = resolution.query_one("#resolution-answer", TextArea)
             await pilot.press("enter")
             await runtime.wait_for(lambda: app.focused is answer)
-            await pilot.press(*GUIDANCE_MESSAGE)
+            await enter_text(pilot, GUIDANCE_MESSAGE)
             assert DECISION_QUESTION in _rendered_lines(
                 resolution.query_one("#resolution-decision")
             )
             external_connection = Database(state_db_path(tmp_path)).connect()
             external_queue = CommandQueue(external_connection, runtime.clock)
-            external_commands = OperatorCommands(
-                external_queue,
-                runtime.clock,
-                engine_up=lambda: runtime.engine_is_up,
+            external_queued = external_queue.append(
+                runtime.commands.prepare_resolve_escalation(escalation.id, CancelResolution())
             )
-            external_send = asyncio.create_task(
-                external_commands.resolve_escalation(escalation.id, CancelResolution())
-            )
-            await runtime.wait_for(external_send.done)
-            external_ack = await external_send
-            assert external_ack.status.value == "done"
+
+            def external_resolution_done() -> bool:
+                outcome = external_queue.status(external_queued.id)
+                return outcome is not None and outcome.status is CommandStatus.DONE
+
+            await runtime.wait_for(external_resolution_done)
             await runtime.wait_for(
                 lambda: answer.disabled and resolution.query_one("#resolution-notice").display
             )

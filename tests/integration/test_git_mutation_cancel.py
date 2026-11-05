@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shlex
 import signal
 import stat
 from contextlib import suppress
@@ -15,6 +16,7 @@ from shikiru.errors import CommandTimeoutError
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.git import Git
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo
+from tests.support.handshake import fifo_writer, release_fifo
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
@@ -26,16 +28,10 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.asyncio
 
 _WAIT_SECONDS = 10.0
-_HOOK_SELF_EXPIRY_POLLS = 600
 _HOOK = """#!/bin/sh
 [ "$1" = prepared ] || exit 0
 echo $$ > '{pid}'
-touch '{ready}'
-polls=0
-while [ ! -e '{release}' ] && [ "$polls" -lt {expiry} ]; do
-    sleep 0.1
-    polls=$((polls + 1))
-done
+cat {release} > /dev/null
 """
 
 
@@ -54,18 +50,18 @@ async def test_cancelled_merge_leaves_no_lock_and_no_hook(tmp_path: Path) -> Non
     (repo / "a.txt").write_text("changed")
     await commit_all(runner, repo, "change")
     await runner.run(["git", "checkout", "main"], timeout=_WAIT_SECONDS, cwd=repo, check=True)
-    ready, release, pid_file = tmp_path / "ready", tmp_path / "release", tmp_path / "hook.pid"
+    release, pid_file = tmp_path / "release", tmp_path / "hook.pid"
+    os.mkfifo(release)
     hook = repo / ".git" / "hooks" / "reference-transaction"
-    hook.write_text(
-        _HOOK.format(ready=ready, release=release, pid=pid_file, expiry=_HOOK_SELF_EXPIRY_POLLS)
-    )
+    hook.write_text(_HOOK.format(release=shlex.quote(str(release)), pid=pid_file))
     hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
     merge = asyncio.create_task(
         Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).merge_ff_only(repo, "feature")
     )
     hook_pid: int | None = None
+    writer: int | None = None
     try:
-        await wait_until(ready.exists, _WAIT_SECONDS)
+        writer = await fifo_writer(release, _WAIT_SECONDS)
         hook_pid = int(pid_file.read_text())
         assert _locks(repo)
 
@@ -76,7 +72,8 @@ async def test_cancelled_merge_leaves_no_lock_and_no_hook(tmp_path: Path) -> Non
         assert _locks(repo) == []
         await wait_until(lambda: runner.identify(hook_pid) is None, _WAIT_SECONDS)
     finally:
-        release.touch()
+        if writer is not None:
+            release_fifo(writer, release)
         if hook_pid is not None:
             with suppress(ProcessLookupError):
                 os.kill(hook_pid, signal.SIGKILL)
@@ -87,31 +84,48 @@ sleep 300 &
 echo $! > '{pid}'
 wait
 """
-_SHORT_TIMEOUT_SECONDS = 1.0
+_TIMEOUT_ESCALATION_SECONDS = (1.0, 4.0, 16.0)
 
 
-class _ShortTimeoutRunner(SubprocessRunner):
+class _EscalatingTimeoutRunner(SubprocessRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.timeout_seconds = _TIMEOUT_ESCALATION_SECONDS[0]
+
     async def run(self, argv: Sequence[str], **kwargs: Any) -> ProcessResult:
-        kwargs["timeout"] = _SHORT_TIMEOUT_SECONDS
+        kwargs["timeout"] = self.timeout_seconds
         return await super().run(argv, **kwargs)
 
 
+def _recorded_pid(pid_file: Path) -> int | None:
+    recorded = pid_file.read_text().strip() if pid_file.exists() else ""
+    return int(recorded) if recorded else None
+
+
 async def test_a_timed_out_read_only_git_call_leaves_no_descendant(tmp_path: Path) -> None:
-    runner = _ShortTimeoutRunner()
+    setup = SubprocessRunner()
     repo = tmp_path / "repo"
-    await init_repo(runner, repo)
+    await init_repo(setup, repo)
     (repo / "a.txt").write_text("a")
-    await commit_all(runner, repo, "initial")
+    await commit_all(setup, repo, "initial")
     pid_file = tmp_path / "descendant.pid"
     monitor = tmp_path / "fsmonitor"
     monitor.write_text(_FSMONITOR.format(pid=pid_file))
     monitor.chmod(monitor.stat().st_mode | stat.S_IXUSR)
-    await runner.run(["git", "config", "core.fsmonitor", str(monitor)], cwd=repo, timeout=1)
+    await setup.run(
+        ["git", "config", "core.fsmonitor", str(monitor)], cwd=repo, timeout=GIT_COMMAND_TIMEOUT
+    )
+    runner = _EscalatingTimeoutRunner()
 
-    with pytest.raises(CommandTimeoutError):
-        await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).status_porcelain(repo)
+    for seconds in _TIMEOUT_ESCALATION_SECONDS:
+        runner.timeout_seconds = seconds
+        with pytest.raises(CommandTimeoutError):
+            await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).status_porcelain(repo)
+        if _recorded_pid(pid_file) is not None:
+            break
 
-    descendant_pid = int(pid_file.read_text())
+    descendant_pid = _recorded_pid(pid_file)
+    assert descendant_pid is not None
     try:
         await wait_until(lambda: runner.identify(descendant_pid) is None, _WAIT_SECONDS)
     finally:

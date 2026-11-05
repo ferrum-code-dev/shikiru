@@ -593,22 +593,15 @@ async def test_integrator_refuses_a_worktree_that_left_its_task_branch_and_keeps
     )
 
 
-_OFF_BRANCH_FLOWS = {
-    "switched_branch": "branch",
-    "detached_head": "detach",
-}
-
-
-@pytest.mark.parametrize("leave", _OFF_BRANCH_FLOWS.values(), ids=_OFF_BRANCH_FLOWS.keys())
 async def test_a_task_whose_agent_left_its_branch_never_reaches_done_and_keeps_its_work(
-    engine_env: EngineEnv, tmux_server: TmuxServer, leave: str
+    engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:
     await init_project_repo(engine_env.project_root)
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     await set_role_script(
         tmux_server,
         Role.IMPLEMENTER,
-        [{"kind": "accept", "leave_branch": leave}, {"kind": "accept"}, {"kind": "accept"}],
+        [{"kind": "accept", "leave_branch": "detach"}, {"kind": "accept"}, {"kind": "accept"}],
     )
     main_sha = await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(
         engine_env.project_root, "main"

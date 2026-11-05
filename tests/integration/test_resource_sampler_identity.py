@@ -20,7 +20,7 @@ from tests.support.resource_agent import (
     RESOURCE_AGENT_WAIT_SECONDS,
     RESOURCE_BYTES_PER_GIB,
     RESOURCE_PID_REUSE_SHIFT_SECONDS,
-    RESOURCE_RSS_TOLERANCE_BYTES,
+    RESOURCE_RSS_TOLERANCE_RATIO,
     resource_services,
     start_resource_agent,
 )
@@ -124,7 +124,7 @@ async def test_overlapping_recorded_agent_roots_are_counted_once(
         assert sample.agents_rss_gb is not None
         assert sample.instance_rss_gb == sample.agents_rss_gb
         assert sample.agents_rss_gb * RESOURCE_BYTES_PER_GIB == pytest.approx(
-            expected_rss_bytes, abs=RESOURCE_RSS_TOLERANCE_BYTES
+            expected_rss_bytes, rel=RESOURCE_RSS_TOLERANCE_RATIO
         )
     finally:
         if process.returncode is None:

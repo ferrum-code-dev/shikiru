@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from textual.app import App, ComposeResult
-from textual.widgets import Static
+from textual.errors import NoWidget
+from textual.widgets import Button, Input, Static, TextArea
 
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.activity import RoleViewTail
@@ -120,13 +121,62 @@ class ManualFocusHost(WidgetHostApp):
     AUTO_FOCUS = None
 
 
+async def enter_text(pilot: Pilot[None], text: str) -> None:
+    """Insert `text` at the cursor of the focused text field, as typing it would."""
+    await wait_until(
+        lambda: isinstance(pilot.app.focused, TextArea | Input), timeout=UI_WAIT_SECONDS
+    )
+    focused = pilot.app.focused
+    if isinstance(focused, TextArea):
+        focused.insert(text)
+    elif isinstance(focused, Input):
+        focused.insert_text_at_cursor(text)
+    else:
+        message = f"{focused!r} cannot take text"
+        raise TypeError(message)
+    await pilot.pause()
+
+
+async def focus(pilot: Pilot[Any], widget: Widget) -> None:
+    """Focus `widget`, wait until focus is there and a button is ready to be pressed again."""
+    widget.focus()
+    await wait_until(lambda: pilot.app.focused is widget, timeout=UI_WAIT_SECONDS)
+    if isinstance(widget, Button):
+        await wait_until(
+            lambda: not widget.has_class(PRESSED_BUTTON_CLASS), timeout=UI_WAIT_SECONDS
+        )
+
+
+PRESSED_BUTTON_CLASS = "-active"
+CENTER_DIVISOR = 2
+
+
+def is_hit_at_center(app: App[Any], widget: Widget) -> bool:
+    """Return whether a click on the widget would reach it."""
+    region = widget.region
+    if region.height == 0 or region.width == 0:
+        return False
+    try:
+        hit, _ = app.get_widget_at(region.x + region.width // CENTER_DIVISOR, region.y)
+    except NoWidget:
+        return False
+    return hit is widget or widget in hit.ancestors
+
+
+def is_clickable(app: App[Any], button: Widget) -> bool:
+    """Return whether a click on the button reaches it and is not swallowed by a press in flight."""
+    return is_hit_at_center(app, button) and not button.has_class(PRESSED_BUTTON_CLASS)
+
+
 async def ignore_palette_action(action: str) -> None:
     del action
 
 
 async def _activate_control(pilot: Pilot[None], selector: str) -> None:
     origin = pilot.app.screen
-    pilot.app.screen.query_one(selector).focus()
+    control = pilot.app.screen.query_one(selector)
+    await focus(pilot, control)
+    await wait_until(lambda: not control.has_class(PRESSED_BUTTON_CLASS), timeout=UI_WAIT_SECONDS)
     await pilot.press("enter")
     await wait_until(lambda: pilot.app.screen is not origin, timeout=UI_WAIT_SECONDS)
 
@@ -147,6 +197,15 @@ async def choose_details_entry(pilot: Pilot[None], entry_id: str) -> None:
     await focus_inspector_details(pilot)
     await pilot.press(TASK_DETAIL_VIEWS_KEY)
     await pick_details_entry(pilot, entry_id)
+    await wait_until(lambda: _entry_is_open_and_focused(pilot, entry_id), timeout=UI_WAIT_SECONDS)
+
+
+def _entry_is_open_and_focused(pilot: Pilot[None], entry_id: str) -> bool:
+    panel = pilot.app.screen.query_one("#task-detail-panel", TaskDetailPanel)
+    fold = next((item for item in panel.query(DetailFold) if item.view_id == entry_id), None)
+    return (
+        fold is not None and entry_id in panel.open_views and pilot.app.focused is fold.focus_target
+    )
 
 
 async def focus_inspector_details(pilot: Pilot[None]) -> None:

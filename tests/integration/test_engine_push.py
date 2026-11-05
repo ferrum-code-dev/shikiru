@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
@@ -42,6 +43,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo, run_git
 from tests.support.github import add_bare_remote
+from tests.support.handshake import fifo_writer, release_fifo
 from tests.support.permissions import EXECUTABLE_MODE
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
@@ -466,6 +468,7 @@ async def test_an_integration_registered_during_a_push_stays_pending_across_a_re
     rig = await _rig(connection, tmp_path, interval=_FOUR_HOURS)
     hang_dir = tmp_path_factory.mktemp("hang")
     calls, release = hang_dir / "calls", hang_dir / "go"
+    os.mkfifo(release)
     hook = rig.remote_dir / "hooks" / "pre-receive"
     hook.write_text(_HANGING_PRE_RECEIVE.format(calls=calls, release=release))
     hook.chmod(EXECUTABLE_MODE)
@@ -475,8 +478,11 @@ async def test_an_integration_registered_during_a_push_stays_pending_across_a_re
     rig.clock.advance(_FOUR_HOURS)
     rig.service.poll(_LOGGER)
     await wait_until(calls.exists, _WAIT_SECONDS)
-    await rig.integrate("during")
-    release.touch()
+    writer = await fifo_writer(release, _WAIT_SECONDS)
+    try:
+        await rig.integrate("during")
+    finally:
+        release_fifo(writer, release)
     await rig.service.finish_outstanding()
 
     assert await rig.remote_sha("main") == sent
@@ -619,7 +625,7 @@ async def test_a_diverged_remote_is_never_overwritten(
 
 _HANGING_PRE_RECEIVE = """#!/bin/sh
 echo started >> '{calls}'
-while [ ! -e '{release}' ]; do sleep 0.05; done
+cat '{release}' > /dev/null
 """
 _WAIT_SECONDS = 10.0
 _MALFORMED_CONFIG_SECTION = "\n[remote\n"
@@ -640,6 +646,7 @@ async def test_a_hung_push_never_stops_the_engine_from_processing_commands(
     await add_bare_remote(project_root, remote_dir, settings.repo.remote)
     hang_dir = tmp_path_factory.mktemp("hang")
     calls, release = hang_dir / "calls", hang_dir / "go"
+    os.mkfifo(release)
     hook = remote_dir / "hooks" / "pre-receive"
     hook.write_text(_HANGING_PRE_RECEIVE.format(calls=calls, release=release))
     hook.chmod(EXECUTABLE_MODE)
@@ -650,16 +657,26 @@ async def test_a_hung_push_never_stops_the_engine_from_processing_commands(
     PushTargets(connection).register("main", now=clock.now(), interval=0)
     tmux = build_tmux(tmux_server)
     await SessionView(tmux).ensure("test", project_root, home_command=("/bin/sh",))
-    engine = build_engine(project_root, settings, clock=clock, tmux=tmux, registry=build_registry())
+    engine = build_engine(
+        project_root,
+        settings,
+        clock=clock,
+        tmux=tmux,
+        registry=build_registry(),
+    )
     queue = CommandQueue(connection, clock)
     running = asyncio.create_task(engine.run())
+    writer: int | None = None
     try:
 
         async def push_started() -> bool:
+            if calls.exists():
+                return True
             clock.advance(COMMAND_POLL_SECONDS)
-            return calls.exists()
+            return False
 
         await wait_until(push_started, _WAIT_SECONDS)
+        writer = await fifo_writer(release, _WAIT_SECONDS)
 
         outcome = await wait_for_command(
             queue.append(Submit(title="independent", request="independent")), queue, clock
@@ -667,18 +684,22 @@ async def test_a_hung_push_never_stops_the_engine_from_processing_commands(
 
         assert outcome.status is CommandStatus.DONE
         assert PushTargets(connection).pending()
-        release.touch()
+        release_fifo(writer, release)
+        writer = None
 
         async def pushed() -> bool:
+            if not PushTargets(connection).pending():
+                return True
             clock.advance(COMMAND_POLL_SECONDS)
-            return not PushTargets(connection).pending()
+            return False
 
         await wait_until(pushed, _WAIT_SECONDS)
         assert await run_git(_RUNNER, remote_dir, "rev-parse", "refs/heads/main") == (
             await run_git(_RUNNER, project_root, "rev-parse", "main")
         )
     finally:
-        release.touch()
+        if writer is not None:
+            release_fifo(writer, release)
         running.cancel()
         with suppress(asyncio.CancelledError):
             await running

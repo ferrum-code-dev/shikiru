@@ -264,8 +264,13 @@ def _active_tabs(screen: Screen[Any]) -> list[str]:
     return [
         str(label.content)
         for label in labels
-        if set(foregrounds(label, str(label.content))) == {STEEL_BLUE}
+        if _is_painted(label) and set(foregrounds(label, str(label.content))) == {STEEL_BLUE}
     ]
+
+
+def _is_painted(label: Static) -> bool:
+    painted = "".join(char for cells in rendered_lines(label) for char, _ in cells)
+    return str(label.content) in painted
 
 
 @pytest.mark.parametrize(
@@ -296,7 +301,7 @@ async def test_help_opens_on_its_context_tab_and_left_right_switch_the_keys_from
         await pilot.pause()
         await pilot.press("?")
         await wait_until(
-            lambda: bool(app.screen.query("#workspace-help-scroll")), timeout=UI_WAIT_SECONDS
+            lambda: bool(app.screen.query("#workspace-help-copy")), timeout=UI_WAIT_SECONDS
         )
         screen = app.screen
         body = screen.query_one("#workspace-help-scroll", VerticalScroll)
@@ -312,7 +317,7 @@ async def test_help_opens_on_its_context_tab_and_left_right_switch_the_keys_from
 
         await pilot.press(key)
         await wait_until(lambda: _active_tabs(screen) == [neighbour.value], timeout=UI_WAIT_SECONDS)
-        assert body.scroll_y == 0
+        await wait_until(lambda: body.scroll_y == 0, timeout=UI_WAIT_SECONDS)
         assert _copy_text(copy) != opening_keys
         assert set(foregrounds(copy, "Up/Down")) == {STEEL_BLUE}
 

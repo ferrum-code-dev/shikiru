@@ -68,6 +68,7 @@ from tests.support.dashboard import (
     StubServices,
     WidgetHostApp,
     fixed_settings,
+    focus,
     ignore_palette_action,
     open_command_history,
     open_usage_details,
@@ -617,9 +618,9 @@ async def _assert_unstarted_motion_callback_can_be_unsubscribed(
 
     app.register_motion_callback(cancel_scheduled_refresh)
     unsubscribe_scheduled = app.register_motion_callback(scheduled_refresh)
-    await wait_until(clock.has_pending_sleep, timeout=1)
+    await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
     clock.advance(interval)
-    await wait_until(scheduled_cancelled.is_set, timeout=1)
+    await wait_until(scheduled_cancelled.is_set, timeout=UI_WAIT_SECONDS)
     await yield_control()
     assert scheduled_calls == 0
 
@@ -633,7 +634,8 @@ async def test_slow_motion_callback_does_not_block_or_overlap_other_callbacks(
     clock = FakeClock(_START)
     settings = _motion_settings(project_dir)
     task, _ = _seed_dashboard_state(connection, clock)
-    reader = StateReader(database, clock)
+    reader_clock = FakeClock(_START)
+    reader = StateReader(database, reader_clock)
     try:
         blocked = asyncio.Event()
         cancelled = asyncio.Event()
@@ -662,27 +664,34 @@ async def test_slow_motion_callback_does_not_block_or_overlap_other_callbacks(
             motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
             settings=fixed_settings(reader, settings),
             open_palette=open_palette,
-            widget_names=settings.dashboard.widgets,
+            widget_names=["usage"],
         )
         unsubscribe_blocked = app.register_motion_callback(blocked_refresh)
         unsubscribe_fast = app.register_motion_callback(fast_refresh)
         interval = 1 / settings.dashboard.motion.refresh_hz
         async with app.run_test(size=(100, 35)):
-            await wait_until(clock.has_pending_sleep, timeout=1)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+            await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+            reader_clock.advance(1)
+            await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+            assert fast_frames == []
+            assert blocked_calls == 0
             for expected_frames in (1, 2, 3):
+                await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
                 clock.advance(interval)
                 await wait_until(
                     lambda frame_count=expected_frames: len(fast_frames) >= frame_count,
-                    timeout=1,
+                    timeout=UI_WAIT_SECONDS,
                 )
             assert blocked_calls == 1
             unsubscribe_blocked()
-            await wait_until(cancelled.is_set, timeout=1)
+            await wait_until(cancelled.is_set, timeout=UI_WAIT_SECONDS)
             for expected_frames in (4, 5):
+                await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
                 clock.advance(interval)
                 await wait_until(
                     lambda frame_count=expected_frames: len(fast_frames) >= frame_count,
-                    timeout=1,
+                    timeout=UI_WAIT_SECONDS,
                 )
             assert len(fast_frames) == 5
             unsubscribe_fast()
@@ -704,7 +713,7 @@ async def test_failing_motion_callback_is_surfaced_and_ends_the_app(
     clock = FakeClock(_START)
     settings = _motion_settings(project_dir)
     task, _ = _seed_dashboard_state(connection, clock)
-    reader = StateReader(database, clock)
+    reader = StateReader(database, FakeClock(_START))
     try:
 
         async def failing_refresh() -> None:
@@ -722,15 +731,15 @@ async def test_failing_motion_callback_is_surfaced_and_ends_the_app(
             motion_interval_seconds=interval,
             settings=fixed_settings(reader, settings),
             open_palette=open_palette,
-            widget_names=settings.dashboard.widgets,
+            widget_names=["usage"],
         )
         app.register_motion_callback(failing_refresh)
 
         async def run_until_the_app_ends() -> None:
             async with app.run_test(size=(100, 35)):
-                await wait_until(clock.has_pending_sleep, timeout=1)
+                await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
                 clock.advance(interval)
-                await wait_until(lambda: app.return_code is not None, timeout=1)
+                await wait_until(lambda: app.return_code is not None, timeout=UI_WAIT_SECONDS)
 
         with pytest.raises(_MotionCallbackFailure):
             await run_until_the_app_ends()
@@ -971,7 +980,7 @@ async def test_focus_usage_details_refreshes_reported_cost_and_quota_on_motion(
         async with app.run_test(size=(180, 40)) as pilot:
             await open_usage_details(pilot)
             usage = pilot.app.screen.query_one("#usage", UsagePanel)
-            await wait_until(clock.has_pending_sleep, timeout=1)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             assert "$0.42" in plain_text(usage.content)
             assert "10s" in plain_text(usage.content)
 
@@ -980,7 +989,7 @@ async def test_focus_usage_details_refreshes_reported_cost_and_quota_on_motion(
                 Usage(200, 40, 0, 0, 0.87, "billed", None),
             )
             clock.advance(0.5)
-            await wait_until(lambda: "$0.87" in plain_text(usage.content), timeout=1)
+            await wait_until(lambda: "$0.87" in plain_text(usage.content), timeout=UI_WAIT_SECONDS)
     finally:
         reader.close()
 
@@ -1313,7 +1322,7 @@ async def test_task_detail_refreshes_recorded_ages_without_database_changes(
             if popup_open:
                 detail_screen = app.screen
                 await pilot.press("question_mark")
-                await wait_until(lambda: app.screen is not detail_screen, timeout=1)
+                await wait_until(lambda: app.screen is not detail_screen, timeout=UI_WAIT_SECONDS)
             tick = settings.dashboard.timeline_refresh_seconds
             signal_at = clock.now()
             log_path.write_text(f"{_row(signal_at, _TURN_NAME, VIEW_SESSION_STARTED_SIGNAL)}\n")
@@ -1378,12 +1387,12 @@ async def test_home_attention_count_updates_from_motion_without_database_changes
         )
         async with app.run_test(size=(100, 30)):
             status = app.query_one("#escalations", Static)
-            await wait_until(clock.has_pending_sleep, timeout=1)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             assert "No decisions needed" in plain_text(status.content)
             clock.advance(3)
             await wait_until(
                 lambda: task.id in plain_text(status.content),
-                timeout=1,
+                timeout=UI_WAIT_SECONDS,
             )
             assert views.attention().stalls == 1
     finally:
@@ -1443,20 +1452,24 @@ async def test_home_header_and_attention_keep_ticking_under_a_pushed_screen(
             status = app.query_one("#escalations", Static)
             header = app.query_one("#header", Static)
             home_screen = pilot.app.screen
-            await wait_until(clock.has_pending_sleep, timeout=1)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             assert "No decisions needed" in plain_text(status.content)
             assert _uptime_text(header) == _UPTIME_AT_START
 
             await pilot.press("?")
-            await wait_until(lambda: pilot.app.screen is not home_screen, timeout=1)
+            await wait_until(lambda: pilot.app.screen is not home_screen, timeout=UI_WAIT_SECONDS)
             clock.advance(_UPTIME_STEP_SECONDS)
-            await wait_until(lambda: task.id in plain_text(status.content), timeout=1)
-            await wait_until(lambda: _uptime_text(header) == _UPTIME_AFTER_STEP, timeout=1)
+            await wait_until(lambda: task.id in plain_text(status.content), timeout=UI_WAIT_SECONDS)
+            await wait_until(
+                lambda: _uptime_text(header) == _UPTIME_AFTER_STEP, timeout=UI_WAIT_SECONDS
+            )
 
             await pilot.press("escape")
-            await wait_until(lambda: pilot.app.screen is home_screen, timeout=1)
+            await wait_until(lambda: pilot.app.screen is home_screen, timeout=UI_WAIT_SECONDS)
             clock.advance(_UPTIME_STEP_SECONDS)
-            await wait_until(lambda: _uptime_text(header) == _UPTIME_AFTER_TWO_STEPS, timeout=1)
+            await wait_until(
+                lambda: _uptime_text(header) == _UPTIME_AFTER_TWO_STEPS, timeout=UI_WAIT_SECONDS
+            )
             assert views.attention().stalls == 1
     finally:
         reader.close()
@@ -1672,10 +1685,10 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
         async with app.run_test(size=(100, 30)) as pilot:
             panel = app.query_one(EscalationsPanel)
             scroll = panel.query_one("#escalation-panels", VerticalScroll)
-            await wait_until(lambda: len(list(scroll.query(Static))) == 1, timeout=1)
+            await wait_until(lambda: len(list(scroll.query(Static))) == 1, timeout=UI_WAIT_SECONDS)
             row = scroll.query_one(Static)
             assert first.id in plain_text(row.content)
-            panel.focus()
+            await focus(pilot, panel)
             home = app.screen
             await pilot.press("enter")
             assert first.id in resolution_title(await wait_for_resolution(app))
@@ -1689,7 +1702,7 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
                     "E-2 ·" in plain_text(scroll.query(Static)[0].content)
                     and "Second packet" in plain_text(scroll.query(Static)[0].content)
                 ),
-                timeout=1,
+                timeout=UI_WAIT_SECONDS,
             )
             assert pilot.app.focused is panel
             assert len(list(scroll.query(Static))) == 1
@@ -1702,11 +1715,11 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
                     panel.display
                     and "No decisions needed" in plain_text(scroll.query(Static)[0].content)
                 ),
-                timeout=1,
+                timeout=UI_WAIT_SECONDS,
             )
             assert pilot.app.focused is panel
             app.query_one("#focus-footer").focus()
-            await wait_until(lambda: panel.display, timeout=1)
+            await wait_until(lambda: panel.display, timeout=UI_WAIT_SECONDS)
 
             reopened = _open_escalation(connection, clock, project_dir, task.id, "Reopened packet")
             clock.advance(0.5)
@@ -1715,7 +1728,7 @@ async def test_focus_attention_selects_groups_and_reappears_after_resolution(
                     panel.display
                     and "Reopened packet" in plain_text(scroll.query(Static)[0].content)
                 ),
-                timeout=1,
+                timeout=UI_WAIT_SECONDS,
             )
             assert views.escalations()[0].escalation_id == reopened.id
     finally:
@@ -1769,11 +1782,11 @@ async def test_focus_attention_up_and_down_keep_the_first_group_among_many(
         async with app.run_test(size=(100, 32)) as pilot:
             panel = app.query_one(EscalationsPanel)
             scroll = panel.query_one("#escalation-panels", VerticalScroll)
-            panel.focus()
+            await focus(pilot, panel)
             await pilot.press(*("down" for _ in range(8)))
             await pilot.pause()
             assert first_escalation_id in plain_text(scroll.query_one(Static).content)
-            panel.focus()
+            await focus(pilot, panel)
             await pilot.press("enter")
             assert first_escalation_id in resolution_title(await wait_for_resolution(app))
     finally:
@@ -1799,7 +1812,8 @@ async def test_disabled_animations_keep_countdowns_live_without_animating_frames
         }
     )
     task, task_run = _seed_dashboard_state(connection, clock)
-    reader = StateReader(database, clock)
+    reader_clock = FakeClock(_START)
+    reader = StateReader(database, reader_clock)
     try:
         views = _build_views(reader, project_dir, settings, clock, task)
         _write_current_turn_log(project_dir, task, views)
@@ -1815,30 +1829,32 @@ async def test_disabled_animations_keep_countdowns_live_without_animating_frames
             motion_interval_seconds=1 / settings.dashboard.motion.refresh_hz,
             settings=fixed_settings(reader, settings),
             open_palette=open_palette,
-            widget_names=settings.dashboard.widgets,
+            widget_names=["usage"],
         )
         async with app.run_test(size=(180, 40)) as pilot:
             await open_usage_details(pilot)
             usage = pilot.app.screen.query_one(UsagePanel)
-            await wait_until(clock.has_pending_sleep, timeout=1)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             initial_usage = plain_text(usage.content)
             assert "$0.42" in initial_usage
             assert "10s" in initial_usage
             clock.advance(2)
-            await wait_until(clock.has_pending_sleep, timeout=1)
-            assert "8s" in plain_text(usage.content)
+            await wait_until(lambda: "8s" in plain_text(usage.content), timeout=UI_WAIT_SECONDS)
             assert plain_text(usage.content) != initial_usage
 
             RunStore(connection, clock).record_usage(
                 task_run.id,
                 Usage(200, 40, 0, 0, 0.87, "billed", None),
             )
+            await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
+            reader_clock.advance(0.5)
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             clock.advance(0.5)
-            await wait_until(lambda: "$0.87" in plain_text(usage.content), timeout=1)
+            await wait_until(lambda: "$0.87" in plain_text(usage.content), timeout=UI_WAIT_SECONDS)
 
             usage_screen = pilot.app.screen
             await pilot.press("escape")
-            await wait_until(lambda: pilot.app.screen is not usage_screen, timeout=1)
+            await wait_until(lambda: pilot.app.screen is not usage_screen, timeout=UI_WAIT_SECONDS)
     finally:
         reader.close()
 

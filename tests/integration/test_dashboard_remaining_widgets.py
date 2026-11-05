@@ -82,6 +82,7 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import (
     WidgetHostApp,
     fixed_settings,
+    focus,
     live_work_service,
     open_project_diagnostics,
     widget_context,
@@ -383,7 +384,7 @@ async def _assert_home_task_opens(
     title: str,
 ) -> None:
     task_list = app.query_one("#task-browser-list", ListView)
-    task_list.focus()
+    await focus(pilot, task_list)
     task_list.index = 0
     await pilot.press("enter")
     identity = app.query_one("#task-detail-identity", Static)
@@ -605,7 +606,7 @@ async def test_attention_refreshes_after_another_client_resolves_without_stealin
                 timeout=UI_WAIT_SECONDS,
             )
             assert context.views.workspace_summary().attention == 1
-            panel.focus()
+            await focus(pilot, panel)
             active_screen = pilot.app.screen
             fault_data = {
                 "scope": "engine tick",
@@ -700,7 +701,7 @@ async def test_dialogue_filters_noise_and_enter_shows_the_full_implementer_text(
         home = pilot.app.screen
         table = cast("DataTable[object]", widget.query_one("#dialogue-table", DataTable))
         table.move_cursor(row=table.row_count - 2)
-        table.focus()
+        await focus(pilot, table)
         await pilot.press("enter")
         await wait_until(
             lambda: bool(pilot.app.screen.query("#dialogue-text-close")),

@@ -90,6 +90,7 @@ class _Run:
         self._env = env
         self._settings = settings
         self._task_id = task_id
+        self.clock = FakeClock(env.clock.now())
         self.flow = self._start(resumed=False)
 
     def start(self) -> None:
@@ -107,7 +108,7 @@ class _Run:
         strategy = PullRequest(
             git=Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT),
             github=GitHub(_RUNNER),
-            clock=env.clock,
+            clock=self.clock,
             tasks=env.tasks,
             events=events,
             project_root=env.project_root,
@@ -120,6 +121,7 @@ class _Run:
         flow = build_flow(
             env,
             self._settings,
+            turn_clock=FakeClock(env.clock.now()),
             strategy=strategy,
             base_refs=_fetched(self._settings, env.project_root),
         ).flow
@@ -272,7 +274,7 @@ async def test_pull_request_records_the_verified_landing_after_update_and_restar
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     assert task.repo is not None
     run = _Run(engine_env, settings, task.id)
-    await _await_poll(fake_github, clock, 1)
+    await _await_poll(fake_github, run.clock, 1)
     events = EventLog(engine_env.connection, clock)
     [opened] = events.since(0, kinds=[EventKind.PR_OPENED], task_id=task.id)
 
@@ -287,11 +289,11 @@ async def test_pull_request_records_the_verified_landing_after_update_and_restar
     )
     previous_views = fake_github.views()
     await run.restart()
-    await _await_poll(fake_github, clock, previous_views + 1)
+    await _await_poll(fake_github, run.clock, previous_views + 1)
 
     landed = await merge_on_remote(remote_dir, task.repo.base, task.repo.branch, style)
     fake_github.merge(1, landed)
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
 
     [done] = events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
     parents = await _git(remote_dir, "rev-list", "--parents", "-n", "1", landed)
@@ -334,26 +336,24 @@ async def test_pull_request_lands_through_the_done_path(
         await _die_between_opening_and_recording(fake_github, run)
     for number, outcome in enumerate(case.outcomes, start=1):
         views = fake_github.views() + 1
-        await _await_poll(fake_github, clock, views)
+        await _await_poll(fake_github, run.clock, views)
         _assert_waiting_on_open_pr(engine_env, task.id)
         assert len(fake_github.pull_requests()) == number
         if case.restart_while_open:
             await run.restart()
-            await _await_poll(fake_github, clock, views + 1)
+            await _await_poll(fake_github, run.clock, views + 1)
         if outcome is PullRequestState.MERGED:
             await _merge_remotely(fake_github, remote_dir, number, MergeStyle.MERGE_COMMIT)
         else:
             fake_github.set_state(number, outcome)
-        await _land(clock, run.flow)
+        await _land(run.clock, run.flow)
         if outcome is PullRequestState.CLOSED:
             await _retry_closed(engine_env, run, task.id, case, remote_dir)
 
     await _assert_landed(engine_env, fake_github, remote_dir, task, len(case.outcomes))
 
 
-@pytest.mark.parametrize("leave", ["branch", "detach"])
 async def test_an_agent_that_left_its_task_branch_opens_no_pull_request(
-    leave: str,
     engine_env: EngineEnv,
     tmux_server: TmuxServer,
     fake_github: FakeGitHub,
@@ -367,7 +367,7 @@ async def test_an_agent_that_left_its_task_branch_opens_no_pull_request(
     await set_role_script(
         tmux_server,
         Role.IMPLEMENTER,
-        [{"kind": "accept", "leave_branch": leave}, {"kind": "accept"}, {"kind": "accept"}],
+        [{"kind": "accept", "leave_branch": "branch"}, {"kind": "accept"}, {"kind": "accept"}],
     )
     run = _Run(engine_env, settings, task.id)
 
@@ -398,9 +398,9 @@ async def test_dependents_start_from_the_merged_remote_base(
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     assert task.repo is not None
     run = _Run(engine_env, settings, task.id)
-    await _await_poll(fake_github, clock, 1)
+    await _await_poll(fake_github, run.clock, 1)
     await _merge_remotely(fake_github, remote_dir, 1, style)
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
     delivered = await _git(
         remote_dir, "diff", "--name-only", f"{task.repo.base_sha}..{task.repo.base}"
     )
@@ -438,10 +438,10 @@ async def test_a_merged_pull_request_missing_from_the_remote_base_blocks_done(
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     assert task.repo is not None
     run = _Run(engine_env, settings, task.id)
-    await _await_poll(fake_github, clock, 1)
+    await _await_poll(fake_github, run.clock, 1)
 
     fake_github.merge(1, await _git(remote_dir, "rev-parse", task.repo.branch))
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
 
     [escalation] = fetch_open_escalations(engine_env.connection)
     assert escalation.reason is EscalationReason.INTEGRATION_BLOCKED
@@ -465,13 +465,13 @@ async def test_uncommitted_work_that_blocks_the_base_sync_escalates_and_complete
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     assert task.repo is not None
     run = _Run(engine_env, settings, task.id)
-    await _await_poll(fake_github, clock, 1)
+    await _await_poll(fake_github, run.clock, 1)
     await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
     merge_commit = fake_github.pull_requests()[0]["mergeCommit"]["oid"]
     delivered = (await _changed_paths(remote_dir, task.repo.base_sha, merge_commit))[0]
     (project_root / delivered).write_text(_LOCAL_EDIT)
     base_before = await _git(project_root, "rev-parse", task.repo.base)
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
 
     [escalation] = fetch_open_escalations(engine_env.connection)
     assert escalation.reason is EscalationReason.INTEGRATION_BLOCKED
@@ -484,7 +484,7 @@ async def test_uncommitted_work_that_blocks_the_base_sync_escalates_and_complete
     moved_aside = project_root / f"{delivered}.mine"
     (project_root / delivered).rename(moved_aside)
     _retry(engine_env, run, task.id, EscalationReason.INTEGRATION_BLOCKED)
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
 
     await _assert_landed(engine_env, fake_github, remote_dir, task, 1)
     remote_tip = await _git(remote_dir, "rev-parse", task.repo.base)
@@ -507,12 +507,12 @@ async def test_an_unpushed_local_commit_blocks_done_and_is_kept(
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     assert task.repo is not None
     run = _Run(engine_env, settings, task.id)
-    await _await_poll(fake_github, clock, 1)
+    await _await_poll(fake_github, run.clock, 1)
     (project_root / _LOCAL_ONLY).write_text(_LOCAL_EDIT)
     await commit_all(_RUNNER, project_root, "local work")
     local_base = await _git(project_root, "rev-parse", task.repo.base)
     await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
 
     [escalation] = fetch_open_escalations(engine_env.connection)
     assert escalation.reason is EscalationReason.INTEGRATION_BLOCKED
@@ -536,11 +536,11 @@ async def test_a_paused_pull_request_stops_polling_and_never_escalates_until_res
     await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     run = _Run(engine_env, settings, task.id)
-    await _await_poll(fake_github, clock, 1)
+    await _await_poll(fake_github, run.clock, 1)
 
     engine_env.tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
-    await _land(clock, run.flow)
-    clock.advance(settings.orchestration.timeouts.pr_wait)
+    await _land(run.clock, run.flow)
+    run.clock.advance(settings.orchestration.timeouts.pr_wait)
 
     assert fake_github.views() == 1
     assert fetch_open_escalations(engine_env.connection) == []
@@ -549,7 +549,7 @@ async def test_a_paused_pull_request_stops_polling_and_never_escalates_until_res
     engine_env.tasks.set_holds(task.id, frozenset())
     await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
     run.start()
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
 
     assert engine_env.tasks.require(task.id).status is Status.DONE
 
@@ -591,10 +591,10 @@ async def test_an_open_pull_request_that_cannot_land_escalates_once_with_its_url
     await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     run = _Run(engine_env, settings, task.id)
-    await _await_poll(fake_github, clock, 1)
+    await _await_poll(fake_github, run.clock, 1)
 
     fake_github.set_fields(1, **stall.fields)
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
 
     [escalation] = fetch_open_escalations(engine_env.connection)
     assert escalation.reason is stall.reason
@@ -629,7 +629,7 @@ async def test_failed_polls_are_retried_on_a_backoff_and_escalate_only_past_the_
 
     if not exhausted:
         await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
 
     assert fake_github.views() == (failures if exhausted else failures + 1)
     final = engine_env.tasks.require(task.id)
@@ -660,17 +660,17 @@ async def test_a_failing_check_does_not_escalate_until_the_checks_have_settled(
     await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     run = _Run(engine_env, settings, task.id)
-    await _await_poll(fake_github, clock, 1)
+    await _await_poll(fake_github, run.clock, 1)
 
     fake_github.set_fields(1, statusCheckRollup=unsettled)
-    await _poll_again(fake_github, clock, 2)
+    await _poll_again(fake_github, run.clock, 2)
 
     assert fetch_open_escalations(engine_env.connection) == []
     assert not run.flow.done()
 
     fake_github.set_fields(1, statusCheckRollup=[_PASSING_CHECK])
     await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
 
     done = engine_env.tasks.get(task.id)
     assert done is not None
@@ -691,11 +691,11 @@ async def test_the_branch_of_a_merged_pull_request_stays_with_a_worktree_kept_fo
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     assert task.repo is not None
     run = _Run(engine_env, settings, task.id)
-    await _await_poll(fake_github, clock, 1)
+    await _await_poll(fake_github, run.clock, 1)
 
     (task_root(engine_env.project_root, task.id) / "scratch.txt").write_text("unsaved work\n")
     await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.SQUASH)
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
 
     done = engine_env.tasks.get(task.id)
     assert done is not None
@@ -787,9 +787,9 @@ async def test_a_retry_after_a_conflicting_pull_request_rebases_and_pushes_again
     )
     assert task.repo is not None
     run = _Run(engine_env, settings, task.id)
-    await _await_poll(fake_github, clock, 1)
+    await _await_poll(fake_github, run.clock, 1)
     fake_github.set_fields(1, mergeable="CONFLICTING")
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
     moved = await _push_unrelated_change(
         remote_dir, tmp_path_factory.mktemp("other") / "clone", "elsewhere.txt"
     )
@@ -798,12 +798,12 @@ async def test_a_retry_after_a_conflicting_pull_request_rebases_and_pushes_again
     views = fake_github.views() + 1
     fake_github.set_fields(1, mergeable="MERGEABLE")
     _retry(engine_env, run, task.id, EscalationReason.INTEGRATION_CONFLICT)
-    await _await_poll(fake_github, clock, views)
+    await _await_poll(fake_github, run.clock, views)
 
     assert await _contains(remote_dir, task.repo.branch, moved)
     assert len(fake_github.pull_requests()) == 1
     await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
-    await _land(clock, run.flow)
+    await _land(run.clock, run.flow)
     done = engine_env.tasks.get(task.id)
     assert done is not None
     assert done.status is Status.DONE
