@@ -1,9 +1,16 @@
 # Shikiru (しきる)
 
+[![CI](https://github.com/ferrum-code-dev/shikiru/actions/workflows/ci.yml/badge.svg)](https://github.com/ferrum-code-dev/shikiru/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ferrum-code-dev/shikiru?include_prereleases)](https://github.com/ferrum-code-dev/shikiru/releases)
+[![License](https://img.shields.io/github/license/ferrum-code-dev/shikiru)](https://github.com/ferrum-code-dev/shikiru/blob/main/LICENSE)
+
 Shikiru coordinates coding agents through a defined development workflow: turn a request into
 reviewed changes, integrate them, and ask you when a decision needs human judgment. It runs locally
 with Git worktrees, a persistent engine and a terminal dashboard in tmux. Claude Code and Codex CLI
 are built in; different agents and models can work on the same task in different roles.
+
+To have routine escalations handled for you, and the rest forwarded to your phone, see the companion
+service [shikiri-yaku](https://github.com/ferrum-code-dev/shikiri-yaku).
 
 ## How it works
 
@@ -378,6 +385,15 @@ engine as up. Run `uv run poe deploy`. It should report the engine that did not 
 first release, restart the engines it had restarted, and exit non-zero. Then run
 `shikiru --version` and `shikiru --json ls` to confirm the first release is back, and restore the file
 permissions.
+
+## Shikiri-yaku
+
+Shikiru stops and waits for a person when it raises an escalation.
+[Shikiri-yaku](https://github.com/ferrum-code-dev/shikiri-yaku) is a companion background service that
+takes that seat: it watches the escalations of your Shikiru projects, handles the routine ones (retries,
+quota waits, engine restarts, approved tool installs) and forwards the rest to you in Telegram, where one
+tap applies the answer. It talks to Shikiru only through `shikiru mcp` and the CLI, and keeps nothing in
+your repositories. Shikiri-yaku 0.1.x works with Shikiru 0.1.x; its `doctor` checks the version.
 
 ## Contributing
 
