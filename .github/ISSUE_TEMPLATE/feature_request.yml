@@ -1,0 +1,24 @@
+name: Feature request
+description: Suggest a change to Shikiru
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Open this before starting anything larger than a small fix, so the approach can be agreed first.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

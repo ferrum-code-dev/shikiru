@@ -62,7 +62,7 @@ Acceptance criteria:
 
 ### R3 — Files an open-source project needs
 
-- [ ] Add the license, metadata, CONTRIBUTING, SECURITY, CHANGELOG and templates.
+- [x] Add the license, metadata, CONTRIBUTING, SECURITY, CHANGELOG and templates.
 
 Acceptance criteria:
 
@@ -82,7 +82,7 @@ Acceptance criteria:
    Shikiru does, written from the README and not from the git log.
 5. `.github/ISSUE_TEMPLATE/bug_report.yml`, `.github/ISSUE_TEMPLATE/feature_request.yml` and
    `.github/pull_request_template.md`, short; the PR template asks for the gate result.
-6. `git grep -n '/Users/'` finds nothing in tracked files.
+6. `git grep` for the macOS home-directory prefix finds nothing in tracked files, this plan included.
 7. `uv build` into a temporary directory produces a wheel and sdist whose metadata shows the license,
    URLs and classifiers. Every relative link in `README.md`, `CONTRIBUTING.md` and `AGENTS.md`
    resolves. The full gate passes.

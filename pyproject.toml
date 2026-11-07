@@ -3,6 +3,14 @@ name = "shikiru"
 version = "0.1.0"
 description = "Runs coding-agent tasks in tmux panes, orchestrated by an asyncio engine."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ferrum Code" }]
+keywords = ["coding-agents", "claude", "codex", "tmux", "orchestration", "git-worktrees"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3.14",
+]
 requires-python = ">=3.14"
 dependencies = [
   "typer>=0.27,<0.28",
@@ -12,6 +20,12 @@ dependencies = [
   "psutil>=7.0,<8.0",
   "mcp>=1.26,<2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ferrum-code-dev/shikiru"
+Source = "https://github.com/ferrum-code-dev/shikiru"
+Issues = "https://github.com/ferrum-code-dev/shikiru/issues"
+Changelog = "https://github.com/ferrum-code-dev/shikiru/blob/main/CHANGELOG.md"
 
 [project.scripts]
 shikiru = "shikiru.cli.app:app"
