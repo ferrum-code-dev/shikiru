@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-07
+
+### Fixed
+
+- `poe deploy` ran its restart and verification commands with the checkout's virtual environment
+  first on `PATH`, so it checked and restarted engines with the checkout's copy instead of the
+  installed release.
+
+### Changed
+
+- The README installs a release, from its wheel or its tag, instead of a checkout.
+
 ## [0.1.0] - 2026-11-07
 
 ### Added

@@ -44,13 +44,13 @@ and a timeline so you can understand both its result and how it got there.
 ### Install a release
 
 ```sh
-uv tool install https://github.com/ferrum-code-dev/shikiru/releases/download/v0.1.0/shikiru-0.1.0-py3-none-any.whl
+uv tool install https://github.com/ferrum-code-dev/shikiru/releases/download/v0.1.1/shikiru-0.1.1-py3-none-any.whl
 # Or install directly from the tag:
-uv tool install git+https://github.com/ferrum-code-dev/shikiru@v0.1.0
+uv tool install git+https://github.com/ferrum-code-dev/shikiru@v0.1.1
 shikiru --help
 ```
 
-Change `0.1.0` in the URL for a newer release. A long-running installation must be a release; see
+Change `0.1.1` in the URL for a newer release. A long-running installation must be a release; see
 [Applying a release](#applying-a-release). For development, see [From a checkout](CONTRIBUTING.md).
 Never install a long-running copy with `--editable`.
 
@@ -348,11 +348,11 @@ software is correct.
 ## Applying a release
 
 The installed `shikiru` is a tagged release, never a checkout. Commit the version you want in
-`pyproject.toml`, then tag that commit `v<version>` (for example `v0.1.0`). The work tree must be
+`pyproject.toml`, then tag that commit `v<version>` (for example `v0.1.1`). The work tree must be
 clean and HEAD must be exactly that tag.
 
 ```sh
-git tag v0.1.0
+git tag v0.1.1
 uv run poe deploy
 ```
 
