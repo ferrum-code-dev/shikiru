@@ -134,7 +134,7 @@ Acceptance criteria:
 
 ### W6 — An engine-lock test fails on the macOS runner
 
-- [ ] Find why `test_stop_returns_only_after_the_engine_released_its_lock` fails on `macos-15` and make it deterministic.
+- [x] Find why `test_stop_returns_only_after_the_engine_released_its_lock` fails on `macos-15` and make it deterministic.
 
 Run 42412443881 of the CI workflow, commit `0b0ac3db`. `ubuntu-24.04` passed everything (gate and package
 smoke, 11 min). On `macos-15` the first attempt passed the gate and then failed in the package smoke with

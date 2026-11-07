@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from fake_agent.scripted import SCRIPT_ENV_VAR, role_script_env_var
 
+from shikiru.agents.contracts import shikiru_argv
 from shikiru.clock import SystemClock
 from shikiru.domain.tasks import Role, Status
 from shikiru.engine.daemon import EngineLock
@@ -29,7 +30,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from shikiru.domain.events import EventKind
-    from shikiru.process import ProcessIdentity
+    from shikiru.process import ProcessIdentity, SpawnedProcess
     from tests.support.tmux import TmuxServer
 
 TASK_ID = "T-1"
@@ -59,6 +60,7 @@ class EngineProject:
         self.root = root
         self.environment = environment
         self.gate = gate
+        self.engines: list[SpawnedProcess] = []
 
     async def cli(self, *arguments: str) -> str:
         code, stdout, stderr = await self.run(*arguments)
@@ -67,6 +69,16 @@ class EngineProject:
 
     async def run(self, *arguments: str) -> tuple[int, str, str]:
         return await run_cli(self.root, self.environment, *SETTINGS, *arguments)
+
+    async def run_engine(self) -> SpawnedProcess:
+        engine = await RUNNER.spawn(
+            shikiru_argv("--project", str(self.root), *SETTINGS, "engine"),
+            cwd=self.root,
+            env=self.environment,
+        )
+        self.engines.append(engine)
+        await self.eventually(lambda: self.engine_pid() == engine.pid)
+        return engine
 
     def engine_pid(self) -> int | None:
         return EngineLock.pid_if_running(engine_lock_path(self.root))
@@ -146,18 +158,18 @@ async def engine_project(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGenera
         identity = project.turn_identity()
         if identity is not None:
             RUNNER.signal_group(identity, signal.SIGKILL)
+        for engine in project.engines:
+            await engine.stop(grace=0)
 
 
 async def start_with_running_turn(project: EngineProject) -> tuple[int, ProcessIdentity]:
-    await project.cli("start")
+    engine = await project.run_engine()
     await project.cli("submit", "Implement task A1 from tasks/plan.md")
 
     async def turn_running() -> bool:
         return project.turn_identity() is not None
 
     await project.eventually(turn_running)
-    engine_pid = project.engine_pid()
     identity = project.turn_identity()
-    assert engine_pid is not None
     assert identity is not None
-    return engine_pid, identity
+    return engine.pid, identity

@@ -42,7 +42,7 @@ async def test_a_signal_ends_the_turn_releases_the_lock_and_a_restart_resumes(
         assert EventKind.ENGINE_STOPPED in project.event_kinds()
         assert project.task_status() is Status.RUNNING
 
-        await project.cli("start")
+        await project.run_engine()
         await project.eventually(lambda: project.turn_identity() not in {None, identity})
         await project.eventually(project.open_gate)
         await project.eventually(lambda: project.task_status() is Status.DONE)
@@ -57,7 +57,7 @@ async def test_stop_returns_only_after_the_engine_released_its_lock(
         await project.cli("stop")
         assert project.engine_pid() is None
 
-        await project.cli("start")
+        await project.run_engine()
         assert project.engine_pid() not in {None, engine_pid}
 
 
@@ -90,7 +90,7 @@ async def test_a_second_signal_ends_the_engine_by_force_and_a_restart_resumes(
         assert not RUNNER.group_is_running(identity.pid)
         assert project.task_status() is Status.RUNNING
 
-        await project.cli("start")
+        await project.run_engine()
         await project.eventually(lambda: project.turn_identity() not in {None, identity})
         await project.eventually(project.open_gate)
         await project.eventually(lambda: project.task_status() is Status.DONE)
