@@ -131,3 +131,31 @@ Acceptance criteria:
    could still differ on the runner. A Docker image that mirrors the CI job may exist on this host
    (`docker run --rm --cpus=1 -v <repo>:/src:ro shikiru-ubuntu-smoke ...`); use it if it helps and Docker is
    reachable, otherwise skip it.
+
+### W6 — An engine-lock test fails on the macOS runner
+
+- [ ] Find why `test_stop_returns_only_after_the_engine_released_its_lock` fails on `macos-15` and make it deterministic.
+
+Run 42412443881 of the CI workflow, commit `0b0ac3db`. `ubuntu-24.04` passed everything (gate and package
+smoke, 11 min). On `macos-15` the first attempt passed the gate and then failed in the package smoke with
+`No space left on device` (a runner disk problem; the failure text could not even be printed). The re-run
+failed the gate with one test:
+
+    FAILED tests/integration/test_engine_signals.py::test_stop_returns_only_after_the_engine_released_its_lock
+    AssertionError: ✕ engine did not acquire its lock after start
+    1 failed, 2517 passed, 15 skipped in 1324s
+
+The macOS runner has 3 cores and runs 3 workers (`SHIKIRU_TEST_CPUS_PER_WORKER=1`); the gate takes 22 minutes
+there against 12 on Ubuntu, so waits that are fine on a fast machine can run out. The test passes here.
+
+Acceptance criteria:
+
+1. Read the test and the helper that waits for the engine lock. Report what is waited for, with what timeout, and
+   what a slow start can do to it (the engine process starting later than the wait allows, the lock file created
+   after the process is up, or a wait that starts before the start command returns).
+2. Make the wait follow the real condition (the engine reports it holds the lock, or the lock is held when tried)
+   with the same kind of deadline the other engine tests use. Do not add sleeps, do not only raise a timeout, and
+   do not skip or loosen the assertion that `stop` returns only after the lock is released.
+3. Look for the same pattern in the other engine and process tests (`git grep` for the helper) and fix any that
+   wait the same way, or list them in the report.
+4. The full gate passes here. You cannot run Actions; say so in the report.
