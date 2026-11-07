@@ -336,6 +336,40 @@ environment and may use your credentials. Use only repositories and hosts you tr
 Review changes and commits before trusting them. Agent review and a valid report are not proof that
 software is correct.
 
+## Applying a release
+
+The installed `shikiru` is a tagged release, never a checkout. Commit the version you want in
+`pyproject.toml`, then tag that commit `v<version>` (for example `v0.1.0`). The work tree must be
+clean and HEAD must be exactly that tag.
+
+```sh
+git tag v0.1.0
+uv run poe deploy
+```
+
+`poe deploy` runs the gate and the release smoke, builds the wheel into the release store
+(`$XDG_DATA_HOME/shikiru/releases`, default `~/.local/share/shikiru/releases`, last five kept),
+installs it, checks that `shikiru --version` reports the tag's version, and restarts each engine that
+is up. Nothing is installed if a check before the install fails.
+
+- A project with a task running is not restarted. It is reported as busy and stays on the previous
+  code; run `shikiru --project <dir> restart` there once its tasks finish.
+- If an engine does not come up, or the installed version is wrong, the deploy reinstalls the release
+  that the `current` file names, restarts the engines it had restarted, and exits non-zero.
+- A successful deploy writes `current`. `uv run poe rollback` reinstalls the release `current` names
+  and restarts the engines that are up. After a successful deploy that is the release just deployed.
+- Install with `uv tool install --reinstall <wheel>` only through the deploy. Do not use `--editable`
+  or install from a checkout: an editable install follows the working tree, and the deploy cannot
+  return it to a known release.
+
+Drill, to check the rollback on a host you can afford to break: deploy a good release, then tag a
+second release and make one engine fail to restart after the install by making its project
+configuration unreadable (`chmod 000 <project>/.shikiru/config.toml`) once `shikiru ls` lists its
+engine as up. Run `uv run poe deploy`. It should report the engine that did not come up, reinstall the
+first release, restart the engines it had restarted, and exit non-zero. Then run
+`shikiru --version` and `shikiru --json ls` to confirm the first release is back, and restore the file
+permissions.
+
 ## Validate a checkout and a real project
 
 ```sh

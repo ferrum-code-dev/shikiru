@@ -71,6 +71,8 @@ comments = "python -m tests.support.comment_rule"
 literals = "python -m tests.support.literal_rule"
 test = "pytest -m 'not e2e'"
 e2e = "pytest -m e2e --no-cov -n 0"
+deploy = "python scripts/deploy.py"
+rollback = "python scripts/deploy.py --rollback"
 
 [tool.poe.tasks.fix]
 sequence = [
@@ -155,6 +157,7 @@ runtime-evaluated-decorators = [
 "src/shikiru/workspace/**" = ["ASYNC240"] # local worktree filesystem ops, as blocking as sqlite3
 "tests/support/git_repo.py" = ["ASYNC240"]
 "src/shikiru/process.py" = ["TID251"]
+"scripts/deploy.py" = ["TID251", "S603", "INP001"] # standalone stdlib-only release script: it cannot import SubprocessRunner, and it is a script, not a package
 "src/shikiru/clock.py" = ["TID251"]
 "src/shikiru/config/loader.py" = ["ANN401"]
 "tests/support/waiting.py" = ["TID251"]

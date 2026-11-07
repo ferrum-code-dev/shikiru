@@ -38,7 +38,7 @@ Acceptance criteria:
 
 ### R2 — Deploy a tagged release, roll back on failure
 
-- [ ] Add `scripts/deploy.py`, the poe tasks, the README part and the human drill.
+- [x] Add `scripts/deploy.py`, the poe tasks, the README part and the human drill.
 
 Acceptance criteria:
 
