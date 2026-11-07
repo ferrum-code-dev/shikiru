@@ -162,7 +162,7 @@ Acceptance criteria:
 
 ### W7 — The release waits for a green CI on the tagged commit
 
-- [ ] Add the CI wait to the Release workflow.
+- [x] Add the CI wait to the Release workflow.
 
 Today pushing a tag publishes at once, even when CI has not finished or has failed on that commit. A release
 that cannot be unpublished (PyPI later) must only come from a commit CI has passed.

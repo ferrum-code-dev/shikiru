@@ -7,8 +7,31 @@ on:
 permissions: {}
 
 jobs:
+  ci-green:
+    name: Wait for CI on the tagged commit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the tagged commit is on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Wait for CI to pass on the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/wait_for_ci.py "$GITHUB_SHA"
+
   publish:
     name: Publish the GitHub release
+    needs: ci-green
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
