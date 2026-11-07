@@ -101,6 +101,7 @@ and defaults; the root help also offers shell-completion setup and `--version`.
 | `shikiru init` | Configure a repository through the wizard; `--yes` writes editable defaults. |
 | `shikiru start` | Start or reuse its detached engine and ensure its tmux session; `--attach` enters it. |
 | `shikiru stop` | Stop orchestration while keeping project state and tmux agent panes; `--kill-session` also closes that project's tmux session. |
+| `shikiru restart` | Stop and start the engine so it runs the installed code; refuses while a task runs unless `--force`. |
 | `shikiru submit "REQUEST"` | Queue work and return its allocated task ID. |
 | `shikiru status` | Show engine/queue state, tasks, escalations, usage and quota; add `T-1` for one task or `--watch` for updates. |
 | `shikiru ls` | List discovered project sessions; `--host HOST` queries an SSH host. |

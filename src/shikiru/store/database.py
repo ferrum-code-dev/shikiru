@@ -48,7 +48,7 @@ class Database:
         """
         make_private_dir(self._path.parent)
         create_private_file(self._path)
-        connection = self._connect(mode="rwc")
+        connection = _guard_schema(self._connect(mode="rwc"), self._path)
         connection.execute("PRAGMA journal_mode = WAL")
         _migrate(connection)
         return connection
@@ -56,10 +56,11 @@ class Database:
     def connect_readonly(self) -> sqlite3.Connection:
         """Open a connection SQLite itself refuses to let write."""
         try:
-            return self._connect(mode="ro")
+            connection = self._connect(mode="ro")
         except sqlite3.Error as error:
             message = f"could not open read-only database {self._path}: {error}"
             raise DatabaseError(message) from error
+        return _guard_schema(connection, self._path)
 
     def schema_version(self, connection: sqlite3.Connection) -> int:
         """Return the migrated schema version for an open database connection."""
@@ -186,6 +187,19 @@ def _statements(sql: str) -> list[str]:
 
 def _schema_version(connection: sqlite3.Connection) -> int:
     return connection.execute(_READ_VERSION).fetchone()[0]
+
+
+def _guard_schema(connection: sqlite3.Connection, path: Path) -> sqlite3.Connection:
+    stored = _schema_version(connection)
+    known = _migration_files()[-1][0]
+    if stored > known:
+        connection.close()
+        message = (
+            f"state database {path} has schema version {stored}, newer than the version "
+            f"{known} this Shikiru knows; use the Shikiru release that wrote it"
+        )
+        raise DatabaseError(message)
+    return connection
 
 
 def _migrate(connection: sqlite3.Connection) -> None:

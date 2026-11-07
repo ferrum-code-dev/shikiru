@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, ConfigDict
 
 from shikiru.config.loader import load_settings
-from shikiru.errors import ShikiruError
+from shikiru.domain.tasks import Status
+from shikiru.errors import EXIT_COMMAND_REJECTED, ShikiruError
 from shikiru.operator.attachment import admit_attachment
 from shikiru.operator.commands import Ack, AckStatus
 from shikiru.paths import engine_output_path
@@ -52,10 +53,26 @@ ENGINE_START_WAIT_SECONDS = 5.0
 ENGINE_START_POLL_SECONDS = 0.05
 ENGINE_OUTPUT_TAIL_BYTES = 2000
 ENGINE_EXITED_MESSAGE = "the engine process exited before it acquired its lock"
+RESTART_BLOCKING_STATUSES = (Status.RUNNING, Status.INTEGRATING)
+STOP_NOT_CONFIRMED_MESSAGE = "the engine did not confirm the stop"
 
 
 class EngineExitedError(ShikiruError):
     """The engine process started by `start` ended without ever holding its lock."""
+
+
+class RestartRefusedError(ShikiruError):
+    """A restart would interrupt running tasks and was not forced."""
+
+    exit_code = EXIT_COMMAND_REJECTED
+
+    def __init__(self, task_ids: Sequence[str]) -> None:
+        """Record the running tasks that block the restart."""
+        super().__init__(
+            f"restart refused while tasks are running: {', '.join(task_ids)}; "
+            "wait for them to finish or run restart with --force"
+        )
+        self.task_ids = tuple(task_ids)
 
 
 class ProjectLifecycle:
@@ -168,6 +185,35 @@ class ProjectLifecycle:
             await self._tmux.kill_session(target)
         return ack
 
+    async def restart(
+        self,
+        root: Path,
+        overrides: Sequence[str],
+        *,
+        force: bool,
+    ) -> RestartResult:
+        """Stop a running engine, refusing while tasks run unless forced, then start it again."""
+        settings = load_settings(root, overrides)
+        restarted = self._engine_up(root)
+        if restarted:
+            if not force:
+                running = self._running_task_ids(root, settings)
+                if running:
+                    raise RestartRefusedError(running)
+            ack = await self.stop(root, overrides, kill_session=False)
+            if ack.status is not AckStatus.DONE:
+                raise ShikiruError(ack.message or STOP_NOT_CONFIRMED_MESSAGE)
+        started = await self.start(root, overrides, attach=False)
+        return RestartResult(restarted=restarted, engine=started.engine, session=started.session)
+
+    def _running_task_ids(self, root: Path, settings: Settings) -> list[str]:
+        services = self._operator_factory(root, settings)
+        try:
+            tasks = services.queries.list_tasks(statuses=RESTART_BLOCKING_STATUSES)
+        finally:
+            services.close()
+        return [task.id for task in tasks]
+
     async def _wait_for_engine(
         self,
         root: Path,
@@ -234,5 +280,15 @@ class StartResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     started: bool
+    engine: Literal["up"]
+    session: str
+
+
+class RestartResult(BaseModel):
+    """Whether a running engine was stopped, and the engine and session a restart left up."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    restarted: bool
     engine: Literal["up"]
     session: str

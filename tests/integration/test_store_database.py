@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.agents.contracts import BILLING_MODE_UNKNOWN, BILLING_SOURCE_UNKNOWN
+from shikiru.errors import DatabaseError
 from shikiru.store.database import Database, format_timestamp
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
@@ -322,3 +323,49 @@ def test_upgrade_drops_task_quota_evidence_and_matches_a_fresh_schema(tmp_path: 
     finally:
         migrated.close()
         fresh.close()
+
+
+KNOWN_SCHEMA_VERSION = _migration_number(_migration_scripts()[-1][0])
+
+
+def _user_version(path: Path) -> int:
+    connection = sqlite3.connect(path)
+    try:
+        return connection.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    ("stored", "refused"),
+    [
+        pytest.param(0, False, id="older"),
+        pytest.param(KNOWN_SCHEMA_VERSION, False, id="equal"),
+        pytest.param(KNOWN_SCHEMA_VERSION + 1, True, id="newer"),
+    ],
+)
+def test_a_schema_newer_than_the_code_is_refused_without_writing(
+    tmp_path: Path, stored: int, refused: bool
+) -> None:
+    path = tmp_path / "state.db"
+    if stored == 0:
+        sqlite3.connect(path).close()
+    else:
+        Database(path).connect().close()
+        legacy = sqlite3.connect(path)
+        try:
+            legacy.execute(f"PRAGMA user_version = {stored}")
+            legacy.commit()
+        finally:
+            legacy.close()
+    database = Database(path)
+
+    if not refused:
+        database.connect().close()
+        assert _user_version(path) == KNOWN_SCHEMA_VERSION
+        return
+    with pytest.raises(DatabaseError, match=f"version {stored}, newer than the version"):
+        database.connect()
+    with pytest.raises(DatabaseError, match=f"version {stored}, newer than the version"):
+        database.connect_readonly()
+    assert _user_version(path) == stored

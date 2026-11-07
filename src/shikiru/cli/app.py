@@ -36,6 +36,7 @@ from shikiru.cli.render import (
     init_renderable,
     init_wizard_result_renderable,
     missing_submit_request_renderable,
+    restart_renderable,
     session_diagnostics_renderable,
     session_rows_renderable,
     start_renderable,
@@ -105,6 +106,13 @@ ATTACH_OPTION = typer.Option(
     help=(
         "Attach to the project session after starting or reusing the engine. "
         "[bold]Default:[/] stay detached."
+    ),
+)
+FORCE_OPTION = typer.Option(
+    "--force",
+    help=(
+        "Restart even while tasks run, which may interrupt their turns. "
+        "[bold]Default:[/] refuse while a task is running."
     ),
 )
 KILL_SESSION_OPTION = typer.Option(
@@ -303,6 +311,22 @@ def stop(
     except ShikiruError as error:
         _fail(error)
     emit_ack(state, result, stopping=True)
+
+
+@app.command()
+def restart(
+    context: typer.Context,
+    *,
+    force: Annotated[bool, FORCE_OPTION] = False,
+) -> None:
+    """Stop the project's engine if one runs, then start it again."""
+    try:
+        state = state_from(context)
+        root = project_root(state)
+        result = _run(build_lifecycle().restart(root, state.overrides, force=force))
+    except ShikiruError as error:
+        _fail(error)
+    _emit_value(state, result, restart_renderable(result))
 
 
 @app.command(name="ls")

@@ -22,7 +22,7 @@ tracker for the tasks below. Each task checks only its own entry when complete. 
 
 ### R1 — `shikiru restart` and a refusal of newer schemas
 
-- [ ] Add the restart command and make an unknown newer schema an error.
+- [x] Add the restart command and make an unknown newer schema an error.
 
 Acceptance criteria:
 

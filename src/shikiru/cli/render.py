@@ -98,7 +98,7 @@ if TYPE_CHECKING:
     from shikiru.operator.commands import Ack
     from shikiru.operator.detectors import InitWizardResult
     from shikiru.operator.doctor import DoctorCheck, DoctorReport
-    from shikiru.operator.lifecycle import StartResult
+    from shikiru.operator.lifecycle import RestartResult, StartResult
     from shikiru.operator.queries import (
         EscalationView,
         HumanStatusView,
@@ -246,6 +246,12 @@ def init_wizard_result_renderable(
 def start_renderable(result: StartResult) -> Text:
     """Render the engine outcome of `start`."""
     label = "Engine started" if result.started else "Engine already running"
+    return _outcome_line_for_cli(label, GLYPH_DONE, SUCCESS_COLOR)
+
+
+def restart_renderable(result: RestartResult) -> Text:
+    """Render the engine outcome of `restart`."""
+    label = "Engine restarted" if result.restarted else "Engine started"
     return _outcome_line_for_cli(label, GLYPH_DONE, SUCCESS_COLOR)
 
 

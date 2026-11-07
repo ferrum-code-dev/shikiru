@@ -16,7 +16,9 @@ from shikiru.clock import SystemClock
 from shikiru.operator.doctor import Doctor
 from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.operator.probe import AgentProbe
+from shikiru.paths import state_db_path
 from shikiru.process import SubprocessRunner
+from shikiru.store.database import Database
 from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
@@ -349,6 +351,24 @@ async def test_doctor_fails_a_project_root_inside_a_repository(tmp_path: Path) -
     checks = {check["name"]: check for check in json.loads(stdout)["checks"]}
     assert checks["repository"]["ok"] is False
     assert str(root) in checks["repository"]["detail"]
+    assert code != 0
+
+
+async def test_doctor_fails_a_database_whose_schema_is_newer_than_the_code(tmp_path: Path) -> None:
+    root = await _project(tmp_path)
+    database_path = state_db_path(root)
+    newer_version = Database(database_path).health() + 1
+    connection = Database(database_path).connect()
+    try:
+        connection.execute(f"PRAGMA user_version = {newer_version}")
+    finally:
+        connection.close()
+
+    code, stdout, _ = await _cli(root, "--json", "doctor")
+
+    checks = {check["name"]: check for check in json.loads(stdout)["checks"]}
+    assert checks["db"]["ok"] is False
+    assert f"version {newer_version}" in checks["db"]["detail"]
     assert code != 0
 
 
