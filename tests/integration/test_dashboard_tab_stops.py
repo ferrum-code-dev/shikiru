@@ -233,6 +233,10 @@ async def test_focused_readout_scrolls_with_page_keys_and_keeps_the_task_selecti
         selected = task_list.index
         decision_home.query_one("#usage", UsagePanel).focus()
         await pilot.pause()
+        await wait_until(
+            lambda: not any(scroller.is_scrolling for scroller in scrollers),
+            timeout=UI_WAIT_SECONDS,
+        )
         before = sum(scroller.scroll_y for scroller in scrollers)
         await pilot.press("pagedown")
         await wait_until(

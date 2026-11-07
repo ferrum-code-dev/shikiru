@@ -50,7 +50,7 @@ Acceptance criteria:
 
 ### W3 — The dashboard page-key test fails on GitHub Actions
 
-- [ ] Find why the test fails in Actions and make it deterministic.
+- [x] Find why the test fails in Actions and make it deterministic.
 
 The first GitHub Actions run (run 42392666568 of the CI workflow, on both `ubuntu-24.04` and
 `macos-15`) passed everything except one test:
