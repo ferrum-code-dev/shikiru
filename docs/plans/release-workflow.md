@@ -33,7 +33,7 @@ Acceptance criteria:
 
 ### W2 — Install from a release
 
-- [ ] Change the README installation to install a release, not a checkout.
+- [x] Change the README installation to install a release, not a checkout.
 
 Acceptance criteria:
 

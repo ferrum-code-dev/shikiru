@@ -41,13 +41,22 @@ and a timeline so you can understand both its result and how it got there.
 - Claude Code or Codex CLI installed and configured for your account.
 - `gh` and an accessible GitHub remote if you choose pull-request integration.
 
-Install from a Shikiru source checkout:
+### Install a release
 
 ```sh
-cd /path/to/shikiru
-uv tool install .
+uv tool install https://github.com/ferrum-code-dev/shikiru/releases/download/v0.1.0/shikiru-0.1.0-py3-none-any.whl
+# Or install directly from the tag:
+uv tool install git+https://github.com/ferrum-code-dev/shikiru@v0.1.0
 shikiru --help
 ```
+
+Change `0.1.0` in the URL for a newer release. A long-running installation must be a release; see
+[Applying a release](#applying-a-release). For development, see [From a checkout](CONTRIBUTING.md).
+Never install a long-running copy with `--editable`.
+
+### From a checkout
+
+For development from a source checkout, follow [CONTRIBUTING.md](CONTRIBUTING.md).
 
 macOS is the platform exercised locally. CI is configured for Ubuntu 24.04 and macOS 15; see
 [workflow runs](https://github.com/ferrum-code-dev/shikiru/actions/workflows/ci.yml) for
