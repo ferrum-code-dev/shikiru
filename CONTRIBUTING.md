@@ -94,3 +94,16 @@ Shikiru, review its ladders and submit one small, reviewable change. While activ
 exercise a task pause and, where useful, Take over/Hand back; stop/start the engine to inspect
 recovery. Confirm the resulting diff, tests and Git history. Use a model and account you are willing
 to spend usage on; `doctor --probe` is also a live check.
+
+## Releasing
+
+A release is the commit tagged `v<version>`; see [the design](docs/design.md#releases-and-deployment).
+
+1. Bump `version` in `pyproject.toml`, and move the Unreleased changes in `CHANGELOG.md` under
+   `## [<version>] - <date>`.
+2. Commit the bump and tag that commit: `git tag v<version>`.
+3. Deploy it on this host: `uv run poe deploy`. It refuses unless the work tree is clean and HEAD
+   is that tag, and it rolls back if a step fails.
+4. Push the tag: `git push origin v<version>`. The push publishes the GitHub release with the
+   wheel, the sdist and the changelog text (`.github/workflows/release.yml`), and the workflow fails
+   when the changelog section is missing or empty. Pushing the tag is the owner's decision.

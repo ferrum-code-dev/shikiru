@@ -9,7 +9,7 @@ tracker. Each task checks only its own entry when complete. See
 
 ### W1 — Release workflow
 
-- [ ] Add the release-notes script, the workflow and the CONTRIBUTING part.
+- [x] Add the release-notes script, the workflow and the CONTRIBUTING part.
 
 Acceptance criteria:
 

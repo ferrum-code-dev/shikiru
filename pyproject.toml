@@ -172,6 +172,7 @@ runtime-evaluated-decorators = [
 "tests/support/git_repo.py" = ["ASYNC240"]
 "src/shikiru/process.py" = ["TID251"]
 "scripts/deploy.py" = ["TID251", "S603", "INP001"] # standalone stdlib-only release script: it cannot import SubprocessRunner, and it is a script, not a package
+"scripts/release_notes.py" = ["INP001"] # standalone stdlib-only release script run by the release workflow, not a package
 "src/shikiru/clock.py" = ["TID251"]
 "src/shikiru/config/loader.py" = ["ANN401"]
 "tests/support/waiting.py" = ["TID251"]
