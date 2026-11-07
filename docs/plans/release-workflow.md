@@ -71,3 +71,26 @@ Acceptance criteria:
    the timeout and do not skip or xfail the test. If the cause is in the product (a tiny terminal
    cannot scroll the readout), fix the product and keep the test.
 3. The full gate passes locally. You cannot run Actions; say so in the report.
+
+### W4 — The package smoke fails on Ubuntu in GitHub Actions
+
+- [ ] Make the smoke print why it fails, then fix the cause.
+
+In run 42401933761 of the CI workflow (after the W3 fix) `macos-15` passed completely, but on
+`ubuntu-24.04` the step "Build and exercise package distributions" (`scripts/release-readiness-smoke.sh`)
+failed with only `Process completed with exit code 1` about 25 seconds after its last printed line,
+`installed entry points, defaults, prompt, migration and artwork resources verified`. The script writes its
+details to `build/release-readiness/*.log` and prints nothing of them, so the CI log does not say which check
+failed. The gate step of the same job passed.
+
+Acceptance criteria:
+
+1. When any check in the script fails, the script prints the name of the failing stage and the last 60 lines of
+   its log to stderr before it exits, and still exits non-zero. A passing run prints what it printed before.
+2. Reproduce the failure where you can (the smoke runs the same on Linux and macOS except for the tools; if you
+   cannot reproduce it, say so). Find the failing stage from the code that follows line 334 and fix the cause
+   in the product or the script. Do not skip, loosen or time-box a check to make it pass.
+3. If the cause depends on a Linux detail you cannot test here (for example a different `script` or `tmux`
+   behaviour, a missing terminal, or a path length), make the smallest change that is right for both systems
+   and say in the report what could still differ on the runner.
+4. The full gate passes locally; the script still passes on this machine.
