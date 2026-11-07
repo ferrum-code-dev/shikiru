@@ -1,8 +1,8 @@
 # Shikiru (しきる)
 
-[![CI](https://github.com/ferrum-code-dev/shikiru/actions/workflows/ci.yml/badge.svg)](https://github.com/ferrum-code-dev/shikiru/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/ferrum-code-dev/shikiru?include_prereleases)](https://github.com/ferrum-code-dev/shikiru/releases)
 [![License](https://img.shields.io/github/license/ferrum-code-dev/shikiru)](https://github.com/ferrum-code-dev/shikiru/blob/main/LICENSE)
+[![CI](https://github.com/ferrum-code-dev/shikiru/actions/workflows/ci.yml/badge.svg)](https://github.com/ferrum-code-dev/shikiru/actions/workflows/ci.yml)
 
 Shikiru coordinates coding agents through a defined development workflow: turn a request into
 reviewed changes, integrate them, and ask you when a decision needs human judgment. It runs locally
