@@ -17,6 +17,9 @@ PYPROJECT_NAME = "pyproject.toml"
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DATA_HOME_ENVIRONMENT = "XDG_DATA_HOME"
 DEFAULT_DATA_HOME = Path(".local", "share")
+PATH_VARIABLE = "PATH"
+VIRTUAL_ENV_VARIABLE = "VIRTUAL_ENV"
+VENV_BIN_DIRECTORY = "bin"
 RELEASES_DIRECTORY = "releases"
 CURRENT_NAME = "current"
 TAG_PREFIX = "v"
@@ -57,7 +60,25 @@ class CommandRunner(Protocol):
     ) -> CommandResult: ...
 
 
+def command_environment(
+    environ: Mapping[str, str], overrides: Mapping[str, str] | None
+) -> dict[str, str]:
+    environment = dict(environ)
+    virtual_env = environ.get(VIRTUAL_ENV_VARIABLE)
+    if virtual_env and PATH_VARIABLE in environ:
+        checkout_bin = Path(virtual_env, VENV_BIN_DIRECTORY)
+        entries = environ[PATH_VARIABLE].split(os.pathsep)
+        environment[PATH_VARIABLE] = os.pathsep.join(
+            entry for entry in entries if Path(entry) != checkout_bin
+        )
+    environment.update(overrides or {})
+    return environment
+
+
+@dataclass(frozen=True)
 class SubprocessRunner:
+    environ: Mapping[str, str]
+
     def run(
         self,
         argv: Sequence[str],
@@ -66,7 +87,7 @@ class SubprocessRunner:
         env: Mapping[str, str] | None = None,
         show_output: bool = False,
     ) -> CommandResult:
-        environment = None if env is None else {**os.environ, **env}
+        environment = command_environment(self.environ, env)
         if show_output:
             completed = subprocess.run(argv, cwd=cwd, env=environment, check=False)
             return CommandResult(completed.returncode)
@@ -313,7 +334,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     arguments = parser.parse_args(argv)
     paths = ReleasePaths(repo=REPO_ROOT, store=release_store())
-    runner = SubprocessRunner()
+    runner = SubprocessRunner(os.environ)
     if arguments.rollback:
         return roll_back_on_demand(runner, paths, print)
     return deploy(runner, paths, print)

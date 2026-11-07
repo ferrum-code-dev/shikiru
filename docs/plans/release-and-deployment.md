@@ -39,6 +39,7 @@ Acceptance criteria:
 ### R2 — Deploy a tagged release, roll back on failure
 
 - [x] Add `scripts/deploy.py`, the poe tasks, the README part and the human drill.
+- Every deploy command runs with the checkout's `VIRTUAL_ENV/bin` removed from `PATH`, so `shikiru` is the installed release, not the checkout's `.venv` copy.
 
 Acceptance criteria:
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -262,3 +263,38 @@ def test_rollback_reinstalls_the_current_release_and_restarts_engines_that_are_u
     assert host.installs == [OLD_WHEEL]
     assert host.installed == OLD_VERSION
     assert host.restarts == [("/p/a", OLD_VERSION)]
+
+
+CHECKOUT_VENV = "/checkout/.venv"
+CHECKOUT_VENV_BIN = f"{CHECKOUT_VENV}/bin"
+SYSTEM_PATH = os.pathsep.join(["/usr/bin", "/bin"])
+PRINT_PATH = "import os, sys; sys.stdout.write(os.environ['PATH'])"
+
+
+@pytest.mark.parametrize(
+    ("environ", "expected_path"),
+    [
+        pytest.param(
+            {
+                "VIRTUAL_ENV": CHECKOUT_VENV,
+                "PATH": os.pathsep.join([CHECKOUT_VENV_BIN, SYSTEM_PATH]),
+            },
+            SYSTEM_PATH,
+            id="checkout-venv-bin-removed",
+        ),
+        pytest.param(
+            {"PATH": os.pathsep.join([CHECKOUT_VENV_BIN, SYSTEM_PATH])},
+            os.pathsep.join([CHECKOUT_VENV_BIN, SYSTEM_PATH]),
+            id="path-unchanged-without-virtual-env",
+        ),
+    ],
+)
+def test_commands_run_without_the_checkout_venv_bin_on_path(
+    tmp_path: Path, environ: Mapping[str, str], expected_path: str
+) -> None:
+    runner = release.SubprocessRunner(environ)
+
+    result = runner.run((sys.executable, "-c", PRINT_PATH), cwd=tmp_path)
+
+    assert result.returncode == 0
+    assert result.stdout == expected_path
