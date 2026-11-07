@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-11-07
+
+### Fixed
+
+- The wizard kept no ladder text that was typed and not yet committed when the scope was switched,
+  so a ladder could end up empty and block "Next".
+- The package smoke prints the failing stage and the end of its log.
+- Several tests that waited too briefly on slow machines (dashboard scrolling, engine lock, status
+  polls) now wait for the real condition.
+
+### Changed
+
+- The README has Release, License and CI badges and points to shikiri-yaku.
+
 ## [0.1.1] - 2026-11-07
 
 ### Fixed
