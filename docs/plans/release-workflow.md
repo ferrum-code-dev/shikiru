@@ -30,3 +30,20 @@ Acceptance criteria:
 5. The workflow parses as YAML and every `uses:` is pinned to a full commit SHA with the version in a
    comment. The workflow itself cannot run here; say so in the report.
 6. The full gate passes.
+
+### W2 — Install from a release
+
+- [ ] Change the README installation to install a release, not a checkout.
+
+Acceptance criteria:
+
+1. README "Requirements and installation": replace "Install from a Shikiru source checkout" with
+   "Install a release": from the release wheel
+   (`uv tool install https://github.com/ferrum-code-dev/shikiru/releases/download/v0.1.0/shikiru-0.1.0-py3-none-any.whl`)
+   or from the tag (`uv tool install git+https://github.com/ferrum-code-dev/shikiru@v0.1.0`); the
+   version in the URL is the one to change for a newer release. Keep a short "From a checkout" part
+   pointing to `CONTRIBUTING.md`, and say that a long-running installation must be a release (see
+   "Applying a release"; never `--editable`).
+2. No other text in the README, `docs/` or `AGENTS.md` presents installing from a checkout as the
+   normal way. Documentation-only change: review the diff and run `git diff --check`; the full gate
+   is not required.
