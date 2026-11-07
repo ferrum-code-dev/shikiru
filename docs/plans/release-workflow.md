@@ -97,7 +97,7 @@ Acceptance criteria:
 
 ### W5 — The wizard stage of the package smoke fails on the Ubuntu runner
 
-- [ ] Find why the Leader and Implementer ladders are empty on the runner and make the smoke wait for the real state.
+- [x] Find why the Leader and Implementer ladders are empty on the runner and make the smoke wait for the real state.
 
 After W4 the Ubuntu job of run 42406618134 prints the cause location. The smoke fails in the stage
 `normal-size interactive wizard`: `click_wizard_button 'Next' 'SHIKIRU · Trackers'` times out after 20 s with

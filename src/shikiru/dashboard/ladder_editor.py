@@ -157,7 +157,7 @@ class LadderEditor(Vertical):
     @on(RowList.Moved, "#ladder-scopes")
     def _scope_moved(self, message: RowList.Moved) -> None:
         message.stop()
-        self._remember_cursor()
+        self._remember_field()
         self._selected_scope = message.index
         self._clear_form()
         self._refresh_scope()
@@ -165,7 +165,7 @@ class LadderEditor(Vertical):
     @on(RowList.Opened, "#ladder-scopes")
     def _scope_opened(self, message: RowList.Opened) -> None:
         message.stop()
-        self._remember_cursor()
+        self._remember_field()
         self._selected_scope = message.index
         self._clear_form()
         self._refresh_scope()
@@ -234,7 +234,7 @@ class LadderEditor(Vertical):
             message = "complexity scopes belong to the Implementer role"
             raise ValueError(message)
         if self.is_mounted:
-            self._remember_cursor()
+            self._remember_field()
         self._selected_scope = SCOPE_KEYS.index(key)
         if self.is_mounted:
             self._clear_form()
@@ -445,13 +445,15 @@ class LadderEditor(Vertical):
         self._new_model = ""
         self._new_effort = None
 
-    def _remember_cursor(self) -> None:
+    def _remember_field(self) -> None:
         if self.is_mounted:
             field = self.query_one(LADDER_INPUT, Input)
-            self._draft_cursors[self._scope_key()] = field.cursor_position
+            key = self._scope_key()
+            self._drafts[key] = field.value
+            self._draft_cursors[key] = field.cursor_position
 
     def _focus_invalid(self, scope_index: int) -> None:
-        self._remember_cursor()
+        self._remember_field()
         self._clear_form()
         self._selected_scope = scope_index
         self._refresh_scope()

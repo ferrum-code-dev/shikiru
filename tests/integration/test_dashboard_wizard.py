@@ -9,6 +9,8 @@ from textual.widgets import Button, Input, Select, Static
 import shikiru.agents.registry as registry_module
 import shikiru.dashboard.wizard as wizard_module
 from shikiru.config.loader import load_default_orchestration, load_settings
+from shikiru.dashboard.ladder_editor import LadderEditor
+from shikiru.domain.tasks import Role
 from shikiru.process import SubprocessRunner
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
@@ -21,6 +23,7 @@ if TYPE_CHECKING:
 
 
 from tests.integration.dashboard_wizard_support import (
+    BASE_RUNG_TEXT,
     COMPACT_WIZARD_SIZE,
     LADDER_SCOPES,
     LONG_CACHE_CANDIDATE,
@@ -330,3 +333,24 @@ async def test_invalid_push_interval_focuses_its_field_and_zero_is_saved(
         await pilot.click("#wizard-finish")
 
     assert load_settings(tmp_path).orchestration.push_interval_seconds == 0
+
+
+async def test_ladder_text_typed_before_its_change_event_survives_a_scope_switch(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await git_project(tmp_path)
+    private_doctor_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", no_entry_points)
+    app = await app_with_agents(tmp_path, {"fake": create_fake_agent})
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await click_next(pilot, "#wizard-page-1")
+        editor = app.query_one("#ladder-editor", LadderEditor)
+        field = app.query_one("#ladder-input", Input)
+        field.value = BASE_RUNG_TEXT
+        editor.set_scope(Role.IMPLEMENTER)
+        editor.set_scope(Role.LEADER)
+        await pilot.pause()
+
+        assert input_value(pilot, "#ladder-input") == BASE_RUNG_TEXT
