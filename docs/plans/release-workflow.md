@@ -159,3 +159,33 @@ Acceptance criteria:
 3. Look for the same pattern in the other engine and process tests (`git grep` for the helper) and fix any that
    wait the same way, or list them in the report.
 4. The full gate passes here. You cannot run Actions; say so in the report.
+
+### W7 — The release waits for a green CI on the tagged commit
+
+- [ ] Add the CI wait to the Release workflow.
+
+Today pushing a tag publishes at once, even when CI has not finished or has failed on that commit. A release
+that cannot be unpublished (PyPI later) must only come from a commit CI has passed.
+
+Acceptance criteria:
+
+1. `scripts/wait_for_ci.py` (standard library only): given the commit SHA, it polls
+   `gh run list --workflow ci.yml --commit <sha> --json status,conclusion` every `POLL_SECONDS` (30) and decides
+   with a pure function. A completed run with conclusion `success` passes. A completed run with another
+   conclusion and no running or queued run fails, naming the conclusion. No run at all after
+   `START_WAIT_SECONDS` (300) fails with "CI did not start for this commit". Otherwise keep waiting until
+   `TOTAL_WAIT_SECONDS` (3600; this repository's CI takes 15 to 25 minutes) and then fail. The runner is
+   injected, so tests call neither `gh` nor sleep.
+2. `.github/workflows/release.yml`: a first job `ci-green` with `permissions: contents: read, actions: read`,
+   a full-history checkout, a step that fails unless the tagged commit is an ancestor of `origin/main`
+   (`git merge-base --is-ancestor`), then the script with `GH_TOKEN: ${{ github.token }}` for that step only.
+   The existing release job gets `needs: ci-green` and keeps its own narrow permissions. The job's
+   `timeout-minutes` covers `TOTAL_WAIT_SECONDS` plus a margin.
+3. `CONTRIBUTING.md`, "Releasing": push `main`, tag, push the tag; the release waits for CI, and a failed CI is
+   fixed on `main` and re-run (re-run the failed CI, then re-run the Release workflow).
+4. Table-driven test of the decision function: success; failure with nothing running; failure while another run
+   is queued; no run before and after `START_WAIT_SECONDS`; a run in progress; the total wait exceeded; several
+   runs for one commit (a success wins over an earlier failure).
+5. The workflow parses as YAML, every `uses:` is pinned to a full SHA with its version in a comment, and only the
+   CI-wait step and the release step see a token. The workflow itself cannot run here; say so in the report.
+6. The full gate passes.
