@@ -47,3 +47,27 @@ Acceptance criteria:
 2. No other text in the README, `docs/` or `AGENTS.md` presents installing from a checkout as the
    normal way. Documentation-only change: review the diff and run `git diff --check`; the full gate
    is not required.
+
+### W3 — The dashboard page-key test fails on GitHub Actions
+
+- [ ] Find why the test fails in Actions and make it deterministic.
+
+The first GitHub Actions run (run 42392666568 of the CI workflow, on both `ubuntu-24.04` and
+`macos-15`) passed everything except one test:
+`tests/integration/test_dashboard_tab_stops.py::test_focused_readout_scrolls_with_page_keys_and_keeps_the_task_selection[size1]`
+(the `_TINY` size, 20x8). After `pilot.press("pagedown")` on the focused usage panel, the sum of
+`scroll_y` over `#focus-readouts` and `#focus-root` did not rise within the 30 s `wait_until`. The
+same test passes locally, alone and in the full gate, including with `CI=true GITHUB_ACTIONS=true
+TERM=xterm-256color`. The runs use `SHIKIRU_TEST_CPUS_PER_WORKER=1` (more workers on fewer cores),
+`--dist=loadfile` and a pinned Textual. `gh run view 42392666568 --log-failed` has the log.
+
+Acceptance criteria:
+
+1. Find the cause. Try reproducing with the CI settings (`SHIKIRU_TEST_CPUS_PER_WORKER=1`, the pinned
+   uv and Python from `ci.yml`, limited CPUs); state in the final report what you found, even if you
+   could not reproduce it.
+2. Make the test deterministic. If the cause is that the key is sent before the scrollable area has
+   its final size, wait for that state (for example `max_scroll_y > 0`) before pressing; do not raise
+   the timeout and do not skip or xfail the test. If the cause is in the product (a tiny terminal
+   cannot scroll the readout), fix the product and keep the test.
+3. The full gate passes locally. You cannot run Actions; say so in the report.
