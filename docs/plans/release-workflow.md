@@ -94,3 +94,40 @@ Acceptance criteria:
    behaviour, a missing terminal, or a path length), make the smallest change that is right for both systems
    and say in the report what could still differ on the runner.
 4. The full gate passes locally; the script still passes on this machine.
+
+### W5 — The wizard stage of the package smoke fails on the Ubuntu runner
+
+- [ ] Find why the Leader and Implementer ladders are empty on the runner and make the smoke wait for the real state.
+
+After W4 the Ubuntu job of run 42406618134 prints the cause location. The smoke fails in the stage
+`normal-size interactive wizard`: `click_wizard_button 'Next' 'SHIKIRU · Trackers'` times out after 20 s with
+`WaitTimeoutError` in `tests/support/release_wait.py` (`click_button` → `wait_for_pane`). The captured pane shows the
+wizard still on `Agents and ladders`, with
+
+    Leader                 (empty)
+    Implementer · Base     (empty)
+    Implementer · Low/Normal/High  inherits Base · (empty)
+    Helper                 fake:smoke
+    Edit Leader ... Leader: enter at least one ladder entry
+
+so Next is refused by validation. The three `run_waiter ladder ...` calls before it (`Leader`/`fake:smoke`,
+`Implementer · Base`/`fake:strong`, `Helper`/`fake:smoke`) all returned success, yet only Helper kept its value.
+`macos-15` passes. The same script passes on this machine and in a clean `ubuntu:24.04` container built to match the
+CI job (tmux 3.5a from source, git 2.56, uv 0.12.5, Python 3.14), also limited to one CPU. The CI run uses
+x86-64; the container here is arm64.
+
+Acceptance criteria:
+
+1. Read `set_ladder` (and the `ladder` waiter) in `tests/support/release_wait.py` and the wizard's ladder editor.
+   Explain in the report why a call can succeed while the ladder ends up empty (for example it accepts text that is
+   still only typed in the field and not yet added, or an Enter/BTab sequence that lands on another widget when the
+   screen is not settled).
+2. Make each ladder step check the state that matters: after setting a ladder, the pane must show that scope with
+   its value in the ladder summary, and the next step must not start before that is visible. Do not add sleeps, do
+   not raise the timeouts, and do not skip or loosen a check.
+3. If a product bug is behind it (for example the editor drops an entry when Add is pressed during a refresh), fix
+   the product and add a test that fails without the fix.
+4. The full gate passes and the smoke still passes here. You cannot run Actions; say so in the report, and say what
+   could still differ on the runner. A Docker image that mirrors the CI job may exist on this host
+   (`docker run --rm --cpus=1 -v <repo>:/src:ro shikiru-ubuntu-smoke ...`); use it if it helps and Docker is
+   reachable, otherwise skip it.
