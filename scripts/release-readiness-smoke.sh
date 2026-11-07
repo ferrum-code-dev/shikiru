@@ -20,6 +20,7 @@ PYTHON_BIN="$(require_tool python3)"
 SCRIPT_BIN="$(require_tool script)"
 SMOKE_TMPDIR="${SHIKIRU_SMOKE_TMPDIR:-/tmp}"
 SOCKET_PATH_LIMIT=100
+FAILURE_LOG_LINES=60
 DATE="$(date +%F)"
 RUN_STAMP="$(date -u +%Y%m%dT%H%M%SZ)-$$"
 STARTED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -62,6 +63,11 @@ finish() {
     local exit_status=$?
     trap - EXIT
     printf '\nRelease smoke stage: %s\n' "$SMOKE_STAGE" >> "$LOG"
+    if (( exit_status != 0 )); then
+        printf 'Release smoke failed in stage: %s\nLast %d lines of %s:\n' \
+            "$SMOKE_STAGE" "$FAILURE_LOG_LINES" "$LOG" >&2
+        tail -n "$FAILURE_LOG_LINES" "$LOG" >&2
+    fi
     if [[ -f "${STATUS_PATH:-}" ]]; then
         printf '\nLast observed task status:\n' >> "$LOG"
         cat "$STATUS_PATH" >> "$LOG"

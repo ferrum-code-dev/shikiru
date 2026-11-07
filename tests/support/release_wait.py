@@ -8,6 +8,7 @@ from rich.cells import cell_len
 from textual.widgets import Button
 
 from shikiru.clock import SystemClock
+from shikiru.errors import CommandTimeoutError
 from shikiru.process import SubprocessRunner
 from tests.support.tmux import CONFIG_FLAG, SOCKET_FLAG
 from tests.support.waiting import WaitTimeoutError, wait_until
@@ -110,7 +111,10 @@ async def wait_for_task(tool: str, project: str, status_file: str) -> None:
 
     async def complete() -> bool:
         nonlocal latest
-        result = await RUNNER.run(command, timeout=COMMAND_TIMEOUT)
+        try:
+            result = await RUNNER.run(command, timeout=COMMAND_TIMEOUT)
+        except CommandTimeoutError:
+            return False
         if result.returncode != 0:
             return False
         latest = result.stdout

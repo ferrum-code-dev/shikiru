@@ -74,7 +74,7 @@ Acceptance criteria:
 
 ### W4 — The package smoke fails on Ubuntu in GitHub Actions
 
-- [ ] Make the smoke print why it fails, then fix the cause.
+- [x] Make the smoke print why it fails, then fix the cause.
 
 In run 42401933761 of the CI workflow (after the W3 fix) `macos-15` passed completely, but on
 `ubuntu-24.04` the step "Build and exercise package distributions" (`scripts/release-readiness-smoke.sh`)
