@@ -562,6 +562,8 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         return None
 
     async def _sync(self, *, select_first: bool = False) -> None:
+        if not self._content_mounted():
+            return
         groups = action_groups(self._list_context())
         self._paint_title()
         layout = tuple((group.title, row.key) for group in groups for row in group.rows)
@@ -571,6 +573,8 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         if layout != self._shown:
             self._shown = None
             await self._rebuild(groups)
+            if not self._content_mounted():
+                return
             self._shown = layout
         else:
             self._repaint(groups)
@@ -645,8 +649,15 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         if indices:
             self._list.index = indices[min(max(position, 0), len(indices) - 1)]
 
+    def _content_mounted(self) -> bool:
+        return (
+            self.is_attached
+            and len(self.query(f"#{ACTIONS_TITLE}")) > 0
+            and len(self.query(f"#{ACTIONS_LIST}")) > 0
+        )
+
     def _paint_title(self) -> None:
-        if not self.is_attached:
+        if not self._content_mounted():
             return
         task_id = self._request.task_id
         task = self._queries.get_task_state(task_id) if task_id is not None else None
