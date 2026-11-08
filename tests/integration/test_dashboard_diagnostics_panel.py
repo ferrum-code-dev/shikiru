@@ -624,7 +624,9 @@ async def test_a_refresh_keeps_a_scrolled_cards_state_focus_and_visibility(
         assert app.focused is focused
         scroller = app.screen.query_one("#context-widget-content")
         scroller.scroll_to_widget(focused, animate=False)
-        await pilot.pause()
+        await wait_until(
+            lambda: scroller.region.contains_region(focused.region), timeout=_WAIT_SECONDS
+        )
         clock.advance(1)
         for index in range(_URGENT_FAULTS):
             _record_fault(
@@ -648,4 +650,6 @@ async def test_a_refresh_keeps_a_scrolled_cards_state_focus_and_visibility(
         assert cards[_URGENT_FAULTS + _FOCUSED_CARD] is focused_card
         assert focused_card.query_one(Collapsible).collapsed is False
         assert app.focused is focused
-        assert scroller.region.contains_region(focused.region)
+        await wait_until(
+            lambda: scroller.region.contains_region(focused.region), timeout=_WAIT_SECONDS
+        )

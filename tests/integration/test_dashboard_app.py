@@ -943,7 +943,7 @@ def _record_mixed_billing(runs: RunStore, task_id: str) -> None:
     )
 
 
-def _seed_project_usage(connection: Connection, clock: SystemClock) -> None:
+def _seed_project_usage(connection: Connection, clock: Clock) -> None:
     task = seed_task(connection, clock, title="Project totals with mixed billing")
     runs = RunStore(connection, clock)
     _record_mixed_billing(runs, task.id)
@@ -5113,7 +5113,7 @@ async def test_configured_usage_and_resources_widgets_open_their_panels(
     size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     _seed_project_usage(connection, clock)
     reader = StateReader(database, clock)
 
