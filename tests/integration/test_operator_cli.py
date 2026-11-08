@@ -36,7 +36,7 @@ from shikiru.tmux.session import (
 )
 from tests.support.clock import FakeClock
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import PROCESS_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -153,7 +153,7 @@ async def test_human_submit_reports_the_engine_acknowledgement_and_allocated_ide
     try:
         cli_task = asyncio.create_task(_cli(tmp_path, "submit", "human task"))
         if outcome != "pending":
-            await wait_until(lambda: bool(queue.pending()), timeout=5)
+            await wait_until(lambda: bool(queue.pending()), timeout=PROCESS_WAIT_SECONDS)
             command = queue.pending()[0]
             assert isinstance(command.command, Submit)
             if outcome == "applied":

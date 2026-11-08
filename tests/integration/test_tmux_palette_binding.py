@@ -23,7 +23,7 @@ from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
-from tests.support.waiting import wait_until
+from tests.support.waiting import PROCESS_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -121,9 +121,9 @@ async def _exercise_live_home_palette_routes(
         async def prefix_active() -> bool:
             return await _client_key_table(tmux_server, client_target) == "prefix"
 
-        await wait_until(prefix_active, timeout=5)
+        await wait_until(prefix_active, timeout=PROCESS_WAIT_SECONDS)
         await tmux_server.run("send-keys", "-K", "-c", client_target, "Space")
-        await wait_until(actions_open, timeout=5)
+        await wait_until(actions_open, timeout=PROCESS_WAIT_SECONDS)
         actions_text = await pane_text()
         assert "Actions" in actions_text
         assert "Tasks" in actions_text
@@ -131,15 +131,15 @@ async def _exercise_live_home_palette_routes(
             await tmux_server.run("display-message", "-p", "-t", pane_id, "#{pane_pid}")
         ).stdout.strip() == str(pane_pid)
         await tmux_server.run("send-keys", "-t", pane_id, "Escape")
-        await wait_until(actions_closed, timeout=5)
+        await wait_until(actions_closed, timeout=PROCESS_WAIT_SECONDS)
 
         await tmux_server.run("send-keys", "-t", pane_id, "C-p")
-        await wait_until(actions_open, timeout=5)
+        await wait_until(actions_open, timeout=PROCESS_WAIT_SECONDS)
         actions_text = await pane_text()
         assert "Actions" in actions_text
         assert "Tasks" in actions_text
         await tmux_server.run("send-keys", "-t", pane_id, "Escape")
-        await wait_until(actions_closed, timeout=5)
+        await wait_until(actions_closed, timeout=PROCESS_WAIT_SECONDS)
 
 
 async def test_home_prefix_space_and_ctrl_p_open_actions_in_the_existing_dashboard(
@@ -194,7 +194,7 @@ async def test_home_prefix_space_and_ctrl_p_open_actions_in_the_existing_dashboa
             connection.close()
     finally:
         await tmux_server.run("kill-window", "-t", pane_id, check=False)
-        await wait_until(lambda: identify_pid(pane_pid) is None, timeout=5)
+        await wait_until(lambda: identify_pid(pane_pid) is None, timeout=PROCESS_WAIT_SECONDS)
 
 
 async def test_popup_command_dispatch_expands_origin_and_preserves_argv(

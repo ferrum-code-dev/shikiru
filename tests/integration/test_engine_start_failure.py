@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import stat
 from typing import TYPE_CHECKING
@@ -9,7 +10,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.bootstrap import build_operator
-from shikiru.clock import SystemClock
 from shikiru.engine.daemon import engine_is_running
 from shikiru.operator.lifecycle import EngineExitedError, ProjectLifecycle
 from shikiru.paths import engine_lock_path, engine_output_path, state_db_path
@@ -18,8 +18,12 @@ from shikiru.process import SubprocessRunner
 from shikiru.tmux.client import Tmux
 from shikiru.tmux.session import SessionView
 from tests.support.cli_project import prepare_project, run_cli, tmux_environment
+from tests.support.clock import FakeClock
+from tests.support.factories import TASK_CREATED_AT
+from tests.support.waiting import PROCESS_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
     from shikiru.config.settings import Settings
@@ -32,6 +36,24 @@ NOT_A_DATABASE = b"this is not a database"
 NOT_A_DATABASE_ERROR = "file is not a database"
 
 
+class _SpawnRecordingRunner(SubprocessRunner):
+    """A real runner that remembers the process ids it starts detached."""
+
+    def __init__(self) -> None:
+        self.spawned: list[int] = []
+
+    def spawn_detached(
+        self,
+        argv: Sequence[str],
+        *,
+        output: Path,
+        env: Mapping[str, str] | None = None,
+    ) -> int:
+        pid = super().spawn_detached(argv, output=output, env=env)
+        self.spawned.append(pid)
+        return pid
+
+
 async def test_start_fails_with_the_engine_exit_when_the_engine_dies_at_start(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
@@ -40,7 +62,8 @@ async def test_start_fails_with_the_engine_exit_when_the_engine_dies_at_start(
     code, _, stderr = await run_cli(prepared.root, environment, "init", "--yes")
     assert code == 0, stderr
     state_db_path(prepared.root).write_bytes(NOT_A_DATABASE)
-    clock = SystemClock()
+    clock = FakeClock(TASK_CREATED_AT)
+    runner = _SpawnRecordingRunner()
     tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name, env=tmux_server.env)
 
     async def accept_plugins(_settings: Settings) -> None:
@@ -50,7 +73,7 @@ async def test_start_fails_with_the_engine_exit_when_the_engine_dies_at_start(
         return build_operator(root, settings, clock=clock)
 
     lifecycle = ProjectLifecycle(
-        runner=SubprocessRunner(),
+        runner=runner,
         tmux=tmux,
         session=SessionView(tmux),
         clock=clock,
@@ -59,8 +82,14 @@ async def test_start_fails_with_the_engine_exit_when_the_engine_dies_at_start(
         engine_up=lambda root: engine_is_running(engine_lock_path(root)),
     )
 
+    starting = asyncio.create_task(lifecycle.start(prepared.root, (), attach=False))
+    await wait_until(lambda: starting.done() or clock.has_pending_sleep(), PROCESS_WAIT_SECONDS)
+    if not starting.done():
+        await wait_until(lambda: runner.identify(runner.spawned[-1]) is None, PROCESS_WAIT_SECONDS)
+        clock.advance_to_next_sleeper()
+
     with pytest.raises(EngineExitedError, match=NOT_A_DATABASE_ERROR):
-        await lifecycle.start(prepared.root, (), attach=False)
+        await starting
 
     assert NOT_A_DATABASE_ERROR in engine_output_path(prepared.root).read_text()
     assert stat.S_IMODE(engine_output_path(prepared.root).stat().st_mode) == PRIVATE_FILE_MODE

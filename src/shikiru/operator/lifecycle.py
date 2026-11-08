@@ -49,7 +49,6 @@ PALETTE_COMMAND = (
     CLI_PALETTE_ORIGIN_PANE_OPTION,
     FORMAT_PANE_ID,
 )
-ENGINE_START_WAIT_SECONDS = 5.0
 ENGINE_START_POLL_SECONDS = 0.05
 ENGINE_OUTPUT_TAIL_BYTES = 2000
 ENGINE_EXITED_MESSAGE = "the engine process exited before it acquired its lock"
@@ -141,7 +140,7 @@ class ProjectLifecycle:
             await self._wait_for_engine(
                 root,
                 up=True,
-                seconds=ENGINE_START_WAIT_SECONDS,
+                seconds=settings.orchestration.engine_start_seconds,
                 failure="engine did not acquire its lock after start",
                 spawned=pid,
                 output=output,

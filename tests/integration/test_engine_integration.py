@@ -55,7 +55,7 @@ from tests.support.factories import TASK_CREATED_AT
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo, run_git
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import PROCESS_WAIT_SECONDS, wait_until
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -257,7 +257,7 @@ async def test_local_merge_retries_dirty_overlap_until_checkout_is_clean(
             _request(task, state, task_root)
         )
     )
-    await wait_until(clock.has_pending_sleep, timeout=5)
+    await wait_until(clock.has_pending_sleep, timeout=PROCESS_WAIT_SECONDS)
     (project_root / "README.md").write_text("base\n")
     await _RUNNER.run(
         ["git", "restore", "--", "README.md"], cwd=project_root, timeout=10, check=True
@@ -286,9 +286,9 @@ async def test_local_merge_records_one_notified_event_naming_the_blocking_paths(
     )
 
     for _ in range(3):
-        await wait_until(clock.has_pending_sleep, timeout=5)
+        await wait_until(clock.has_pending_sleep, timeout=PROCESS_WAIT_SECONDS)
         clock.advance(120)
-    await wait_until(clock.has_pending_sleep, timeout=5)
+    await wait_until(clock.has_pending_sleep, timeout=PROCESS_WAIT_SECONDS)
 
     waiting = events.since(0, kinds=[EventKind.INTEGRATION_WAITING])
     assert len(waiting) == 1
@@ -322,7 +322,7 @@ async def test_local_merge_escalates_when_dirty_overlap_never_clears(
         ).merge(_request(task, state, task_root))
     )
 
-    await wait_until(clock.has_pending_sleep, timeout=5)
+    await wait_until(clock.has_pending_sleep, timeout=PROCESS_WAIT_SECONDS)
     clock.advance(integration_wait_seconds)
 
     with pytest.raises(IntegrationBlocked):
@@ -370,7 +370,7 @@ async def test_local_merge_waits_for_a_dirty_directory_ancestor(
             _request(task, state, task_root)
         )
     )
-    await wait_until(clock.has_pending_sleep, timeout=5)
+    await wait_until(clock.has_pending_sleep, timeout=PROCESS_WAIT_SECONDS)
     shutil.rmtree(dirty_directory)
     clock.advance(120)
 

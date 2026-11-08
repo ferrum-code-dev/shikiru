@@ -90,7 +90,7 @@ from tests.support.dashboard import (
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT
 from tests.support.render import plain_text
 from tests.support.store import seed_task
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import PROCESS_WAIT_SECONDS, UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -1334,7 +1334,7 @@ async def test_docker_section_shows_what_the_fake_docker_reports(
         def shown_text() -> str:
             return "\n".join("".join(char for char, _ in cells) for cells in rendered_lines(panel))
 
-        await wait_until(lambda: "Running" in shown_text(), timeout=5)
+        await wait_until(lambda: "Running" in shown_text(), timeout=PROCESS_WAIT_SECONDS)
         shown = shown_text()
         assert "Running  2 of 3 · CPU 45% · RAM 1.4 GiB" in shown
         assert "Problems db unhealthy · job exited (2)" in shown
@@ -1377,7 +1377,7 @@ async def _start_resource_test_panes(
     await tmux.set_pane_option(system_pane, LAYOUT_PANE_OPTION, SYSTEM_LAYOUT_PANE)
     command_row = await tmux.display(system_pane, "#{pane_start_command}")
     assert tuple(shlex.split(command_row)) == (TMUX_ENV_COMMAND, *system_command)
-    await wait_until(lambda: _pane_is_live(tmux, system_pane), timeout=5.0)
+    await wait_until(lambda: _pane_is_live(tmux, system_pane), timeout=PROCESS_WAIT_SECONDS)
     excluded_panes: list[str] = []
     for name, marker in (
         ("dashboard", None),
@@ -1468,7 +1468,7 @@ async def test_resources_service_excludes_panes_from_other_projects(
     panes = await _start_resource_test_panes(tmux, project_dir, other_project_dir, task.id)
     tasks.set_window(task.id, panes.task_window_id)
     tasks.set_panes(task.id, {Role.IMPLEMENTER: panes.role_pane_id})
-    await wait_until(lambda: _resource_panes_ready(panes), timeout=5.0)
+    await wait_until(lambda: _resource_panes_ready(panes), timeout=PROCESS_WAIT_SECONDS)
     assert any(
         item.id == task.id and item.window_id == panes.task_window_id
         for item in reader.list_tasks()

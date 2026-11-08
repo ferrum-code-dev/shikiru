@@ -13,6 +13,7 @@ remote_recheck_seconds = 60
 poll_seconds = 2
 shutdown_seconds = 15
 dispatch_budget_seconds = 10
+engine_start_seconds = 5
 
 [orchestration.resources]
 max_cpu_pct = 85

@@ -54,6 +54,7 @@ from tests.support.actions import (
 from tests.support.cli_project import prepare_project, tmux_environment
 from tests.support.clock import FakeClock
 from tests.support.dashboard import enter_text
+from tests.support.engine_project import ENGINE_START_OVERRIDE
 from tests.support.escalations import operator_services, resolution_factory, seed_escalation
 from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
@@ -116,6 +117,7 @@ ladder = [{agent = "fake", model = "default"}]
 """
 _INVALID_LIFECYCLE_CONFIG = f"{_LIFECYCLE_CONFIG}\n[agents.fake.options]\nunexpected = true\n"
 _PROJECT_NAME_OVERRIDE = "project.name=task248-overridden"
+_START_OVERRIDES = (_PROJECT_NAME_OVERRIDE, ENGINE_START_OVERRIDE)
 _HOME_PANE_FORMAT = "#{pane_id}\t#{pane_pid}\t#{pane_dead}"
 _PANE_ALIVE = "0"
 _ENGINE_RUNNING = "Engine running"
@@ -694,7 +696,7 @@ async def test_standalone_project_actions_start_stop_and_report_start_failure(
     services = build_operator(project_root, settings, clock=clock)
     lifecycle = build_lifecycle()
     lock_path = engine_lock_path(project_root)
-    start_project_engine = build_project_starter(project_root, (_PROJECT_NAME_OVERRIDE,))
+    start_project_engine = build_project_starter(project_root, _START_OVERRIDES)
     start_attempts: list[StartResult | None] = []
     startup_gate = (asyncio.Event(), asyncio.Event())
 
@@ -705,9 +707,7 @@ async def test_standalone_project_actions_start_stop_and_report_start_failure(
             startup_gate[0].set()
             await startup_gate[1].wait()
         if attempt == 1:
-            concurrent_start = await lifecycle.start(
-                project_root, (_PROJECT_NAME_OVERRIDE,), attach=False
-            )
+            concurrent_start = await lifecycle.start(project_root, _START_OVERRIDES, attach=False)
             assert concurrent_start.started
         result = await start_project_engine()
         start_attempts[attempt] = result
@@ -964,7 +964,7 @@ async def test_cli_dashboard_survives_engine_stop_and_restarts_through_the_same_
     lock_path = engine_lock_path(prepared.root)
 
     try:
-        started = await lifecycle.start(prepared.root, (), attach=False)
+        started = await lifecycle.start(prepared.root, (ENGINE_START_OVERRIDE,), attach=False)
         async with attach_tmux_client(tmux_server, started.session) as client:
             await wait_until(
                 lambda: _home_pane_exists(tmux_server, started.session),

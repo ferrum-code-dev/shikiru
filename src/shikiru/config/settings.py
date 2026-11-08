@@ -132,6 +132,7 @@ class OrchestrationConfig(ConfigModel):
     poll_seconds: int
     shutdown_seconds: float = Field(gt=0)
     dispatch_budget_seconds: float = Field(gt=0)
+    engine_start_seconds: float = Field(gt=0)
     resources: ResourcesConfig
     timeouts: TimeoutsConfig
     faults: FaultsConfig
