@@ -373,17 +373,21 @@ Deleting `.shikiru/` destroys its local state; initialization cannot reconstruct
 
 ## Releases and deployment
 
-**Versions.** The version in `pyproject.toml` follows SemVer. A release is the commit tagged `v<version>`, and the tag must equal the version at that commit. Below 1.0 any minor version may change behavior, configuration or the database schema; the changelog says so when it does.
+**Versions.** The version in `pyproject.toml` follows SemVer. A release is the commit tagged `v<version>`, and the tag must equal the version at that commit. Below 1.0 any minor version may change behavior, the config or the journal schema; the release notes say so when it does.
 
-**A running installation is a release, never a checkout.** The installed `shikiru` is a wheel built from a tagged commit. `poe deploy` (`scripts/deploy.py`) does the following and stops at the first failing step:
+**Releasing is one command.** `uv run poe release patch|minor|major` (`scripts/release.py`) refuses unless the work tree is clean, the branch is `main` and HEAD equals `origin/main`. It then bumps the version in `pyproject.toml`, the project's own entry in `uv.lock` and every occurrence of the old version in `README.md`, commits `chore: release <version>`, pushes `main`, tags the commit `v<version>` and pushes the tag. `--dry-run` prints what it would do. The release workflow does the rest: it waits for CI to pass on the tagged commit (and fails when the commit is not on `main`), builds the wheel and sdist, and publishes a GitHub release with both, a `SHA256SUMS` file and the notes. Releases below 1.0 are marked pre-release.
 
-1. Refuses unless the work tree is clean and HEAD is exactly the tag `v<version>`.
-2. Runs the gate and `scripts/release-readiness-smoke.sh`, which builds the wheel and sdist and exercises an isolated installation, then builds the wheel into the release store, `$XDG_DATA_HOME/shikiru/releases` (default `~/.local/share/shikiru/releases`), keeping the last five. The file `current` in the store names the wheel last deployed successfully.
-3. Installs the wheel (`uv tool install --reinstall <wheel>`) and verifies that `shikiru --version` is the tag's version.
+**Release notes come from commits; there is no changelog file.** The notes list the commits since the previous tag, without the release commits. Commit subjects follow Conventional Commits, `type(scope)!: description`. The notes group them as Breaking changes (a `!` after the type, or a `BREAKING CHANGE:` line in the body), Features (`feat`), Fixes (`fix`) and Other changes (everything else, as written). Each line links its commit. The notes end with a "Full Changelog" compare link to the previous tag and the install command. The notes are only as good as the subjects, so a commit that changes behavior, configuration or the schema says so in its subject or in a `BREAKING CHANGE:` line.
+
+**A running installation is a release, never a checkout.** The installed `shikiru` is a wheel from a release. `shikiru update` does the following and stops at the first failing step:
+
+1. Finds the newest release of the repository on GitHub (pre-releases included), downloads its wheel and `SHA256SUMS`, and refuses unless the wheel's SHA-256 is the listed one. The checksum guards against a damaged or mismatched download; it does not defend against a compromised release. `--check` prints the installed and the newest version and changes nothing; `--wheel <path>` installs a given wheel without downloading. When the installed version is already the newest, it says so and exits 0.
+2. Puts the wheel into the release store, `$XDG_DATA_HOME/shikiru/releases` (default `~/.local/share/shikiru/releases`), keeping the last five. The file `current` in the store names the wheel last installed successfully.
+3. Installs the wheel (`uv tool install --reinstall <wheel>`) and verifies that `shikiru --version` is the wheel's version. After this step the running process does not import its own package again: it replaced its own files, so every later step runs through the new `shikiru` as a subprocess.
 4. Restarts the engines: for each project that `shikiru --json ls` lists with an engine that is up, `shikiru --project <dir> restart`. A project that is busy is reported and left on the old code, and `shikiru restart` run there later finishes the change. A project whose engine does not come up after its restart is a failure.
-5. Success writes `current`. Any failure after step 3 is a **rollback**: reinstall the wheel `current` named, restart the engines that were restarted, report what failed, exit non-zero. With no `current` (the first deploy) there is nothing to go back to, and the script says so.
+5. Success writes `current`. Any failure after step 3 is a **rollback**: reinstall the wheel `current` named, restart the engines that were restarted, report what failed, exit non-zero. With no `current` (the first update) there is nothing to go back to, and the command says so.
 
-`poe rollback` does the rollback on demand. An engine keeps the code it was started with, so an installation is not in effect for a project until its engine has restarted.
+`shikiru update --rollback` does the rollback on demand. An engine keeps the code it was started with, so an installation is not in effect for a project until its engine has restarted.
 
 **One-way schema.** A project database with a schema newer than the code knows is refused with an error naming both versions, never opened. After a release that migrated the schema, an older version therefore stops instead of corrupting state, and migrations are reviewed as one-way changes.
 
