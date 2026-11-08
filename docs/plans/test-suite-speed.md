@@ -12,7 +12,7 @@ Each task checks only its own entry when complete.
 
 ### A1 — Measure and audit (report only)
 
-- [ ] Produce `docs/plans/test-suite-audit.md` and change no test and no source.
+- [x] Produce `docs/plans/test-suite-audit.md` and change no test and no source.
 
 Acceptance criteria:
 
