@@ -101,4 +101,5 @@ A release is the commit tagged `v<version>`; see [the design](docs/design.md#rel
 Run `uv run poe release <bump>` on a clean `main` equal to `origin/main`; `--dry-run` prints every
 change and command without making any. The Release workflow
 publishes after CI passes on that commit; if CI fails, fix it on `main` and re-run the failed
-workflow runs.
+workflow runs. A host applies the published wheel with `shikiru update --wheel <path>` (and rolls
+back with `shikiru update --rollback`); see [Applying a release](README.md#applying-a-release).

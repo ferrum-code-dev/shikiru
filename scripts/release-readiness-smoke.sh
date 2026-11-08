@@ -576,3 +576,10 @@ record app "$WORK_PROJECT" stop --kill-session
 app "$WORK_PROJECT" --json ls > "$LS_PATH" 2>> "$LOG"
 [[ "$("$PACKAGE_PYTHON" -c 'import json,sys; print(len(json.load(open(sys.argv[1]))) )' "$LS_PATH")" == 0 ]]
 [[ -z "$(tmux_run list-sessions -F '#{session_name}' | grep -F '[shikiru]' || true)" ]]
+
+SMOKE_STAGE="shikiru update --wheel"
+WHEEL_NAME="$(basename "${WHEELS[0]}")"
+WHEEL_VERSION="$(printf '%s\n' "$WHEEL_NAME" | cut -d- -f2)"
+record env -i "${RUNTIME_ENV[@]}" "$TOOL_BIN" update --wheel "${WHEELS[0]}"
+[[ "$(env -i "${RUNTIME_ENV[@]}" "$TOOL_BIN" --version)" == "$WHEEL_VERSION" ]]
+[[ "$(cat "$CACHE_DIR/data/shikiru/releases/current")" == "$WHEEL_NAME" ]]

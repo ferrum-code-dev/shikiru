@@ -86,8 +86,6 @@ literals = "python -m tests.support.literal_rule"
 test = "pytest -m 'not e2e'"
 e2e = "pytest -m e2e --no-cov -n 0"
 release = "python scripts/release.py"
-deploy = "python scripts/deploy.py"
-rollback = "python scripts/deploy.py --rollback"
 
 [tool.poe.tasks.fix]
 sequence = [
@@ -172,7 +170,6 @@ runtime-evaluated-decorators = [
 "src/shikiru/workspace/**" = ["ASYNC240"] # local worktree filesystem ops, as blocking as sqlite3
 "tests/support/git_repo.py" = ["ASYNC240"]
 "src/shikiru/process.py" = ["TID251"]
-"scripts/deploy.py" = ["TID251", "S603", "INP001"] # standalone stdlib-only release script: it cannot import SubprocessRunner, and it is a script, not a package
 "scripts/release.py" = ["TID251", "S603", "S607", "INP001"] # standalone stdlib-only release script: it runs git and uv through subprocess, and it is a script, not a package
 "scripts/release_notes.py" = ["TID251", "S603", "S607", "INP001"] # standalone stdlib-only release script: the release workflow runs it, it is not a package, and git is called through subprocess
 "scripts/wait_for_ci.py" = ["TID251", "S603", "INP001"] # standalone stdlib-only release script: the release workflow runs it, it is not a package, and gh is called through subprocess
@@ -233,6 +230,7 @@ forbidden_modules = [
   "shikiru.cli",
   "shikiru.clock",
   "shikiru.config",
+  "shikiru.update",
   "shikiru.dashboard.actions_list",
   "shikiru.dashboard.activity",
   "shikiru.dashboard.app",
@@ -319,6 +317,7 @@ forbidden_modules = [
   "shikiru.palette",
   "shikiru.private",
   "shikiru.view_log",
+  "shikiru.update",
   "shikiru.__main__",
   "shikiru.agents.registry",
   "shikiru.agents.testing",

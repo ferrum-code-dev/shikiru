@@ -65,7 +65,7 @@ Acceptance criteria:
 
 ### N3 — `shikiru update --wheel` replaces `poe deploy`
 
-- [ ] Move the deploy logic into the package as `shikiru update`, with `--wheel` and `--rollback`.
+- [x] Move the deploy logic into the package as `shikiru update`, with `--wheel` and `--rollback`.
 
 Acceptance criteria:
 

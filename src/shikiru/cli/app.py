@@ -64,6 +64,7 @@ from shikiru.operator.lifecycle import (
 from shikiru.operator.queries import TaskNotFoundError
 from shikiru.operator.sessions import REMOTE_ORIGIN_HOST_ENV_VAR
 from shikiru.paths import project_config_path
+from shikiru.process import SubprocessRunner
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.ui.console import human_console
 from shikiru.ui.tokens import (
@@ -75,6 +76,9 @@ from shikiru.ui.tokens import (
     STYLE_BOLD,
     STYLE_DIM,
 )
+from shikiru.update.commands import HostCommands
+from shikiru.update.flow import roll_back_on_demand, update_from_wheel
+from shikiru.update.store import ReleaseStore, release_store
 from shikiru.view_log import CLI_VIEW_COMMAND
 
 if TYPE_CHECKING:
@@ -130,6 +134,20 @@ PROBE_OPTION = typer.Option(
     help=(
         "Run live contract and smoke checks for configured role rungs. "
         "[bold]Default:[/] skip live agent probes."
+    ),
+)
+WHEEL_OPTION = typer.Option(
+    "--wheel",
+    help=(
+        "Install this release wheel without downloading it. "
+        "[bold]Default:[/] required; downloads are not available yet."
+    ),
+)
+ROLLBACK_OPTION = typer.Option(
+    "--rollback",
+    help=(
+        "Reinstall the release last installed and restart its engines. "
+        "[bold]Default:[/] install a wheel."
     ),
 )
 REQUIRED_LEGEND = f"[bold {ALERT_COLOR}]*[/] marks a required argument."
@@ -327,6 +345,32 @@ def restart(
     except ShikiruError as error:
         _fail(error)
     _emit_value(state, result, restart_renderable(result))
+
+
+@app.command()
+def update(
+    *,
+    wheel: Annotated[Path | None, WHEEL_OPTION] = None,
+    rollback: Annotated[bool, ROLLBACK_OPTION] = False,
+) -> None:
+    """Install a Shikiru release wheel, restart its engines, or roll back to the last release."""
+    if wheel is not None and rollback:
+        _fail(UsageError("--wheel and --rollback cannot be combined"))
+    if wheel is None and not rollback:
+        typer.echo(
+            "shikiru update needs --wheel <path>; "
+            "downloading the newest release is not available yet",
+            err=True,
+        )
+        raise typer.Exit(code=EXIT_GENERIC_ERROR)
+    commands = HostCommands(environment=os.environ, runner=SubprocessRunner())
+    store = ReleaseStore(release_store())
+    code = _run(
+        roll_back_on_demand(commands, store, typer.echo)
+        if wheel is None
+        else update_from_wheel(commands, store, wheel, typer.echo)
+    )
+    raise typer.Exit(code=code)
 
 
 @app.command(name="ls")
