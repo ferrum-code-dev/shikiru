@@ -325,13 +325,39 @@ async def test_local_merge_escalates_when_dirty_overlap_never_clears(
     await wait_until(clock.has_pending_sleep, timeout=PROCESS_WAIT_SECONDS)
     clock.advance(integration_wait_seconds)
 
-    with pytest.raises(IntegrationBlocked):
+    with pytest.raises(IntegrationBlocked) as blocked:
         await merge_task
+    assert "README.md" in str(blocked.value)
     assert (project_root / "README.md").read_text() == "operator\n"
     assert (
         await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).current_branch(project_root)
         == "main"
     )
+
+
+async def test_local_merge_escalates_naming_the_git_command_that_never_succeeds(
+    connection: Connection, tmp_path: Path
+) -> None:
+    project_root = await _repo(tmp_path / "project")
+    task, state = await _task_with_worktree(connection, project_root)
+    task_root = project_root / ".shikiru" / "worktrees" / task.id
+    (task_root / "task.txt").write_text("task\n")
+    await commit_all(_RUNNER, task_root, "task change")
+    missing_base_state = state.model_copy(update={"base": "missing-base"})
+    clock = FakeClock(TASK_CREATED_AT)
+    integration_wait_seconds = 120
+    merge_task = asyncio.create_task(
+        _local_merge(
+            project_root, clock, integration_wait_seconds, EventLog(connection, clock)
+        ).merge(_request(task, missing_base_state, task_root))
+    )
+
+    await wait_until(clock.has_pending_sleep, timeout=PROCESS_WAIT_SECONDS)
+    clock.advance(integration_wait_seconds)
+
+    with pytest.raises(IntegrationBlocked) as blocked:
+        await merge_task
+    assert "git rev-parse missing-base failed" in str(blocked.value)
 
 
 async def test_update_ref_rejects_a_stale_expected_sha_without_moving_the_branch(

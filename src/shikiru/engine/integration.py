@@ -428,7 +428,7 @@ class LocalMerge:
                     raise IntegrationHeld from None
                 remaining = (deadline - self._clock.now()).total_seconds()
                 if remaining <= 0:
-                    raise IntegrationBlocked from None
+                    raise _blocked_by(request.task_id, error) from error
                 await self._clock.sleep(min(INTEGRATION_RETRY.total_seconds(), remaining))
                 continue
             break
@@ -1216,6 +1216,18 @@ def _git_failure_message(task_id: str, command: str, error: CommandFailed) -> st
     if not detail:
         detail = "Git returned no error details."
     return f"{task_id}: git {command} failed with exit {error.returncode}: {detail}"
+
+
+def _blocked_by(task_id: str, blocker: _PrecheckFailed | CommandFailed) -> IntegrationBlocked:
+    if isinstance(blocker, _CheckoutDirty):
+        return IntegrationBlocked(
+            f"{task_id}: the project checkout has uncommitted changes on {', '.join(blocker.paths)}"
+        )
+    if isinstance(blocker, CommandFailed):
+        return IntegrationBlocked(
+            _git_failure_message(task_id, " ".join(blocker.argv[1:]), blocker)
+        )
+    return IntegrationBlocked()
 
 
 def _done_transition(task: Task) -> Transition:

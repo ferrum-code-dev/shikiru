@@ -114,7 +114,7 @@ Acceptance criteria:
 
 ### I1 — A blocked integration says why
 
-- [ ] The integration-blocked escalation names the blocker.
+- [x] The integration-blocked escalation names the blocker.
 
 Acceptance criteria:
 
