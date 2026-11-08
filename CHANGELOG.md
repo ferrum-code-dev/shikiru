@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-11-08
+
+### Changed
+
+- The release workflow waits for a green CI run on the tagged commit before it publishes the GitHub
+  Release. A tag whose commit is not on `main` is refused.
+
 ## [0.1.2] - 2026-11-07
 
 ### Fixed

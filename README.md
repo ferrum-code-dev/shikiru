@@ -51,13 +51,13 @@ and a timeline so you can understand both its result and how it got there.
 ### Install a release
 
 ```sh
-uv tool install https://github.com/ferrum-code-dev/shikiru/releases/download/v0.1.2/shikiru-0.1.2-py3-none-any.whl
+uv tool install https://github.com/ferrum-code-dev/shikiru/releases/download/v0.1.3/shikiru-0.1.3-py3-none-any.whl
 # Or install directly from the tag:
-uv tool install git+https://github.com/ferrum-code-dev/shikiru@v0.1.2
+uv tool install git+https://github.com/ferrum-code-dev/shikiru@v0.1.3
 shikiru --help
 ```
 
-Change `0.1.2` in the URL for a newer release. A long-running installation must be a release; see
+Change `0.1.3` in the URL for a newer release. A long-running installation must be a release; see
 [Applying a release](#applying-a-release). For development, see [From a checkout](CONTRIBUTING.md).
 Never install a long-running copy with `--editable`.
 
