@@ -10,7 +10,7 @@ of this tracker.
 
 ### N1 — Release notes from commits
 
-- [ ] Generate the notes from the commit log, publish `SHA256SUMS`, and delete `CHANGELOG.md`.
+- [x] Generate the notes from the commit log, publish `SHA256SUMS`, and delete `CHANGELOG.md`.
 
 Acceptance criteria:
 

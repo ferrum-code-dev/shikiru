@@ -43,6 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
@@ -63,8 +64,13 @@ jobs:
       - name: Build the distributions
         run: uv build
 
+      - name: Write the checksums
+        run: cd dist && sha256sum * > SHA256SUMS
+
       - name: Write the release notes
-        run: python3 scripts/release_notes.py "$VERSION" > "$RUNNER_TEMP/release-notes.md"
+        run: |
+          python3 scripts/release_notes.py "$TAG" --repo "$GITHUB_REPOSITORY" \
+            > "$RUNNER_TEMP/release-notes.md"
 
       - name: Create the GitHub release
         env:

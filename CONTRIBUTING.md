@@ -98,16 +98,6 @@ to spend usage on; `doctor --probe` is also a live check.
 ## Releasing
 
 A release is the commit tagged `v<version>`; see [the design](docs/design.md#releases-and-deployment).
-
-1. Bump `version` in `pyproject.toml`, and move the Unreleased changes in `CHANGELOG.md` under
-   `## [<version>] - <date>`.
-2. Commit the bump and push `main`: `git push origin main`. CI runs on that commit.
-3. Tag that commit `git tag v<version>` and deploy it on this host: `uv run poe deploy`. It refuses
-   unless the work tree is clean and HEAD is that tag, and it rolls back if a step fails.
-4. Push the tag: `git push origin v<version>`. The release workflow waits (up to an hour) for CI to
-   pass on the tagged commit, then publishes the GitHub release with the wheel, the sdist and the
-   changelog text (`.github/workflows/release.yml`). It fails when the tagged commit is not on
-   `main`, when CI fails or never starts for it, or when the changelog section is missing or empty.
-   Pushing the tag is the owner's decision.
-5. If CI fails on the tagged commit, fix it on `main`, re-run the failed CI run
-   (`gh run rerun <id> --failed`), then re-run the Release workflow (`gh run rerun <id>`).
+Run `uv run poe release <bump>` on a clean `main` equal to `origin/main`. The Release workflow
+publishes after CI passes on that commit; if CI fails, fix it on `main` and re-run the failed
+workflow runs.
