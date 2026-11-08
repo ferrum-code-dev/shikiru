@@ -1,5 +1,38 @@
 # Test suite audit (A1)
 
+## T-71 follow-up
+
+The table below is the original name-and-first-lines audit, not an implementation plan. The
+follow-up checked the bodies and retained the separate recovery, lock, Git and integration cases.
+In particular, row 7 switches to another branch whereas row 10 detaches HEAD; neither substitutes
+for the other. Removing assertions from row 7 would not avoid its engine workflow. The quota family
+tests reset selection and persisted deadlines; the cited domain tests instead cover release of an
+existing block. The export walkthrough covers completed, cancelled and superseded cleanup, and
+the wizard resize test checks scrolling and restored geometry. The restart refusal that row 33
+could not find is covered by `test_restart_refuses_while_a_task_runs_and_leaves_the_engine_alone`.
+The mixed-ladder wizard and consultation test exercise the full configured paths; the retention
+test already uses only three completed tasks to exercise repeated live-engine cycles. The context
+menu test exercises several routes, not just a timer. These are not established shortcuts.
+
+The timeout quick win needs a startup barrier: starting a 0.5-second timeout immediately could
+kill the hook before its child starts. The revised test observes a running child before releasing
+the real timeout. The sleep audit's statement about no avoidable real-time waits overlooked this
+real timeout, although its count of direct sleep sites is a separate observation. The vacuous
+briefing width test was removed; other briefing tests cover rows, line caps and screen height.
+Motion data-change tests now disable their watcher and mutate data before the tick; separate
+writer-commit tests exercise watcher refresh for the header and queue.
+
+On the same non-isolated machine, before and after runs used `PYTEST_ADDOPTS='--dist=loadfile'
+uv run pytest -n 10 -m 'not e2e' --durations=0 -p no:cacheprovider`, with coverage enabled.
+Before: 2,529 passed, 14 skipped, 92% coverage, 307.08 s. After: 2,528 passed, 14 skipped,
+92% coverage, 288.95 s. The removed briefing case took 6.76 s before; the hook timeout case
+took 10.03 s before and 0.55 s after. Motion header/queue cases took 0.53/0.59 s before and
+0.07/0.19 s after. These are single runs on a shared machine, so the 18.13 s wall-time change
+is not a reliable CI prediction. The original audit's historical timings and machine conditions
+cannot be re-established from current tests. No worker or scheduling change is recommended
+without a separate comparable benchmark. The after measurement preceded the final explicit
+assertions for the timeout error and cancelled delivery; both were subsequently verified.
+
 Report for [Test suite speed](test-suite-speed.md) A1. No test and no source changed. The verdicts
 below are a review of test names and the first lines of each body, not of every line, so each one
 should be confirmed before the test is edited.

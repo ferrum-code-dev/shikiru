@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
@@ -57,6 +58,11 @@ def _count_content(queue: QueuePanel) -> object:
     return queue.query_one("#task-browser-count", Static).content
 
 
+async def _ignore_changes(callback: Callable[[], Awaitable[None]]) -> None:
+    del callback
+    await asyncio.Event().wait()
+
+
 async def test_header_motion_tick_with_unchanged_state_keeps_the_rendered_content(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
@@ -78,12 +84,17 @@ async def test_header_motion_tick_shows_a_data_change(
 ) -> None:
     clock = FakeClock(START)
     ticks = MotionTicks()
-    context = _context(reader, write_minimal_project(tmp_path), clock, ticks)
+    context = replace(
+        _context(reader, write_minimal_project(tmp_path), clock, ticks), on_change=_ignore_changes
+    )
     header = cast("HeaderPanel", HeaderWidget().create(context))
     async with WidgetHostApp(header).run_test() as pilot:
         await pilot.pause()
-        await ticks.tick()
+        assert "Waiting 1" not in plain_text(header.content)
         seed_task(connection, clock, title="Add retry")
+        assert "Waiting 1" not in plain_text(header.content)
+
+        await ticks.tick()
 
         await wait_until(lambda: "Waiting 1" in plain_text(header.content), timeout=WAIT_SECONDS)
 
@@ -152,12 +163,20 @@ async def test_queue_motion_tick_shows_a_data_change(
     clock = FakeClock(START)
     ticks = MotionTicks()
     seed_task(connection, clock, title="Add retry")
-    context = _context(reader, write_minimal_project(tmp_path), clock, ticks)
+    context = replace(
+        _context(reader, write_minimal_project(tmp_path), clock, ticks), on_change=_ignore_changes
+    )
     queue = cast("QueuePanel", QueueWidget().create(context))
     async with WidgetHostApp(queue).run_test() as pilot:
         await pilot.pause()
-        await ticks.tick()
         seed_task(connection, clock, title="Fix parser")
+
+        assert all(
+            "Fix parser" not in plain_text(row.render())
+            for item in queue.query("ListItem")
+            for row in item.query(Static)
+        )
+        await ticks.tick()
 
         await wait_until(
             lambda: any(

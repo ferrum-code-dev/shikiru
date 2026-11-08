@@ -87,7 +87,6 @@ OPERATOR_ZONE = "Asia/Tokyo"
 WIDE_SIZE = (100, 40)
 COMPACT_SIZE = (40, 40)
 TINY_SIZE = (40, 8)
-BRIEFING_SIZES = (WIDE_SIZE, (60, 40), (48, 40), COMPACT_SIZE, TINY_SIZE)
 BRANCH = "task/t-12"
 QUESTION = "Which failures should the parser retry?"
 LAST_WORDS = "Running the parser tests after the retry change."
@@ -610,31 +609,6 @@ async def test_a_finished_task_shows_its_total_and_finish_time_in_the_operator_z
         identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
         expected = f"{ELAPSED_MINUTES}m total \N{MIDDLE DOT} finished 2026-01-01 09:31"
         await wait_until(lambda: expected in plain_text(identity.content), timeout=UI_WAIT_SECONDS)
-
-
-async def test_every_briefing_stays_inside_its_width(
-    connection: Connection,
-    reader: StateReader,
-    tmp_path: Path,
-) -> None:
-    project_root = write_minimal_project(tmp_path)
-    clock = FakeClock(START)
-    tasks = {name: case.seed(connection, clock, project_root) for name, case in CASES.items()}
-    for size in BRIEFING_SIZES:
-        app = _app(reader, project_root, clock)
-        async with app.run_test(size=size):
-            halves = _briefing_halves(app)
-            identity = app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)
-            for name in CASES:
-                task = tasks[name]
-                app.query_one("#queue", QueuePanel).select_task(task.id)
-                await wait_until(
-                    lambda task=task, identity=identity: _is_loaded(identity, task),
-                    timeout=UI_WAIT_SECONDS,
-                )
-                for half in halves:
-                    lines = rendered_lines(half.content, width=half.size.width)
-                    assert all(len(line) <= half.size.width for line in lines), (size, name)
 
 
 @pytest.mark.parametrize(

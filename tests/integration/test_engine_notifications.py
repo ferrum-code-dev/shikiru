@@ -28,6 +28,7 @@ from tests.support.factories import TASK_CREATED_AT
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable
     from pathlib import Path
 
     from tests.support.store import Connection
@@ -130,26 +131,39 @@ async def test_notifier_isolates_external_command_failure(
 
 
 _HOOK_WAIT_SECONDS = 30.0
-_SHORT_HOOK_TIMEOUT_SECONDS = 10.0
 _LONG_HOOK_TIMEOUT_SECONDS = 600.0
 _QUICK_HOOK_TIMEOUT_SECONDS = 0.5
 
 
 @pytest.mark.parametrize("cancelled", [False, True], ids=["timeout", "cancellation"])
 async def test_hook_descendants_die_with_the_hook(
-    connection: Connection, tmux_server: TmuxServer, tmp_path: Path, *, cancelled: bool
+    connection: Connection,
+    tmux_server: TmuxServer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    cancelled: bool,
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
     runner = SubprocessRunner()
     pid_file = tmp_path / "descendant.pid"
     script = f"sleep 1000 & echo $! > {pid_file}; wait"
+    release_timeout = asyncio.Event()
+    wait_for = asyncio.wait_for
+
+    async def wait_after_start(awaitable: Awaitable[object], timeout: float | None) -> object:
+        if timeout == _QUICK_HOOK_TIMEOUT_SECONDS:
+            await release_timeout.wait()
+        return await wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", wait_after_start)
     notifier = Notifier(
         build_tmux(tmux_server),
         runner,
         _reporter(connection, clock),
         session_target=exact_target(session_name("missing")),
         command=f"/bin/sh -c {shlex.quote(script)}",
-        timeout_seconds=_LONG_HOOK_TIMEOUT_SECONDS if cancelled else _SHORT_HOOK_TIMEOUT_SECONDS,
+        timeout_seconds=_LONG_HOOK_TIMEOUT_SECONDS if cancelled else _QUICK_HOOK_TIMEOUT_SECONDS,
     )
     event = EventLog(connection, clock).append(EventKind.TASK_DONE, message="done")
     delivery = asyncio.create_task(notifier.notify(event))
@@ -159,15 +173,21 @@ async def test_hook_descendants_die_with_the_hook(
         )
         descendant = runner.identify(int(pid_file.read_text()))
         assert descendant is not None
+        assert runner.is_running(descendant)
         if cancelled:
             delivery.cancel()
             with suppress(asyncio.CancelledError):
                 await delivery
+            assert delivery.cancelled()
         else:
+            release_timeout.set()
             await delivery
+            (fault,) = EventLog(connection, clock).since(0, kinds=[EventKind.ENGINE_FAULT])
+            assert fault.data["error"] == "CommandTimeoutError"
 
         await wait_until(lambda: not runner.is_running(descendant), _HOOK_WAIT_SECONDS)
     finally:
+        release_timeout.set()
         with suppress(ProcessLookupError, ValueError):
             os.kill(int(pid_file.read_text()), signal.SIGKILL)
 
