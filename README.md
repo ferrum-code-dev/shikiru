@@ -12,7 +12,12 @@ are built in; different agents and models can work on the same task in different
 To have routine escalations handled for you, and the rest forwarded to your phone, see the companion
 service [shikiri-yaku](https://github.com/ferrum-code-dev/shikiri-yaku).
 
+I designed and implemented Shikiru from my own experience developing software with AI agents. No
+existing tool covered all the workflows I needed, so I built one that does.
+
 ## How it works
+
+![Shikiru terminal dashboard](docs/assets/shikiru-dashboard.gif)
 
 | Participant | Responsibility |
 | --- | --- |
