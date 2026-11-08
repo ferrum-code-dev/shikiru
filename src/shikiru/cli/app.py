@@ -44,7 +44,7 @@ from shikiru.cli.render import (
 )
 from shikiru.cli.report import report_command
 from shikiru.cli.view import view_command
-from shikiru.config.loader import load_settings
+from shikiru.config.loader import load_settings, load_update_settings
 from shikiru.config.settings import ComplexityName
 from shikiru.domain.tasks import Mode
 from shikiru.errors import (
@@ -77,7 +77,13 @@ from shikiru.ui.tokens import (
     STYLE_DIM,
 )
 from shikiru.update.commands import HostCommands
-from shikiru.update.flow import roll_back_on_demand, update_from_wheel
+from shikiru.update.flow import (
+    check_for_update,
+    roll_back_on_demand,
+    update_from_wheel,
+    update_to_newest,
+)
+from shikiru.update.github import GitHubReleaseSource
 from shikiru.update.store import ReleaseStore, release_store
 from shikiru.view_log import CLI_VIEW_COMMAND
 
@@ -139,8 +145,15 @@ PROBE_OPTION = typer.Option(
 WHEEL_OPTION = typer.Option(
     "--wheel",
     help=(
-        "Install this release wheel without downloading it. "
-        "[bold]Default:[/] required; downloads are not available yet."
+        "Install this release wheel instead of the newest release. "
+        "[bold]Default:[/] download the newest release."
+    ),
+)
+CHECK_OPTION = typer.Option(
+    "--check",
+    help=(
+        "Print the installed and the newest version; change nothing. "
+        "[bold]Default:[/] download and install the newest release."
     ),
 )
 ROLLBACK_OPTION = typer.Option(
@@ -352,25 +365,28 @@ def update(
     *,
     wheel: Annotated[Path | None, WHEEL_OPTION] = None,
     rollback: Annotated[bool, ROLLBACK_OPTION] = False,
+    check: Annotated[bool, CHECK_OPTION] = False,
 ) -> None:
-    """Install a Shikiru release wheel, restart its engines, or roll back to the last release."""
-    if wheel is not None and rollback:
-        _fail(UsageError("--wheel and --rollback cannot be combined"))
-    if wheel is None and not rollback:
-        typer.echo(
-            "shikiru update needs --wheel <path>; "
-            "downloading the newest release is not available yet",
-            err=True,
-        )
-        raise typer.Exit(code=EXIT_GENERIC_ERROR)
+    """Install the newest Shikiru release, a given wheel, or roll back to the last release."""
+    if sum((wheel is not None, rollback, check)) > 1:
+        _fail(UsageError("--check, --wheel and --rollback are alternatives; give one at most"))
     commands = HostCommands(environment=os.environ, runner=SubprocessRunner())
     store = ReleaseStore(release_store())
-    code = _run(
-        roll_back_on_demand(commands, store, typer.echo)
-        if wheel is None
-        else update_from_wheel(commands, store, wheel, typer.echo)
+    limits = load_update_settings()
+    source = GitHubReleaseSource(
+        timeout_seconds=limits.download_timeout_seconds,
+        max_bytes=limits.max_download_bytes,
     )
-    raise typer.Exit(code=code)
+    installed = version(PACKAGE_NAME)
+    if check:
+        operation = check_for_update(source, installed, typer.echo)
+    elif wheel is not None:
+        operation = update_from_wheel(commands, store, wheel, typer.echo)
+    elif rollback:
+        operation = roll_back_on_demand(commands, store, typer.echo)
+    else:
+        operation = update_to_newest(source, commands, store, installed, typer.echo)
+    raise typer.Exit(code=_run(operation))
 
 
 @app.command(name="ls")

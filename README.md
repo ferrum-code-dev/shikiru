@@ -62,8 +62,10 @@ uv tool install git+https://github.com/ferrum-code-dev/shikiru@v0.1.3
 shikiru --help
 ```
 
-Change `0.1.3` in the URL for a newer release. A long-running installation must be a release; see
-[Applying a release](#applying-a-release). For development, see [From a checkout](CONTRIBUTING.md).
+Change `0.1.3` in the URL for a newer release. An installed Shikiru updates itself with
+`shikiru update`, which downloads the newest release, checks it against its `SHA256SUMS` and installs
+it; `shikiru update --check` shows whether one exists. A long-running installation must be a release;
+see [Applying a release](#applying-a-release). For development, see [From a checkout](CONTRIBUTING.md).
 Never install a long-running copy with `--editable`.
 
 ### From a checkout

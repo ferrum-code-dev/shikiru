@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -13,11 +14,21 @@ import pytest
 from typer.testing import CliRunner
 
 from shikiru.cli.app import app
-from shikiru.errors import EXIT_COMMAND_REJECTED, EXIT_GENERIC_ERROR
+from shikiru.domain.releases import Release, ReleaseAsset
+from shikiru.errors import EXIT_COMMAND_REJECTED, EXIT_USAGE_ERROR
 from shikiru.operator.lifecycle import PACKAGE_NAME
 from shikiru.process import ProcessResult, SubprocessRunner
 from shikiru.update.commands import HostCommands, command_environment
-from shikiru.update.flow import EXIT_FAILURE, EXIT_SUCCESS, roll_back_on_demand, update_from_wheel
+from shikiru.update.errors import ReleaseStepError
+from shikiru.update.flow import (
+    EXIT_FAILURE,
+    EXIT_SUCCESS,
+    check_for_update,
+    roll_back_on_demand,
+    update_from_wheel,
+    update_to_newest,
+)
+from shikiru.update.github import GitHubReleaseSource
 from shikiru.update.store import ReleaseStore, wheel_version
 
 if TYPE_CHECKING:
@@ -45,7 +56,11 @@ CHECKOUT_VENV_BIN = f"{CHECKOUT_VENV}/bin"
 SYSTEM_PATH = os.pathsep.join(["/usr/bin", "/bin"])
 PRINT_PATH = "import os, sys; sys.stdout.write(os.environ['PATH'])"
 SLEEP_PROGRAM = f"import time; time.sleep({LONG_SLEEP_SECONDS})"
-NO_OPTIONS_EXIT = EXIT_GENERIC_ERROR
+NEW_TAG = "v0.1.0"
+OLD_TAG = "v0.0.9"
+CHECKSUMS_NAME = "SHA256SUMS"
+NEW_WHEEL_CONTENT = b"new wheel"
+PLAIN_HTTP_ADDRESS = "http://downloads.example.test/SHA256SUMS"
 
 
 def wheel_name(version: str) -> str:
@@ -118,6 +133,44 @@ def publish(
         os.utime(wheel, (age, age))
     if current:
         store.current_file.write_text(f"{name}\n", encoding="utf-8")
+
+
+def asset_url(tag: str, name: str) -> str:
+    return f"https://downloads.example.test/{tag}/{name}"
+
+
+def checksum_listing(name: str, content: bytes) -> bytes:
+    return f"{hashlib.sha256(content).hexdigest()}  {name}\n".encode()
+
+
+@dataclass
+class FakeReleaseSource:
+    listed: list[Release] = field(default_factory=list)
+    contents: dict[str, bytes] = field(default_factory=dict)
+    downloads: list[str] = field(default_factory=list)
+
+    def publish(
+        self,
+        tag: str,
+        files: Mapping[str, bytes],
+        *,
+        draft: bool = False,
+        prerelease: bool = False,
+    ) -> None:
+        assets = tuple(ReleaseAsset(name=name, url=asset_url(tag, name)) for name in files)
+        self.listed.append(Release(tag=tag, draft=draft, prerelease=prerelease, assets=assets))
+        self.contents.update({asset_url(tag, name): content for name, content in files.items()})
+
+    async def releases(self) -> list[Release]:
+        return list(self.listed)
+
+    async def download(self, url: str) -> bytes:
+        self.downloads.append(url)
+        return self.contents[url]
+
+
+def published_new_release(source: FakeReleaseSource) -> None:
+    source.publish(NEW_TAG, VERIFIED_FILES)
 
 
 def new_wheel(tmp_path: Path, version: str = NEW_VERSION) -> Path:
@@ -264,11 +317,153 @@ async def test_rollback_reinstalls_the_current_release_and_restarts_engines_that
     assert host.restarts == [(PROJECT_A, OLD_VERSION)]
 
 
-def test_update_without_options_says_the_wheel_is_required() -> None:
-    result = CliRunner().invoke(app, ["update"])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param(["update", "--check", "--rollback"], id="check-and-rollback"),
+        pytest.param(["update", "--check", "--wheel", NEW_WHEEL], id="check-and-wheel"),
+        pytest.param(["update", "--wheel", NEW_WHEEL, "--rollback"], id="wheel-and-rollback"),
+    ],
+)
+def test_update_options_are_alternatives(arguments: list[str]) -> None:
+    result = CliRunner().invoke(app, arguments)
 
-    assert result.exit_code == NO_OPTIONS_EXIT
-    assert "--wheel" in result.output
+    assert result.exit_code == EXIT_USAGE_ERROR
+    assert "alternatives" in result.output
+
+
+async def test_update_to_newest_installs_the_verified_release_and_reports_both_versions(
+    store: ReleaseStore,
+) -> None:
+    host = FakeHost(engines={PROJECT_A: ENGINE_UP})
+    source = FakeReleaseSource()
+    published_new_release(source)
+    messages: list[str] = []
+
+    code = await update_to_newest(source, host, store, OLD_VERSION, messages.append)
+
+    assert code == EXIT_SUCCESS
+    assert host.installs == [NEW_WHEEL]
+    assert host.installed == NEW_VERSION
+    assert host.restarts == [(PROJECT_A, NEW_VERSION)]
+    assert any(OLD_VERSION in message and NEW_VERSION in message for message in messages)
+    assert store.current_file.read_text(encoding="utf-8") == f"{NEW_WHEEL}\n"
+
+
+async def test_update_to_newest_says_so_and_changes_nothing_when_already_newest(
+    store: ReleaseStore,
+) -> None:
+    host = FakeHost(engines={PROJECT_A: ENGINE_UP}, installed=NEW_VERSION)
+    source = FakeReleaseSource()
+    published_new_release(source)
+    messages: list[str] = []
+
+    code = await update_to_newest(source, host, store, NEW_VERSION, messages.append)
+
+    assert code == EXIT_SUCCESS
+    assert host.installs == []
+    assert source.downloads == []
+    assert any("already the newest" in message for message in messages)
+
+
+VERIFIED_FILES: dict[str, bytes] = {
+    NEW_WHEEL: NEW_WHEEL_CONTENT,
+    CHECKSUMS_NAME: checksum_listing(NEW_WHEEL, NEW_WHEEL_CONTENT),
+}
+
+
+@pytest.mark.parametrize(
+    ("files", "draft", "reason"),
+    [
+        pytest.param(
+            {NEW_WHEEL: NEW_WHEEL_CONTENT, CHECKSUMS_NAME: checksum_listing(NEW_WHEEL, b"other")},
+            False,
+            "is not the one SHA256SUMS lists",
+            id="checksum-mismatch",
+        ),
+        pytest.param(
+            {CHECKSUMS_NAME: checksum_listing(NEW_WHEEL, NEW_WHEEL_CONTENT)},
+            False,
+            f"has no {NEW_WHEEL} file",
+            id="no-wheel",
+        ),
+        pytest.param(
+            {NEW_WHEEL: NEW_WHEEL_CONTENT},
+            False,
+            "has no SHA256SUMS file",
+            id="no-checksums",
+        ),
+        pytest.param(
+            {NEW_WHEEL: NEW_WHEEL_CONTENT, CHECKSUMS_NAME: b"not a checksum\n"},
+            False,
+            "malformed line",
+            id="malformed-checksums",
+        ),
+        pytest.param(
+            {NEW_WHEEL: NEW_WHEEL_CONTENT, CHECKSUMS_NAME: checksum_listing("other.whl", b"other")},
+            False,
+            "does not list",
+            id="wheel-not-listed",
+        ),
+        pytest.param(
+            VERIFIED_FILES,
+            True,
+            "no usable release",
+            id="only-draft",
+        ),
+    ],
+)
+async def test_update_to_newest_installs_nothing_when_the_release_cannot_be_verified(
+    store: ReleaseStore,
+    files: Mapping[str, bytes],
+    draft: bool,
+    reason: str,
+) -> None:
+    host = FakeHost(engines={PROJECT_A: ENGINE_UP})
+    source = FakeReleaseSource()
+    source.publish(NEW_TAG, files, draft=draft)
+    messages: list[str] = []
+
+    code = await update_to_newest(source, host, store, OLD_VERSION, messages.append)
+
+    assert code == EXIT_FAILURE
+    assert host.installs == []
+    assert host.restarts == []
+    assert not store.current_file.exists()
+    assert any(reason in message for message in messages)
+
+
+@pytest.mark.parametrize(
+    ("installed", "expected"),
+    [
+        pytest.param(OLD_VERSION, "an update is available", id="update-available"),
+        pytest.param(NEW_VERSION, "up to date", id="up-to-date"),
+    ],
+)
+async def test_check_reports_both_versions_and_changes_nothing(
+    store: ReleaseStore, installed: str, expected: str
+) -> None:
+    host = FakeHost(engines={PROJECT_A: ENGINE_UP}, installed=installed)
+    source = FakeReleaseSource()
+    published_new_release(source)
+    messages: list[str] = []
+
+    code = await check_for_update(source, installed, messages.append)
+
+    assert code == EXIT_SUCCESS
+    assert f"installed: {installed}" in messages
+    assert f"newest: {NEW_VERSION}" in messages
+    assert expected in messages
+    assert host.installs == []
+    assert source.downloads == []
+    assert not store.root.exists()
+
+
+async def test_github_source_refuses_to_read_a_plain_http_address() -> None:
+    source = GitHubReleaseSource(timeout_seconds=1, max_bytes=1024)
+
+    with pytest.raises(ReleaseStepError, match="only https"):
+        await source.download(PLAIN_HTTP_ADDRESS)
 
 
 @pytest.mark.parametrize(

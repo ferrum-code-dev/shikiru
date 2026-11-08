@@ -90,7 +90,7 @@ Acceptance criteria:
 
 ### N4 — `shikiru update` downloads the newest release
 
-- [ ] Add the GitHub source, the checksum check and `--check`.
+- [x] Add the GitHub source, the checksum check and `--check`.
 
 Acceptance criteria:
 

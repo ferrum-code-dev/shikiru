@@ -2,19 +2,30 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
+from shikiru.domain.releases import (
+    TAG_PREFIX,
+    ReleaseRuleError,
+    checksum_for,
+    digest_matches,
+    newest_release,
+    parse_number,
+)
 from shikiru.errors import EXIT_GENERIC_ERROR
 from shikiru.operator.lifecycle import PACKAGE_NAME
 from shikiru.update.engines import engine_projects, restart_engines
 from shikiru.update.errors import ReleaseStepError
-from shikiru.update.store import wheel_version
+from shikiru.update.store import wheel_name, wheel_version
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
-    from pathlib import Path
 
+    from shikiru.domain.releases import Release, ReleaseNumber
     from shikiru.update.commands import CommandRunner
+    from shikiru.update.sources import ReleaseSource
     from shikiru.update.store import ReleaseStore
 
 EXIT_SUCCESS = 0
@@ -26,6 +37,12 @@ REINSTALL_FLAG = "--reinstall"
 VERSION_FLAG = "--version"
 INSTALL_TIMEOUT_SECONDS = 600.0
 VERSION_TIMEOUT_SECONDS = 60.0
+CHECKSUMS_FILE_NAME = "SHA256SUMS"
+NO_USABLE_RELEASE = (
+    "the repository has no usable release: "
+    "none is a v<major>.<minor>.<patch> tag that is not a draft"
+)
+RELEASE_FAILURES = (ReleaseStepError, ReleaseRuleError)
 
 
 async def install(commands: CommandRunner, wheel: Path) -> None:
@@ -110,3 +127,88 @@ async def roll_back_on_demand(
         report(f"rollback failed: {error}")
         return EXIT_FAILURE
     return EXIT_SUCCESS if await roll_back(commands, store, report, projects) else EXIT_FAILURE
+
+
+def installed_number(installed: str) -> ReleaseNumber:
+    """Return the numbers of the installed version, which must be `major.minor.patch`."""
+    number = parse_number(installed)
+    if number is None:
+        message = f"the installed version {installed} is not major.minor.patch"
+        raise ReleaseStepError(message)
+    return number
+
+
+async def latest_release(source: ReleaseSource) -> tuple[ReleaseNumber, Release]:
+    """Return the newest usable release of the repository with its number."""
+    found = newest_release(await source.releases())
+    if found is None:
+        raise ReleaseStepError(NO_USABLE_RELEASE)
+    return found
+
+
+async def verified_wheel(source: ReleaseSource, release: Release) -> tuple[str, bytes]:
+    """Return the file name and content of the release's wheel, once its SHA-256 is confirmed."""
+    name = wheel_name(release.tag.removeprefix(TAG_PREFIX))
+    wheel = release.asset(name)
+    checksums = release.asset(CHECKSUMS_FILE_NAME)
+    if wheel is None:
+        message = f"{release.tag} has no {name} file"
+        raise ReleaseStepError(message)
+    if checksums is None:
+        message = f"{release.tag} has no {CHECKSUMS_FILE_NAME} file"
+        raise ReleaseStepError(message)
+    expected = checksum_for(await source.download(checksums.url), name)
+    content = await source.download(wheel.url)
+    if not digest_matches(content, expected):
+        message = f"the SHA-256 of {name} is not the one {CHECKSUMS_FILE_NAME} lists"
+        raise ReleaseStepError(message)
+    return name, content
+
+
+async def check_for_update(
+    source: ReleaseSource,
+    installed: str,
+    report: Callable[[str], None],
+) -> int:
+    """Report the installed and the newest release, and whether an update exists; change nothing."""
+    try:
+        current = installed_number(installed)
+        number, newest = await latest_release(source)
+    except RELEASE_FAILURES as error:
+        report(f"update check failed: {error}")
+        return EXIT_FAILURE
+    report(f"installed: {installed}")
+    report(f"newest: {newest.tag.removeprefix(TAG_PREFIX)}")
+    report("an update is available" if number > current else "up to date")
+    return EXIT_SUCCESS
+
+
+async def update_to_newest(
+    source: ReleaseSource,
+    commands: CommandRunner,
+    store: ReleaseStore,
+    installed: str,
+    report: Callable[[str], None],
+) -> int:
+    """Download and verify the newest release, then install it as `update_from_wheel` does."""
+    try:
+        current = installed_number(installed)
+        number, newest = await latest_release(source)
+        if number <= current:
+            report(f"already the newest release: {installed}")
+            return EXIT_SUCCESS
+        report(f"updating {installed} to {newest.tag.removeprefix(TAG_PREFIX)}")
+        name, content = await verified_wheel(source, newest)
+    except RELEASE_FAILURES as error:
+        report(f"update stopped before anything was installed: {error}")
+        return EXIT_FAILURE
+    with TemporaryDirectory() as directory:
+        wheel = stage_wheel(Path(directory), name, content)
+        return await update_from_wheel(commands, store, wheel, report)
+
+
+def stage_wheel(directory: Path, name: str, content: bytes) -> Path:
+    """Write a downloaded wheel into `directory` under its release file name."""
+    wheel = directory / name
+    wheel.write_bytes(content)
+    return wheel

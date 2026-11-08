@@ -18,6 +18,7 @@ TEMPORARY_CURRENT_NAME = "current.tmp"
 RETAINED_WHEELS = 5
 WHEEL_GLOB = "*.whl"
 WHEEL_SUFFIX = ".whl"
+WHEEL_TAGS = "py3-none-any"
 NAME_SEPARATOR = "-"
 VERSION_FIELD = 1
 
@@ -27,6 +28,11 @@ def release_store() -> Path:
     configured = os.environ.get(DATA_HOME_ENVIRONMENT)
     data_home = Path(configured) if configured else Path.home() / DEFAULT_DATA_HOME
     return data_home / PACKAGE_NAME / RELEASES_DIRECTORY
+
+
+def wheel_name(version: str) -> str:
+    """Return the file name of the Shikiru wheel for `version`."""
+    return f"{PACKAGE_NAME}{NAME_SEPARATOR}{version}{NAME_SEPARATOR}{WHEEL_TAGS}{WHEEL_SUFFIX}"
 
 
 def wheel_version(wheel: Path) -> str:
