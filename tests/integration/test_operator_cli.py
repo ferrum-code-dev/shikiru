@@ -311,7 +311,7 @@ async def test_submit_parser_rejects_missing_request_before_project_or_queue_wri
     assert stderr == ""
 
     connection = Database(state_db_path(tmp_path)).connect()
-    queue = CommandQueue(connection, SystemClock())
+    queue = CommandQueue(connection, FakeClock(START))
     try:
         code, stdout, stderr = await _cli(tmp_path, "submit")
         assert code == 2

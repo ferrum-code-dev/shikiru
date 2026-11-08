@@ -109,7 +109,7 @@ from shikiru.process import (
 from shikiru.store.commands import CommandQueue
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
-from shikiru.store.reader import StateReader
+from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.telemetry.resources import ResourceProcessRoots, ResourceSampler
@@ -306,8 +306,7 @@ def _widget_text(widget: Static) -> str:
     return "\n".join(_rendered_widget_lines(widget))
 
 
-def _seed_paused_escalated_task(connection: Connection) -> str:
-    clock = SystemClock()
+def _seed_paused_escalated_task(connection: Connection, clock: Clock) -> str:
     task = seed_task(connection, clock, title="Paused dashboard task", mode=Mode.IMPLEMENT)
     tasks = TaskStore(connection, clock)
     tasks.apply_transition(
@@ -518,13 +517,12 @@ def _app(
     open_palette_context: OpenPaletteContext | None = None,
     resolution_screen: ResolutionScreenFactory | None = None,
     focus_task: str | None = None,
-    clock: Clock | None = None,
+    clock: Clock,
     settings: Settings | None = None,
     tmux_detach_hint: str | None = None,
     detach_tmux_client: Callable[[], Awaitable[bool]] | None = None,
 ) -> DashboardApp:
     settings = settings or load_settings(project_dir)
-    clock = clock or SystemClock()
     return DashboardApp(
         focus_task=focus_task,
         views=state_views(
@@ -602,7 +600,12 @@ async def test_dashboard_app_rejects_an_invalid_widget_config_naming_the_widget(
         return list(registered)
 
     monkeypatch.setattr(registry_module, "entry_points", entry_points_with_extension)
-    app = _app(reader, write_minimal_project(tmp_path), widget_names=[widget_name])
+    app = _app(
+        reader,
+        write_minimal_project(tmp_path),
+        widget_names=[widget_name],
+        clock=FakeClock(_TEST_START),
+    )
     with pytest.raises(WidgetPluginError, match=widget_name):
         async with app.run_test():
             pass
@@ -613,7 +616,7 @@ async def test_dashboard_mounts_the_default_widgets_and_fits_the_pane(
     database: Database, connection: Connection, tmp_path: Path, size: tuple[int, int]
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Visible task", mode=Mode.IMPLEMENT)
     TaskStore(connection, clock).set_slot(task.id, 0)
     TaskStore(connection, clock).apply_transition(task.id, first_step(task))
@@ -628,10 +631,10 @@ async def test_dashboard_mounts_the_default_widgets_and_fits_the_pane(
             "repeat": 2,
         },
     )
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     settings = load_settings(project_dir)
     try:
-        app = _app(reader, project_dir, widget_names=settings.dashboard.widgets)
+        app = _app(reader, project_dir, widget_names=settings.dashboard.widgets, clock=clock)
         async with app.run_test(size=size) as pilot:
             await pilot.pause()
             queue_panel = app.query_one("#queue")
@@ -684,7 +687,7 @@ async def test_home_status_keeps_stopped_engine_fault_context_without_escalation
     size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Fault remains visible")
     EventLog(connection, clock).append(
         EventKind.ENGINE_FAULT,
@@ -697,9 +700,9 @@ async def test_home_status_keeps_stopped_engine_fault_context_without_escalation
             "repeat": 2,
         },
     )
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=["header"])
+        app = _app(reader, project_dir, widget_names=["header"], clock=clock)
         async with app.run_test(size=size):
             header = app.query_one("#header", Static)
             status = app.query_one("#escalations", Static)
@@ -726,7 +729,7 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
     size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock, reader_clock = FakeClock(_TEST_START), FakeClock(_TEST_START)
     services = StubServices(engine_running=True)
     paused = seed_task(connection, clock, title="Paused task")
     owned = seed_task(connection, clock, title="Owned task")
@@ -736,9 +739,15 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
     tasks = TaskStore(connection, clock)
     tasks.set_holds(paused.id, frozenset({Hold.PAUSED}))
     tasks.set_holds(owned.id, frozenset({Hold.INTERVENTION}))
-    reader = StateReader(database, clock)
+    reader = StateReader(database, reader_clock)
     try:
-        app = _app(reader, project_dir, widget_names=["queue", "escalations"], services=services)
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue", "escalations"],
+            services=services,
+            clock=clock,
+        )
         async with app.run_test(size=size) as pilot:
             attention = app.query_one("#escalations", EscalationsPanel)
             await wait_until(
@@ -753,15 +762,16 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
             assert "Operator owns" in visible_status
             assert "intervention" in visible_status
             assert "paused" in visible_status
-            assert owned.id in visible_status
-            assert paused.id in visible_status
+            assert all(task_id in visible_status for task_id in (owned.id, paused.id))
             assert "automation held" not in visible_status
             attention.activate_attention()
             app.query_one("#task-browser-list", ListView).focus()
             assert attention.display
 
             services.engine_running = False
+            await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             EventLog(connection, clock).append(EventKind.ENGINE_STOPPED, message="stopped")
+            reader_clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
 
             def stopped_state_visible() -> bool:
                 visible = " ".join(_rendered_widget_lines(_focus_attention_row(attention)))
@@ -780,8 +790,7 @@ async def test_home_attention_tracks_owned_held_and_engine_state_changes(
             visible_status = " ".join(_rendered_widget_lines(_focus_attention_row(attention)))
             assert "intervention" in visible_status
             assert "paused" in visible_status
-            assert owned.id in visible_status
-            assert paused.id in visible_status
+            assert all(task_id in visible_status for task_id in (owned.id, paused.id))
             assert "automation held" not in visible_status
             assert "Engine stopped" not in visible_status
             assert "Automation continues" not in _rendered_text(_focus_attention_row(attention))
@@ -970,7 +979,7 @@ def _seed_project_usage(connection: Connection, clock: Clock) -> None:
 
 def _seed_home_task_rows(
     connection: Connection,
-    clock: SystemClock,
+    clock: Clock,
     primary_task_id: str,
     runs: RunStore,
 ) -> tuple[tuple[str, ...], str, str, str]:
@@ -1176,7 +1185,7 @@ async def test_wide_home_keeps_usage_resources_and_attention_visible_above_the_t
     size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path_factory.mktemp("p"))
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     primary_task_id, runs = _seed_primary_usage(connection, clock)
     active_task_ids, completed_task_id, paused_task_id, owned_task_id = _seed_home_task_rows(
         connection,
@@ -1192,6 +1201,7 @@ async def test_wide_home_keeps_usage_resources_and_attention_visible_above_the_t
             project_dir,
             widget_names=["header", "queue", "escalations", "usage", "resources"],
             services=services,
+            clock=clock,
         )
         async with app.run_test(size=size) as pilot:
             await _assert_mixed_home_readouts(app)
@@ -1232,7 +1242,7 @@ async def test_resource_groups_stay_aligned_after_resize_for_observed_process_tr
         engine_pid=os.getpid() if populated else None,
     )
     try:
-        app = _app(reader, project_dir, widget_names=["resources"], services=services)
+        app = _app(reader, project_dir, widget_names=["resources"], services=services, clock=clock)
         async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
             resources = app.query_one("#resources", Static)
             expected_group = "Shikiru CPU" if populated else "Shikiru process tree is empty"
@@ -1502,14 +1512,14 @@ async def test_focus_keeps_selected_task_and_reading_position_after_reorder(
     database: Database, connection: Connection, tmp_path: Path
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     tasks = [
         seed_task(connection, clock, title=f"Queued task {index}", priority=0)
         for index in range(21)
     ]
     reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=["queue"])
+        app = _app(reader, project_dir, widget_names=["queue"], clock=FakeClock(_TEST_START))
         async with app.run_test(size=(120, 40)) as pilot:
             list_view = app.query_one("#task-browser-list", ListView)
             await wait_until(lambda: len(list_view.children) == len(tasks), timeout=UI_WAIT_SECONDS)
@@ -1536,11 +1546,13 @@ async def test_focus_keeps_selected_task_and_reading_position_after_reorder(
 
             anchor_before = visible_anchor()
             moved = tasks[5]
+            await wait_until(clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             writer = database.connect()
             try:
                 TaskStore(writer, clock).set_priority(moved.id, 9)
             finally:
                 writer.close()
+            clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
             await wait_until(
                 lambda: (
                     list_view.children[0].id == f"task-row-{moved.id}"
@@ -1575,7 +1587,7 @@ async def test_home_task_list_keeps_a_recent_completed_history_row(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     active = seed_task(connection, clock, title="Active request")
     completed = seed_task(connection, clock, title="Completed request")
     TaskStore(connection, clock).apply_transition(
@@ -1584,7 +1596,7 @@ async def test_home_task_list_keeps_a_recent_completed_history_row(
     )
     reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=["queue"])
+        app = _app(reader, project_dir, widget_names=["queue"], clock=clock)
         async with app.run_test(size=_WIDE_HOME_SIZE):
             task_list = app.query_one("#task-browser-list", ListView)
             recent_list = app.query_one("#task-browser-recent-list", ListView)
@@ -1823,9 +1835,16 @@ async def test_home_quiet_status_reports_running_unblocked_engine(
     del connection
     project_dir = write_minimal_project(tmp_path)
     services = StubServices(engine_running=True)
-    reader = StateReader(database, SystemClock())
+    clock = FakeClock(_TEST_START)
+    reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=["queue", "escalations"], services=services)
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=["queue", "escalations"],
+            services=services,
+            clock=clock,
+        )
         async with app.run_test(size=size):
             attention = app.query_one("#escalations", EscalationsPanel)
             status = _focus_attention_row(attention)
@@ -1846,14 +1865,19 @@ async def test_focus_operational_counts_and_contextual_task_filters(
     database: Database, connection: Connection, tmp_path: Path
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     active = seed_task(connection, clock, title="Active focus task", mode=Mode.IMPLEMENT)
     TaskStore(connection, clock).set_slot(active.id, 0)
     TaskStore(connection, clock).apply_transition(active.id, first_step(active))
     waiting = seed_task(connection, clock, title="Waiting focus task")
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=load_settings(project_dir).dashboard.widgets)
+        app = _app(
+            reader,
+            project_dir,
+            widget_names=load_settings(project_dir).dashboard.widgets,
+            clock=clock,
+        )
         async with app.run_test(size=(120, 40)) as pilot:
             home_screen = app.screen
             await pilot.press("z")
@@ -1943,7 +1967,7 @@ async def test_focus_attention_shows_the_decision_status_row(
     database: Database, connection: Connection, tmp_path: Path, size: tuple[int, int]
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Choose retry behavior")
     TaskStore(connection, clock).apply_transition(
         task.id,
@@ -1961,7 +1985,7 @@ async def test_focus_attention_shows_the_decision_status_row(
     )
     reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=["escalations"])
+        app = _app(reader, project_dir, widget_names=["escalations"], clock=clock)
         async with app.run_test(size=size):
             attention = app.query_one("#escalations", EscalationsPanel)
             await wait_until(lambda: attention.display, timeout=UI_WAIT_SECONDS)
@@ -1985,7 +2009,8 @@ async def test_home_bar_shows_the_first_decision_of_a_task_and_the_next_once_it_
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
+    reader_clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Choose between the two decisions")
     TaskStore(connection, clock).apply_transition(
         task.id,
@@ -2006,7 +2031,7 @@ async def test_home_bar_shows_the_first_decision_of_a_task_and_the_next_once_it_
     queue = CommandQueue(connection, clock)
     for command in queue.pending():
         queue.mark_done(command.id)
-    reader = StateReader(database, clock)
+    reader = StateReader(database, reader_clock)
     commands, queries, _ = operator_services(connection, reader, clock, project_dir)
 
     try:
@@ -2015,6 +2040,7 @@ async def test_home_bar_shows_the_first_decision_of_a_task_and_the_next_once_it_
             project_dir,
             widget_names=["queue", "escalations"],
             resolution_screen=resolution_factory(commands, queries, clock, reader),
+            clock=clock,
         )
         async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
             home_screen = app.screen
@@ -2039,7 +2065,9 @@ async def test_home_bar_shows_the_first_decision_of_a_task_and_the_next_once_it_
 
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
+            await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             escalations.resolve(decisions[0].id, ResolutionKind.CANCEL.value)
+            reader_clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
             await wait_until(
                 lambda: (
                     decisions[1].id in _rendered_text(row)
@@ -2105,6 +2133,7 @@ async def test_dashboard_engine_action_tracks_lock_and_refuses_a_stale_stop(
             project_dir,
             widget_names=[],
             open_palette_context=open_palette_context,
+            clock=clock,
         )
         active_apps[:] = [first_app]
         async with first_app.run_test(size=(120, 40)) as pilot:
@@ -2196,7 +2225,8 @@ async def test_home_command_feedback_callbacks_survive_partial_home_teardown(
 ) -> None:
     del connection
     project_dir = write_minimal_project(tmp_path)
-    reader = StateReader(database, SystemClock())
+    clock = FakeClock(_TEST_START)
+    reader = StateReader(database, clock)
 
     async def refuse_detach() -> bool:
         return False
@@ -2208,6 +2238,7 @@ async def test_home_command_feedback_callbacks_survive_partial_home_teardown(
             widget_names=[],
             tmux_detach_hint=_GLOBAL_TMUX_PREFIX,
             detach_tmux_client=refuse_detach,
+            clock=clock,
         )
         async with app.run_test(size=(120, 40)) as pilot:
             status = app.query_one("#workspace-command-status", Button)
@@ -2237,7 +2268,7 @@ async def test_palette_resume_is_safe_when_home_has_no_task_detail(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     reader = StateReader(database, clock)
     active_apps: list[DashboardApp] = []
 
@@ -2255,7 +2286,9 @@ async def test_palette_resume_is_safe_when_home_has_no_task_detail(
         )
 
     try:
-        app = _app(reader, project_dir, widget_names=["usage"], open_palette=open_palette)
+        app = _app(
+            reader, project_dir, widget_names=["usage"], open_palette=open_palette, clock=clock
+        )
         active_apps.append(app)
         async with app.run_test(size=(100, 34)) as pilot:
             home_screen = app.screen
@@ -2277,11 +2310,11 @@ async def test_dashboard_restart_recovers_another_clients_rejected_command(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     reader = StateReader(database, clock)
     queue = CommandQueue(connection, clock)
     try:
-        first_app = _app(reader, project_dir, widget_names=[])
+        first_app = _app(reader, project_dir, widget_names=[], clock=clock)
         async with first_app.run_test(size=(100, 34)):
             pass
 
@@ -2307,6 +2340,7 @@ async def test_dashboard_restart_recovers_another_clients_rejected_command(
             project_dir,
             widget_names=[],
             services=StubServices(engine_running=True),
+            clock=clock,
         )
         async with restarted_app.run_test(size=(120, 40)) as pilot:
             status = restarted_app.query_one("#workspace-command-status", Button)
@@ -2340,7 +2374,7 @@ async def test_dashboard_restart_recovers_another_clients_rejected_command(
 
 def _seed_command_feedback_task(
     connection: Connection,
-    clock: SystemClock,
+    clock: Clock,
     status: CommandFeedbackStatus,
 ) -> tuple[Task, int]:
     task = seed_task(connection, clock, title="Footer feedback task")
@@ -2480,7 +2514,7 @@ async def test_durable_command_feedback_footer_matches_home_facts_and_resizes(
         monkeypatch.delenv("NO_COLOR", raising=False)
         monkeypatch.delenv("FORCE_COLOR", raising=False)
         monkeypatch.setenv("TERM", "xterm-256color")
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     task, command_id = _seed_command_feedback_task(connection, clock, CommandFeedbackStatus.APPLIED)
     if mono:
         queue = CommandQueue(connection, clock)
@@ -2539,7 +2573,7 @@ async def test_latest_command_status_ends_on_footer_right_edge_across_widths(
     status: CommandFeedbackStatus,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     _seed_command_feedback_task(connection, clock, status)
     reader = StateReader(database, clock)
 
@@ -2681,7 +2715,8 @@ async def _assert_command_history_last_page_and_refresh(
     pilot: Pilot[None],
     *,
     database: Database,
-    clock: SystemClock,
+    clock: Clock,
+    reader_clock: FakeClock,
     pending_id: int,
     home_screen: Widget,
     history_frame: Widget,
@@ -2720,11 +2755,13 @@ async def _assert_command_history_last_page_and_refresh(
     await pilot.pause()
     assert history_scroll.scroll_y == history_scroll.max_scroll_y > 0
     focus_before_refresh = app.focused
+    await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
     engine = database.connect()
     try:
         CommandQueue(engine, clock).mark_done(pending_id, {"effect": "applied once"})
     finally:
         engine.close()
+    reader_clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
     await wait_until(
         lambda: (
             f"#{pending_id} · Applied" in _rendered_text(history_copy)
@@ -2757,8 +2794,9 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
-    reader = StateReader(database, clock)
+    clock = FakeClock(_TEST_START)
+    reader_clock = FakeClock(_TEST_START)
+    reader = StateReader(database, reader_clock)
     queue = CommandQueue(connection, clock)
     pending = queue.append(Stop())
     applied = queue.append(Stop())
@@ -2768,7 +2806,7 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
         queue.mark_done(applied.id, {"effect": index})
 
     try:
-        app = _app(reader, project_dir, widget_names=[])
+        app = _app(reader, project_dir, widget_names=[], clock=clock)
         async with app.run_test(size=_COMMAND_HISTORY_INITIAL_SIZE) as pilot:
             home_screen = app.screen
             await open_command_history(pilot)
@@ -2823,6 +2861,7 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
                 pilot,
                 database=database,
                 clock=clock,
+                reader_clock=reader_clock,
                 pending_id=pending.id,
                 home_screen=home_screen,
                 history_frame=history_frame,
@@ -2838,6 +2877,7 @@ async def test_command_history_pages_recover_and_refresh_an_older_pending_comman
                 connection,
                 clock,
                 initial_size,
+                reader_clock=reader_clock,
             )
     finally:
         reader.close()
@@ -2848,10 +2888,12 @@ async def _assert_initial_command_history_size_restoration(
     reader: StateReader,
     project_dir: Path,
     connection: Connection,
-    clock: SystemClock,
+    clock: Clock,
     initial_size: tuple[int, int],
+    *,
+    reader_clock: FakeClock,
 ) -> None:
-    app = _app(reader, project_dir, widget_names=[])
+    app = _app(reader, project_dir, widget_names=[], clock=clock)
     queue = CommandQueue(connection, clock)
     async with app.run_test(size=initial_size) as pilot:
         home_screen = app.screen
@@ -2872,6 +2914,7 @@ async def _assert_initial_command_history_size_restoration(
             queue,
             initial_size,
             initial_geometry,
+            reader_clock=reader_clock,
         )
         assert await pilot.click("#command-history-close")
         await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
@@ -2975,6 +3018,8 @@ async def _assert_initial_history_live_restoration(
     queue: CommandQueue,
     initial_size: tuple[int, int],
     initial_geometry: tuple[Region, int, int],
+    *,
+    reader_clock: FakeClock,
 ) -> None:
     screen = app.screen
     frame = screen.query_one("#command-history-frame")
@@ -3003,7 +3048,9 @@ async def _assert_initial_history_live_restoration(
         ),
         timeout=UI_WAIT_SECONDS,
     )
+    await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
     live_entry = queue.append(Stop())
+    reader_clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
     await wait_until(
         lambda: f"#{live_entry.id} · Pending" in _rendered_text(copy),
         timeout=UI_WAIT_SECONDS,
@@ -3081,7 +3128,7 @@ async def test_task_detail_lists_page_with_page_keys_and_stop_at_boundaries(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Page route target")
     tasks = TaskStore(connection, clock)
     for index in range(TASK_PAGE_TEST_RELATIONSHIP_COUNT):
@@ -3108,6 +3155,7 @@ async def test_task_detail_lists_page_with_page_keys_and_stop_at_boundaries(
             widget_names=[],
             focus_task=task.id,
             settings=settings,
+            clock=clock,
         )
         async with app.run_test(size=(100, 34)) as pilot:
             await choose_details_entry(pilot, TASK_VIEW_EVIDENCE)
@@ -3238,7 +3286,7 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
 ) -> None:
     width, height = size
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     reader = StateReader(database, clock)
     task = seed_task(connection, clock, title="Task120 native Home task")
     queue = CommandQueue(connection, clock)
@@ -3248,7 +3296,7 @@ async def test_narrow_home_keeps_keyboard_routes_reachable(
         queue.append(Stop())
 
     try:
-        app = _app(reader, project_dir, widget_names=["header", "queue"])
+        app = _app(reader, project_dir, widget_names=["header", "queue"], clock=clock)
         async with app.run_test(size=size) as pilot:
             status = app.query_one("#workspace-command-status", Button)
             footer = app.query_one("#focus-footer", Grid)
@@ -3438,15 +3486,14 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
 ) -> None:
     monkeypatch.setenv("NO_COLOR", "1")
     project_dir = write_minimal_project(tmp_path)
-    task = seed_task(
-        connection, SystemClock(), title="Responsive selected task", mode=Mode.IMPLEMENT
-    )
-    stored_task = TaskStore(connection, SystemClock()).require(task.id)
-    TaskStore(connection, SystemClock()).apply_transition(
+    clock = FakeClock(_TEST_START)
+    task = seed_task(connection, clock, title="Responsive selected task", mode=Mode.IMPLEMENT)
+    stored_task = TaskStore(connection, clock).require(task.id)
+    TaskStore(connection, clock).apply_transition(
         task.id,
         Transition.stay(stored_task, step=Step.IMPLEMENT, status=Status.RUNNING),
     )
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
 
     try:
         palette_requests: list[PaletteRequest] = []
@@ -3459,6 +3506,7 @@ async def test_home_resizes_through_the_terminal_matrix_without_losing_selection
             project_dir,
             widget_names=["queue"],
             open_palette_context=open_palette_context,
+            clock=clock,
         )
         async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
             await _assert_home_resize_matrix(app, pilot, task)
@@ -3473,14 +3521,14 @@ async def test_home_row_click_and_enter_keep_the_shared_inspector_on_home(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     tasks = (
         seed_task(connection, clock, title="Focused route first"),
         seed_task(connection, clock, title="Focused route second"),
     )
     reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=["queue"])
+        app = _app(reader, project_dir, widget_names=["queue"], clock=clock)
         async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
             home = app.screen
             list_view = app.query_one("#task-browser-list", ListView)
@@ -3563,11 +3611,11 @@ async def test_task_usage_and_evidence_keys_open_nothing_and_send_nothing(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Inert task keys")
     reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=[], focus_task=task.id)
+        app = _app(reader, project_dir, widget_names=[], focus_task=task.id, clock=clock)
         async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
             await wait_until(
                 lambda: (
@@ -3903,7 +3951,7 @@ async def test_task_context_menu_closes_and_opens_secondary_views_without_comman
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Context menu view target")
     queue = CommandQueue(connection, clock)
     for command in queue.pending():
@@ -4145,7 +4193,7 @@ async def test_empty_home_footer_actions_are_mouse_reachable_and_read_only(
     size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     reader = StateReader(database, clock)
     queue = CommandQueue(connection, clock)
     for command in queue.pending():
@@ -4163,6 +4211,7 @@ async def test_empty_home_footer_actions_are_mouse_reachable_and_read_only(
             project_dir,
             widget_names=["queue"],
             open_palette_context=open_palette_context,
+            clock=clock,
         )
         app_instances.append(app)
         async with app.run_test(size=size) as pilot:
@@ -4206,7 +4255,7 @@ async def test_home_footer_detaches_the_input_selected_project_client_by_click_a
     tmux_server: TmuxServer,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     CommandQueue(connection, clock).append(Stop())
     tmux = Tmux(tmux_server.runner, socket=tmux_server.socket_name)
     project_session = exact_target(_PROJECT_SESSION_NAME)
@@ -4272,6 +4321,7 @@ async def test_home_footer_detaches_the_input_selected_project_client_by_click_a
                 widget_names=["queue"],
                 tmux_detach_hint=prefix_hint,
                 detach_tmux_client=detach_project_client,
+                clock=clock,
             )
             async with app.run_test(size=_WIDE_HOME_SIZE) as pilot:
                 detach = app.query_one("#focus-footer-detach", Button)
@@ -4346,7 +4396,7 @@ async def test_compact_task_evidence_fold_opens_and_returns_to_home_selection(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     settings = load_settings(project_dir)
     task = seed_task(connection, clock, title="Compact contextual view")
     queue = CommandQueue(connection, clock)
@@ -4420,7 +4470,7 @@ async def test_project_fault_attention_without_faults_extension_opens_existing_h
     widget_names: list[str],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     EventLog(connection, clock).append(
         EventKind.ENGINE_FAULT,
         task_id=None,
@@ -4435,7 +4485,7 @@ async def test_project_fault_attention_without_faults_extension_opens_existing_h
     reader = StateReader(database, clock)
     queue = CommandQueue(connection, clock)
     try:
-        app = _app(reader, project_dir, widget_names=widget_names)
+        app = _app(reader, project_dir, widget_names=widget_names, clock=clock)
         async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
             attention = app.query_one("#escalations")
             attention_text = (
@@ -4473,10 +4523,11 @@ async def test_task_view_opens_in_the_popup_when_home_shows_no_inspector(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    task = seed_task(connection, SystemClock(), title="Popup route target")
-    reader = StateReader(database, SystemClock())
+    clock = FakeClock(_TEST_START)
+    task = seed_task(connection, clock, title="Popup route target")
+    reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=["header"])
+        app = _app(reader, project_dir, widget_names=["header"], clock=clock)
         async with app.run_test(size=_STANDARD_HOME_SIZE):
             await app.open_task_detail_view(task.id, TASK_VIEW_USAGE)
             await wait_until(
@@ -4497,14 +4548,16 @@ async def test_stopped_project_attention_without_rows_opens_command_history(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    reader = StateReader(database, SystemClock())
-    queue = CommandQueue(connection, SystemClock())
+    clock = FakeClock(_TEST_START)
+    reader = StateReader(database, clock)
+    queue = CommandQueue(connection, clock)
     try:
         app = _app(
             reader,
             project_dir,
             widget_names=["header"],
             services=StubServices(engine_running=False),
+            clock=clock,
         )
         async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
             attention = app.query_one("#escalations", Static)
@@ -4724,8 +4777,9 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    task = seed_task(connection, SystemClock(), title="Accessible task detail")
-    reader = StateReader(database, SystemClock())
+    clock = FakeClock(_TEST_START)
+    task = seed_task(connection, clock, title="Accessible task detail")
+    reader = StateReader(database, clock)
     palette_requests: list[PaletteRequest] = []
 
     async def open_palette_context(request: PaletteRequest) -> None:
@@ -4737,6 +4791,7 @@ async def test_task_detail_contextual_controls_are_reachable_at_narrow_width(
             project_dir,
             widget_names=["queue"],
             open_palette_context=open_palette_context,
+            clock=clock,
         )
         async with app.run_test(size=(36, 20)) as pilot:
             home = app.screen
@@ -4791,7 +4846,7 @@ async def test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions
     size: tuple[int, int],
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Mounted palette route")
     queued_before = CommandQueue(connection, clock).pending()
     reader = StateReader(database, clock)
@@ -4817,6 +4872,7 @@ async def test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions
             project_dir,
             widget_names=["queue"],
             open_palette_context=open_palette_context,
+            clock=clock,
         )
         app_instances.append(app)
         async with app.run_test(size=size) as pilot:
@@ -4864,9 +4920,10 @@ async def test_home_shared_detail_is_current_after_a_task_detail_popup_closes(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
+    reader_clock = FakeClock(_TEST_START)
     task = seed_task(connection, clock, title="Home detail resumes fresh")
-    reader = StateReader(database, clock)
+    reader = StateReader(database, reader_clock)
     active_apps: list[DashboardApp] = []
 
     async def open_palette_context(request: PaletteRequest) -> None:
@@ -4882,6 +4939,7 @@ async def test_home_shared_detail_is_current_after_a_task_detail_popup_closes(
             project_dir,
             widget_names=["queue"],
             open_palette_context=open_palette_context,
+            clock=clock,
         )
         active_apps.append(app)
         async with app.run_test(size=(120, 40)) as pilot:
@@ -4909,7 +4967,9 @@ async def test_home_shared_detail_is_current_after_a_task_detail_popup_closes(
             task_ownership = task_screen.query_one(f"#{TASK_DETAIL_OWNERSHIP}", Static)
             await pilot.press("ctrl+p")
             await _wait_for_actions(app)
+            await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED}))
+            reader_clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
             await pilot.press("escape")
             await wait_until(lambda: app.screen is task_screen, timeout=UI_WAIT_SECONDS)
             await wait_until(
@@ -4941,8 +5001,9 @@ async def test_home_selection_discards_detail_result_from_an_in_flight_report_re
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    first = seed_task(connection, SystemClock(), title="First delayed report")
-    second = seed_task(connection, SystemClock(), title="Second delayed report")
+    clock = FakeClock(_TEST_START)
+    first = seed_task(connection, clock, title="First delayed report")
+    second = seed_task(connection, clock, title="Second delayed report")
     report_text = (
         '{"title":"Loaded report","mode":"implement","complexity":"normal",'
         '"acceptance_criteria":[],"references":[]}'
@@ -4956,9 +5017,9 @@ async def test_home_selection_discards_detail_result_from_an_in_flight_report_re
         (report_path.parent / REPORT_KIND_FILENAME).write_text(ReportKind.TRIAGE.value)
         os.mkfifo(report_path)
     writer_descriptors: dict[Path, int] = {}
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=["queue"])
+        app = _app(reader, project_dir, widget_names=["queue"], clock=clock)
         async with app.run_test(size=(120, 40)) as pilot:
             identity = app.query_one("#task-detail-identity", Static)
             await wait_until(
@@ -5002,7 +5063,7 @@ async def test_home_selection_clears_rendered_task_sections_while_next_report_lo
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     first_request = "First task request evidence"
     second_request = "Second task request evidence"
     first = seed_task(connection, clock, title="First loaded task", request=first_request)
@@ -5028,7 +5089,7 @@ async def test_home_selection_clears_rendered_task_sections_while_next_report_lo
     TaskStore(connection, clock).set_holds(first.id, frozenset({Hold.PAUSED}))
     reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=["queue"])
+        app = _app(reader, project_dir, widget_names=["queue"], clock=clock)
         async with app.run_test(size=(120, 40)) as pilot:
             identity = app.query_one("#task-detail-identity", Static)
             await wait_until(
@@ -5090,10 +5151,11 @@ async def test_dashboard_compact_footer_and_persisted_state_are_readable_without
 ) -> None:
     monkeypatch.setenv("NO_COLOR", "1")
     project_dir = write_minimal_project(tmp_path)
-    _seed_paused_escalated_task(connection)
-    reader = StateReader(database, SystemClock())
+    clock = FakeClock(_TEST_START)
+    _seed_paused_escalated_task(connection, clock)
+    reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=["header"])
+        app = _app(reader, project_dir, widget_names=["header"], clock=clock)
         async with app.run_test(size=size) as pilot:
             await pilot.pause()
             footer = app.query_one("#focus-footer")
@@ -5218,7 +5280,7 @@ async def test_dashboard_palette_lists_and_opens_external_widgets_under_extensio
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     queue = CommandQueue(connection, clock)
     command = queue.append(Stop())
     queue.mark_done(command.id, {"stopping": True})
@@ -5252,6 +5314,7 @@ async def test_dashboard_palette_lists_and_opens_external_widgets_under_extensio
             project_dir,
             widget_names=["usage", _LATER_EXTERNAL_WIDGET_NAME, _EXTERNAL_WIDGET_NAME],
             open_palette_context=open_palette_context,
+            clock=clock,
         )
         apps.append(app)
         async with app.run_test(size=(72, 30)) as pilot:
@@ -5303,7 +5366,7 @@ async def test_dashboard_palette_lists_and_opens_external_widgets_under_extensio
         reader.close()
 
 
-def _seed_mounted_role_focus_tasks(connection: Connection, clock: SystemClock) -> tuple[Task, Task]:
+def _seed_mounted_role_focus_tasks(connection: Connection, clock: Clock) -> tuple[Task, Task]:
     task = seed_task(connection, clock, title="Home contextual action", mode=Mode.IMPLEMENT)
     tasks = TaskStore(connection, clock)
     tasks.set_slot(task.id, 0)
@@ -5334,9 +5397,9 @@ async def test_mounted_role_action_popups_focus_role_and_keep_tab_order(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     task, owned_task = _seed_mounted_role_focus_tasks(connection, clock)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     queue = CommandQueue(connection, clock)
     pending_before = queue.pending()
     apps: list[DashboardApp] = []
@@ -5351,6 +5414,7 @@ async def test_mounted_role_action_popups_focus_role_and_keep_tab_order(
             project_dir,
             widget_names=["queue"],
             open_palette_context=open_palette_context,
+            clock=clock,
         )
         apps.append(app)
         async with app.run_test(size=_ROLE_DROPDOWN_DASHBOARD_SIZE) as pilot:
@@ -5417,7 +5481,7 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
     clock = FakeClock(_TEST_START)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(_TEST_START))
     settings = load_settings(project_dir)
     queue = CommandQueue(connection, clock)
     commands = OperatorCommands(queue, clock, engine_up=lambda: True)
@@ -5449,7 +5513,13 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
         )
 
     try:
-        app_instance = _app(reader, project_dir, widget_names=[], open_palette=open_palette)
+        app_instance = _app(
+            reader,
+            project_dir,
+            widget_names=[],
+            open_palette=open_palette,
+            clock=FakeClock(_TEST_START),
+        )
         async with app_instance.run_test(size=(72, 32)) as pilot:
             await pilot.press("ctrl+p")
             await pilot.pause()
@@ -5482,8 +5552,9 @@ async def test_ctrl_p_carries_the_selected_browser_task(
     tmp_path: Path,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    task = seed_task(connection, SystemClock(), title="Selected browser task")
-    reader = StateReader(database, SystemClock())
+    clock = FakeClock(_TEST_START)
+    task = seed_task(connection, clock, title="Selected browser task")
+    reader = StateReader(database, clock)
     opened: list[PaletteRequest] = []
 
     async def open_palette_context(request: PaletteRequest) -> None:
@@ -5495,6 +5566,7 @@ async def test_ctrl_p_carries_the_selected_browser_task(
             project_dir,
             widget_names=["queue"],
             open_palette_context=open_palette_context,
+            clock=clock,
         )
         async with app.run_test(size=(72, 32)) as pilot:
             await pilot.pause()
@@ -5511,7 +5583,7 @@ async def test_project_engine_fault_bar_has_no_action_hint_and_opens_the_faults_
     database: Database, connection: Connection, tmp_path: Path
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_TEST_START)
     EventLog(connection, clock).append(
         EventKind.ENGINE_FAULT,
         task_id=None,
@@ -5525,7 +5597,7 @@ async def test_project_engine_fault_bar_has_no_action_hint_and_opens_the_faults_
     )
     reader = StateReader(database, clock)
     try:
-        app = _app(reader, project_dir, widget_names=["header", "faults"])
+        app = _app(reader, project_dir, widget_names=["header", "faults"], clock=clock)
         async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
             status = app.query_one("#escalations", Static)
             await wait_until(

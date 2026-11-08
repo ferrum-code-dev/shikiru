@@ -43,9 +43,15 @@ def connection(database: Database) -> Iterator[Connection]:
 
 
 @pytest.fixture
-def reader(database: Database) -> Iterator[StateReader]:
+def reader_clock() -> Clock:
+    """Clock used by the reader fixture; tests may override it to control polling."""
+    return SystemClock()
+
+
+@pytest.fixture
+def reader(database: Database, reader_clock: Clock) -> Iterator[StateReader]:
     """A `StateReader` over `database`, closed on teardown."""
-    state_reader = StateReader(database, SystemClock())
+    state_reader = StateReader(database, reader_clock)
     try:
         yield state_reader
     finally:

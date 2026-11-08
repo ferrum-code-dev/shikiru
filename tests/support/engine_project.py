@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING
 from fake_agent.scripted import SCRIPT_ENV_VAR, role_script_env_var
 
 from shikiru.agents.contracts import shikiru_argv
-from shikiru.clock import SystemClock
 from shikiru.domain.tasks import Role, Status
 from shikiru.engine.daemon import EngineLock
 from shikiru.engine.turn_processes import read_turn_pid, turn_pid_path
@@ -22,6 +21,7 @@ from shikiru.store.database import Database
 from shikiru.store.events import EventLog
 from shikiru.store.tasks import TaskStore
 from tests.support.cli_project import prepare_project, run_cli, tmux_environment
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.factories import CPU_UNCAPPED_PCT
 from tests.support.waiting import WaitTimeoutError, wait_until
 
@@ -106,7 +106,7 @@ class EngineProject:
     def task_status(self) -> Status:
         connection = Database(state_db_path(self.root)).connect()
         try:
-            task = TaskStore(connection, SystemClock()).get(TASK_ID)
+            task = TaskStore(connection, FakeClock(LONG_AGO)).get(TASK_ID)
             assert task is not None
             return task.status
         finally:
@@ -115,7 +115,7 @@ class EngineProject:
     def event_kinds(self) -> list[EventKind]:
         connection = Database(state_db_path(self.root)).connect()
         try:
-            return [event.kind for event in EventLog(connection, SystemClock()).since(0)]
+            return [event.kind for event in EventLog(connection, FakeClock(LONG_AGO)).since(0)]
         finally:
             connection.close()
 

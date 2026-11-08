@@ -7,13 +7,13 @@ import pytest
 import shikiru.agents.registry as registry_module
 from shikiru.agents.contracts import Agent, AgentContext
 from shikiru.agents.registry import PLUGIN_REINSTALL_HINT, AgentPluginError, AgentRegistry
-from shikiru.clock import SystemClock
 from shikiru.process import SubprocessRunner
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.entry_points import ambiguous_entry_points
 
 
 def _context() -> AgentContext:
-    return AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock())
+    return AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(LONG_AGO))
 
 
 def test_create_names_the_plugin_when_none_is_registered_or_installed() -> None:

@@ -50,7 +50,6 @@ from shikiru.agents.testing import (
     RecordedStream,
     ReplayedProcess,
 )
-from shikiru.clock import SystemClock
 from shikiru.domain.recovery import Escalate, Failed, RecoveryPolicy, TurnCounters, decide
 from shikiru.domain.reports import (
     CURRENT_TURN_LINK_NAME,
@@ -175,7 +174,9 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         executable.chmod(0o755)
         monkeypatch.setenv("PATH", f"{cli_directory}{os.pathsep}{os.environ['PATH']}")
 
-        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        agent = create(
+            AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
+        )
         catalog = await agent.model_catalog()
         invocation = json.loads(capture.read_text(encoding="utf-8"))
         request = json.loads(invocation["request"])
@@ -877,7 +878,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
             AgentContext(
                 options={},
                 runner=SubprocessRunner(),
-                clock=SystemClock(),
+                clock=FakeClock(_SAMPLE_NOW),
             )
         )
         command = agent.process_sequence(spec).start(spec)
@@ -976,7 +977,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
             AgentContext(
                 options={},
                 runner=SubprocessRunner(),
-                clock=SystemClock(),
+                clock=FakeClock(_SAMPLE_NOW),
             )
         )
         headless = agent.headless()

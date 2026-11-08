@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, cast
 import pytest
 from textual.widgets import Static
 
-from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.detail import (
     AGENT_TIMELINE_IDS,
@@ -159,7 +158,7 @@ async def test_header_keys_move_between_folds_and_open_or_close_them(
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task_id, _ = _seed(connection, project_root, clock, "Fold keys")
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     try:
         for case in KEY_CASES:
             panel = TaskDetailPanel(
@@ -248,7 +247,7 @@ async def test_open_folds_survive_a_refresh_and_a_task_change_but_task_state_res
     clock = FakeClock(START)
     first_id, _ = _seed(connection, project_root, clock, "First task")
     second_id, _ = _seed(connection, project_root, clock, "Second task")
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(widget_context(reader, project_root, clock), first_id, fixed=True)
     try:
         async with ManualFocusHost(panel).run_test(size=(100, 60)):
@@ -284,7 +283,7 @@ async def test_escape_returns_from_an_open_list_to_its_header_before_leaving(
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task_id, _ = _seed(connection, project_root, clock, "Escape steps")
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     left_for_home: list[str] = []
 
     async def navigate_home() -> str:
@@ -340,7 +339,7 @@ async def test_clicking_fold_header_enters_its_list_and_closes_back_to_the_heade
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task_id, _ = _seed(connection, project_root, clock, "Selection marks")
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(widget_context(reader, project_root, clock), task_id, fixed=True)
     try:
         async with ManualFocusHost(panel).run_test(size=(100, 40)) as pilot:

@@ -8,7 +8,6 @@ import stat
 import sys
 from typing import TYPE_CHECKING
 
-from shikiru.clock import SystemClock
 from shikiru.operator.lifecycle import home_command
 from shikiru.process import identify_pid
 from shikiru.store.commands import CommandQueue
@@ -20,6 +19,7 @@ from shikiru.tmux.session import (
     bind_palette_key,
     session_name,
 )
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
@@ -156,8 +156,9 @@ async def test_home_prefix_space_and_ctrl_p_open_actions_in_the_existing_dashboa
     )
     database = Database(project_dir / ".shikiru" / "state.db")
     connection = database.connect()
-    task = seed_task(connection, SystemClock(), title="tmux overlay route proof")
-    queued_before = CommandQueue(connection, SystemClock()).pending()
+    clock = FakeClock(LONG_AGO)
+    task = seed_task(connection, clock, title="tmux overlay route proof")
+    queued_before = CommandQueue(connection, clock).pending()
     connection.close()
     tmux = Tmux(
         tmux_server.runner,
@@ -188,7 +189,7 @@ async def test_home_prefix_space_and_ctrl_p_open_actions_in_the_existing_dashboa
         )
         connection = database.connect()
         try:
-            assert CommandQueue(connection, SystemClock()).pending() == queued_before
+            assert CommandQueue(connection, clock).pending() == queued_before
         finally:
             connection.close()
     finally:

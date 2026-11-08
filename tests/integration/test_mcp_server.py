@@ -6,13 +6,13 @@ import pytest
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from shikiru.bootstrap import build_operator
-from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.tasks import EscalationReason
 from shikiru.mcp.server import build_server
 from shikiru.paths import state_db_path
 from shikiru.store.database import Database
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.escalations import seed_escalation
 from tests.support.store import seed_task
@@ -57,7 +57,7 @@ async def test_mcp_escalation_tools_return_agent_options_and_resolutions_as_json
     services = build_operator(project_root, load_settings(project_root))
     connection = Database(state_db_path(project_root)).connect()
     try:
-        clock = SystemClock()
+        clock = FakeClock(LONG_AGO)
         task = seed_task(connection, clock, title="decide")
         escalation, _ = seed_escalation(
             connection,

@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.agents.contracts import Rung, role_dir
-from shikiru.clock import SystemClock
 from shikiru.domain.escalation import EscalationStatus, options_for
 from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
@@ -33,6 +32,7 @@ from shikiru.store.escalations import EscalationStore, fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.engine import build_raiser
 from tests.support.factories import make_verdict
 from tests.support.store import seed_task
@@ -80,7 +80,7 @@ def test_every_reason_renders_a_packet_with_its_evidence_and_exactly_one_star() 
 async def test_raise_escalation_writes_the_packet_and_opens_the_escalation_row(
     connection: Connection, tmp_path: Path
 ) -> None:
-    clock = SystemClock()
+    clock = FakeClock(LONG_AGO)
     events = EventLog(connection, clock)
     runs = RunStore(connection, clock)
     escalations_store = EscalationStore(connection, clock)
@@ -151,7 +151,7 @@ async def test_restored_packet_uses_the_latest_typed_agent_alternatives(
     connection: Connection,
     tmp_path: Path,
 ) -> None:
-    clock = SystemClock()
+    clock = FakeClock(LONG_AGO)
     task = seed_task(connection, clock, title="Restore agent alternatives")
     reason = EscalationReason.DECISION_REQUIRED
     TaskStore(connection, clock).apply_transition(
@@ -218,7 +218,7 @@ async def _raise(
 async def test_a_failure_after_the_state_write_rolls_back_state_row_event_and_packet(
     connection: Connection, tmp_path: Path
 ) -> None:
-    clock = SystemClock()
+    clock = FakeClock(LONG_AGO)
     tasks = TaskStore(connection, clock)
     raiser = build_raiser(connection, clock, tmp_path)
     task = seed_task(connection, clock, title="State failure")
@@ -244,7 +244,7 @@ async def test_a_failure_after_the_state_write_rolls_back_state_row_event_and_pa
 async def test_an_unwritable_packet_directory_still_escalates_and_the_packet_follows_the_repair(
     connection: Connection, tmp_path: Path
 ) -> None:
-    clock = SystemClock()
+    clock = FakeClock(LONG_AGO)
     events = EventLog(connection, clock)
     raiser = build_raiser(connection, clock, tmp_path)
     task = seed_task(connection, clock, title="Packet failure")

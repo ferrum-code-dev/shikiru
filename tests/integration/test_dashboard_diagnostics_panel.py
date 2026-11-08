@@ -23,6 +23,7 @@ from shikiru.domain.events import EventKind
 from shikiru.plugins.widgets.faults import FaultCard
 from shikiru.process import ProcessIdentity
 from shikiru.store.events import EventLog
+from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS, StateReader
 from shikiru.ui.tokens import NEUTRAL_BORDER_COLOR, SAGE
 from tests.support.cells import (
     ALERT_TEXT,
@@ -51,6 +52,7 @@ from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
     from textual.pilot import Pilot
@@ -58,7 +60,7 @@ if TYPE_CHECKING:
 
     from shikiru.dashboard.app import DashboardApp
     from shikiru.dashboard.views import StateDashboardViews
-    from shikiru.store.reader import StateReader
+    from shikiru.store.database import Database
     from tests.support.store import Connection
 
 pytestmark = pytest.mark.usefixtures("colour_terminal", "connection")
@@ -79,6 +81,16 @@ _GREEN: Style = (False, SAGE)
 _AVAILABLE = DiagnosticSampleState.AVAILABLE
 _ENGINE_UPTIME_SECONDS = 3 * 3600 + 12 * 60
 _UPTIME_IDENTITY = ProcessIdentity(4321, 1_700_000_000.0)
+
+
+@pytest.fixture
+def controlled_reader(database: Database) -> Iterator[StateReader]:
+    reader = StateReader(database, FakeClock(_START))
+    try:
+        yield reader
+    finally:
+        reader.close()
+
 
 _SAMPLE = ResourceView(
     host_cpu_pct=5.0,
@@ -336,11 +348,11 @@ async def test_engine_section_shows_the_recorded_uptime_and_the_open_fault_count
 
 
 async def test_values_follow_the_resources_bar_refresh_without_any_commit_or_new_sample(
-    reader: StateReader, tmp_path: Path
+    controlled_reader: StateReader, tmp_path: Path
 ) -> None:
     services = _Services(_SAMPLE)
-    views = _views(reader, tmp_path, services)
-    panel = ProjectDiagnosticsPanel(views, reader.watch, ())
+    views = _views(controlled_reader, tmp_path, services)
+    panel = ProjectDiagnosticsPanel(views, controlled_reader.watch, ())
     async with WidgetHostApp(panel).run_test(size=_WIDE) as pilot:
         await wait_until(
             lambda: "5.0%" in _text_of(panel, RESOURCES_SECTION_ID), timeout=_WAIT_SECONDS
@@ -352,8 +364,9 @@ async def test_values_follow_the_resources_bar_refresh_without_any_commit_or_new
         assert services.samples_taken == 0
 
         await views.resources()
-        await pilot.pause()
-
+        await wait_until(
+            lambda: "42%" in _text_of(panel, RESOURCES_SECTION_ID), timeout=_WAIT_SECONDS
+        )
         assert "42%" in _text_of(panel, RESOURCES_SECTION_ID)
         assert "Running" in _text_of(panel, ENGINE_SECTION_ID)
         assert services.samples_taken == 1
@@ -465,9 +478,11 @@ def _section_lines(screen: Screen[object], section_id: str) -> list[str]:
 
 
 async def test_the_faults_section_takes_no_room_until_a_fault_is_open(
-    reader: StateReader, tmp_path: Path, connection: Connection
+    database: Database, tmp_path: Path, connection: Connection
 ) -> None:
     clock = FakeClock(_START)
+    reader_clock = FakeClock(_START)
+    reader = StateReader(database, reader_clock)
     task = seed_task(connection, clock, title="Faulty")
     project_dir = write_minimal_project(tmp_path)
     settings = load_settings(
@@ -481,16 +496,20 @@ async def test_the_faults_section_takes_no_room_until_a_fault_is_open(
         services=_Services(_SAMPLE),
         settings=settings,
     )
-    async with app.run_test(size=_POPUP) as pilot:
-        await _open_popup(app, pilot)
-        faults = app.screen.query_one("#faults")
-        await pilot.pause()
-        assert faults.region.height == 0
-        assert "Faults None open" in " ".join(_text_of_engine(app).split())
-        _record_fault(connection, clock, task.id)
-        await wait_until(lambda: faults.region.height > 0, timeout=_WAIT_SECONDS)
-        assert _faults_lines(app)[1] == "Faults \N{MIDDLE DOT} 1"
-        assert "Faults 1 open" in " ".join(_text_of_engine(app).split())
+    try:
+        async with app.run_test(size=_POPUP) as pilot:
+            await _open_popup(app, pilot)
+            faults = app.screen.query_one("#faults")
+            assert faults.region.height == 0
+            assert "Faults None open" in " ".join(_text_of_engine(app).split())
+            await wait_until(reader_clock.has_pending_sleep, timeout=_WAIT_SECONDS)
+            _record_fault(connection, clock, task.id)
+            reader_clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
+            await wait_until(lambda: faults.region.height > 0, timeout=_WAIT_SECONDS)
+            assert _faults_lines(app)[1] == "Faults \N{MIDDLE DOT} 1"
+            assert "Faults 1 open" in " ".join(_text_of_engine(app).split())
+    finally:
+        reader.close()
 
 
 def _text_of_engine(app: DashboardApp) -> str:

@@ -803,7 +803,7 @@ async def test_standalone_project_actions_start_stop_and_report_start_failure(
         services.close()
 
 
-def _seed_dashboard_decision_state(root: Path, clock: SystemClock) -> tuple[StateReader, str]:
+def _seed_dashboard_decision_state(root: Path, clock: FakeClock) -> tuple[StateReader, str]:
     database = Database(state_db_path(root))
     connection = database.connect()
     task = seed_task(connection, clock, title=_TASK_IN_DECISION, mode=Mode.IMPLEMENT)
@@ -958,7 +958,7 @@ async def test_cli_dashboard_survives_engine_stop_and_restarts_through_the_same_
     config = project_config_path(prepared.root)
     config.parent.mkdir(exist_ok=True)
     config.write_text(_LIFECYCLE_CONFIG)
-    clock = SystemClock()
+    clock = FakeClock(_START)
     state_reader, task_id = _seed_dashboard_decision_state(prepared.root, clock)
     lifecycle = build_lifecycle()
     lock_path = engine_lock_path(prepared.root)

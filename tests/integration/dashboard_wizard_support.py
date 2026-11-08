@@ -15,7 +15,6 @@ from shikiru.agents.registry import AgentRegistry
 from shikiru.agents.settings import AgentOptionsError, AgentSetting, SettingKind
 from shikiru.bootstrap import build_doctor, build_project_detectors, run_init_wizard
 from shikiru.cli.render import doctor_renderable
-from shikiru.clock import SystemClock
 from shikiru.config.loader import load_default_orchestration, load_settings
 from shikiru.dashboard.wizard import InitWizardApp
 from shikiru.domain.ladder import pick_rung
@@ -27,6 +26,7 @@ from shikiru.operator.probe import AgentProbe
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.dashboard import focus
 from tests.support.factories import make_task
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
@@ -178,7 +178,7 @@ async def app_with_agents(
     orchestration_defaults: OrchestrationConfig | None = None,
 ) -> InitWizardApp:
     runner = SubprocessRunner()
-    clock = SystemClock()
+    clock = FakeClock(LONG_AGO)
     registry = AgentRegistry()
     for name, factory in agents.items():
         registry.register(name, factory)
@@ -221,7 +221,7 @@ async def app_with_agents(
 
 async def app_with_cow_probe_error(root: Path) -> InitWizardApp:
     runner = SubprocessRunner()
-    clock = SystemClock()
+    clock = FakeClock(LONG_AGO)
     registry = AgentRegistry()
     registry.register("fake", create_fake_agent)
     detectors = ProjectDetectors(

@@ -9,10 +9,10 @@ import pytest
 
 from shikiru.agents.contracts import AgentContext, Rung, TurnSpec, module_argv
 from shikiru.agents.sdk.turn import TurnProcessResult
-from shikiru.clock import SystemClock
 from shikiru.plugins.agents.claude.agent import create
 from shikiru.plugins.agents.claude.hook import STOP_REASON
 from shikiru.process import SubprocessRunner
+from tests.support.clock import LONG_AGO, FakeClock
 
 _FIXTURES_DIR = Path(__file__).parents[1] / "fixtures" / "agents" / "claude"
 _HOOK_MODULE = "shikiru.plugins.agents.claude.hook"
@@ -90,7 +90,7 @@ def test_only_the_plugin_marker_or_a_context_failure_continues_the_turn(
         session_id=None,
         usage=None,
     )
-    agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+    agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(LONG_AGO)))
     sequence = agent.process_sequence(spec)
     command = sequence.start(spec)
     stderr_text = (_FIXTURES_DIR / stderr).read_text() if stderr is not None else ""

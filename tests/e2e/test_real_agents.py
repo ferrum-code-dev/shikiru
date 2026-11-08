@@ -684,8 +684,8 @@ async def _wait_for_implement_turn(project: PreparedProject) -> tuple[ProcessIde
     pid_path = run_dir(project.root, TASK_ID) / Role.IMPLEMENTER.value / TURN_PID_NAME
     connection = Database(state_db_path(project.root)).connect_readonly()
     try:
-        events = EventLog(connection, SystemClock())
-        runs = RunStore(connection, SystemClock())
+        events = EventLog(connection, CLOCK)
+        runs = RunStore(connection, CLOCK)
 
         def implementing() -> bool:
             started = any(
@@ -722,7 +722,7 @@ def _assert_same_implementer_session(project: PreparedProject, session_id: str) 
     try:
         runs = [
             run
-            for run in RunStore(connection, SystemClock()).for_task(TASK_ID)
+            for run in RunStore(connection, CLOCK).for_task(TASK_ID)
             if run.role is Role.IMPLEMENTER
         ]
     finally:
@@ -1153,7 +1153,7 @@ async def _wait_for_agent_tui(
 def _taken_over_agent(project: PreparedProject) -> str:
     connection = Database(state_db_path(project.root)).connect_readonly()
     try:
-        run = RunStore(connection, SystemClock()).get_taken_over(TASK_ID, Role.IMPLEMENTER)
+        run = RunStore(connection, CLOCK).get_taken_over(TASK_ID, Role.IMPLEMENTER)
     finally:
         connection.close()
     _require(run is not None, "the implementer run is not taken over")
@@ -1183,7 +1183,7 @@ async def _wait_second_task_done_while_first_held(
 def _task_events(project: PreparedProject, *kinds: EventKind) -> list[Event]:
     connection = Database(state_db_path(project.root)).connect_readonly()
     try:
-        return EventLog(connection, SystemClock()).since(0, kinds=kinds, task_id=TASK_ID)
+        return EventLog(connection, CLOCK).since(0, kinds=kinds, task_id=TASK_ID)
     finally:
         connection.close()
 

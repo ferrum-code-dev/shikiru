@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 import pytest
 from fake_agent.scripted import FAKE_CHANGE_FILENAME
 
-from shikiru.clock import SystemClock
 from shikiru.config.settings import RepoConfig
 from shikiru.domain.commands import Resolve, RetryResolution
 from shikiru.domain.events import EventKind
@@ -143,8 +142,9 @@ async def _task_with_worktree(
     title: str = "merge task",
     base: str = "main",
 ):
-    task = seed_task(connection, SystemClock(), title=title, mode=Mode.IMPLEMENT)
-    tasks = TaskStore(connection, SystemClock())
+    clock = FakeClock(TASK_CREATED_AT)
+    task = seed_task(connection, clock, title=title, mode=Mode.IMPLEMENT)
+    tasks = TaskStore(connection, clock)
     transition = Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
     tasks.apply_transition(task.id, transition)
     state = await task_root_builder(_RUNNER, project_root, RepoConfig(base=base)).build(
@@ -159,15 +159,16 @@ async def _task_with_worktree(
 async def test_local_merge_fast_forwards_base_and_reports_commits(
     connection: Connection, tmp_path: Path
 ) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
     project_root = await _repo(tmp_path / "project")
     task, state = await _task_with_worktree(connection, project_root)
     task_root = project_root / ".shikiru" / "worktrees" / task.id
     (task_root / "README.md").write_text("task\n")
     await commit_all(_RUNNER, task_root, "task change")
 
-    result = await _local_merge(
-        project_root, SystemClock(), 1, EventLog(connection, SystemClock())
-    ).merge(_request(task, state, task_root))
+    result = await _local_merge(project_root, clock, 1, EventLog(connection, clock)).merge(
+        _request(task, state, task_root)
+    )
 
     assert (project_root / "README.md").read_text() == "task\n"
     assert result.commits
@@ -222,6 +223,7 @@ async def test_local_merge_preserves_conventional_task_commit_messages_across_re
 async def test_local_merge_updates_a_base_branch_that_is_not_checked_out(
     connection: Connection, tmp_path: Path
 ) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
     project_root = await _repo(tmp_path / "project")
     await _RUNNER.run(["git", "branch", "release"], cwd=project_root, timeout=10, check=True)
     task, state = await _task_with_worktree(connection, project_root, base="release")
@@ -229,9 +231,9 @@ async def test_local_merge_updates_a_base_branch_that_is_not_checked_out(
     (task_root / "README.md").write_text("release task\n")
     await commit_all(_RUNNER, task_root, "release change")
 
-    result = await _local_merge(
-        project_root, SystemClock(), 1, EventLog(connection, SystemClock())
-    ).merge(_request(task, state, task_root))
+    result = await _local_merge(project_root, clock, 1, EventLog(connection, clock)).merge(
+        _request(task, state, task_root)
+    )
 
     assert result.commits
     assert await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(
@@ -381,6 +383,7 @@ async def test_local_merge_waits_for_a_dirty_directory_ancestor(
 async def test_local_merge_blocks_when_base_moved_past_the_rebased_branch(
     connection: Connection, tmp_path: Path
 ) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
     project_root = await _repo(tmp_path / "project")
     task, state = await _task_with_worktree(connection, project_root)
     task_root = project_root / ".shikiru" / "worktrees" / task.id
@@ -393,9 +396,9 @@ async def test_local_merge_blocks_when_base_moved_past_the_rebased_branch(
     )
 
     with pytest.raises(IntegrationBlocked):
-        await _local_merge(
-            project_root, SystemClock(), 0, EventLog(connection, SystemClock())
-        ).merge(_request(task, state, task_root))
+        await _local_merge(project_root, clock, 0, EventLog(connection, clock)).merge(
+            _request(task, state, task_root)
+        )
 
     assert (
         await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(project_root, "main")
@@ -406,6 +409,7 @@ async def test_local_merge_blocks_when_base_moved_past_the_rebased_branch(
 async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     connection: Connection, tmp_path: Path
 ) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
     project_root = await _repo(tmp_path / "project")
     task, state = await _task_with_worktree(connection, project_root, title="conflict task")
     task_root = project_root / ".shikiru" / "worktrees" / task.id
@@ -414,8 +418,8 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     await commit_all(_RUNNER, task_root, "task change")
     (project_root / "README.md").write_text("main\n")
     await commit_all(_RUNNER, project_root, "main change")
-    events = EventLog(connection, SystemClock())
-    tasks = TaskStore(connection, SystemClock())
+    events = EventLog(connection, clock)
+    tasks = TaskStore(connection, clock)
     tasks.set_window(task.id, "window")
     task = tasks.get(task.id)
     assert task is not None
@@ -449,7 +453,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
 
     result = await Integrator(
         git=Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT),
-        strategy=_local_merge(project_root, SystemClock(), 1, events),
+        strategy=_local_merge(project_root, clock, 1, events),
         base_refs=LocalBaseRefs(),
         lock=asyncio.Lock(),
         project_root=project_root,
@@ -458,7 +462,7 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
         finish_task=finish_task,
     ).run(task, resolve, IntegrationMetadata(subject="feat: change", summary="stale summary"))
 
-    final = TaskStore(connection, SystemClock()).get(task.id)
+    final = TaskStore(connection, clock).get(task.id)
     assert final is not None
     assert final.status is Status.DONE
     assert final.summary == "accepted summary"
@@ -481,18 +485,22 @@ async def test_integrator_rebases_conflict_then_finishes_terminal_state(
     }
 
 
-def _integrator(connection: Connection, project_root: Path) -> Integrator:
+def _integrator(
+    connection: Connection, project_root: Path, clock: Clock | None = None
+) -> Integrator:
+    clock = clock or FakeClock(TASK_CREATED_AT)
+
     async def keep_worktree(task: Task) -> None:
         del task
 
     return Integrator(
         git=Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT),
-        strategy=_local_merge(project_root, SystemClock(), 0, EventLog(connection, SystemClock())),
+        strategy=_local_merge(project_root, clock, 0, EventLog(connection, clock)),
         base_refs=LocalBaseRefs(),
         lock=asyncio.Lock(),
         project_root=project_root,
-        tasks=TaskStore(connection, SystemClock()),
-        events=EventLog(connection, SystemClock()),
+        tasks=TaskStore(connection, clock),
+        events=EventLog(connection, clock),
         finish_task=keep_worktree,
     )
 
@@ -524,6 +532,7 @@ async def _dirty_task_worktree(
 async def test_integrator_refuses_uncommitted_work_and_keeps_the_worktree(
     connection: Connection, tmp_path: Path, *, tracked: bool, ahead: bool
 ) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
     project_root = await _repo(tmp_path / "project")
     task, task_root, output = await _dirty_task_worktree(
         connection, project_root, tracked=tracked, ahead=ahead
@@ -539,7 +548,7 @@ async def test_integrator_refuses_uncommitted_work_and_keeps_the_worktree(
 
     assert refused.value.reason is EscalationReason.UNCOMMITTED_WORK
     assert output.name in str(refused.value)
-    final = TaskStore(connection, SystemClock()).get(task.id)
+    final = TaskStore(connection, clock).get(task.id)
     assert final is not None
     assert final.status is Status.INTEGRATING
     assert output.read_text() == "uncommitted\n"
@@ -561,6 +570,7 @@ _LEAVE_BRANCH = {
 async def test_integrator_refuses_a_worktree_that_left_its_task_branch_and_keeps_its_commits(
     connection: Connection, tmp_path: Path, leave: list[str]
 ) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
     project_root = await _repo(tmp_path / "project")
     task, state = await _task_with_worktree(connection, project_root)
     task_root = project_root / ".shikiru" / "worktrees" / task.id
@@ -580,7 +590,7 @@ async def test_integrator_refuses_a_worktree_that_left_its_task_branch_and_keeps
     assert refused.value.reason is EscalationReason.OFF_TASK_BRANCH
     assert state.branch in str(refused.value)
     assert work_sha[:7] in str(refused.value)
-    final = TaskStore(connection, SystemClock()).get(task.id)
+    final = TaskStore(connection, clock).get(task.id)
     assert final is not None
     assert final.status is Status.INTEGRATING
     assert (
@@ -636,6 +646,7 @@ async def test_a_task_whose_agent_left_its_branch_never_reaches_done_and_keeps_i
 async def test_integrator_finishes_a_clean_no_op_task_as_done(
     connection: Connection, tmp_path: Path
 ) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
     project_root = await _repo(tmp_path / "project")
     task, _ = await _task_with_worktree(connection, project_root)
 
@@ -645,7 +656,7 @@ async def test_integrator_finishes_a_clean_no_op_task_as_done(
         IntegrationMetadata(subject="feat: change", summary="nothing to change"),
     )
 
-    final = TaskStore(connection, SystemClock()).get(task.id)
+    final = TaskStore(connection, clock).get(task.id)
     assert final is not None
     assert final.status is Status.DONE
     assert result.commits == ()
@@ -1245,6 +1256,7 @@ _SCENARIO_WAIT_SECONDS = 10.0
 async def test_a_rebase_that_timed_out_is_undone_and_not_mistaken_for_a_conflict(
     connection: Connection, tmp_path: Path
 ) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
     project_root = await _repo(tmp_path / "project")
     task, state = await _task_with_worktree(connection, project_root)
     task_root = project_root / ".shikiru" / "worktrees" / task.id
@@ -1259,7 +1271,7 @@ async def test_a_rebase_that_timed_out_is_undone_and_not_mistaken_for_a_conflict
     )
     hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
     git = Git(_RUNNER, command_timeout=_SHORT_GIT_TIMEOUT_SECONDS)
-    events = EventLog(connection, SystemClock())
+    events = EventLog(connection, clock)
     conflicts_resolved: list[str] = []
 
     async def resolve(
@@ -1277,11 +1289,11 @@ async def test_a_rebase_that_timed_out_is_undone_and_not_mistaken_for_a_conflict
     def integrator() -> Integrator:
         return Integrator(
             git=git,
-            strategy=_local_merge(project_root, SystemClock(), 0, events),
+            strategy=_local_merge(project_root, clock, 0, events),
             base_refs=LocalBaseRefs(),
             lock=asyncio.Lock(),
             project_root=project_root,
-            tasks=TaskStore(connection, SystemClock()),
+            tasks=TaskStore(connection, clock),
             events=events,
             finish_task=keep_worktree,
         )
@@ -1316,18 +1328,19 @@ class _RebaseScenario:
     conflicts_resolved: list[str]
 
     def integrator(self) -> Integrator:
-        events = EventLog(self.connection, SystemClock())
+        clock = FakeClock(TASK_CREATED_AT)
+        events = EventLog(self.connection, clock)
 
         async def keep_worktree(task_value: Task) -> None:
             del task_value
 
         return Integrator(
             git=self.git,
-            strategy=_local_merge(self.project_root, SystemClock(), 0, events),
+            strategy=_local_merge(self.project_root, clock, 0, events),
             base_refs=LocalBaseRefs(),
             lock=asyncio.Lock(),
             project_root=self.project_root,
-            tasks=TaskStore(self.connection, SystemClock()),
+            tasks=TaskStore(self.connection, clock),
             events=events,
             finish_task=keep_worktree,
         )

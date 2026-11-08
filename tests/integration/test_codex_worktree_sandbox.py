@@ -8,10 +8,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.agents.contracts import AgentContext, Rung, TurnSpec
-from shikiru.clock import SystemClock
 from shikiru.plugins.agents.codex.agent import create
 from shikiru.plugins.agents.codex.options import CODEX_HOME_ENV_VAR, WRITABLE_ROOTS_CONFIG
 from shikiru.process import SubprocessRunner
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.git_repo import commit_all, init_repo, run_git
 
 if TYPE_CHECKING:
@@ -65,7 +65,7 @@ def _parse_roots(capture: Path) -> set[Path]:
 
 
 async def _writable_roots(tmp_path: Path, worktree: Path, session_id: str | None) -> set[Path]:
-    agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+    agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(LONG_AGO)))
     await _drain(await agent.start_turn(_spec(tmp_path, worktree, session_id)))
     return _parse_roots(tmp_path / "argv")
 

@@ -10,7 +10,6 @@ import pytest
 from textual.geometry import Region, Size
 from textual.widgets import Static, TextArea
 
-from shikiru.clock import SystemClock
 from shikiru.dashboard.actions_list import ActionsListScreen
 from shikiru.dashboard.extra_details import ExtraDetailsScreen
 from shikiru.dashboard.resolution import ResolutionDrafts, ResolutionScreen
@@ -825,7 +824,7 @@ async def test_every_entry_route_opens_the_resolution_screen_without_dispatching
     route: str,
 ) -> None:
     project_dir = write_minimal_project(tmp_path)
-    clock = SystemClock()
+    clock = FakeClock(_START)
     reader = StateReader(database, clock)
     request.addfinalizer(reader.close)
     task = seed_task(connection, clock, title="Entry route")

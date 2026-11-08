@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.clock import SystemClock
 from shikiru.domain.events import Event, EventKind
 from shikiru.paths import TURNS_DIR_NAME, engine_log_path, run_dir, state_db_path
 from shikiru.process import SubprocessRunner
@@ -54,8 +53,9 @@ async def _project(root: Path) -> Path:
 def _seed(root: Path, *messages: str) -> None:
     connection = Database(state_db_path(root)).connect()
     try:
-        seed_task(connection, SystemClock(), title="the task")
-        events = EventLog(connection, SystemClock())
+        clock = FakeClock(TASK_CREATED_AT)
+        seed_task(connection, clock, title="the task")
+        events = EventLog(connection, clock)
         for message in messages:
             events.append(EventKind.NUDGE, task_id="T-1", message=message)
     finally:

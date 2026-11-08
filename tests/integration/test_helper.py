@@ -8,7 +8,6 @@ import pytest
 from fake_agent.agent import create
 
 from shikiru.agents.contracts import AgentContext, FailureKind, HeadlessAgent, Rung
-from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.domain.reports import ReportKind, TriageReport
 from shikiru.errors import ConfigError
@@ -40,13 +39,14 @@ _VALID_TRIAGE: dict[str, Any] = {
 }
 
 
-def _agent(asks: list[dict[str, Any]]) -> Agent:
-    context = AgentContext(options={"asks": asks}, runner=SubprocessRunner(), clock=SystemClock())
+def _agent(asks: list[dict[str, Any]], clock: Clock) -> Agent:
+    context = AgentContext(options={"asks": asks}, runner=SubprocessRunner(), clock=clock)
     return create(context)
 
 
 async def test_rebuild_report_accepts_a_valid_answer(tmp_path: Path) -> None:
-    helper = Helper([HelperEntry(HELPER_RUNG, _agent([_VALID_TRIAGE]))], SystemClock())
+    clock = FakeClock(TASK_CREATED_AT)
+    helper = Helper([HelperEntry(HELPER_RUNG, _agent([_VALID_TRIAGE], clock))], clock)
 
     result = await helper.rebuild_report(
         ReportKind.TRIAGE,
@@ -61,9 +61,10 @@ async def test_rebuild_report_accepts_a_valid_answer(tmp_path: Path) -> None:
 
 
 async def test_rebuild_report_returns_an_explicit_unrecoverable_result(tmp_path: Path) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
     helper = Helper(
-        [HelperEntry(HELPER_RUNG, _agent([{"unrecoverable": "the transcript is empty"}]))],
-        SystemClock(),
+        [HelperEntry(HELPER_RUNG, _agent([{"unrecoverable": "the transcript is empty"}], clock))],
+        clock,
     )
 
     result = await helper.rebuild_report(ReportKind.TRIAGE, "", "", cwd=tmp_path, timeout=_TIMEOUT)
@@ -75,14 +76,15 @@ async def test_rebuild_report_returns_an_explicit_unrecoverable_result(tmp_path:
 async def test_classify_failure_validates_and_preserves_the_classification(
     tmp_path: Path,
 ) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
     helper = Helper(
         [
             HelperEntry(
                 HELPER_RUNG,
-                _agent([{"kind": "quota", "confidence": 0.91, "resets_at": None}]),
+                _agent([{"kind": "quota", "confidence": 0.91, "resets_at": None}], clock),
             )
         ],
-        SystemClock(),
+        clock,
     )
 
     result = await helper.classify_failure(
@@ -97,14 +99,15 @@ async def test_classify_failure_validates_and_preserves_the_classification(
 async def test_classify_failure_marks_an_ambiguous_answer_unrecoverable(
     tmp_path: Path,
 ) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
     helper = Helper(
         [
             HelperEntry(
                 HELPER_RUNG,
-                _agent([{"kind": "not-a-failure-kind", "confidence": 0.9}]),
+                _agent([{"kind": "not-a-failure-kind", "confidence": 0.9}], clock),
             )
         ],
-        SystemClock(),
+        clock,
     )
 
     result = await helper.classify_failure(
@@ -253,7 +256,7 @@ def test_helper_requires_headless_support() -> None:
                     Rung(agent="codex", model="sol", effort="high"), _AgentWithoutHeadless()
                 ),
             ],
-            SystemClock(),
+            FakeClock(TASK_CREATED_AT),
         )
 
 

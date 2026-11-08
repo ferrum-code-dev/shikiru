@@ -20,7 +20,6 @@ from shikiru.agents.contracts import (
     billing_declaration_for,
 )
 from shikiru.agents.registry import AgentRegistry
-from shikiru.clock import SystemClock
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.tasks import Role
 from shikiru.engine.agents import AgentPool
@@ -30,7 +29,7 @@ from shikiru.plugins.agents.claude.agent import create as create_claude_agent
 from shikiru.plugins.agents.codex.agent import create as create_codex_agent
 from shikiru.process import SubprocessRunner
 from shikiru.workspace.roots import run_dir
-from tests.support.clock import FakeClock
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.engine import FAKE_RUNG
 from tests.support.factories import make_settings
 
@@ -122,7 +121,7 @@ def test_real_agent_factories_validate_and_normalize_billing_options(
     factory: AgentFactory,
 ) -> None:
     for options, expected in _EXPECTED_OPTIONS:
-        agent = factory(AgentContext(options, SubprocessRunner(), SystemClock()))
+        agent = factory(AgentContext(options, SubprocessRunner(), FakeClock(LONG_AGO)))
         assert billing_declaration_for(agent) == expected
 
     with pytest.raises(ConfigError):
@@ -130,7 +129,7 @@ def test_real_agent_factories_validate_and_normalize_billing_options(
             AgentContext(
                 {"billing_mode": _INVALID_BILLING_MODE},
                 SubprocessRunner(),
-                SystemClock(),
+                FakeClock(LONG_AGO),
             )
         )
 

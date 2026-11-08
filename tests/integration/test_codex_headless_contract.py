@@ -49,7 +49,6 @@ from shikiru.agents.testing import (
     ReplayedProcess,
 )
 from shikiru.agents.testing.resume import RESUME_NONCE_PROMPT, RESUME_RECALL_PROMPT
-from shikiru.clock import SystemClock
 from shikiru.domain.recovery import (
     QUOTA_MARGIN,
     Escalate,
@@ -648,7 +647,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
         self, tmp_path: Path, operator_codex_home: Path
     ) -> None:
         spec = self.build_spec(tmp_path, resume_session_id=None)
-        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        agent = create(
+            AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
+        )
 
         command = agent.process_sequence(spec, git_dirs=(tmp_path / ".git",)).start(spec)
 
@@ -814,7 +815,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
         _install_fake_codex(tmp_path / "bin")
         monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
         monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture_path))
-        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        agent = create(
+            AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
+        )
         headless = agent.headless()
         assert headless is not None
 
@@ -852,7 +855,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
         _install_fake_codex(tmp_path / "bin")
         monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
         monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture_path))
-        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        agent = create(
+            AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
+        )
 
         checks = await agent.doctor(())
 
@@ -888,7 +893,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
         _install_fake_codex(tmp_path / "bin")
         monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
         monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(tmp_path / "doctor-environment.txt"))
-        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        agent = create(
+            AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
+        )
 
         known = await agent.doctor((_MODEL,))
         unknown = await agent.doctor((_MODEL, "unlisted-model"))
@@ -914,7 +921,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
             ),
         )
         spec = _with_model(self.build_spec(tmp_path, resume_session_id=None), _LIVE_MODEL)
-        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        agent = create(
+            AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
+        )
 
         checks = await agent.doctor((_LIVE_MODEL,))
         context_check = next(check for check in checks if check.name == "context_window")
@@ -966,7 +975,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
             'base_url = "https://openrouter.example.invalid/api/v1"\n',
             encoding="utf-8",
         )
-        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        agent = create(
+            AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
+        )
 
         catalog = await agent.model_catalog()
         checks = await agent.doctor(("gpt-hidden",))
@@ -993,7 +1004,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
         monkeypatch.setenv("PATH", f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}")
         monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(tmp_path / "catalog-environment.txt"))
         monkeypatch.setenv(_CODEX_MODEL_CATALOG_JSON_ENV, "not-json")
-        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        agent = create(
+            AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
+        )
 
         catalog = await agent.model_catalog()
 
@@ -1033,7 +1046,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
             'base_url = "https://openrouter.example.invalid/api/v1"\n',
             encoding="utf-8",
         )
-        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        agent = create(
+            AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
+        )
 
         catalog = await agent.model_catalog()
 
@@ -1067,7 +1082,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
         capture = tmp_path / "catalog-environment.txt"
         monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(capture))
         agent = create(
-            AgentContext(options={"args": args}, runner=SubprocessRunner(), clock=SystemClock())
+            AgentContext(
+                options={"args": args}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW)
+            )
         )
 
         catalog = await agent.model_catalog()
@@ -1099,7 +1116,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
                 }
             ),
         )
-        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        agent = create(
+            AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
+        )
 
         catalog = await agent.model_catalog()
         checks = await agent.doctor(("gpt-6-luna",))
@@ -1126,7 +1145,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
         )
         spec = _with_model(self.build_spec(tmp_path, resume_session_id=None), _LIVE_MODEL)
         await _init_live_repo(spec.cwd)
-        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        agent = create(
+            AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
+        )
 
         turn = await agent.start_turn(spec)
         signals = [signal async for signal in turn.signals()]
@@ -1158,7 +1179,9 @@ class TestCodexHeadlessContract(AgentContractSuite):
         monkeypatch.setenv(_CODEX_ENV_CAPTURE, str(tmp_path / "doctor-environment.txt"))
         monkeypatch.setenv(_CODEX_BUNDLED_MODELS_JSON_ENV, catalog_output)
         monkeypatch.setenv(_CODEX_BUNDLED_MODELS_EXIT_CODE_ENV, str(exit_code))
-        agent = create(AgentContext(options={}, runner=SubprocessRunner(), clock=SystemClock()))
+        agent = create(
+            AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
+        )
 
         checks = await agent.doctor((_LIVE_MODEL,))
         context_check = next(check for check in checks if check.name == "context_window")

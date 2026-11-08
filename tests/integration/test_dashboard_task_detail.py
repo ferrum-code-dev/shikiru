@@ -23,7 +23,6 @@ from shikiru.agents.contracts import (
     Rung,
     Usage,
 )
-from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import RepoConfig
 from shikiru.dashboard.actions_list import ActionsListScreen
@@ -311,10 +310,9 @@ def _dashboard_app(
     navigate_task_window: NavigateTaskWindow | None = None,
     navigate_home: NavigateHome | None = None,
     open_palette_context: OpenPaletteContext | None = None,
-    clock: Clock | None = None,
+    clock: Clock,
 ) -> DashboardApp:
     settings = load_settings(project_root)
-    clock = clock or SystemClock()
     return DashboardApp(
         focus_task=focus_task,
         views=state_views(
@@ -543,7 +541,7 @@ async def _navigation_context(
     window_current = await tmux.window_id(pane_current)
     task_store.set_window(task.id, window_old)
     task_store.set_panes(task.id, {Role.LEADER: pane_old, Role.IMPLEMENTER: pane_old})
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     settings = load_settings(project_root)
     queries = OperatorQueries(
         reader,
@@ -818,13 +816,14 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
     migrated_connection = database.connect()
     migrated_connection.close()
 
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     try:
         app = _dashboard_app(
             reader,
             project_root,
             focus_task=task.id,
             widget_names=TASK_DETAIL_WIDGETS,
+            clock=clock,
         )
         async with app.run_test(size=(90, 42)) as pilot:
             await pilot.pause()
@@ -1950,13 +1949,14 @@ async def test_enter_keeps_inline_selection_and_popup_close_restores_browser_scr
     clock = FakeClock(START)
     for index in range(30):
         seed_task(connection, clock, title=f"Browser task {index}")
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     try:
         app = _dashboard_app(
             reader,
             project_root,
             focus_task=None,
             widget_names=TASK_DETAIL_WIDGETS,
+            clock=clock,
         )
         async with app.run_test(size=(80, 40)) as pilot:
             list_view = app.query_one("#task-browser-list", ListView)
@@ -2019,7 +2019,7 @@ async def test_detail_ctrl_p_carries_the_task_and_its_current_role(
         task.id,
         Transition.stay(current_task, step=Step.VERIFY, status=Status.RUNNING),
     )
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     opened: list[PaletteRequest] = []
 
     async def open_palette_context(request: PaletteRequest) -> None:
@@ -2032,6 +2032,7 @@ async def test_detail_ctrl_p_carries_the_task_and_its_current_role(
             focus_task=task.id,
             widget_names=TASK_DETAIL_WIDGETS,
             open_palette_context=open_palette_context,
+            clock=clock,
         )
         async with app.run_test(size=(80, 40)) as pilot:
             await wait_until(
@@ -2366,7 +2367,8 @@ async def test_resume_waits_for_every_hand_back_and_keeps_the_other_holds_until_
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task, runs, tasks, queue, leader, implementer = _seed_owned_task(connection, clock)
-    reader = StateReader(database, SystemClock())
+    reader_clock = FakeClock(START)
+    reader = StateReader(database, reader_clock)
 
     try:
         app = _operator_task_app(reader, project_root, task.id, queue, clock)
@@ -2391,9 +2393,11 @@ async def test_resume_waits_for_every_hand_back_and_keeps_the_other_holds_until_
             )
             assert isinstance(first_command.command, HandBack)
             assert first_command.command.role is Role.LEADER
+            await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             runs.mark_live(leader.id)
             tasks.set_holds(task.id, frozenset({Hold.PAUSED, Hold.INTERVENTION}))
             queue.mark_done(first_command.id, {"role": Role.LEADER.value})
+            reader_clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
             await wait_until(
                 lambda: (
                     "Recorded operator handoff Implementer" in _text(ownership)
@@ -2426,8 +2430,10 @@ async def test_resume_waits_for_every_hand_back_and_keeps_the_other_holds_until_
             )
             assert isinstance(second_command.command, HandBack)
             assert second_command.command.role is Role.IMPLEMENTER
+            await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             runs.mark_live(implementer.id)
             queue.mark_done(second_command.id, {"role": Role.IMPLEMENTER.value})
+            reader_clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
             await wait_until(
                 lambda: (
                     "Recorded operator handoff" not in _text(ownership)
@@ -2443,8 +2449,10 @@ async def test_resume_waits_for_every_hand_back_and_keeps_the_other_holds_until_
             assert task_before_resume is not None
             assert task_before_resume.holds == {Hold.PAUSED, Hold.INTERVENTION}
 
+            await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
             tasks.set_holds(task.id, frozenset())
             queue.mark_done(resume_command.id)
+            reader_clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
             await wait_until(lambda: not _text(ownership), timeout=UI_WAIT_SECONDS)
     finally:
         reader.close()
@@ -2463,7 +2471,7 @@ async def test_resume_availability_includes_an_intervention_only_hold(
     queue = CommandQueue(connection, clock)
     for submitted in queue.pending():
         queue.mark_done(submitted.id)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
 
     try:
         app = _operator_task_app(reader, project_root, task.id, queue, clock)
@@ -2513,13 +2521,14 @@ async def test_fixed_task_view_shows_no_project_widgets_and_keeps_workspace_reac
         return list(registered)
 
     monkeypatch.setattr(registry_module, "entry_points", entry_points_with_extension)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     try:
         app = _dashboard_app(
             reader,
             project_root,
             focus_task=focused.id,
             widget_names=["queue", "dialogue", "usage", EXTENSION_WIDGET],
+            clock=clock,
         )
         async with app.run_test(size=(36, 24)) as pilot:
             identity = app.query_one("#task-detail-identity", Static)
@@ -2627,7 +2636,7 @@ async def test_each_fold_opens_by_key_or_click_without_creating_commands(
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Fold target", priority=5)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     queue = CommandQueue(connection, clock)
     pending_before = queue.pending()
 
@@ -2730,7 +2739,7 @@ async def test_blocker_evidence_fold_is_closed_by_default_and_opens_closes_by_ke
     dependency = seed_task(connection, clock, title="Add database")
     blocked = seed_task(connection, clock, title="Add admin page", depends_on=(dependency.id,))
     TaskStore(connection, clock).set_wait_reason(blocked.id, WaitReason.DEPENDENCY)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, clock)
     queue = CommandQueue(connection, clock)
     by_click = _SectionCase(
         DetailsSection.BLOCKER_EVIDENCE, TASK_VIEW_BLOCKER_EVIDENCE, by_click=True
@@ -2777,11 +2786,12 @@ async def test_escape_steps_from_home_inspector_fold_list_to_header_to_cleared_s
     tmp_path: Path,
 ) -> None:
     project_root = write_minimal_project(tmp_path)
-    task = seed_task(connection, SystemClock(), title="Escape levels target")
-    reader = StateReader(database, SystemClock())
+    clock = FakeClock(START)
+    task = seed_task(connection, clock, title="Escape levels target")
+    reader = StateReader(database, clock)
     try:
         app = _dashboard_app(
-            reader, project_root, focus_task=None, widget_names=TASK_DETAIL_WIDGETS
+            reader, project_root, focus_task=None, widget_names=TASK_DETAIL_WIDGETS, clock=clock
         )
         async with app.run_test(size=(120, 40)) as pilot:
             base = await _open_escape_base(app, pilot, task.id)

@@ -12,7 +12,6 @@ from rich.cells import cell_len
 from textual.widgets import Static
 
 from shikiru.agents.contracts import Rung
-from shikiru.clock import SystemClock
 from shikiru.dashboard.blocker_rows import BLOCKERS_LABEL
 from shikiru.dashboard.detail import (
     TASK_DETAIL_BRIEFING,
@@ -233,7 +232,7 @@ async def test_task_description_comes_first_with_criteria_as_a_list_and_no_proje
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Described", request="Make the parser strict")
     _write_triage(project_root, task, ["rejects bad input", "keeps good input"])
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         task.id,
@@ -297,7 +296,7 @@ async def test_description_lists_triage_criteria_else_the_request_heading_else_t
     )
     if triage_criteria is not None:
         _write_triage(project_root, task, triage_criteria)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         task.id,
@@ -347,7 +346,7 @@ async def test_dependencies_align_colour_a_cancelled_blocker_and_open_on_enter(
     async def open_task_detail(task_id: str) -> None:
         opened.append(task_id)
 
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     context = replace(
         widget_context(reader, project_root, clock), open_task_detail=open_task_detail
     )
@@ -474,7 +473,7 @@ async def test_blocker_headline_has_an_amber_glyph_and_normal_cause_with_grey_de
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task_id, cause = _seed_blocked_task(connection, clock, blocker)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         task_id,
@@ -515,7 +514,7 @@ async def test_a_cancelled_blocker_paints_the_blocker_glyph_and_headline_in_aler
         dependency.id, Transition.stay(dependency, step=None, status=Status.CANCELLED)
     )
     cause = f"Waiting on dependency · {dependency.id} cancelled"
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         blocked.id,
@@ -541,7 +540,7 @@ async def test_a_task_without_a_blocker_shows_no_blockers_label_and_no_evidence_
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Free task")
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         task.id,
@@ -571,7 +570,7 @@ async def test_simultaneous_blockers_share_one_blockers_label_and_one_evidence_f
     store = TaskStore(connection, clock)
     store.set_wait_reason(blocked.id, WaitReason.DEPENDENCY)
     store.set_holds(blocked.id, frozenset({Hold.PAUSED}))
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         blocked.id,
@@ -643,7 +642,7 @@ async def test_the_closed_evidence_fold_hangs_in_grey_from_the_blockers_value_co
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task_id, _ = _seed_blocked_task(connection, clock, _Blocker.DEPENDENCY)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         task_id,
@@ -693,7 +692,7 @@ async def test_a_pause_and_an_intervention_hold_share_one_blockers_label_and_one
     run = runs.start(task.id, Role.LEADER, Rung("codex", "gpt-6-luna", "high"))
     runs.mark_taken_over(run.id)
     TaskStore(connection, clock).set_holds(task.id, frozenset({Hold.PAUSED, Hold.INTERVENTION}))
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         task.id,
@@ -748,7 +747,7 @@ async def test_slot_occupant_status_column_aligns_by_terminal_cells_for_wide_tit
         _start_on_slot(connection, clock, occupant.id, slot)
     waiter = seed_task(connection, clock, title="Slot waiter")
     TaskStore(connection, clock).set_wait_reason(waiter.id, WaitReason.SLOT)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         waiter.id,
@@ -783,7 +782,7 @@ async def test_a_quota_wait_reset_duration_counts_down_with_the_clock_and_no_dat
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task_id, _ = _seed_blocked_task(connection, clock, _Blocker.QUOTA)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(clock.now()))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         task_id,
@@ -812,7 +811,7 @@ async def test_a_quota_countdown_tick_reads_only_the_live_work_and_repaints_only
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task_id, _ = _seed_blocked_task(connection, clock, _Blocker.QUOTA)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(clock.now()))
     context = widget_context(reader, project_root, clock)
     panel = TaskDetailPanel(context, task_id, fixed=True, initial_view=TASK_VIEW_RELATIONSHIPS)
     statements = _trace_statements(reader)
@@ -855,7 +854,7 @@ async def test_a_quota_wait_crossing_utc_midnight_rewords_the_blocker_without_a_
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(MIDNIGHT_EVE)
     task_id, _ = _seed_blocked_task(connection, clock, _Blocker.QUOTA, until=MIDNIGHT_RESET)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(clock.now()))
     context = widget_context(reader, project_root, clock)
     panel = TaskDetailPanel(context, task_id, fixed=True, initial_view=TASK_VIEW_RELATIONSHIPS)
     statements = _trace_statements(reader)
@@ -893,7 +892,7 @@ async def test_a_quota_block_that_lifts_reloads_the_task_and_drops_the_quota_hea
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task_id, cause = _seed_blocked_task(connection, clock, _Blocker.QUOTA)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(clock.now()))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         task_id,
@@ -930,7 +929,7 @@ async def test_recorded_complexity_follows_the_title_with_its_level_bold_and_the
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Ship parser", complexity=complexity)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         task.id,
@@ -955,7 +954,7 @@ async def test_compact_detail_keeps_the_recorded_complexity_on_the_title_line(
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Ship parser", complexity="high")
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         task.id,
@@ -976,7 +975,7 @@ async def test_unset_complexity_leaves_the_title_without_a_suffix(
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Ship parser")
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         task.id,
@@ -998,7 +997,7 @@ async def test_title_complexity_follows_the_selected_task(
     clock = FakeClock(START)
     rated = seed_task(connection, clock, title="Ship parser", complexity="high")
     unrated = seed_task(connection, clock, title="Write docs")
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         rated.id,
@@ -1025,7 +1024,7 @@ async def test_recorded_complexity_reaches_the_title_on_the_next_refresh(
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Ship parser")
     store = TaskStore(connection, clock)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     panel = TaskDetailPanel(
         widget_context(reader, project_root, clock),
         task.id,
@@ -1066,7 +1065,7 @@ async def test_workspace_and_settings_tables_repeat_no_title(
 ) -> None:
     project_root = write_minimal_project(tmp_path)
     clock = FakeClock(START)
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     try:
         for status in (Status.RUNNING, Status.DONE):
             task = seed_task(connection, clock, title="Workspace target", priority=3)
@@ -1157,7 +1156,7 @@ async def test_bottom_hint_follows_focus_and_t_opens_the_task_window_only_from_a
     store.set_window(done.id, "@2")
     store.apply_transition(done.id, Transition.stay(done, step=None, status=Status.DONE))
     store.apply_transition(live.id, Transition.stay(live, step=None, status=Status.RUNNING))
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(START))
     opened: list[str] = []
 
     async def open_window(task_id: str) -> str:

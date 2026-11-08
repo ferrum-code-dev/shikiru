@@ -12,7 +12,6 @@ import pytest
 from fake_agent.turn_cli import CRASH_STDERR
 
 from shikiru.agents.registry import AgentRegistry
-from shikiru.clock import SystemClock
 from shikiru.operator.doctor import Doctor
 from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.operator.probe import AgentProbe
@@ -21,6 +20,7 @@ from shikiru.process import SubprocessRunner
 from shikiru.store.database import Database
 from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
+from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
 
 pytestmark = pytest.mark.asyncio
@@ -403,7 +403,7 @@ async def test_doctor_keeps_unsupported_cow_as_a_passing_degraded_check(
 ) -> None:
     root = await _project(tmp_path)
     runner = SubprocessRunner()
-    clock = SystemClock()
+    clock = FakeClock(LONG_AGO)
     doctor = Doctor(
         root,
         cache_cloner=CacheCloner(runner, cow_args=None, copy_timeout=CACHE_COPY_TIMEOUT),

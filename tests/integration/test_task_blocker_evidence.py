@@ -10,7 +10,6 @@ import pytest
 from textual.widgets import Static
 
 from shikiru.agents.contracts import QUOTA_WINDOW_FIVE_HOUR, QUOTA_WINDOW_SEVEN_DAY, QuotaWindow
-from shikiru.clock import SystemClock
 from shikiru.config.loader import load_settings
 from shikiru.dashboard.contract import ResourceView
 from shikiru.dashboard.detail import (
@@ -126,7 +125,7 @@ async def _mounted(
     width: int = PANEL_WIDTH,
     services: StubServices | None = None,
 ) -> AsyncGenerator[TaskDetailPanel]:
-    reader = StateReader(database, SystemClock())
+    reader = StateReader(database, FakeClock(NOW))
     panel = TaskDetailPanel(
         widget_context(reader, project_dir, clock, services=services),
         task_id,
