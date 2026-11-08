@@ -31,7 +31,7 @@ the guarantee. See [the test rules](../../AGENTS.md).
 
 ### R1 — A spawn-latency hook for the tests
 
-- [ ] Make "slow machine" reproducible and checkable.
+- [x] Make "slow machine" reproducible and checkable.
 
 Acceptance criteria:
 

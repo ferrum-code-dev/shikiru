@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.process import SubprocessRunner
+from tests.support.spawn_hook import spawn_hook
 from tests.support.xdist_workers import CPUS_PER_WORKER_ENV, worker_count
 
 if TYPE_CHECKING:
@@ -84,6 +85,13 @@ def local_timezone(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[str], 
 def colour_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep Textual from monochrome-filtering renders in tests that assert rendered colours."""
     monkeypatch.delenv("NO_COLOR", raising=False)
+
+
+@pytest.fixture(autouse=True, scope="session")
+def spawn_instrumentation() -> Iterator[None]:
+    """Delay and count the test process's spawns when the `SHIKIRU_TEST_SPAWN_*` variables ask."""
+    with spawn_hook(os.environ):
+        yield
 
 
 @pytest.fixture(autouse=True, scope="session")

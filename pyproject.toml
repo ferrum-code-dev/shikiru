@@ -176,6 +176,7 @@ runtime-evaluated-decorators = [
 "src/shikiru/clock.py" = ["TID251"]
 "src/shikiru/config/loader.py" = ["ANN401"]
 "tests/support/waiting.py" = ["TID251"]
+"tests/support/spawn_hook.py" = ["TID251"] # the hook slows spawns on the real clock by design
 "tests/support/store.py" = ["TID251"]
 "tests/integration/test_store_database.py" = ["TID251"]
 "tests/support/store_reader_process.py" = ["T201"]
