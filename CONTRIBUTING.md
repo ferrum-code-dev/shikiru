@@ -98,6 +98,7 @@ to spend usage on; `doctor --probe` is also a live check.
 ## Releasing
 
 A release is the commit tagged `v<version>`; see [the design](docs/design.md#releases-and-deployment).
-Run `uv run poe release <bump>` on a clean `main` equal to `origin/main`. The Release workflow
+Run `uv run poe release <bump>` on a clean `main` equal to `origin/main`; `--dry-run` prints every
+change and command without making any. The Release workflow
 publishes after CI passes on that commit; if CI fails, fix it on `main` and re-run the failed
 workflow runs.

@@ -43,7 +43,7 @@ Acceptance criteria:
 
 ### N2 — One-command release
 
-- [ ] Add `scripts/release.py` and `poe release`.
+- [x] Add `scripts/release.py` and `poe release`.
 
 Acceptance criteria:
 
