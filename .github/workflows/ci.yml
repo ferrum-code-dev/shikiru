@@ -21,10 +21,13 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        os: [ubuntu-24.04, macos-15]
+        include:
+          - os: ubuntu-24.04
+            workers: 4
+          - os: macos-15
+            workers: 2
     env:
-      PYTEST_ADDOPTS: --dist=loadfile --durations=15
-      SHIKIRU_TEST_CPUS_PER_WORKER: "1"
+      PYTEST_ADDOPTS: -n ${{ matrix.workers }} --dist=loadfile --durations=15
       UV_NO_PROGRESS: "true"
       NODE_OPTIONS: --max-old-space-size=1536
       TERM: xterm-256color

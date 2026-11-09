@@ -26,9 +26,10 @@ uses the fake-agent plugin with real Git, SQLite and private tmux. Live provider
 real-agent end-to-end scenarios are opt-in and excluded from normal CI.
 The package smoke builds wheel/sdist and exercises an isolated installed package with a fake agent,
 a disposable HOME/repository and private tmux server; it makes no paid provider calls. GitHub CI
-syncs the locked development environment and runs both checks with one test worker per CPU core
-(`SHIKIRU_TEST_CPUS_PER_WORKER=1`) and job timeouts. The isolated installation resolves the
-built package's declared runtime dependencies.
+syncs the locked development environment and runs both checks with a fixed worker count per runner
+(`-n` in `ci.yml`: 4 on Ubuntu, 2 on macOS, where concurrent tmux panes exhaust pseudo-terminals)
+and job timeouts. The isolated installation resolves the built package's declared runtime
+dependencies.
 Automated checks do not establish reliability for every provider or real project.
 
 ### Verify real agents
