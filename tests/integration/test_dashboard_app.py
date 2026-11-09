@@ -158,7 +158,12 @@ from tests.support.tmux import (
     attach_tmux_client,
     attached_client_tty,
 )
-from tests.support.waiting import ACTION_CONFIRMATION_SECONDS, UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import (
+    ACTION_CONFIRMATION_SECONDS,
+    UI_WAIT_SECONDS,
+    wait_for,
+    wait_until,
+)
 
 _TEST_START = datetime(2026, 1, 1, tzinfo=UTC)
 _COMPACT_RESOLUTION_CONTEXT_SCROLL_ROWS = 5
@@ -2440,6 +2445,7 @@ async def _assert_command_feedback_footer(
         await wait_until(lambda: "priority 4" in _rendered_text(status), timeout=UI_WAIT_SECONDS)
     else:
         await wait_until(lambda: "…" in _rendered_text(status), timeout=UI_WAIT_SECONDS)
+    await wait_until(lambda: footer.region.contains_region(status.region), timeout=UI_WAIT_SECONDS)
     status_text = _rendered_text(status)
     assert status.region.bottom <= size[1]
     assert footer.region.right <= size[0]
@@ -2558,11 +2564,16 @@ async def _assert_status_ends_on_footer_edge(
         ),
         timeout=UI_WAIT_SECONDS,
     )
-    await pilot.pause()
-    assert _last_glyph_column(status_line) == footer.region.right - 1, (
-        width,
-        _rendered_text(status_line),
+    glyph_column, edge, rendered = await wait_for(
+        lambda: (
+            _last_glyph_column(status_line),
+            footer.region.right - 1,
+            _rendered_text(status_line),
+        ),
+        lambda sample: sample[0] == sample[1],
+        timeout=UI_WAIT_SECONDS,
     )
+    assert glyph_column == edge, (width, rendered)
 
 
 @pytest.mark.parametrize("status", list(CommandFeedbackStatus))
@@ -5201,11 +5212,15 @@ async def test_configured_usage_and_resources_widgets_open_their_panels(
         )
         async with app.run_test(size=size) as pilot:
             home_screen = app.screen
-            await wait_until(
-                lambda: "CPU 37%" in _rendered_text(app.query_one("#resources", Static)),
+            reads, _ = await wait_for(
+                lambda: (
+                    services.resource_reads,
+                    _rendered_text(app.query_one("#resources", Static)),
+                ),
+                lambda sample: sample[0] == 1 and "CPU 37%" in sample[1],
                 timeout=UI_WAIT_SECONDS,
             )
-            assert services.resource_reads == 1
+            assert reads == 1
 
             assert await pilot.click("#usage")
             await wait_until(lambda: app.screen is not home_screen, timeout=UI_WAIT_SECONDS)
@@ -5230,9 +5245,19 @@ async def test_configured_usage_and_resources_widgets_open_their_panels(
             assert await pilot.click("#resources")
             await wait_until(lambda: app.screen is not home_screen, timeout=UI_WAIT_SECONDS)
             assert home_screen.is_mounted
-            resources = app.screen.query_one("#project-diagnostics-resources", Static)
-            assert "CPU 37%" in " ".join(_rendered_widget_lines(resources))
-            assert services.resource_reads == 1
+            reads, _ = await wait_for(
+                lambda: (
+                    services.resource_reads,
+                    " ".join(
+                        _rendered_widget_lines(
+                            app.screen.query_one("#project-diagnostics-resources", Static)
+                        )
+                    ),
+                ),
+                lambda sample: sample[0] == 1 and "CPU 37%" in sample[1],
+                timeout=UI_WAIT_SECONDS,
+            )
+            assert reads == 1
             docker = app.screen.query_one("#docker", Static)
             assert docker.region.width > 0
             assert _rendered_text(docker)

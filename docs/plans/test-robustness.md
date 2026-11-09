@@ -91,7 +91,7 @@ Acceptance criteria:
 
 ### R4 — Assert on conditions, not on a fresh snapshot
 
-- [ ] `test_quota_visibility` and the dashboard snapshot assertions wait for the condition they assert.
+- [x] `test_quota_visibility` and the dashboard snapshot assertions wait for the condition they assert.
 
 Acceptance criteria:
 

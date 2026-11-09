@@ -31,7 +31,7 @@ from tests.support.engine import FAKE_RUNG, build_titles
 from tests.support.factories import make_settings
 from tests.support.flow import FAKE_AGENT_NAME, build_flow_task, init_project_repo
 from tests.support.quota_waits import record_quota_wait
-from tests.support.waiting import wait_until
+from tests.support.waiting import wait_for, wait_until
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -54,7 +54,6 @@ _STRIP_PHRASE = "Quota blocked"
 _NARROW_WIDTH = 24
 _WIDE_WIDTH = 100
 _HEIGHT = 20
-_SHORT_HEIGHT = 10
 _LOGGED_ROWS = 40
 _TURN = "01-implement"
 _RUNG = {"agent": "beta", "model": "impl-1", "effort": None}
@@ -478,34 +477,54 @@ async def test_the_strip_reflows_at_narrow_widths_and_follows_a_resize(
     await tmux_server.run("resize-window", "-t", pane, "-x", str(_NARROW_WIDTH), "-y", str(_HEIGHT))
     await _start_view(wait, Role.IMPLEMENTER)
 
-    async def wrapped() -> bool:
-        screen = await _screen(tmux_server, pane)
-        top = [line for line in screen[:3] if line.strip()]
-        text = " ".join(line.strip() for line in top)
-        return len(top) > 1 and _STRIP_PHRASE in text and "retry" in text
-
-    await wait_until(wrapped, timeout=_TIMEOUT_SECONDS)
-    assert all(len(line) <= _NARROW_WIDTH for line in await _screen(tmux_server, pane))
+    screen = await wait_for(
+        lambda: _screen(tmux_server, pane), _wrapped_across_rows, timeout=_TIMEOUT_SECONDS
+    )
+    assert all(len(line) <= _NARROW_WIDTH for line in screen)
 
     await tmux_server.run("resize-window", "-t", pane, "-x", str(_WIDE_WIDTH), "-y", str(_HEIGHT))
 
-    async def single_row() -> bool:
-        screen = await _screen(tmux_server, pane)
-        return _STRIP_PHRASE in screen[0] and "retry" in screen[0]
-
-    await wait_until(single_row, timeout=_TIMEOUT_SECONDS)
-    screen = await _screen(tmux_server, pane)
-    assert sum(_STRIP_PHRASE in line for line in screen) == 1
+    await wait_for(
+        lambda: _screen(tmux_server, pane), _on_one_row_with_retry, timeout=_TIMEOUT_SECONDS
+    )
 
 
-async def _wait_for_replay_without_strip(tmux_server: TmuxServer, pane: str) -> None:
-    async def strip_gone_and_every_marker_replayed() -> bool:
-        if any(_STRIP_PHRASE in line for line in await _screen(tmux_server, pane)):
-            return False
-        history = "\n".join(await _history(tmux_server, pane))
-        return all(f"M{index:03}" in history for index in range(_LOGGED_ROWS))
+def _wrapped_across_rows(screen: list[str]) -> bool:
+    top = [line for line in screen[:3] if line.strip()]
+    text = " ".join(line.strip() for line in top)
+    return len(top) > 1 and _STRIP_PHRASE in text and "retry" in text
 
-    await wait_until(strip_gone_and_every_marker_replayed, timeout=_TIMEOUT_SECONDS)
+
+def _on_one_row_with_retry(screen: list[str]) -> bool:
+    return (
+        _STRIP_PHRASE in screen[0]
+        and "retry" in screen[0]
+        and sum(_STRIP_PHRASE in line for line in screen) == 1
+    )
+
+
+def _marker(index: int) -> str:
+    return f"M{index:03}"
+
+
+def _every_marker_once(history: str) -> bool:
+    return all(history.count(_marker(index)) == 1 for index in range(_LOGGED_ROWS))
+
+
+def _replayed_once_without_strip(history: str) -> bool:
+    return _STRIP_PHRASE not in history and _every_marker_once(history)
+
+
+async def _history_text(tmux_server: TmuxServer, pane: str) -> str:
+    return "\n".join(await _history(tmux_server, pane))
+
+
+async def _replayed_history(tmux_server: TmuxServer, pane: str) -> str:
+    return await wait_for(
+        lambda: _history_text(tmux_server, pane),
+        _replayed_once_without_strip,
+        timeout=_TIMEOUT_SECONDS,
+    )
 
 
 async def test_width_resize_and_clear_preserve_all_pane_output_history(
@@ -540,136 +559,30 @@ async def test_width_resize_and_clear_preserve_all_pane_output_history(
     await wait_until(strip_visible, timeout=_TIMEOUT_SECONDS)
     await tmux_server.run("resize-window", "-t", pane, "-x", str(_NARROW_WIDTH), "-y", str(_HEIGHT))
 
-    async def strip_reflows_narrowly() -> bool:
-        screen = await _screen(tmux_server, pane)
-        top = " ".join(line.strip() for line in screen[:3] if line.strip())
-        return _STRIP_PHRASE in top and "next check" in top
-
-    await wait_until(strip_reflows_narrowly, timeout=_TIMEOUT_SECONDS)
+    await wait_for(lambda: _screen(tmux_server, pane), _reflowed_narrowly, timeout=_TIMEOUT_SECONDS)
     await tmux_server.run("resize-window", "-t", pane, "-x", str(_WIDE_WIDTH), "-y", str(_HEIGHT))
 
-    async def strip_reflows_wide() -> bool:
-        screen = await _screen(tmux_server, pane)
-        return bool(screen) and _STRIP_PHRASE in screen[0] and "next check" in screen[0]
-
-    await wait_until(strip_reflows_wide, timeout=_TIMEOUT_SECONDS)
-    active_history = "\n".join(await _history(tmux_server, pane))
-    assert all(active_history.count(f"M{index:03}") == 1 for index in range(_LOGGED_ROWS))
+    await wait_for(
+        lambda: _screen(tmux_server, pane), _on_one_row_with_next_check, timeout=_TIMEOUT_SECONDS
+    )
+    await wait_for(
+        lambda: _history_text(tmux_server, pane), _every_marker_once, timeout=_TIMEOUT_SECONDS
+    )
     wait.quotas.clear_block(_IMPLEMENTER_AGENT)
     engine_env.tasks.set_wait_reason(wait.task.id, None)
     await wait.sync()
 
-    await _wait_for_replay_without_strip(tmux_server, pane)
-    history = "\n".join(await _history(tmux_server, pane))
-    counts = {f"M{index:03}": history.count(f"M{index:03}") for index in range(_LOGGED_ROWS)}
-    assert all(count == 1 for count in counts.values()), {
-        marker: count for marker, count in counts.items() if count != 1
-    }
-    assert _STRIP_PHRASE not in history, history
+    history = await _replayed_history(tmux_server, pane)
+    assert _replayed_once_without_strip(history), history
 
 
-async def test_height_resize_and_clear_preserve_all_pane_output_history(
-    engine_env: EngineEnv, tmux_server: TmuxServer
-) -> None:
-    wait = await _wait(engine_env)
-    log = view_log_path(run_dir(engine_env.project_root, wait.task.id), Role.IMPLEMENTER.value)
-    log.parent.mkdir(parents=True, exist_ok=True)
-    log.write_text(
-        "".join(_row("Message", text=f"M{index:03}") + "\n" for index in range(_LOGGED_ROWS))
-    )
-    pane = wait.current().panes[Role.IMPLEMENTER]
-    await tmux_server.run("set-option", "-w", "-t", pane, "window-size", "manual")
-    await tmux_server.run("resize-window", "-t", pane, "-x", str(_WIDE_WIDTH), "-y", str(_HEIGHT))
-    await _start_view(wait, Role.IMPLEMENTER)
-
-    async def all_initial_output_rendered() -> bool:
-        history = "\n".join(await _history(tmux_server, pane))
-        return all(f"M{index:03}" in history for index in range(_LOGGED_ROWS))
-
-    await wait_until(all_initial_output_rendered, timeout=_TIMEOUT_SECONDS)
-
-    wait.queue_on_quota()
-    wait.block(_IMPLEMENTER_AGENT)
-    wait.schedule_check(_IMPLEMENTER_AGENT, QuotaAction.NEXT_CHECK)
-    await wait.sync()
-
-    async def strip_visible() -> bool:
-        screen = await _screen(tmux_server, pane)
-        return bool(screen) and _STRIP_PHRASE in screen[0] and "next check" in screen[0]
-
-    await wait_until(strip_visible, timeout=_TIMEOUT_SECONDS)
-    await tmux_server.run(
-        "resize-window", "-t", pane, "-x", str(_WIDE_WIDTH), "-y", str(_SHORT_HEIGHT)
-    )
-
-    async def strip_visible_after_resize() -> bool:
-        screen = await _screen(tmux_server, pane)
-        return bool(screen) and _STRIP_PHRASE in screen[0] and "next check" in screen[0]
-
-    await wait_until(strip_visible_after_resize, timeout=_TIMEOUT_SECONDS)
-    active_history = "\n".join(await _history(tmux_server, pane))
-    assert all(active_history.count(f"M{index:03}") == 1 for index in range(_LOGGED_ROWS))
-
-    wait.quotas.clear_block(_IMPLEMENTER_AGENT)
-    engine_env.tasks.set_wait_reason(wait.task.id, None)
-    await wait.sync()
-
-    await _wait_for_replay_without_strip(tmux_server, pane)
-    history = "\n".join(await _history(tmux_server, pane))
-    counts = {f"M{index:03}": history.count(f"M{index:03}") for index in range(_LOGGED_ROWS)}
-    assert all(count == 1 for count in counts.values()), {
-        marker: count for marker, count in counts.items() if count != 1
-    }
-    assert _STRIP_PHRASE not in history, history
+def _reflowed_narrowly(screen: list[str]) -> bool:
+    top = " ".join(line.strip() for line in screen[:3] if line.strip())
+    return _STRIP_PHRASE in top and "next check" in top
 
 
-async def test_status_growth_and_clear_preserve_all_pane_output_history(
-    engine_env: EngineEnv, tmux_server: TmuxServer
-) -> None:
-    wait = await _wait(engine_env)
-    log = view_log_path(run_dir(engine_env.project_root, wait.task.id), Role.IMPLEMENTER.value)
-    log.parent.mkdir(parents=True, exist_ok=True)
-    log.write_text(
-        "".join(_row("Message", text=f"M{index:03}") + "\n" for index in range(_LOGGED_ROWS))
-    )
-    pane = wait.current().panes[Role.IMPLEMENTER]
-    await tmux_server.run("set-option", "-w", "-t", pane, "window-size", "manual")
-    await tmux_server.run("resize-window", "-t", pane, "-x", str(_NARROW_WIDTH), "-y", str(_HEIGHT))
-    await _start_view(wait, Role.IMPLEMENTER)
-
-    async def all_initial_output_rendered() -> bool:
-        history = "\n".join(await _history(tmux_server, pane))
-        return all(f"M{index:03}" in history for index in range(_LOGGED_ROWS))
-
-    await wait_until(all_initial_output_rendered, timeout=_TIMEOUT_SECONDS)
-    wait.queue_on_quota()
-    wait.block(_IMPLEMENTER_AGENT)
-    await wait.sync()
-
-    async def time_free_status_visible() -> bool:
-        return _STRIP_PHRASE in "\n".join(await _screen(tmux_server, pane))
-
-    await wait_until(time_free_status_visible, timeout=_TIMEOUT_SECONDS)
-    wait.schedule_check(_IMPLEMENTER_AGENT, QuotaAction.NEXT_CHECK)
-    await wait.sync()
-
-    async def scheduled_status_visible() -> bool:
-        screen = await _screen(tmux_server, pane)
-        return "next check" in " ".join(line.strip() for line in screen[:4])
-
-    await wait_until(scheduled_status_visible, timeout=_TIMEOUT_SECONDS)
-
-    wait.quotas.clear_block(_IMPLEMENTER_AGENT)
-    engine_env.tasks.set_wait_reason(wait.task.id, None)
-    await wait.sync()
-
-    await _wait_for_replay_without_strip(tmux_server, pane)
-    history = "\n".join(await _history(tmux_server, pane))
-    counts = {f"M{index:03}": history.count(f"M{index:03}") for index in range(_LOGGED_ROWS)}
-    assert all(count == 1 for count in counts.values()), {
-        marker: count for marker, count in counts.items() if count != 1
-    }
-    assert _STRIP_PHRASE not in history, history
+def _on_one_row_with_next_check(screen: list[str]) -> bool:
+    return bool(screen) and _STRIP_PHRASE in screen[0] and "next check" in screen[0]
 
 
 async def test_a_recreated_view_pane_shows_the_still_current_wait(

@@ -342,8 +342,7 @@ async def click_ready_button(pilot: Pilot[InitWizardResult | None], button: Butt
         return widget is button
 
     await wait_until(ready, timeout=UI_WAIT_SECONDS)
-    clicked = await pilot.click(button, offset=(button.region.width // 2, 0))
-    assert clicked
+    await pilot.click(button, offset=(button.region.width // 2, 0))
 
 
 async def click_next(

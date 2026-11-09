@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 import os
 import subprocess
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from textual.css.query import NoMatches
 
@@ -89,7 +90,20 @@ async def wait_until(predicate: _Predicate, timeout: float) -> None:
     widget is not mounted yet; it counts as "not yet" and, if the wait times out, is chained as the
     cause.
     """
-    await _wait(functools.partial(_evaluate, predicate), timeout, _describe(predicate))
+    await _wait(functools.partial(_sample, predicate), bool, timeout, _describe(predicate))
+
+
+async def wait_for[T](
+    sample: Callable[[], T | Awaitable[T]], accept: Callable[[T], bool], *, timeout: float
+) -> T:
+    """Poll `sample` (sync or async) until `accept` is true of its value, and return that value.
+
+    Assert on the returned value, not on a fresh sample: it is the one that satisfied the condition.
+    On timeout the message carries the last sampled value, so a pane capture shows the screen that
+    failed. `timeout` is scaled by `time_scale()`, and `NoMatches` counts as "not yet" as in
+    `wait_until`.
+    """
+    return await _wait(functools.partial(_sample, sample), accept, timeout, _describe(sample))
 
 
 async def wait_until_advancing(
@@ -108,8 +122,8 @@ async def wait_until_advancing(
     timeout can fire early. While it is false the clock stays where it is.
     """
 
-    async def advanced() -> object:
-        result = await _evaluate(predicate)
+    async def advanced() -> bool:
+        result = await _sample(predicate)
         if result:
             return result
         if jump_while is not None:
@@ -117,37 +131,43 @@ async def wait_until_advancing(
                 clock.advance_to_next_sleeper()
         elif clock.has_pending_sleep():
             clock.advance(step_seconds)
-        return await _evaluate(predicate)
+        return await _sample(predicate)
 
-    await _wait(advanced, timeout, _describe(predicate))
-
-
-async def _evaluate(predicate: _Predicate) -> object:
-    result = predicate()
-    if isinstance(result, Awaitable):
-        result = await result
-    return result
+    await _wait(advanced, bool, timeout, _describe(predicate))
 
 
-async def _wait(sample: Callable[[], Awaitable[object]], timeout: float, description: str) -> None:
+async def _sample[T](sample: Callable[[], T | Awaitable[T]]) -> T:
+    result = sample()
+    if inspect.isawaitable(result):
+        return await result
+    return cast("T", result)
+
+
+async def _wait[T](
+    sample: Callable[[], Awaitable[T]],
+    accept: Callable[[T], bool],
+    timeout: float,
+    description: str,
+) -> T:
     limit = scaled(timeout)
     deadline = time.monotonic() + limit
     not_mounted: NoMatches | None = None
     last: object = _NOT_SAMPLED
     while True:
         try:
-            last = await sample()
+            value = await sample()
         except NoMatches as error:
             not_mounted = error
         else:
-            if last:
-                return
+            last = value
+            if accept(value):
+                return value
         if time.monotonic() >= deadline:
             raise WaitTimeoutError(_timeout_message(description, limit, last)) from not_mounted
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
 
-def _describe(predicate: _Predicate) -> str:
+def _describe(predicate: Callable[[], object]) -> str:
     return getattr(predicate, "__qualname__", None) or repr(predicate)
 
 
