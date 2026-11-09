@@ -13,7 +13,6 @@ from shikiru.config.settings import (
     OrchestrationConfig,
     SessionSettings,
     Settings,
-    UpdateSettings,
 )
 from shikiru.errors import ConfigError
 from shikiru.paths import PROJECT_CONFIG_RELATIVE_PATH, project_config_path
@@ -59,12 +58,6 @@ def load_session_settings(overrides: Sequence[str] = ()) -> SessionSettings:
     except (KeyError, ValidationError) as error:
         message = f"defaults.toml: invalid sessions settings: {error}"
         raise ConfigError(message) from error
-
-
-def load_update_settings() -> UpdateSettings:
-    """Return the packaged `[update]` limits for `shikiru update`, which runs outside a project."""
-    defaults, _ = _load_defaults()
-    return UpdateSettings.model_validate(defaults["update"])
 
 
 def load_default_orchestration() -> OrchestrationConfig:

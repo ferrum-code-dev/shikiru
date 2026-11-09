@@ -44,7 +44,7 @@ from shikiru.cli.render import (
 )
 from shikiru.cli.report import report_command
 from shikiru.cli.view import view_command
-from shikiru.config.loader import load_settings, load_update_settings
+from shikiru.config.loader import load_settings
 from shikiru.config.settings import ComplexityName
 from shikiru.domain.tasks import Mode
 from shikiru.errors import (
@@ -64,7 +64,6 @@ from shikiru.operator.lifecycle import (
 from shikiru.operator.queries import TaskNotFoundError
 from shikiru.operator.sessions import REMOTE_ORIGIN_HOST_ENV_VAR
 from shikiru.paths import project_config_path
-from shikiru.process import SubprocessRunner
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.ui.console import human_console
 from shikiru.ui.tokens import (
@@ -76,15 +75,6 @@ from shikiru.ui.tokens import (
     STYLE_BOLD,
     STYLE_DIM,
 )
-from shikiru.update.commands import HostCommands
-from shikiru.update.flow import (
-    check_for_update,
-    roll_back_on_demand,
-    update_from_wheel,
-    update_to_newest,
-)
-from shikiru.update.github import GitHubReleaseSource
-from shikiru.update.store import ReleaseStore, release_store
 from shikiru.view_log import CLI_VIEW_COMMAND
 
 if TYPE_CHECKING:
@@ -140,27 +130,6 @@ PROBE_OPTION = typer.Option(
     help=(
         "Run live contract and smoke checks for configured role rungs. "
         "[bold]Default:[/] skip live agent probes."
-    ),
-)
-WHEEL_OPTION = typer.Option(
-    "--wheel",
-    help=(
-        "Install this release wheel instead of the newest release. "
-        "[bold]Default:[/] download the newest release."
-    ),
-)
-CHECK_OPTION = typer.Option(
-    "--check",
-    help=(
-        "Print the installed and the newest version; change nothing. "
-        "[bold]Default:[/] download and install the newest release."
-    ),
-)
-ROLLBACK_OPTION = typer.Option(
-    "--rollback",
-    help=(
-        "Reinstall the release last installed and restart its engines. "
-        "[bold]Default:[/] install a wheel."
     ),
 )
 REQUIRED_LEGEND = f"[bold {ALERT_COLOR}]*[/] marks a required argument."
@@ -358,35 +327,6 @@ def restart(
     except ShikiruError as error:
         _fail(error)
     _emit_value(state, result, restart_renderable(result))
-
-
-@app.command()
-def update(
-    *,
-    wheel: Annotated[Path | None, WHEEL_OPTION] = None,
-    rollback: Annotated[bool, ROLLBACK_OPTION] = False,
-    check: Annotated[bool, CHECK_OPTION] = False,
-) -> None:
-    """Install the newest Shikiru release, a given wheel, or roll back to the last release."""
-    if sum((wheel is not None, rollback, check)) > 1:
-        _fail(UsageError("--check, --wheel and --rollback are alternatives; give one at most"))
-    commands = HostCommands(environment=os.environ, runner=SubprocessRunner())
-    store = ReleaseStore(release_store())
-    limits = load_update_settings()
-    source = GitHubReleaseSource(
-        timeout_seconds=limits.download_timeout_seconds,
-        max_bytes=limits.max_download_bytes,
-    )
-    installed = version(PACKAGE_NAME)
-    if check:
-        operation = check_for_update(source, installed, typer.echo)
-    elif wheel is not None:
-        operation = update_from_wheel(commands, store, wheel, typer.echo)
-    elif rollback:
-        operation = roll_back_on_demand(commands, store, typer.echo)
-    else:
-        operation = update_to_newest(source, commands, store, installed, typer.echo)
-    raise typer.Exit(code=_run(operation))
 
 
 @app.command(name="ls")

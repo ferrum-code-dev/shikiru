@@ -36,7 +36,7 @@ Acceptance criteria:
 
 ### S2 — Remove `update`, the release scripts and the pins
 
-- [ ] Delete what packaging already does.
+- [x] Delete what packaging already does.
 
 Acceptance criteria:
 

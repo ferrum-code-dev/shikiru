@@ -8,7 +8,7 @@ permissions: {}
 
 jobs:
   ci-green:
-    name: Wait for CI on the tagged commit
+    name: Check the tagged commit is on main
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:
@@ -23,11 +23,6 @@ jobs:
 
       - name: Check the tagged commit is on main
         run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-
-      - name: Wait for CI to pass on the commit
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/wait_for_ci.py "$GITHUB_SHA"
 
   publish:
     name: Publish the GitHub release
@@ -63,9 +58,6 @@ jobs:
             exit 1
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Write the checksums
-        run: cd dist && sha256sum * > SHA256SUMS
 
       - name: Write the release notes
         run: |

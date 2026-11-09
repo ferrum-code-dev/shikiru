@@ -58,13 +58,6 @@ class SessionSettings(ConfigModel):
     ssh_timeout_seconds: float = Field(gt=0)
 
 
-class UpdateSettings(ConfigModel):
-    """`[update]`: limits for downloading a release from GitHub."""
-
-    download_timeout_seconds: float = Field(gt=0)
-    max_download_bytes: int = Field(gt=0)
-
-
 class ResourcesConfig(ConfigModel):
     """`[orchestration.resources]`."""
 
@@ -359,7 +352,6 @@ class Settings(ConfigModel):
     project: ProjectConfig
     repo: RepoConfig = Field(default_factory=RepoConfig)
     sessions: SessionSettings
-    update: UpdateSettings
     orchestration: OrchestrationConfig
     escalation: EscalationConfig
     agents: dict[str, AgentConfig] = Field(default_factory=dict)

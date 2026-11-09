@@ -4,10 +4,6 @@ trackers = []
 [sessions]
 ssh_timeout_seconds = 30
 
-[update]
-download_timeout_seconds = 60
-max_download_bytes = 52428800
-
 [orchestration]
 max_parallel = 2
 max_iterations = 5

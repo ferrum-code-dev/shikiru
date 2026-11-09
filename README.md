@@ -53,20 +53,34 @@ and a timeline so you can understand both its result and how it got there.
 - Claude Code or Codex CLI installed and configured for your account.
 - `gh` and an accessible GitHub remote if you choose pull-request integration.
 
-### Install a release
+### Installation
 
 ```sh
-uv tool install https://github.com/ferrum-code-dev/shikiru/releases/download/v0.1.4/shikiru-0.1.4-py3-none-any.whl
-# Or install directly from the tag:
-uv tool install git+https://github.com/ferrum-code-dev/shikiru@v0.1.4
+uv tool install shikiru
 shikiru --help
 ```
 
-Change `0.1.4` in the URL for a newer release. An installed Shikiru updates itself with
-`shikiru update`, which downloads the newest release, checks it against its `SHA256SUMS` and installs
-it; `shikiru update --check` shows whether one exists. A long-running installation must be a release;
-see [Applying a release](#applying-a-release). For development, see [From a checkout](CONTRIBUTING.md).
-Never install a long-running copy with `--editable`.
+Before the first PyPI release, install the wheel from the latest release on the Releases page.
+Never install a long-running copy with `--editable`: an editable install follows the working tree.
+For development, see [From a checkout](CONTRIBUTING.md).
+
+### Updating
+
+```sh
+uv tool upgrade shikiru
+```
+
+An engine keeps the code it was started with, so run `shikiru restart` in each project with a running
+engine afterwards. `restart` refuses while a task runs unless `--force` is given.
+
+### Going back
+
+```sh
+uv tool install shikiru==<version>
+```
+
+Replace `<version>` with the release to return to, then run `shikiru restart` in each project with a
+running engine.
 
 ### From a checkout
 
@@ -364,42 +378,6 @@ environment and may use your credentials. Use only repositories and hosts you tr
 Review changes and commits before trusting them. Agent review and a valid report are not proof that
 software is correct.
 
-## Applying a release
-
-The installed `shikiru` is a tagged release, never a checkout. Commit the version you want in
-`pyproject.toml`, tag that commit `v<version>` (for example `v0.1.2`), and build its wheel from the
-tag with `uv build --wheel`. The Release workflow runs the gate and the release smoke on that commit
-before it publishes; the host does not repeat them.
-
-```sh
-git tag v0.1.2
-uv build --wheel
-shikiru update --wheel dist/shikiru-0.1.2-py3-none-any.whl
-```
-
-`shikiru update --wheel` copies the wheel into the release store
-(`$XDG_DATA_HOME/shikiru/releases`, default `~/.local/share/shikiru/releases`, last five kept),
-installs it with `uv tool install --reinstall`, checks that `shikiru --version` reports the wheel's
-version, and restarts each engine that is up. Nothing is installed if the path is not a Shikiru wheel.
-
-- A project with a task running is not restarted. It is reported as busy and stays on the previous
-  code; run `shikiru --project <dir> restart` there once its tasks finish.
-- If an engine does not come up, or the installed version is wrong, the update reinstalls the release
-  that the `current` file names, restarts the engines it had restarted, and exits non-zero.
-- A successful update writes `current`. `shikiru update --rollback` reinstalls the release `current`
-  names and restarts the engines that are up. After a successful update that is the release just
-  installed.
-- Install only through `shikiru update`. Do not use `--editable` or install from a checkout: an
-  editable install follows the working tree, and the update cannot return it to a known release.
-
-Drill, to check the rollback on a host you can afford to break: update to a good release, then build a
-second wheel and make one engine fail to restart after the install by making its project
-configuration unreadable (`chmod 000 <project>/.shikiru/config.toml`) once `shikiru ls` lists its
-engine as up. Run `shikiru update --wheel` with the second wheel. It should report the engine that did
-not come up, reinstall the first release, restart the engines it had restarted, and exit non-zero.
-Then run `shikiru --version` and `shikiru --json ls` to confirm the first release is back, and restore
-the file permissions.
-
 ## Shikiri-yaku
 
 Shikiru stops and waits for a person when it raises an escalation.
@@ -407,7 +385,7 @@ Shikiru stops and waits for a person when it raises an escalation.
 takes that seat: it watches the escalations of your Shikiru projects, handles the routine ones (retries,
 quota waits, engine restarts, approved tool installs) and forwards the rest to you in Telegram, where one
 tap applies the answer. It talks to Shikiru only through `shikiru mcp` and the CLI, and keeps nothing in
-your repositories. Shikiri-yaku 0.1.x works with Shikiru 0.1.x; its `doctor` checks the version.
+your repositories. Its `doctor` checks that the installed Shikiru is compatible.
 
 ## Contributing
 
