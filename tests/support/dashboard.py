@@ -410,6 +410,7 @@ def dashboard_app(
     widget_names: list[str],
     settings: Settings | None = None,
     services: StubServices | None = None,
+    views: StateDashboardViews | None = None,
     open_palette_context: OpenPaletteContext | None = None,
     resolution_screen: ResolutionScreenFactory | None = None,
     focus_task: str | None = None,
@@ -420,7 +421,8 @@ def dashboard_app(
     settings = settings or load_settings(project_dir)
     return DashboardApp(
         focus_task=focus_task,
-        views=state_views(
+        views=views
+        or state_views(
             reader,
             project_dir,
             clock,

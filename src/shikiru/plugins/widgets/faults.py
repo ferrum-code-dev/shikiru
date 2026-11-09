@@ -111,6 +111,7 @@ class FaultsPanel(Vertical):
         self._unsubscribe_resources: Callable[[], None] | None = None
         self._title = GatedStatic()
         self._cards: dict[str, FaultCard] = {}
+        self._pending_anchor: tuple[Widget, ScrollableContainer, int] | None = None
 
     def compose(self) -> ComposeResult:
         """Start with the title; cards are mounted as faults open."""
@@ -146,8 +147,9 @@ class FaultsPanel(Vertical):
         cards = [self._card(fault) for fault in faults]
         anchor = self._anchor()
         self._arrange(cards)
-        if anchor is not None:
-            self.call_after_refresh(self._restore, *anchor)
+        if anchor is not None and self._pending_anchor is None:
+            self._pending_anchor = anchor
+            self.call_after_refresh(self._restore)
 
     def _anchor(self) -> tuple[Widget, ScrollableContainer, int] | None:
         focused = self.screen.focused
@@ -160,12 +162,16 @@ class FaultsPanel(Vertical):
             return None
         return focused, scroller, focused.region.y
 
-    def _restore(self, focused: Widget, scroller: ScrollableContainer, old_y: int) -> None:
-        if not focused.is_attached:
+    def _restore(self) -> None:
+        anchor, self._pending_anchor = self._pending_anchor, None
+        if anchor is None:
+            return
+        focused, scroller, old_y = anchor
+        if not focused.is_attached or self.screen.focused is not focused:
             return
         shift = focused.region.y - old_y
         if shift:
-            scroller.scroll_to(y=scroller.scroll_y + shift, animate=False)
+            scroller.scroll_to(y=scroller.scroll_y + shift, animate=False, immediate=True)
 
     def _card(self, fault: EngineFaultView) -> FaultCard:
         card = self._cards.get(fault.key)

@@ -625,12 +625,14 @@ async def test_a_refresh_keeps_a_scrolled_cards_state_focus_and_visibility(
     scopes = [f"base push b{index}" for index in range(_MANY_FAULTS)]
     for scope in scopes:
         _record_fault(connection, clock, None, scope=scope, error="CommandFailed")
+    services = _Services(_SAMPLE)
+    views = _views(reader, tmp_path, services, clock)
     app = dashboard_app(
         reader,
-        write_minimal_project(tmp_path),
+        tmp_path,
         clock,
         widget_names=["queue", "resources", "faults"],
-        services=_Services(_SAMPLE),
+        views=views,
     )
     async with app.run_test(size=_SHORT_POPUP) as pilot:
         await _open_popup(app, pilot)
@@ -656,6 +658,8 @@ async def test_a_refresh_keeps_a_scrolled_cards_state_focus_and_visibility(
                 error="ValueError",
                 recoverable=False,
             )
+        await views.resources()
+        await views.resources()
         await wait_until(
             lambda: len(app.screen.query(FaultCard)) == _MANY_FAULTS + _URGENT_FAULTS,
             timeout=_WAIT_SECONDS,
