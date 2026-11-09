@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from shikiru.config.settings import ANY_COMMENT_FEEDBACK
 from shikiru.domain.events import EventKind
 from shikiru.domain.feedback import (
     FeedbackMessage,
@@ -121,6 +122,31 @@ async def test_only_new_changes_requested_reviews_start_a_round(
     assert pull.waiting()
     started = pull.events.since(0, kinds=[EventKind.FEEDBACK_STARTED], task_id=pull.task.id)
     assert started == []
+    await pull.stop()
+
+
+async def test_any_comment_scope_starts_a_round_for_a_commenting_review_and_its_discussion(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(
+        engine_env, fake_github, tmp_path_factory, pr_feedback=ANY_COMMENT_FEEDBACK
+    )
+    fake_github.set_fields(
+        1,
+        headRefOid=await pull.remote_branch(),
+        reviews=[review_node(1, REVIEW, "COMMENTED", body="a remark")],
+        reviewThreads=[
+            thread_node(THREAD, [comment_node(1, 11, "rename it", review_id=REVIEW)]),
+        ],
+    )
+    await pull.until(lambda: pull.store.active(pull.task.id) is not None)
+
+    started = pull.store.active(pull.task.id)
+    assert started is not None
+    assert started.review_ids == [REVIEW]
+    assert started.comment_ids == ["PRRC_11"]
     await pull.stop()
 
 

@@ -1,4 +1,4 @@
-"""Notice new changes-requested feedback on a waiting pull request and start a round for it."""
+"""Notice new review feedback on a waiting pull request and start a round for it."""
 
 from __future__ import annotations
 
@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING
 from shikiru.domain.events import EventKind
 from shikiru.engine.feedback_snapshot import (
     build_snapshot,
-    new_change_requests,
     new_discussion_comments,
+    new_reviews,
 )
 from shikiru.errors import ShikiruError
 from shikiru.workspace.github import PullRequestState
@@ -16,6 +16,7 @@ from shikiru.workspace.github import PullRequestState
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from shikiru.config.settings import PullRequestFeedbackScope
     from shikiru.engine.fault_reporter import FaultReporter
     from shikiru.store.events import EventLog
     from shikiru.store.feedback import FeedbackStore
@@ -35,23 +36,26 @@ class FeedbackIntake:
         events: EventLog,
         faults: FaultReporter,
         project_root: Path,
+        scope: PullRequestFeedbackScope,
     ) -> None:
         """Read feedback through `github`; record rounds in `store` and announce them in `events`.
 
-        A failed read is recorded through `faults` and tried again at the next poll.
+        `scope` decides which reviews and comments start a round. A failed read is recorded
+        through `faults` and tried again at the next poll.
         """
         self._github = github
         self._store = store
         self._events = events
         self._faults = faults
         self._project_root = project_root
+        self._scope: PullRequestFeedbackScope = scope
 
     async def arrived(self, task_id: str, url: str) -> bool:
         """Return whether `task_id`'s pull request at `url` has feedback awaiting a round.
 
-        A round that is already unfinished counts. Otherwise the submitted changes-requested
-        reviews and the new comments in their discussions, which no earlier round covered, are
-        frozen into a new one.
+        A round that is already unfinished counts. Otherwise the reviews and the discussion
+        comments under the configured scope, which no earlier round covered, are frozen into a
+        new one.
         """
         if self._store.active(task_id) is not None:
             return True
@@ -63,8 +67,10 @@ class FeedbackIntake:
         self._faults.resolve(FEEDBACK_FAULT_SCOPE, task_id=task_id)
         if feedback.state is not PullRequestState.OPEN:
             return False
-        reviews = new_change_requests(feedback, self._store.seen_review_ids(task_id, url))
-        comments = new_discussion_comments(feedback, self._store.seen_comment_ids(task_id, url))
+        reviews = new_reviews(feedback, self._store.seen_review_ids(task_id, url), self._scope)
+        comments = new_discussion_comments(
+            feedback, self._store.seen_comment_ids(task_id, url), self._scope
+        )
         if not reviews and not comments:
             return False
         started = self._store.start(

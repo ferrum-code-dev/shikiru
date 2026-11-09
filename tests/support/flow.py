@@ -63,7 +63,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.registry import AgentRegistry
     from shikiru.clock import Clock
-    from shikiru.config.settings import ComplexityName, Settings
+    from shikiru.config.settings import ComplexityName, PullRequestFeedbackScope, Settings
     from shikiru.domain.tasks import Mode, Task
     from shikiru.engine.titles import TaskTitles
     from shikiru.store.events import EventLog
@@ -96,12 +96,16 @@ class _NoOpIntegrationCoordinator:
 
 
 def flow_settings(
-    *, max_iterations: int = MAX_ITERATIONS, escalate_after: int = ESCALATE_AFTER
+    *,
+    max_iterations: int = MAX_ITERATIONS,
+    escalate_after: int = ESCALATE_AFTER,
+    pr_feedback: PullRequestFeedbackScope | None = None,
 ) -> Settings:
     """Settings whose leader, implementer and helper all use the fake CLI."""
     return make_settings(
         max_iterations=max_iterations,
         escalate_after=escalate_after,
+        pr_feedback=pr_feedback,
         leader_ladder=[FAKE_RUNG],
         implementer_ladder=[FAKE_RUNG],
         helper_ladder=[FAKE_RUNG],

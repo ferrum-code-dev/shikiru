@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
@@ -15,6 +15,9 @@ MERGE_INTEGRATION = "merge"
 SQUASH_INTEGRATION = "squash"
 PULL_REQUEST_INTEGRATION = "pr"
 IntegrationStrategy = Literal["merge", "squash", "pr"]
+CHANGES_REQUESTED_FEEDBACK: Final = "changes_requested"
+ANY_COMMENT_FEEDBACK: Final = "any_comment"
+PullRequestFeedbackScope = Literal["changes_requested", "any_comment"]
 LayoutSplitAxis = Literal["h", "v"]
 DOCKER_SCOPE_ALL = "all"
 DockerScope = Literal["project", "all"]
@@ -134,6 +137,7 @@ class OrchestrationConfig(ConfigModel):
     max_parallel: int
     max_iterations: int
     integration: IntegrationStrategy
+    pr_feedback: PullRequestFeedbackScope
     push_interval_seconds: int = Field(ge=0)
     remote_recheck_seconds: int = Field(gt=0)
     poll_seconds: int

@@ -1206,6 +1206,7 @@ def _build_integrator(
             events=events,
             faults=faults,
             project_root=project_root,
+            scope=settings.orchestration.pr_feedback,
         )
         if feedback_store is not None
         else None

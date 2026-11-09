@@ -14,6 +14,8 @@ from textual.widgets import Button, Input, Label, Rule, Select, Static
 
 from shikiru.agents.settings import AgentSetting, AgentSettingError, SettingKind
 from shikiru.config.settings import (
+    ANY_COMMENT_FEEDBACK,
+    CHANGES_REQUESTED_FEEDBACK,
     MERGE_INTEGRATION,
     PULL_REQUEST_INTEGRATION,
     SQUASH_INTEGRATION,
@@ -122,6 +124,12 @@ INTEGRATION_OPTIONS = (
 )
 INTEGRATION_LABELS = {value: label for label, value in INTEGRATION_OPTIONS}
 INTEGRATION_UNSELECTED = "needs a choice"
+PR_FEEDBACK_ROW_ID = "pr-feedback-row"
+PR_FEEDBACK_SELECT_ID = "pr-feedback"
+PR_FEEDBACK_OPTIONS = (
+    ("Changes requested only", CHANGES_REQUESTED_FEEDBACK),
+    ("Any review or discussion comment", ANY_COMMENT_FEEDBACK),
+)
 WIZARD_TITLE = "SHIKIRU"
 LEGACY_CATALOG_DETAIL = "agent does not expose an authoritative model catalog"
 WIZARD_FRAME_MAX_WIDTH = 96
@@ -594,6 +602,7 @@ class InitWizardApp(App[InitWizardResult | None]):
         for input_widget in self.query(Input):
             input_widget.cursor_blink = False
         self._update_pages()
+        self._update_pr_feedback_row()
         self._refresh_candidate_rows()
         self.call_after_refresh(self._capture_agent_page_size)
         self.run_worker(self._load_model_catalogs(), group="model-catalogs", exclusive=True)
@@ -670,6 +679,7 @@ class InitWizardApp(App[InitWizardResult | None]):
     @on(Select.Changed)
     def _select_changed(self, event: Select.Changed) -> None:
         if event.select.id == INTEGRATION_SELECT_ID:
+            self._update_pr_feedback_row()
             self._update_finish_summary()
 
     @on(CandidateRows.Opened)
@@ -804,6 +814,10 @@ class InitWizardApp(App[InitWizardResult | None]):
             if self._step in {TRACKERS_STEP_INDEX, COW_STEP_INDEX}:
                 return NARROW_CANDIDATE_HINT
         return WIZARD_HINTS[self._step]
+
+    def _update_pr_feedback_row(self) -> None:
+        integration = cast("Select[str]", self.query_one(f"#{INTEGRATION_SELECT_ID}", Select)).value
+        self.query_one(f"#{PR_FEEDBACK_ROW_ID}").display = integration == PULL_REQUEST_INTEGRATION
 
     def _update_finish_summary(self) -> None:
         integration_value = cast(
@@ -1062,7 +1076,12 @@ class InitWizardApp(App[InitWizardResult | None]):
             tool=int(self._read_field(TOOL_TIMEOUT)),
             max_cpu_pct=int(self._read_field(MAX_CPU)),
             min_free_ram_gb=float(self._read_field(MIN_FREE_RAM)),
+            pr_feedback=self._read_pr_feedback(),
         )
+
+    def _read_pr_feedback(self) -> str:
+        value = cast("Select[str]", self.query_one(f"#{PR_FEEDBACK_SELECT_ID}", Select)).value
+        return cast("str", value)
 
     def _read_agent_options(self) -> dict[str, dict[str, object]]:
         options: dict[str, dict[str, object]] = {}
@@ -1337,6 +1356,14 @@ class InitWizardApp(App[InitWizardResult | None]):
                 "Local squash and merge", "land a finished task as one commit on the base"
             )
             yield _detail_row("Pull request", "open a pull request for review")
+            with Horizontal(id=PR_FEEDBACK_ROW_ID, classes="palette-row wizard-long-label"):
+                yield Label("Pull request feedback")
+                yield Select(
+                    PR_FEEDBACK_OPTIONS,
+                    value=self._orchestration_defaults.pr_feedback,
+                    allow_blank=False,
+                    id=PR_FEEDBACK_SELECT_ID,
+                )
 
     def _finish_page(self) -> ComposeResult:
         with Vertical(id="wizard-page-7", classes="wizard-page"):

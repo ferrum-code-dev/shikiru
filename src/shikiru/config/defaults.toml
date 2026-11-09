@@ -12,6 +12,7 @@ max_download_bytes = 52428800
 max_parallel = 2
 max_iterations = 5
 integration = "merge"
+pr_feedback = "changes_requested"
 push_interval_seconds = 14400
 remote_recheck_seconds = 60
 poll_seconds = 2

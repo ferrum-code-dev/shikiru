@@ -88,6 +88,7 @@ SELECTOR_OPTIONS = {
         MODEL_WITH_LITERAL_BRACKETS,
     ),
     "#integration": ("merge", "squash", "pr"),
+    "#pr-feedback": ("changes_requested", "any_comment"),
     "#agent-setting-0-1": ("", "api", "subscription"),
 }
 
@@ -668,6 +669,7 @@ def assert_written_project_fields(tmp_path: Path, result: InitWizardResult) -> N
     assert settings.orchestration.max_parallel == 3
     assert settings.orchestration.max_iterations == 7
     assert settings.orchestration.integration == "squash"
+    assert settings.orchestration.pr_feedback == "changes_requested"
     assert settings.orchestration.push_interval_seconds == 900
     assert settings.orchestration.timeouts.max_quota_wait == 600
     assert settings.orchestration.resources.max_cpu_pct == 90

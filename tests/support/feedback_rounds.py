@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     import pytest
 
-    from shikiru.config.settings import Settings
+    from shikiru.config.settings import PullRequestFeedbackScope, Settings
     from shikiru.domain.tasks import Task
     from tests.support.engine import EngineEnv
     from tests.support.github import FakeGitHub
@@ -158,6 +158,7 @@ class _Pull:
                 events=self.events,
                 faults=faults,
                 project_root=env.project_root,
+                scope=self.settings.orchestration.pr_feedback,
             ),
         )
         built = build_flow(
@@ -282,9 +283,12 @@ async def open_pull(
     *,
     max_iterations: int | None = None,
     task_commit: bool = False,
+    pr_feedback: PullRequestFeedbackScope | None = None,
 ) -> _Pull:
     settings = (
-        flow_settings() if max_iterations is None else flow_settings(max_iterations=max_iterations)
+        flow_settings(pr_feedback=pr_feedback)
+        if max_iterations is None
+        else flow_settings(max_iterations=max_iterations, pr_feedback=pr_feedback)
     )
     await init_project_repo(env.project_root)
     remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"

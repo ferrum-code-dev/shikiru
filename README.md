@@ -246,7 +246,7 @@ invalid config keeps the last valid values and shows an alert in the header.
 | --- | --- |
 | `project`, `repo` | Project name, tracker files agents read/update, integration base/remote, ignored cache paths. |
 | `roles`, `agents` | Role and complexity ladders, review escalation policy; plugin CLI arguments, compaction threshold and optional billing declaration. |
-| `orchestration` | Parallel task slots, review iterations and local merge, local squash or pull-request integration; `push_interval_seconds` (seconds between pushes of locally integrated bases, default 14400) and `remote_recheck_seconds` (seconds between pending remote checks and retries for an absent remote, default 60); the init wizard also sets the stall and tool timeouts, the quota, CPU and free-RAM limits below. |
+| `orchestration` | Parallel task slots, review iterations and local merge, local squash or pull-request integration; `pr_feedback` (`changes_requested` by default, or `any_comment`) chooses which PR reviews and comments start feedback rounds; `push_interval_seconds` (seconds between pushes of locally integrated bases, default 14400) and `remote_recheck_seconds` (seconds between pending remote checks and retries for an absent remote, default 60); the init wizard also sets the stall and tool timeouts, the quota, CPU and free-RAM limits below. |
 | `orchestration.resources` | CPU/free-RAM gates for dispatch; these do not impose CPU/RAM limits on already-running agents. |
 | `orchestration.quota_refresh` | `interval_seconds` between quota block revalidations (default 300) and `timeout_seconds` bounding each probe (default 30). |
 | `orchestration.timeouts`, `.network`, `.faults`, `.retries` | Stall/tool/Helper/quota/integration/PR limits, remote polling, engine-fault retries, and configurable provider-unavailable retries. |
@@ -270,11 +270,14 @@ base is fast-forwarded to the merged remote tip before the task is done. If it c
 commits the remote lacks, or uncommitted changes in files the merge changes), the task escalates as
 integration blocked and leaves your work untouched; resolve it, then retry to finish the sync.
 Shikiru does not bypass
-repository review policy. A newly submitted changes-requested review, or a new reply in one of its
-inline discussions, starts a feedback round: the
+repository review policy. With `orchestration.pr_feedback = "changes_requested"` (default) a newly
+submitted changes-requested review, or a new reply in one of its inline discussions, starts a
+feedback round. With `"any_comment"` a newly submitted review that has a body (commented, approved
+or changes requested) and a new reply in any inline discussion start one too. In the wizard the
+choice appears under Integration once "Pull request" is selected. A round works like this: the
 Leader analyses it, the Implementer edits, the Leader verifies, and the engine pushes with a lease
-and replies per item, then returns to the PR wait. Conversation comments, approvals, pending or dismissed
-reviews, Shikiru's own replies and edits to handled reviews do not start rounds, and Shikiru never dismisses reviews,
+and replies per item, then returns to the PR wait. Conversation comments, pending or dismissed
+reviews, Shikiru's own replies and edits to handled reviews never start rounds, and Shikiru never dismisses reviews,
 resolves threads, approves or merges. `orchestration.max_iterations` bounds attempts per batch. A
 PR closed without merge escalates and keeps the branch and worktree; only an explicit Operator
 retry opens a new PR. Dirty overlapping changes in the main checkout block local integration;

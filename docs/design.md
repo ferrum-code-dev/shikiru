@@ -189,12 +189,15 @@ handled explicitly. Repository review and merge policy remain in force. Integrat
 recorded for restart reconciliation.
 
 **PR feedback rounds.** While the PR waits (status `integrating`, wait reason `PR open`, no slot),
-a newly submitted `CHANGES_REQUESTED` review ID starts a round, and so does a new comment in an
-inline discussion that holds a comment of a `CHANGES_REQUESTED` review, whether or not the
-discussion is resolved. Conversation comments, approvals, pending or dismissed reviews, our own
-replies (recognised by their marker), edits to handled reviews and comments, and re-polls of the
-same review or comment never do. A discussion whose `CHANGES_REQUESTED` review is dismissed is no
-longer followed. All new reviews and comments present at round start form one batch; later ones
+`orchestration.pr_feedback` decides which feedback starts a round. Under `changes_requested`
+(default) a newly submitted `CHANGES_REQUESTED` review ID starts a round, and so does a new comment in
+an inline discussion that holds a comment of a `CHANGES_REQUESTED` review, whether or not the
+discussion is resolved; a discussion whose `CHANGES_REQUESTED` review is dismissed is no longer
+followed. Under `any_comment` a newly submitted `COMMENTED`, `APPROVED` or `CHANGES_REQUESTED` review
+with a non-blank body starts a round, and so does a new comment in any inline discussion, except
+comments of pending or dismissed reviews. Under both scopes conversation comments, our own replies
+(recognised by their marker), edits to handled reviews and comments, and re-polls of the same review
+or comment never start a round. All new reviews and comments present at round start form one batch; later ones
 wait for the next round. A discussion enters the batch whole, with its new comments marked, so the
 Leader sees its own earlier answers. Handled review and comment IDs are persisted with the round.
 The Leader analyses the batch, the Implementer edits, the Leader verifies the result and

@@ -88,6 +88,7 @@ class OrchestrationChoices:
     max_parallel: int
     max_iterations: int
     integration: str
+    pr_feedback: str
     push_interval_seconds: int
     max_quota_wait: int
     stall: int
@@ -307,6 +308,7 @@ def render_config(
                 f"max_parallel = {orchestration.max_parallel}",
                 f"max_iterations = {orchestration.max_iterations}",
                 f"integration = {json.dumps(orchestration.integration)}",
+                f"pr_feedback = {json.dumps(orchestration.pr_feedback)}",
                 f"push_interval_seconds = {orchestration.push_interval_seconds}",
                 "",
                 "[orchestration.timeouts]",

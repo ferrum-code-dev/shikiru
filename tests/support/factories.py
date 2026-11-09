@@ -14,6 +14,7 @@ from shikiru.config.settings import (
     ImplementerConfig,
     LayoutSplit,
     PaneLeaf,
+    PullRequestFeedbackScope,
     RoleConfig,
     RolesConfig,
     Settings,
@@ -95,6 +96,7 @@ def make_settings(
     implementer_complexity: dict[ComplexityName, ComplexityLadder] | None = None,
     helper_ladder: list[Rung] | None = None,
     agents: dict[str, AgentConfig] | None = None,
+    pr_feedback: PullRequestFeedbackScope | None = None,
 ) -> Settings:
     base = validate_project_config_text(_PROJECT_CONFIG_TEXT)
     orchestration = base.orchestration
@@ -108,6 +110,7 @@ def make_settings(
                     "timeouts": orchestration.timeouts.model_copy(
                         update={"pr_wait": PR_WAIT_SECONDS}
                     ),
+                    "pr_feedback": pr_feedback or orchestration.pr_feedback,
                 }
             ),
             "roles": RolesConfig(

@@ -245,6 +245,35 @@ async def test_orchestration_fields_start_from_injected_defaults_and_keep_edits(
         )
 
 
+async def test_pull_request_feedback_choice_shows_only_for_pull_request_and_keeps_its_value(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await git_project(tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", no_entry_points)
+    packaged = load_default_orchestration()
+    app = await app_with_agents(
+        tmp_path,
+        {"fake": create_fake_agent},
+        orchestration_defaults=packaged.model_copy(update={"pr_feedback": "any_comment"}),
+    )
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await advance_to_orchestration(pilot)
+        feedback_row = pilot.app.query_one("#pr-feedback-row")
+        feedback = cast("Select[str]", pilot.app.query_one("#pr-feedback", Select))
+        assert not feedback_row.display
+        await choose(pilot, "#integration", "pr")
+        await wait_until(lambda: feedback_row.display, timeout=UI_WAIT_SECONDS)
+        assert feedback.value == "any_comment"
+        await choose(pilot, "#pr-feedback", "changes_requested")
+        await choose(pilot, "#integration", "squash")
+        await wait_until(lambda: not feedback_row.display, timeout=UI_WAIT_SECONDS)
+        await choose(pilot, "#integration", "pr")
+        await wait_until(lambda: feedback_row.display, timeout=UI_WAIT_SECONDS)
+        assert feedback.value == "changes_requested"
+
+
 async def test_invalid_orchestration_values_focus_their_field_and_boundaries_round_trip(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
