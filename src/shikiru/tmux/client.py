@@ -21,6 +21,7 @@ _SOCKET_FLAG = "-L"
 _CONFIG_FLAG = "-f"
 _COMMAND_TIMEOUT_SECONDS = 5.0
 _END_OF_OPTIONS = "--"
+_COMMAND_SEPARATOR = ";"
 TMUX_ENV_COMMAND = "env"
 TMUX_ENV_UNSET_OPTION = "-u"
 TMUX_ENV_UNSET_OPTION_ARGUMENT_COUNT = 2
@@ -133,6 +134,92 @@ def _session_scoped(target: str) -> str:
     return target if _SESSION_SEPARATOR in target else f"{target}{_SESSION_SEPARATOR}"
 
 
+def _command_args(command: Sequence[str] | None) -> list[str]:
+    if command is None:
+        return []
+    return [_END_OF_OPTIONS, *command]
+
+
+def new_session_command(
+    name: str,
+    *,
+    cwd: Path,
+    env: Mapping[str, str],
+    window_name: str,
+    size: tuple[int, int],
+    command: Sequence[str] | None = None,
+) -> tuple[str, ...]:
+    """Build the `new-session` argv for a detached session sized `size`, printing its pane id."""
+    columns, rows = size
+    args = [
+        "new-session",
+        "-d",
+        "-x",
+        str(columns),
+        "-y",
+        str(rows),
+        "-P",
+        "-F",
+        FORMAT_PANE_ID,
+        "-s",
+        name,
+        "-c",
+        str(cwd),
+        "-n",
+        window_name,
+    ]
+    for key, value in env.items():
+        args += ["-e", f"{key}={value}"]
+    args += _command_args(command)
+    return tuple(args)
+
+
+def new_window_command(
+    target_session: str,
+    *,
+    name: str,
+    cwd: Path | None = None,
+    command: Sequence[str] | None = None,
+    detached: bool = False,
+) -> tuple[str, ...]:
+    """Build the `new-window` argv for `name` in `target_session`; it prints its base pane id."""
+    args = ["new-window", "-P", "-F", FORMAT_PANE_ID, "-t", target_session, "-n", name]
+    if detached:
+        args.append(_DETACHED_FLAG)
+    if cwd is not None:
+        args += ["-c", str(cwd)]
+    args += _command_args(command)
+    return tuple(args)
+
+
+def session_option_commands(target: str, options: Mapping[str, str]) -> list[tuple[str, ...]]:
+    """Build one `set-option` per entry of `options`, scoped to session `target`."""
+    return [
+        ("set-option", "-t", _session_scoped(target), name, value)
+        for name, value in options.items()
+    ]
+
+
+def window_option_commands(target: str, options: Mapping[str, str]) -> list[tuple[str, ...]]:
+    """Build one window `set-option` per entry of `options`; `target` may also be a pane."""
+    return [("set-option", "-w", "-t", target, name, value) for name, value in options.items()]
+
+
+def pane_option_commands(target: str, options: Mapping[str, str]) -> list[tuple[str, ...]]:
+    """Build one pane `set-option` per entry of `options`, scoped to pane `target`."""
+    return [("set-option", "-p", "-t", target, name, value) for name, value in options.items()]
+
+
+def rename_window_command(target: str, name: str) -> tuple[str, ...]:
+    """Build the argv that renames window `target` to `name`."""
+    return ("rename-window", "-t", target, name)
+
+
+def pane_title_command(target: str, title: str) -> tuple[str, ...]:
+    """Build the argv that titles pane `target` without changing the active pane."""
+    return ("select-pane", "-t", target, "-T", _escape_pane_title_formats(title))
+
+
 class Tmux:
     """Small, intention-revealing wrapper over the tmux CLI for one server (socket)."""
 
@@ -167,29 +254,29 @@ class Tmux:
 
         Returns the id of its first (base) pane.
         """
-        columns, rows = size
-        args = [
-            "new-session",
-            "-d",
-            "-x",
-            str(columns),
-            "-y",
-            str(rows),
-            "-P",
-            "-F",
-            FORMAT_PANE_ID,
-            "-s",
-            name,
-            "-c",
-            str(cwd),
-            "-n",
-            window_name,
-        ]
-        for key, value in env.items():
-            args += ["-e", f"{key}={value}"]
-        args += self._command_args(command)
-        result = await self._run(*args)
+        result = await self._run(
+            *new_session_command(
+                name, cwd=cwd, env=env, window_name=window_name, size=size, command=command
+            )
+        )
         return result.stdout.strip()
+
+    async def batch(self, commands: Sequence[Sequence[str]]) -> ProcessResult:
+        """Run `commands` in one tmux process, joined by tmux's `;` separator.
+
+        tmux stops at the first command that fails: the call raises `CommandFailed` as a single
+        command would, and the commands after it do not run. The result is the whole process's,
+        so a `new-session` in the batch prints its pane id there.
+        """
+        if not commands:
+            message = "a tmux batch needs at least one command"
+            raise ValueError(message)
+        args: list[str] = []
+        for index, command in enumerate(commands):
+            if index:
+                args.append(_COMMAND_SEPARATOR)
+            args.extend(command)
+        return await self._run(*args)
 
     async def target_exists(self, target: str) -> bool:
         """Return whether `target` (a session or a window, exactly) exists.
@@ -325,24 +412,23 @@ class Tmux:
         qualified with a trailing `:` to mean that session's current window; tmux still applies
         a non-pane, non-window option at session scope.
         """
-        await self._run("set-option", "-t", _session_scoped(target), name, value)
+        await self.batch(session_option_commands(target, {name: value}))
 
     async def set_window_option(self, target: str, name: str, value: str) -> None:
         """Set window option `name` on `target`."""
-        await self._run("set-option", "-w", "-t", target, name, value)
+        await self.batch(window_option_commands(target, {name: value}))
 
     async def set_pane_option(self, target: str, name: str, value: str) -> None:
         """Set pane option `name` on `target`."""
-        await self._run("set-option", "-p", "-t", target, name, value)
+        await self.batch(pane_option_commands(target, {name: value}))
 
     async def rename_window(self, target: str, name: str) -> None:
         """Rename window `target` to `name`."""
-        await self._run("rename-window", "-t", target, name)
+        await self._run(*rename_window_command(target, name))
 
     async def set_pane_title(self, target: str, title: str) -> None:
         """Set pane `target`'s title without changing the active pane."""
-        escaped_title = _escape_pane_title_formats(title)
-        await self._run("select-pane", "-t", target, "-T", escaped_title)
+        await self._run(*pane_title_command(target, title))
 
     async def select_pane(self, target: str) -> None:
         """Select the window containing pane `target`, then make that pane active."""
@@ -363,13 +449,11 @@ class Tmux:
         detached: bool = False,
     ) -> str:
         """Create a window named `name` in `target_session`, returning its base pane id."""
-        args = ["new-window", "-P", "-F", FORMAT_PANE_ID, "-t", target_session, "-n", name]
-        if detached:
-            args.append(_DETACHED_FLAG)
-        if cwd is not None:
-            args += ["-c", str(cwd)]
-        args += self._command_args(command)
-        result = await self._run(*args)
+        result = await self._run(
+            *new_window_command(
+                target_session, name=name, cwd=cwd, command=command, detached=detached
+            )
+        )
         return result.stdout.strip()
 
     async def kill_window(self, target: str) -> None:
@@ -477,9 +561,11 @@ class Tmux:
         result = await self._run("list-panes", "-s", "-t", target, "-F", fmt)
         return result.stdout.splitlines()
 
-    async def list_session_windows(self, target: str) -> list[str]:
-        """List the window ids belonging to `target` without selecting a window."""
-        result = await self._run("list-windows", "-t", target, "-F", FORMAT_WINDOW_ID)
+    async def list_session_windows(
+        self, target: str, *, row_format: str = FORMAT_WINDOW_ID
+    ) -> list[str]:
+        """List one `row_format` line per window of `target`, without selecting a window."""
+        result = await self._run("list-windows", "-t", target, "-F", row_format)
         return result.stdout.splitlines()
 
     async def list_sessions(self) -> list[str]:
@@ -532,12 +618,6 @@ class Tmux:
     async def bind_key(self, key: str, *command: str, table: str = "prefix") -> None:
         """Bind `key` in key table `table` to run `command` (a single tmux command line)."""
         await self._run("bind-key", "-T", table, key, *command)
-
-    @staticmethod
-    def _command_args(command: Sequence[str] | None) -> list[str]:
-        if command is None:
-            return []
-        return [_END_OF_OPTIONS, *command]
 
     async def _run(
         self, *args: str, input_text: str | None = None, check: bool = True

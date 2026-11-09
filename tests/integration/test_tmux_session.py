@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.errors import ConfigError
+from shikiru.errors import CommandFailed, ConfigError
 from shikiru.tmux.client import Tmux, exact_target, tmux_key_label
 from shikiru.tmux.session import (
     DETACHED_SIZE,
@@ -353,3 +353,83 @@ async def test_task_window_survives_its_process_exiting(
 
     await wait_until(lambda: tmux.is_pane_dead(pane_id), 5.0)
     assert await tmux.target_exists(window_target)
+
+
+async def test_task_window_keeps_its_pane_when_its_command_exits_at_once(
+    tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    tmux = _tmux(tmux_server)
+    view = SessionView(tmux)
+    target = await view.ensure("demo", tmp_path, home_command=_HOME_COMMAND)
+    window_target = f"{target}:=T-1"
+
+    pane_id = await view.create_task_window(
+        target, window_name="T-1", cwd=tmp_path, command=("sh", "-c", "exit 0")
+    )
+
+    await wait_until(lambda: tmux.is_pane_dead(pane_id), 5.0)
+    assert await tmux.target_exists(window_target)
+    remain_on_exit = await tmux_server.run(
+        "show-window-options", "-t", window_target, "-v", "remain-on-exit"
+    )
+    assert remain_on_exit.stdout.strip() == "on"
+
+
+async def _session_option(server: TmuxServer, target: str, name: str) -> str | None:
+    result = await server.run("show-options", "-t", f"{target}:", name, check=False)
+    if result.returncode:
+        return None
+    return result.stdout.split()[-1]
+
+
+async def test_batch_applies_every_command_in_one_tmux_call(
+    tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    tmux = _tmux(tmux_server)
+    target = await SessionView(tmux).ensure("demo", tmp_path, home_command=_HOME_COMMAND)
+
+    await tmux.batch(
+        [
+            ["set-option", "-t", f"{target}:", "@shk_first", "1"],
+            ["set-option", "-t", f"{target}:", "@shk_second", "2"],
+        ]
+    )
+
+    assert await _session_option(tmux_server, target, "@shk_first") == "1"
+    assert await _session_option(tmux_server, target, "@shk_second") == "2"
+
+
+async def test_batch_stops_at_a_failing_command_and_raises_command_failed(
+    tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    tmux = _tmux(tmux_server)
+    target = await SessionView(tmux).ensure("demo", tmp_path, home_command=_HOME_COMMAND)
+
+    with pytest.raises(CommandFailed):
+        await tmux.batch(
+            [
+                ["set-option", "-t", f"{target}:", "@shk_before", "1"],
+                ["select-window", "-t", f"{target}:=no-such-window"],
+                ["set-option", "-t", f"{target}:", "@shk_after", "2"],
+            ]
+        )
+
+    assert await _session_option(tmux_server, target, "@shk_before") == "1"
+    assert await _session_option(tmux_server, target, "@shk_after") is None
+
+
+async def test_home_window_keeps_its_pane_when_the_home_command_exits(
+    tmux_server: TmuxServer, tmp_path: Path
+) -> None:
+    tmux = _tmux(tmux_server)
+    view = SessionView(tmux)
+    target = await view.ensure("demo", tmp_path, home_command=("sh", "-c", "exit 0"))
+    home_target = f"{target}:={HOME_WINDOW_NAME}"
+
+    await wait_until(lambda: tmux.is_pane_dead(f"{home_target}"), 5.0)
+
+    assert await tmux.target_exists(home_target)
+    remain_on_exit = await tmux_server.run(
+        "show-window-options", "-t", home_target, "-v", "remain-on-exit"
+    )
+    assert remain_on_exit.stdout.strip() == "on"

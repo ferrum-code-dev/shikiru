@@ -12,6 +12,12 @@ from shikiru.palette import (
     SECONDARY_TEXT_COLOR,
     SELECTED_SURFACE_COLOR,
 )
+from shikiru.tmux.client import (
+    pane_option_commands,
+    pane_title_command,
+    rename_window_command,
+    window_option_commands,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -136,14 +142,15 @@ class PaneDecorator:
 
     async def configure_formats(self, window_target: str) -> None:
         """Set the border and window-status formats that read the `@shk_*` options."""
-        await self._tmux.set_window_option(
-            window_target, _PANE_BORDER_FORMAT_OPTION, PANE_BORDER_FORMAT
-        )
-        await self._tmux.set_window_option(
-            window_target, _WINDOW_STATUS_FORMAT_OPTION, WINDOW_STATUS_FORMAT
-        )
-        await self._tmux.set_window_option(
-            window_target, _WINDOW_STATUS_CURRENT_FORMAT_OPTION, WINDOW_STATUS_CURRENT_FORMAT
+        await self._tmux.batch(
+            window_option_commands(
+                window_target,
+                {
+                    _PANE_BORDER_FORMAT_OPTION: PANE_BORDER_FORMAT,
+                    _WINDOW_STATUS_FORMAT_OPTION: WINDOW_STATUS_FORMAT,
+                    _WINDOW_STATUS_CURRENT_FORMAT_OPTION: WINDOW_STATUS_CURRENT_FORMAT,
+                },
+            )
         )
 
     async def set_pane_title_styling(
@@ -155,31 +162,64 @@ class PaneDecorator:
         field_colors: Mapping[str, str],
         field_segments: Mapping[str, tuple[tuple[str, str], ...]],
     ) -> None:
-        """Set the separately rendered title styles for one pane's border row."""
-        title_format = _render_styled_title(template, fields, field_colors, field_segments)
-        await self._tmux.set_pane_option(pane_target, PANE_TITLE_FORMAT_OPTION, title_format)
+        """Set pane `pane_target`'s title and its styled border row in one tmux call."""
+        await self._set_pane_title(
+            pane_target,
+            template,
+            fields,
+            field_colors=field_colors,
+            field_segments=field_segments,
+        )
 
     async def set_pane_state(self, pane_target: str, *, color: str, glyph: str) -> None:
         """Set pane `pane_target`'s `@shk_color` and `@shk_glyph`."""
-        await self._tmux.set_pane_option(pane_target, PANE_COLOR_OPTION, color)
-        await self._tmux.set_pane_option(pane_target, PANE_GLYPH_OPTION, glyph)
+        await self._tmux.batch(
+            pane_option_commands(pane_target, {PANE_COLOR_OPTION: color, PANE_GLYPH_OPTION: glyph})
+        )
 
-    async def set_window_state(self, window_target: str, *, color: str, glyph: str) -> None:
-        """Set window `window_target`'s `@shk_state_color` and `@shk_state_glyph`."""
-        await self._tmux.set_window_option(window_target, WINDOW_STATE_COLOR_OPTION, color)
-        await self._tmux.set_window_option(window_target, WINDOW_STATE_GLYPH_OPTION, glyph)
+    async def refresh_window(
+        self,
+        window_target: str,
+        template: str,
+        fields: Mapping[str, object],
+        *,
+        color: str,
+        glyph: str,
+    ) -> None:
+        """Set window `window_target`'s state and rename it to `template` rendered with `fields`."""
+        title = render_title(template, fields)
+        await self._tmux.batch(
+            [
+                rename_window_command(window_target, title),
+                *window_option_commands(
+                    window_target,
+                    {WINDOW_STATE_COLOR_OPTION: color, WINDOW_STATE_GLYPH_OPTION: glyph},
+                ),
+            ]
+        )
 
     async def set_pane_title(
         self, pane_target: str, template: str, fields: Mapping[str, object]
     ) -> None:
         """Render `template` with `fields` and set it as pane `pane_target`'s title."""
-        title = render_title(template, fields)
-        await self._tmux.set_pane_title(pane_target, title)
-        title_format = _render_styled_title(template, fields, {}, {})
-        await self._tmux.set_pane_option(pane_target, PANE_TITLE_FORMAT_OPTION, title_format)
+        await self._set_pane_title(
+            pane_target, template, fields, field_colors={}, field_segments={}
+        )
 
-    async def set_window_title(
-        self, window_target: str, template: str, fields: Mapping[str, object]
+    async def _set_pane_title(
+        self,
+        pane_target: str,
+        template: str,
+        fields: Mapping[str, object],
+        *,
+        field_colors: Mapping[str, str],
+        field_segments: Mapping[str, tuple[tuple[str, str], ...]],
     ) -> None:
-        """Render `template` with `fields` and rename window `window_target` to it."""
-        await self._tmux.rename_window(window_target, render_title(template, fields))
+        title = render_title(template, fields)
+        title_format = _render_styled_title(template, fields, field_colors, field_segments)
+        await self._tmux.batch(
+            [
+                pane_title_command(pane_target, title),
+                *pane_option_commands(pane_target, {PANE_TITLE_FORMAT_OPTION: title_format}),
+            ]
+        )

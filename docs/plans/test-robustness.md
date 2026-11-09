@@ -50,7 +50,7 @@ Acceptance criteria:
 
 ### R2 — Batch the tmux setup commands
 
-- [ ] Fewer processes per tmux operation, and `remain-on-exit` set before anything can die.
+- [x] Fewer processes per tmux operation, and `remain-on-exit` set before anything can die.
 
 Acceptance criteria:
 

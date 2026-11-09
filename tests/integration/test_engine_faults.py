@@ -66,6 +66,7 @@ _TARGET = exact_target(session_name("test"))
 _WAIT_SECONDS = 15
 _DECORATION_OPTIONS = {"@shk_color", "@shk_glyph", "@shk_state_color", "@shk_state_glyph"}
 _RENAME_WINDOW = "rename-window"
+_NEW_WINDOW = "new-window"
 _PANE_TITLE_FLAG = "-T"
 _TMUX_TIMEOUT_SECONDS = 5.0
 
@@ -105,9 +106,15 @@ class _RecordedLogs(logging.Handler):
 
 class _DecorationTimeoutRunner(SubprocessRunner):
     async def run(self, argv: Sequence[str], **kwargs: Any) -> ProcessResult:
-        if _RENAME_WINDOW in argv or _PANE_TITLE_FLAG in argv or _is_user_option(argv):
+        if _is_decoration(argv):
             raise CommandTimeoutError(argv, _TMUX_TIMEOUT_SECONDS)
         return await super().run(argv, **kwargs)
+
+
+def _is_decoration(argv: Sequence[str]) -> bool:
+    if _NEW_WINDOW in argv:
+        return False
+    return _RENAME_WINDOW in argv or _PANE_TITLE_FLAG in argv or _is_user_option(argv)
 
 
 def _is_user_option(argv: Sequence[str]) -> bool:

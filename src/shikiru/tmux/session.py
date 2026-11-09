@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shlex
 from typing import TYPE_CHECKING
+from uuid import uuid4
 
 from shikiru.errors import ConfigError
 from shikiru.palette import (
@@ -23,6 +24,12 @@ from shikiru.tmux.client import (
     HOME_PANE_OPTION,
     HOME_PANE_OPTION_VALUE,
     exact_target,
+    new_session_command,
+    new_window_command,
+    pane_option_commands,
+    rename_window_command,
+    session_option_commands,
+    window_option_commands,
 )
 from shikiru.tmux.decorator import (
     HOME_WINDOW_STATUS_CURRENT_FORMAT,
@@ -48,6 +55,7 @@ HOME_WINDOW_NAME = "dashboard"
 LEGACY_HOME_WINDOW_NAME = "shikiru"
 DETACHED_SIZE = (240, 64)
 _HOME_WINDOW_INDEX = "0"
+_PENDING_WINDOW_PREFIX = "shikiru-pending-"
 _HOME_INDEX_TARGET = f":{_HOME_WINDOW_INDEX}"
 
 _PALETTE_KEY = "Space"
@@ -79,6 +87,7 @@ _HOME_PANE_FORMAT = (
     f"{FORMAT_PANE_START_COMMAND}{_FIELD_SEPARATOR}"
     f"#{{{HOME_PANE_OPTION}}}"
 )
+_WINDOW_STATE_ROW_FORMAT = f"{FORMAT_WINDOW_ID}{_FIELD_SEPARATOR}#{{{WINDOW_STATE_COLOR_OPTION}}}"
 
 _SESSION_SCOPED_OPTIONS: dict[str, str] = {
     "base-index": _HOME_WINDOW_INDEX,
@@ -121,20 +130,8 @@ _TASK_WINDOW_OPTIONS: dict[str, str] = {
     **_WINDOW_STATUS_OPTIONS,
 }
 
-_TASK_WINDOW_RECOVERY_OPTIONS: dict[str, str] = {
-    **_OWNED_WINDOW_BEHAVIOR_OPTIONS,
-    **_PANE_TITLE_OPTIONS,
-}
-
 _HOME_WINDOW_OPTIONS: dict[str, str] = {
     **_TASK_WINDOW_OPTIONS,
-    "pane-border-status": "off",
-    "window-status-format": HOME_WINDOW_STATUS_FORMAT,
-    "window-status-current-format": HOME_WINDOW_STATUS_CURRENT_FORMAT,
-}
-
-_HOME_WINDOW_RECOVERY_OPTIONS: dict[str, str] = {
-    **_TASK_WINDOW_RECOVERY_OPTIONS,
     "pane-border-status": "off",
     "window-status-format": HOME_WINDOW_STATUS_FORMAT,
     "window-status-current-format": HOME_WINDOW_STATUS_CURRENT_FORMAT,
@@ -177,6 +174,17 @@ def session_name(project_name: str) -> str:
     return f"{SESSION_PREFIX}{sanitized}"
 
 
+def _home_window_target(session_target: str) -> str:
+    return f"{session_target}:={HOME_WINDOW_NAME}"
+
+
+def _home_window_setup(window_target: str) -> list[tuple[str, ...]]:
+    return [
+        *window_option_commands(window_target, _HOME_WINDOW_OPTIONS),
+        *pane_option_commands(window_target, {HOME_PANE_OPTION: HOME_PANE_OPTION_VALUE}),
+    ]
+
+
 class SessionView:
     """Ensures the project's tmux session, its options, and its home and task windows."""
 
@@ -195,34 +203,55 @@ class SessionView:
         """
         name = session_name(project_name)
         target = exact_target(name)
-        created_home_pane: str | None = None
+        session_options = {**_SESSION_SCOPED_OPTIONS, "set-titles-string": project_name}
         if await self._tmux.target_exists(target):
             await self._check_no_collision(target, project_dir)
+            await self._tmux.batch(session_option_commands(target, session_options))
         else:
-            created_home_pane = await self._tmux.new_session(
-                name,
-                cwd=project_dir,
-                env={PROJECT_DIR_ENV_VAR: str(project_dir)},
-                window_name=HOME_WINDOW_NAME,
-                size=DETACHED_SIZE,
-                command=home_command,
+            await self._tmux.batch(
+                [
+                    new_session_command(
+                        name,
+                        cwd=project_dir,
+                        env={PROJECT_DIR_ENV_VAR: str(project_dir)},
+                        window_name=HOME_WINDOW_NAME,
+                        size=DETACHED_SIZE,
+                        command=home_command,
+                    ),
+                    *session_option_commands(target, session_options),
+                    *_home_window_setup(_home_window_target(target)),
+                ]
             )
-        for option, value in _SESSION_SCOPED_OPTIONS.items():
-            await self._tmux.set_session_option(target, option, value)
-        await self._tmux.set_session_option(target, "set-titles-string", project_name)
-        home_window = await self._ensure_home_window(
-            target, project_dir, home_command, initial_pane=created_home_pane
-        )
-        await self._apply_session_window_options(target, home_window)
+        home = await self._ensure_home_window(target, project_dir, home_command)
+        await self._apply_session_window_options(target, home)
         return target
 
-    async def create_task_window(self, session_target: str, *, window_name: str, cwd: Path) -> str:
-        """Create a task window in `session_target`, returning the id of its base pane."""
-        base_pane = await self._tmux.new_window(
-            session_target, name=window_name, cwd=cwd, detached=True
+    async def create_task_window(
+        self,
+        session_target: str,
+        *,
+        window_name: str,
+        cwd: Path,
+        command: Sequence[str] | None = None,
+    ) -> str:
+        """Create a task window in `session_target`, returning the id of its base pane.
+
+        The window is created with its options and renamed in one tmux call, so its
+        `remain-on-exit` is set before its command can exit. It is created under a unique
+        pending name, so its options can target it exactly even when `window_name` is taken.
+        """
+        pending = f"{_PENDING_WINDOW_PREFIX}{uuid4().hex}"
+        pending_target = f"{session_target}:={pending}"
+        result = await self._tmux.batch(
+            [
+                new_window_command(
+                    session_target, name=pending, cwd=cwd, command=command, detached=True
+                ),
+                *window_option_commands(pending_target, _TASK_WINDOW_OPTIONS),
+                rename_window_command(pending_target, window_name),
+            ]
         )
-        await self._apply_options(await self._tmux.window_id(base_pane), _TASK_WINDOW_OPTIONS)
-        return base_pane
+        return result.stdout.strip()
 
     async def close_task_window(self, window_target: str) -> None:
         """Close a task window."""
@@ -236,47 +265,51 @@ class SessionView:
             raise ConfigError(message)
 
     async def _ensure_home_window(
-        self,
-        target: str,
-        project_dir: Path,
-        home_command: Sequence[str],
-        *,
-        initial_pane: str | None,
-    ) -> str:
-        if initial_pane is not None:
-            window_target = await self._tmux.window_id(initial_pane)
-            await self._mark_home_pane(initial_pane)
-        else:
+        self, target: str, project_dir: Path, home_command: Sequence[str]
+    ) -> tuple[str, str]:
+        matches = await home_window_targets(self._tmux, target)
+        if not matches:
+            await self._create_home_window(target, project_dir, home_command)
             matches = await home_window_targets(self._tmux, target)
-            if not matches:
-                pane_id = await self._tmux.new_window(
+        window_target, pane_id, window_name, _ = _preferred_home(matches)
+        if window_name != HOME_WINDOW_NAME:
+            await self._tmux.rename_window(window_target, HOME_WINDOW_NAME)
+        await self._ensure_home_index(target, window_target)
+        await self._remove_duplicate_home_windows(matches, window_target)
+        return window_target, pane_id
+
+    async def _create_home_window(
+        self, target: str, project_dir: Path, home_command: Sequence[str]
+    ) -> None:
+        await self._tmux.batch(
+            [
+                new_window_command(
                     target,
                     name=HOME_WINDOW_NAME,
                     cwd=project_dir,
                     command=home_command,
                     detached=True,
-                )
-                await self._mark_home_pane(pane_id)
-                matches = await home_window_targets(self._tmux, target)
-            window_target, pane_id, _, _ = _preferred_home(matches)
-            await self._mark_home_pane(pane_id)
-        if await self._tmux.display(window_target, FORMAT_WINDOW_NAME) != HOME_WINDOW_NAME:
-            await self._tmux.rename_window(window_target, HOME_WINDOW_NAME)
-        await self._ensure_home_index(target, window_target)
-        await self._remove_duplicate_home_windows(target, window_target)
-        return window_target
+                ),
+                *_home_window_setup(_home_window_target(target)),
+            ]
+        )
 
-    async def _apply_session_window_options(self, target: str, home_window: str) -> None:
-        for window_target in await self._tmux.list_session_windows(target):
-            await self._apply_options(window_target, _WINDOW_STATUS_OPTIONS)
-            if window_target == home_window:
-                await self._apply_options(window_target, _HOME_WINDOW_RECOVERY_OPTIONS)
-            elif await self._is_task_window(window_target):
-                await self._apply_options(window_target, _TASK_WINDOW_RECOVERY_OPTIONS)
-
-    async def _is_task_window(self, window_target: str) -> bool:
-        state_color_format = f"#{{{WINDOW_STATE_COLOR_OPTION}}}"
-        return bool(await self._tmux.display(window_target, state_color_format))
+    async def _apply_session_window_options(self, target: str, home: tuple[str, str]) -> None:
+        home_window, home_pane = home
+        commands: list[tuple[str, ...]] = []
+        for row in await self._tmux.list_session_windows(
+            target, row_format=_WINDOW_STATE_ROW_FORMAT
+        ):
+            window_id, _, state_color = row.partition(_FIELD_SEPARATOR)
+            if window_id == home_window:
+                options = _HOME_WINDOW_OPTIONS
+            elif state_color:
+                options = _TASK_WINDOW_OPTIONS
+            else:
+                options = _WINDOW_STATUS_OPTIONS
+            commands.extend(window_option_commands(window_id, options))
+        commands.extend(pane_option_commands(home_pane, {HOME_PANE_OPTION: HOME_PANE_OPTION_VALUE}))
+        await self._tmux.batch(commands)
 
     async def _ensure_home_index(self, target: str, home_window: str) -> None:
         if await self._tmux.display(home_window, FORMAT_WINDOW_INDEX) == _HOME_WINDOW_INDEX:
@@ -295,17 +328,13 @@ class SessionView:
             raise ConfigError(message)
         await self._tmux.move_window(home_window, home_target)
 
-    async def _mark_home_pane(self, pane_id: str) -> None:
-        await self._tmux.set_pane_option(pane_id, HOME_PANE_OPTION, HOME_PANE_OPTION_VALUE)
-
-    async def _remove_duplicate_home_windows(self, target: str, home_window: str) -> None:
-        for duplicate, _, _, _ in await home_window_targets(self._tmux, target):
+    async def _remove_duplicate_home_windows(
+        self, matches: list[tuple[str, str, str, str]], home_window: str
+    ) -> None:
+        duplicates = dict.fromkeys(window_id for window_id, _, _, _ in matches)
+        for duplicate in duplicates:
             if duplicate != home_window:
                 await self._tmux.kill_window(duplicate)
-
-    async def _apply_options(self, window_target: str, options: dict[str, str]) -> None:
-        for option, value in options.items():
-            await self._tmux.set_window_option(window_target, option, value)
 
 
 async def home_window_target(tmux: Tmux, session_target: str) -> tuple[str, str] | None:

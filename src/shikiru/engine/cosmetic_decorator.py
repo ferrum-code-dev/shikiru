@@ -54,10 +54,19 @@ class CosmeticDecorator(PaneDecorator):
             "set_pane_state", super().set_pane_state(pane_target, color=color, glyph=glyph)
         )
 
-    async def set_window_state(self, window_target: str, *, color: str, glyph: str) -> None:
-        """Set the window state, logging a tmux failure."""
+    async def refresh_window(
+        self,
+        window_target: str,
+        template: str,
+        fields: Mapping[str, object],
+        *,
+        color: str,
+        glyph: str,
+    ) -> None:
+        """Set the window state and title, logging a tmux failure."""
         await self._cosmetic(
-            "set_window_state", super().set_window_state(window_target, color=color, glyph=glyph)
+            "refresh_window",
+            super().refresh_window(window_target, template, fields, color=color, glyph=glyph),
         )
 
     async def set_pane_title(
@@ -87,12 +96,4 @@ class CosmeticDecorator(PaneDecorator):
                 field_colors=field_colors,
                 field_segments=field_segments,
             ),
-        )
-
-    async def set_window_title(
-        self, window_target: str, template: str, fields: Mapping[str, object]
-    ) -> None:
-        """Set the window title, logging a tmux failure."""
-        await self._cosmetic(
-            "set_window_title", super().set_window_title(window_target, template, fields)
         )

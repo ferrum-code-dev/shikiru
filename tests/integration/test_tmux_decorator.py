@@ -76,14 +76,15 @@ async def test_window_state_and_title_render_and_are_readable_back(
     window_target = await tmux.display(pane_id, "#{window_id}")
     decorator = PaneDecorator(tmux)
 
-    await decorator.set_window_state(window_target, color="#facc15", glyph="⏧")
-    await decorator.set_window_title(
+    await decorator.refresh_window(
         window_target,
         "{task_id} {title:.4}",
         {
             "task_id": "T-1",
             "title": "Add retry logic",
         },
+        color="#facc15",
+        glyph="⏧",
     )
 
     assert await tmux.display(window_target, "#{window_name}") == "T-1 Add"
@@ -243,7 +244,7 @@ async def test_project_chrome_is_local_and_recovered_without_changing_focus(
     task_window = await tmux.window_id(task_pane)
     decorator = PaneDecorator(tmux)
     await decorator.configure_formats(task_window)
-    await decorator.set_window_state(task_window, color="#83bddd", glyph="◆")
+    await decorator.refresh_window(task_window, "T-1 Recovery", {}, color="#83bddd", glyph="◆")
     await decorator.set_pane_title(task_pane, "Task title #{{session_name}} #[bg=green]", {})
     task_title = await tmux.display(task_pane, "#{pane_title}")
 

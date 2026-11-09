@@ -198,10 +198,13 @@ class TaskTitles:
         self, task: Task, window_target: str, quota: TaskQuotaWait | None
     ) -> None:
         color, glyph = _window_state(task, quota)
-        await self._decorator.set_window_state(window_target, color=color, glyph=glyph)
         fields = {"task_id": task.id, "title": task.title}
-        await self._decorator.set_window_title(
-            window_target, self._settings.dashboard.titles.window, fields
+        await self._decorator.refresh_window(
+            window_target,
+            self._settings.dashboard.titles.window,
+            fields,
+            color=color,
+            glyph=glyph,
         )
 
     async def _refresh_pane(
@@ -240,7 +243,6 @@ class TaskTitles:
             "flags": _flags(task),
             "flags_text": _flags(task, taken_over=taken_over, include_glyphs=False),
         }
-        await self._decorator.set_pane_title(pane_id, template, fields)
         cost_color = SECONDARY_TEXT_COLOR
         if usage.cost_usd is not None and usage_reported is not False:
             if usage.cost_basis == COST_BASIS_BILLED:
