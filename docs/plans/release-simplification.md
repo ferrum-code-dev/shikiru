@@ -83,7 +83,7 @@ Acceptance criteria:
 
 ### S4 — Back up the state database before a migration
 
-- [ ] Same protection shikiri-yaku has for its journal.
+- [x] Same protection shikiri-yaku has for its journal.
 
 Acceptance criteria:
 

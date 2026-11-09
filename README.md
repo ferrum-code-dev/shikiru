@@ -339,6 +339,7 @@ eligible work. Use task controls when you need to halt a specific task without s
 | --- | --- |
 | `.shikiru/config.toml` | Project settings. |
 | `.shikiru/state.db` | Tasks, commands, events, sessions, decisions and recovery state. |
+| `.shikiru/backups/` | Copies of `state.db` from before each schema migration; the newest three are kept. |
 | `.shikiru/worktrees/` | Per-task Git checkouts. |
 | `.shikiru/runs/` | Turn prompts, reports, collected facts, streams and logs. |
 | `.shikiru/logs/engine.log` | Rotating engine diagnostics. |
@@ -346,7 +347,8 @@ eligible work. Use task controls when you need to halt a specific task without s
 Use Doctor for setup/state problems, status for progress and decisions, and dashboard Diagnostics
 for live resource/fault information. Retention removes eligible finished evidence after configured
 horizons while preserving unresolved work; export evidence you need to keep. Missing/corrupt state
-is not repaired by deleting `.shikiru/`.
+is not repaired by deleting `.shikiru/`. To roll back after a migration, stop the engine and copy the
+newest file from `.shikiru/backups/` over `state.db`.
 
 Shikiru orchestrates agents; it does not sandbox them. Agents run as your user, inherit their CLI's
 environment and may use your credentials. Use only repositories and hosts you trust.

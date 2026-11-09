@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import sqlite3  # noqa: TID251
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from importlib import resources
 from typing import TYPE_CHECKING
 
 from shikiru.errors import DatabaseError
+from shikiru.paths import SCHEMA_BACKUPS_DIR_NAME
 from shikiru.private import create_private_file, make_private_dir
 
 if TYPE_CHECKING:
@@ -18,11 +19,14 @@ if TYPE_CHECKING:
     from pydantic import TypeAdapter
 
 BUSY_TIMEOUT_MS = 5000
+SCHEMA_BACKUPS_KEPT = 3
 OperationalDatabaseError = sqlite3.OperationalError
 """A database fault of the environment: locked, full or unreadable."""
 _MIGRATIONS_PACKAGE = "shikiru.store.migrations"
 _MIGRATION_SUFFIX = ".sql"
 _MIGRATION_NUMBER_SEPARATOR = "_"
+_BACKUP_PREFIX = "state-schema"
+_BACKUP_SUFFIX = ".db"
 _BEGIN = "BEGIN"
 _BEGIN_IMMEDIATE = "BEGIN IMMEDIATE"
 _READ_VERSION = "PRAGMA user_version"
@@ -50,7 +54,11 @@ class Database:
         create_private_file(self._path)
         connection = _guard_schema(self._connect(mode="rwc"), self._path)
         connection.execute("PRAGMA journal_mode = WAL")
-        _migrate(connection)
+        try:
+            _migrate(connection, self._path)
+        except BaseException:
+            connection.close()
+            raise
         return connection
 
     def connect_readonly(self) -> sqlite3.Connection:
@@ -197,15 +205,28 @@ def _guard_schema(connection: sqlite3.Connection, path: Path) -> sqlite3.Connect
         message = (
             f"state database {path} has schema version {stored}, newer than the version "
             f"{known} this Shikiru knows; use the Shikiru release that wrote it"
+            f"{_restore_hint(path)}"
         )
         raise DatabaseError(message)
     return connection
 
 
-def _migrate(connection: sqlite3.Connection) -> None:
+def _restore_hint(path: Path) -> str:
+    newest = _newest_backup(_backups_dir(path))
+    if newest is None:
+        return ""
+    return f"; the newest backup is {newest}, copy it back over {path} to restore it"
+
+
+def _migrate(connection: sqlite3.Connection, path: Path) -> None:
     migrations = _migration_files()
-    if _schema_version(connection) >= migrations[-1][0]:
+    latest = migrations[-1][0]
+    if _schema_version(connection) >= latest:
         return
+    with transaction(connection, immediate=True):
+        stored = _schema_version(connection)
+        if 0 < stored < latest:
+            _back_up(path, stored)
     for number, sql in migrations:
         with transaction(connection, immediate=True):
             if number <= _schema_version(connection):
@@ -213,3 +234,64 @@ def _migrate(connection: sqlite3.Connection) -> None:
             for statement in _statements(sql):
                 connection.execute(statement)
             connection.execute(f"PRAGMA user_version = {number}")
+
+
+def _backups_dir(path: Path) -> Path:
+    return path.parent / SCHEMA_BACKUPS_DIR_NAME
+
+
+def _back_up(path: Path, schema: int) -> None:
+    directory = _backups_dir(path)
+    target = directory / f"{_BACKUP_PREFIX}{schema}{_BACKUP_SUFFIX}"
+    try:
+        make_private_dir(directory)
+        target.unlink(missing_ok=True)
+        create_private_file(target)
+        _copy_database(path, target)
+        _prune_backups(directory)
+    except (OSError, sqlite3.Error) as error:
+        with suppress(OSError):
+            target.unlink(missing_ok=True)
+        message = (
+            f"could not back up state database {path} before migrating from schema {schema}: "
+            f"{error}"
+        )
+        raise DatabaseError(message) from error
+
+
+def _copy_database(source_path: Path, target: Path) -> None:
+    source = sqlite3.connect(source_path)
+    destination = sqlite3.connect(target)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+
+
+def _prune_backups(directory: Path) -> None:
+    for _schema, stale in _backups_by_schema(directory)[:-SCHEMA_BACKUPS_KEPT]:
+        stale.unlink()
+
+
+def _newest_backup(directory: Path) -> Path | None:
+    backups = _backups_by_schema(directory)
+    return backups[-1][1] if backups else None
+
+
+def _backups_by_schema(directory: Path) -> list[tuple[int, Path]]:
+    if not directory.is_dir():
+        return []
+    backups: list[tuple[int, Path]] = []
+    for entry in directory.iterdir():
+        schema = _backup_schema(entry.name)
+        if schema is not None:
+            backups.append((schema, entry))
+    return sorted(backups, key=lambda backup: backup[0])
+
+
+def _backup_schema(name: str) -> int | None:
+    if not (name.startswith(_BACKUP_PREFIX) and name.endswith(_BACKUP_SUFFIX)):
+        return None
+    digits = name.removeprefix(_BACKUP_PREFIX).removesuffix(_BACKUP_SUFFIX)
+    return int(digits) if digits.isdecimal() else None

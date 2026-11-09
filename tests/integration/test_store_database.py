@@ -13,7 +13,7 @@ import pytest
 
 from shikiru.agents.contracts import BILLING_MODE_UNKNOWN, BILLING_SOURCE_UNKNOWN
 from shikiru.errors import DatabaseError
-from shikiru.store.database import Database, format_timestamp
+from shikiru.store.database import SCHEMA_BACKUPS_KEPT, Database, format_timestamp
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
 
@@ -369,3 +369,114 @@ def test_a_schema_newer_than_the_code_is_refused_without_writing(
     with pytest.raises(DatabaseError, match=f"version {stored}, newer than the version"):
         database.connect_readonly()
     assert _user_version(path) == stored
+
+
+def _database_at_schema(path: Path, schema: int) -> None:
+    legacy = sqlite3.connect(path)
+    try:
+        legacy.execute("PRAGMA journal_mode = WAL")
+        for name, sql in _migration_scripts():
+            if _migration_number(name) <= schema:
+                legacy.executescript(sql)
+        legacy.execute(f"PRAGMA user_version = {schema}")
+        legacy.commit()
+    finally:
+        legacy.close()
+
+
+def _set_user_version(path: Path, version: int) -> None:
+    legacy = sqlite3.connect(path)
+    try:
+        legacy.execute(f"PRAGMA user_version = {version}")
+        legacy.commit()
+    finally:
+        legacy.close()
+
+
+_OWNER_ONLY_DIR_MODE = 0o700
+_READ_ONLY_DIR_MODE = 0o500
+
+
+def test_migrating_an_outdated_database_backs_up_its_old_contents_first(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    path = project / "state.db"
+    _database_at_schema(path, 1)
+    legacy = sqlite3.connect(path)
+    try:
+        legacy.execute(
+            "INSERT INTO tasks (id, seq, origin, title, request, status, created_at) "
+            "VALUES ('T-1', 1, 'operator', 'legacy', 'legacy', 'running', ?)",
+            (format_timestamp(START),),
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    Database(path).connect().close()
+
+    backup = project / "backups" / "state-schema1.db"
+    backed_up = sqlite3.connect(backup)
+    try:
+        tasks = backed_up.execute("SELECT id FROM tasks").fetchall()
+    finally:
+        backed_up.close()
+    assert tasks == [("T-1",)]
+    assert _user_version(backup) == 1
+    assert _user_version(path) == KNOWN_SCHEMA_VERSION
+
+
+def test_the_fourth_backup_removes_the_oldest(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    for schema in range(1, SCHEMA_BACKUPS_KEPT + 2):
+        path = project / f"state-{schema}.db"
+        _database_at_schema(path, schema)
+        Database(path).connect().close()
+
+    kept = {entry.name for entry in (project / "backups").iterdir()}
+
+    assert kept == {f"state-schema{schema}.db" for schema in range(2, SCHEMA_BACKUPS_KEPT + 2)}
+
+
+def test_a_fresh_database_is_not_backed_up(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+
+    Database(project / "state.db").connect().close()
+
+    assert not (project / "backups").exists()
+
+
+def test_a_failed_backup_leaves_the_database_unmigrated(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    path = project / "state.db"
+    _database_at_schema(path, 1)
+    backups = project / "backups"
+    backups.mkdir()
+    backups.chmod(_READ_ONLY_DIR_MODE)
+    try:
+        with pytest.raises(DatabaseError, match="could not back up state database"):
+            Database(path).connect()
+        assert _user_version(path) == 1
+    finally:
+        backups.chmod(_OWNER_ONLY_DIR_MODE)
+
+
+def test_the_too_new_error_names_the_newest_backup(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    path = project / "state.db"
+    _database_at_schema(path, 1)
+    Database(path).connect().close()
+    backup = project / "backups" / "state-schema1.db"
+    _set_user_version(path, KNOWN_SCHEMA_VERSION + 1)
+
+    with pytest.raises(DatabaseError) as refused:
+        Database(path).connect()
+
+    message = str(refused.value)
+    assert str(backup) in message
+    assert "copy it back" in message
+    assert _user_version(path) == KNOWN_SCHEMA_VERSION + 1
