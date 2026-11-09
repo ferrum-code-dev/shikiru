@@ -142,3 +142,27 @@ Acceptance criteria:
 3. The dashboard test files run 20 times in a loop at `SHIKIRU_TEST_SPAWN_DELAY=0.05` without a
    `WorkerFailed` (report commands and results).
 4. The gate passes.
+
+### R7 — The resources test asserts membership, not live memory
+
+- [ ] `test_resources_service_excludes_panes_from_other_projects` no longer compares two live RSS readings.
+
+The test (`tests/integration/test_dashboard_remaining_widgets.py`) asserts that the snapshot's RSS is within
+`RESOURCE_RSS_MATCH_TOLERANCE_BYTES` (16 MiB) of a second reading of the same processes taken a moment
+later. The pytest process and the pane shells change their memory by more than that under parallel load
+(measured: 35 MiB), so it fails at random; the guarantee it protects is only which processes are counted.
+
+Acceptance criteria:
+
+1. The test keeps its setup (a pane of this project, a role pane owned by a task, a pane of another
+   project) and asserts membership: the pane process of the other project is not counted, and the role
+   pane's tree is counted under the agents figure. Make the signal larger than any drift: the processes of
+   the other project's pane and the role pane each hold a known extra allocation (for example a Python child
+   that allocates and touches 200 MiB and then sleeps on an event the test releases), and the assertions
+   compare against half of that allocation, never against a second live reading of unrelated processes.
+2. No assertion tolerance in the file is smaller than the signal it separates from the noise;
+   `RESOURCE_RSS_MATCH_TOLERANCE_BYTES` is deleted or replaced by the named allocation size.
+3. The test passes 30 consecutive runs under `SHIKIRU_TEST_SPAWN_DELAY=0.05` (if R1 has landed; otherwise
+   under 8 parallel runs of the file) and 10 consecutive runs while 24 busy loops run
+   (`yes > /dev/null &`, killed afterwards). Report the commands and results.
+4. The gate passes.
