@@ -15,8 +15,9 @@ Delete the file before a run, then count the spawns of a whole run:
     SHIKIRU_TEST_SPAWN_COUNT_FILE=/tmp/spawns.txt uv run pytest tests/integration -q
     wc -l < /tmp/spawns.txt
 
-Both variables are unset by default and then cost nothing. They count and delay only the spawns the
-test process makes; the engine and agent processes it starts are separate and are not affected.
+Both variables are unset by default and then add no delay and write no file. They count and delay only
+the spawns the test process makes; the engine and agent processes it starts are separate and are not
+affected. Calls through `SubprocessRunner` are always tracked for `processes_in_flight()`.
 
 ## Deadlines and the time scale
 
@@ -29,3 +30,11 @@ bypass `SubprocessRunner`, so they are neither delayed nor counted. Run a file o
 with a fixed factor:
 
     SHIKIRU_TEST_TIME_SCALE=3 uv run pytest tests/integration/test_tmux_palette_binding.py -q
+
+## Fake clocks and teardown
+
+An engine or flow driven by a `FakeClock` ends with `stop_engine(task, clock)`: it cancels the task and
+advances the clock until the task has ended, bounded by `ENGINE_STOP_SECONDS`. A plain `await` after
+`cancel()` hangs when the teardown sleeps on the fake clock. `wait_until_advancing` with `jump_while`
+jumps the clock to the next sleeper only while `jump_while()` is true and no subprocess call is in
+flight, so fake time does not outrun a tmux or git call that is still running.

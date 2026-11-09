@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
 from shikiru.domain.commands import ResolutionKind
@@ -34,7 +33,7 @@ from tests.support.github import (
     review_node,
     thread_node,
 )
-from tests.support.waiting import wait_until, wait_until_advancing
+from tests.support.waiting import stop_engine, wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -174,9 +173,7 @@ class _Pull:
         return asyncio.create_task(built.flow.run(self.task.id, resumed=True))
 
     async def stop(self) -> None:
-        self.flow.cancel()
-        with suppress(asyncio.CancelledError):
-            await self.flow
+        await stop_engine(self.flow, self.clock)
 
     async def restart(self) -> None:
         await self.stop()

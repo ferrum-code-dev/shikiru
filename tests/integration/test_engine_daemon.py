@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import stat
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -107,6 +107,7 @@ from tests.support.waiting import (
     LONG_WAIT_SECONDS,
     MEDIUM_WAIT_SECONDS,
     UI_WAIT_SECONDS,
+    stop_engine,
     wait_until,
     wait_until_advancing,
 )
@@ -472,10 +473,7 @@ async def test_an_engine_error_in_a_task_escalates_it_and_the_daemon_keeps_runni
         assert stop_outcome.status is CommandStatus.DONE
         await engine_task
     finally:
-        if not engine_task.done():
-            engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
+        await stop_engine(engine_task, clock)
         connection.close()
 
 
@@ -524,10 +522,7 @@ async def test_a_restarted_engine_gives_every_escalated_task_one_actionable_esca
         assert await asyncio.to_thread(Path(escalation.packet_path).read_text)
         assert _required_task(tasks, task.id).status is Status.ESCALATED
     finally:
-        if not engine_task.done():
-            engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
+        await stop_engine(engine_task, clock)
         connection.close()
 
 
@@ -666,10 +661,7 @@ async def test_resolution_commands_persist_task_and_escalation_outcomes(
         ]
         assert bool(cancelled_events) is (case.expected_status is Status.CANCELLED)
     finally:
-        if not engine_task.done():
-            engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
+        await stop_engine(engine_task, clock)
         connection.close()
 
 
@@ -749,9 +741,7 @@ async def _escalated_task(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGener
 
     async def restart_engine() -> None:
         nonlocal engine_task
-        engine_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await engine_task
+        await stop_engine(engine_task, clock)
         engine_task = start_engine()
 
     try:
@@ -759,10 +749,7 @@ async def _escalated_task(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGener
             operator, escalations, task, escalation.id, tmux, session, tasks, restart_engine
         )
     finally:
-        if not engine_task.done():
-            engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
+        await stop_engine(engine_task, clock)
         connection.close()
 
 
@@ -1090,10 +1077,7 @@ async def test_retry_resolution_drops_only_cancelled_dependencies(
         assert persisted_escalation is not None
         assert persisted_escalation.status is EscalationStatus.RESOLVED
     finally:
-        if not engine_task.done():
-            engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
+        await stop_engine(engine_task, clock)
         connection.close()
 
 
@@ -1149,10 +1133,7 @@ async def test_superseded_task_uses_shared_terminal_cleanup(
         assert superseded.window_id is not None
         assert not await tmux.target_exists(superseded.window_id)
     finally:
-        if not engine_task.done():
-            engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
+        await stop_engine(engine_task, clock)
         connection.close()
 
 
@@ -1299,10 +1280,7 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
         assert resumed.id == run.id
         assert resumed.session_id == session_id
     finally:
-        if not engine_task.done():
-            engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
+        await stop_engine(engine_task, clock)
         connection.close()
 
 
@@ -1742,10 +1720,7 @@ async def test_failed_report_command_stays_live_until_targeted_takeover_and_same
             clock=clock,
         )
     finally:
-        if not engine_task.done():
-            engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
+        await stop_engine(engine_task, clock)
         connection.close()
 
 
@@ -1787,10 +1762,7 @@ async def test_hand_back_clears_the_operator_colour_from_the_pane(
         await wait_until_advancing(clock, handed_back_on_hold, UI_WAIT_SECONDS, step_seconds=0.25)
         assert events.since(0, kinds=[EventKind.HANDED_BACK], task_id=task_id)
     finally:
-        if not engine_task.done():
-            engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
+        await stop_engine(engine_task, clock)
         connection.close()
 
 
@@ -1911,10 +1883,7 @@ async def _operator_session(
         run = await _wait_for_session(operator.runs, clock, task_id)
         yield operator, task_id, run
     finally:
-        if not engine_task.done():
-            engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
+        await stop_engine(engine_task, clock)
         connection.close()
 
 

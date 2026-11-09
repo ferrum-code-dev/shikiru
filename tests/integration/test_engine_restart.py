@@ -9,7 +9,7 @@ import os
 import signal
 import threading
 import warnings
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -55,7 +55,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_sett
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import commit_all
 from tests.support.store import seed_task
-from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until, wait_until_advancing
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, stop_engine, wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -373,9 +373,7 @@ async def _run_until_finished(
             clock, finished, _WAIT_SECONDS, step_seconds=_POLL_ADVANCE_SECONDS
         )
     finally:
-        running.cancel()
-        with suppress(asyncio.CancelledError):
-            await running
+        await stop_engine(running, clock)
 
 
 async def _assert_resumed(
@@ -438,9 +436,7 @@ async def _restart_once(project: _Project, engines: _Engines, leftover_id: str) 
     try:
         await wait_until_advancing(clock, probed, _WAIT_SECONDS, step_seconds=_POLL_ADVANCE_SECONDS)
     finally:
-        running.cancel()
-        with suppress(asyncio.CancelledError):
-            await running
+        await stop_engine(running, clock)
 
 
 async def _assert_leftover_reclaimed_once(
@@ -676,9 +672,7 @@ async def test_a_restarted_engine_leaves_a_paused_integrating_task_alone_until_i
                 step_seconds=_POLL_ADVANCE_SECONDS,
             )
         finally:
-            running.cancel()
-            with suppress(asyncio.CancelledError):
-                await running
+            await stop_engine(running, clock)
         assert len(await _commit_subjects(tmp_path, initial)) == 1
     finally:
         await engines.reap()

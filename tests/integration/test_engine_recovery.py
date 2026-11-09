@@ -4,7 +4,6 @@ import asyncio
 import dataclasses
 import json
 import os
-from contextlib import suppress
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -40,7 +39,7 @@ from tests.support.flow import (
 from tests.support.git_repo import commit_all
 from tests.support.handshake import fifo_writer
 from tests.support.store import seed_task
-from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until, wait_until_advancing
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, stop_engine, wait_until, wait_until_advancing
 
 _TIMEOUT_20_SECONDS = 20
 
@@ -196,9 +195,7 @@ async def test_retry_clock_does_not_expire_a_running_fake_turn(
         if writer is not None:
             os.close(writer)
         if not flow_task.done():
-            flow_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await flow_task
+            await stop_engine(flow_task, clock)
 
 
 async def test_quota_failure_blocks_then_continues_on_the_same_session(
@@ -377,9 +374,7 @@ async def test_live_fake_agent_quota_wait_is_shown_for_its_running_task(
     finally:
         reader.close()
         if not flow_task.done():
-            flow_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await flow_task
+            await stop_engine(flow_task, clock)
 
 
 async def test_quota_wait_during_integration_conflict_is_reported(
@@ -459,9 +454,7 @@ async def test_quota_wait_during_integration_conflict_is_reported(
     finally:
         reader.close()
         if not flow_task.done():
-            flow_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await flow_task
+            await stop_engine(flow_task, clock)
 
 
 async def test_quota_wait_deadline_moves_to_a_different_agent(

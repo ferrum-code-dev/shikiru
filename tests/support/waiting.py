@@ -9,9 +9,12 @@ import os
 import subprocess
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from typing import TYPE_CHECKING, cast
 
 from textual.css.query import NoMatches
+
+from tests.support.spawn_hook import processes_in_flight
 
 if TYPE_CHECKING:
     from tests.support.clock import FakeClock
@@ -32,6 +35,7 @@ PROCESS_WAIT_SECONDS = 30
 LONG_WAIT_SECONDS = 60.0
 ACTION_CONFIRMATION_SECONDS = 60
 ACTION_CONFIRMATION_EXPIRY_SECONDS = 5
+ENGINE_STOP_SECONDS = 30.0
 
 _Predicate = Callable[[], bool | Awaitable[bool]]
 
@@ -117,9 +121,9 @@ async def wait_until_advancing(
     """Like `wait_until`, moving the fake clock whenever a task is sleeping on it.
 
     The clock moves `step_seconds` per poll. With `jump_while` it moves straight to the next
-    pending deadline instead, but only while `jump_while()` is true: the caller states that no real
-    subprocess work is outstanding, so the earliest sleeper is the wait under test and no long
-    timeout can fire early. While it is false the clock stays where it is.
+    pending deadline instead, but only while `jump_while()` is true and no subprocess call is in
+    flight: the caller states that no real work is outstanding, so the earliest sleeper is the
+    wait under test and no long timeout can fire early. While either is false the clock stays put.
     """
 
     async def advanced() -> bool:
@@ -127,13 +131,26 @@ async def wait_until_advancing(
         if result:
             return result
         if jump_while is not None:
-            if jump_while():
+            if jump_while() and processes_in_flight() == 0:
                 clock.advance_to_next_sleeper()
         elif clock.has_pending_sleep():
             clock.advance(step_seconds)
         return await _sample(predicate)
 
     await _wait(advanced, bool, timeout, _describe(predicate))
+
+
+async def stop_engine(task: asyncio.Task[object], clock: FakeClock) -> None:
+    """Cancel an engine or flow task and advance the fake clock until the task has ended.
+
+    Its teardown may sleep on the fake clock, which only moves when advanced, so a plain `await`
+    after `cancel()` can hang. The wait is bounded by `ENGINE_STOP_SECONDS`; the task's own
+    cancellation is absorbed, and any other error it raised propagates.
+    """
+    task.cancel()
+    await wait_until_advancing(clock, task.done, timeout=ENGINE_STOP_SECONDS)
+    with suppress(asyncio.CancelledError):
+        await task
 
 
 async def _sample[T](sample: Callable[[], T | Awaitable[T]]) -> T:

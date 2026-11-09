@@ -6,7 +6,6 @@ import asyncio
 import os
 import shlex
 import stat
-from contextlib import suppress
 from typing import TYPE_CHECKING
 
 from shikiru.bootstrap import build_engine
@@ -30,6 +29,7 @@ from tests.support.flow import init_project_repo
 from tests.support.github import add_bare_remote
 from tests.support.handshake import fifo_writer, release_fifo
 from tests.support.permissions import EXECUTABLE_MODE
+from tests.support.waiting import stop_engine
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -101,7 +101,5 @@ async def test_commands_are_processed_while_a_task_root_build_hangs_on_the_remot
     finally:
         if writer is not None:
             release_fifo(writer, release)
-        running.cancel()
-        with suppress(asyncio.CancelledError):
-            await running
+        await stop_engine(running, clock)
         connection.close()

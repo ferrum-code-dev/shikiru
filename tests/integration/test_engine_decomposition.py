@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -31,7 +31,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import commit_all
 from tests.support.github import MergeStyle, add_bare_remote, merge_on_remote
-from tests.support.waiting import wait_until_advancing
+from tests.support.waiting import stop_engine, wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -103,9 +103,7 @@ async def _engine(
     try:
         yield _Project(clock, TaskStore(connection, clock), CommandQueue(connection, clock))
     finally:
-        engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
+        await stop_engine(engine_task, clock)
         connection.close()
 
 

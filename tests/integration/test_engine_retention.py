@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -36,7 +35,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.github import add_bare_remote
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until_advancing
+from tests.support.waiting import stop_engine, wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -313,10 +312,8 @@ async def test_a_long_lived_engine_keeps_its_run_directories_bounded(
             clock, lambda: len(_run_dirs(tmp_path)) <= 2, _WAIT_SECONDS, step_seconds=_POLL_SECONDS
         )
     finally:
-        running.cancel()
         try:
-            with suppress(asyncio.CancelledError):
-                await running
+            await stop_engine(running, clock)
         finally:
             connection.close()
 

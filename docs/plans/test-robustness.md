@@ -112,7 +112,7 @@ Acceptance criteria:
 
 ### R5 — FakeClock engines stop cleanly and wait for processes
 
-- [ ] A frozen FakeClock never hangs a teardown, and fake time does not outrun real processes.
+- [x] A frozen FakeClock never hangs a teardown, and fake time does not outrun real processes.
 
 Acceptance criteria:
 

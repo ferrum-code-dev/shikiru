@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -30,7 +29,7 @@ from tests.support.engine import build_fault_reporter, pr_poll_seconds, set_role
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import MergeStyle, add_bare_remote, merge_on_remote
-from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until, wait_until_advancing
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, stop_engine, wait_until, wait_until_advancing
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -97,9 +96,7 @@ class _Run:
         self.flow = self._start(resumed=False)
 
     async def restart(self) -> None:
-        self.flow.cancel()
-        with suppress(asyncio.CancelledError):
-            await self.flow
+        await stop_engine(self.flow, self.clock)
         self.flow = self._start(resumed=True)
 
     def _start(self, *, resumed: bool) -> asyncio.Task[None]:

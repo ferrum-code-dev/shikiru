@@ -23,7 +23,7 @@ from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, set_role_script
 from tests.support.factories import TASK_CREATED_AT
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
-from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, stop_engine, wait_until
 
 _TIMEOUT_20_SECONDS = 20
 
@@ -224,9 +224,7 @@ async def test_monitor_observes_activity_after_a_background_wait_before_stall(
         await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
     finally:
         if not flow_task.done():
-            flow_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await flow_task
+            await stop_engine(flow_task, turn_clock)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None

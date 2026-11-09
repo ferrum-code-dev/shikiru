@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -26,7 +26,7 @@ from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, engine_settings, set_role_script, wait_for_command
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
-from tests.support.waiting import wait_until, wait_until_advancing
+from tests.support.waiting import stop_engine, wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -127,10 +127,7 @@ async def _engine(tmp_path: Path, tmux_server: TmuxServer) -> AsyncGenerator[_Pr
         yield project
     finally:
         finishing_flow.release.set()
-        if not engine_task.done():
-            engine_task.cancel()
-        with suppress(asyncio.CancelledError, Exception):
-            await engine_task
+        await stop_engine(engine_task, clock)
         connection.close()
 
 

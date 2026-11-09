@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING
@@ -14,10 +13,10 @@ import pytest
 
 from shikiru.bootstrap import build_engine
 from shikiru.config.settings import RepoConfig
-from shikiru.domain.commands import COMMAND_POLL_SECONDS, Prioritize
+from shikiru.domain.commands import COMMAND_POLL_SECONDS, Submit
 from shikiru.domain.events import EventKind
 from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import Hold, Mode, Status, Step
+from shikiru.domain.tasks import Mode, Status, Step
 from shikiru.engine.fault_reporter import FaultReporter
 from shikiru.engine.integration import IntegrationMetadata, Integrator, LocalMerge, UncommittedWork
 from shikiru.engine.push_service import PUSH_FAULT_SCOPE, REMOTE_CHECK_FAULT_SCOPE, PushService
@@ -46,7 +45,7 @@ from tests.support.github import add_bare_remote
 from tests.support.handshake import fifo_writer, release_fifo
 from tests.support.permissions import EXECUTABLE_MODE
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import stop_engine, wait_until
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -678,10 +677,8 @@ async def test_a_hung_push_never_stops_the_engine_from_processing_commands(
         await wait_until(push_started, _WAIT_SECONDS)
         writer = await fifo_writer(release, _WAIT_SECONDS)
 
-        held = seed_task(connection, clock, title="held")
-        TaskStore(connection, clock).set_holds(held.id, frozenset({Hold.PAUSED}))
         outcome = await wait_for_command(
-            queue.append(Prioritize(task_id=held.id, priority=1)), queue, clock
+            queue.append(Submit(title="independent", request="independent")), queue, clock
         )
 
         assert outcome.status is CommandStatus.DONE
@@ -702,7 +699,5 @@ async def test_a_hung_push_never_stops_the_engine_from_processing_commands(
     finally:
         if writer is not None:
             release_fifo(writer, release)
-        running.cancel()
-        with suppress(asyncio.CancelledError):
-            await running
+        await stop_engine(running, clock)
         connection.close()

@@ -1,4 +1,4 @@
-"""Slows and counts the test process's subprocess spawns, to reproduce a slow machine."""
+"""Slows, counts and tracks the test process's subprocess spawns, to reproduce a slow machine."""
 
 from __future__ import annotations
 
@@ -23,18 +23,42 @@ _NO_DELAY_SECONDS = 0.0
 _TEXT_ENCODING = "utf-8"
 
 
+class _InFlightCounter:
+    """Counts the asynchronous runner calls that have started and not yet returned."""
+
+    def __init__(self) -> None:
+        self._count = 0
+
+    @property
+    def count(self) -> int:
+        return self._count
+
+    @contextmanager
+    def tracking(self) -> Generator[None]:
+        self._count += 1
+        try:
+            yield
+        finally:
+            self._count -= 1
+
+
+_IN_FLIGHT = _InFlightCounter()
+
+
+def processes_in_flight() -> int:
+    """Return how many subprocess calls through `SubprocessRunner` have not yet returned."""
+    return _IN_FLIGHT.count
+
+
 @contextmanager
 def spawn_hook(environ: Mapping[str, str]) -> Generator[None]:
-    """Delay and count `SubprocessRunner`'s spawns as `environ` asks, undone on exit.
+    """Track, delay and count `SubprocessRunner`'s spawns; the delay and count follow `environ`.
 
-    With neither variable set nothing is wrapped. A delay is applied on the real clock before
-    each spawn, including the synchronous `spawn_detached`, which blocks for it.
+    Every asynchronous call is tracked for `processes_in_flight()`. A delay is applied on the real
+    clock before each spawn, including the synchronous `spawn_detached`, which blocks for it.
     """
     delay_text = environ.get(SPAWN_DELAY_ENV)
     count_text = environ.get(SPAWN_COUNT_FILE_ENV)
-    if delay_text is None and count_text is None:
-        yield
-        return
     delay = _parse_delay(delay_text)
     count_file = None if count_text is None else Path(count_text)
     with pytest.MonkeyPatch.context() as patch:
@@ -79,9 +103,10 @@ def _slowed[**P, R](
         self: SubprocessRunner, argv: Sequence[str], *args: P.args, **kwargs: P.kwargs
     ) -> R:
         _record_spawn(argv, count_file)
-        if delay:
-            await asyncio.sleep(delay)
-        return await original(self, argv, *args, **kwargs)
+        with _IN_FLIGHT.tracking():
+            if delay:
+                await asyncio.sleep(delay)
+            return await original(self, argv, *args, **kwargs)
 
     return slowed
 
