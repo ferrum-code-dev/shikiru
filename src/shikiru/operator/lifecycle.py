@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     EngineState = Callable[[Path], bool]
 
 PACKAGE_NAME = "shikiru"
+DISTRIBUTION_NAME = "shikiru-cli"
 CLI_ENGINE_COMMAND = "engine"
 CLI_DASH_COMMAND = "dash"
 CLI_PALETTE_COMMAND = "palette"

@@ -64,8 +64,8 @@ jobs:
       - name: Check the build carries the tag's version
         run: |
           VERSION="${TAG#v}"
-          if [[ ! -f "dist/shikiru-$VERSION-py3-none-any.whl" ]]; then
-            echo "::error::tag $TAG does not build as shikiru $VERSION" >&2
+          if [[ ! -f "dist/shikiru_cli-$VERSION-py3-none-any.whl" ]]; then
+            echo "::error::tag $TAG does not build as shikiru-cli $VERSION" >&2
             exit 1
           fi
 

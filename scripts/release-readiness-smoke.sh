@@ -277,7 +277,7 @@ record env -i \
 [[ -x "$BASE_TOOL_BIN_DIR/shikiru" ]]
 record env -i "HOME=$HOME_DIR" "PATH=$BASE_PATH" "$BASE_TOOL_BIN_DIR/shikiru" --help
 SDIST_VERSION="$(basename "${SDISTS[0]}" .tar.gz)"
-SDIST_VERSION="${SDIST_VERSION#shikiru-}"
+SDIST_VERSION="${SDIST_VERSION#shikiru_cli-}"
 INSTALLED_FROM_SDIST_VERSION="$(env -i "HOME=$HOME_DIR" "PATH=$BASE_PATH" "$BASE_TOOL_BIN_DIR/shikiru" --version)"
 printf '%s\n' "$INSTALLED_FROM_SDIST_VERSION" | tee -a "$LOG"
 [[ "$INSTALLED_FROM_SDIST_VERSION" == "$SDIST_VERSION" ]]

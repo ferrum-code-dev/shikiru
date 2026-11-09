@@ -151,7 +151,7 @@ async def test_full_notes_order_sections_and_link_commits_compare_and_install(
     fix = entry(shas["fix(parser): stop on blank input"], "fix(parser): stop on blank input")
     tidy = entry(shas["Tidy the readme"], "Tidy the readme")
     docs = entry(shas["docs: explain the layout"], "docs: explain the layout")
-    wheel = f"https://github.com/{REPO}/releases/download/v0.1.1/shikiru-0.1.1-py3-none-any.whl"
+    wheel = f"https://github.com/{REPO}/releases/download/v0.1.1/shikiru_cli-0.1.1-py3-none-any.whl"
     blocks = [
         f"{BREAKING.value}\n\n{breaking}",
         f"{FEATURES.value}\n\n{feature}",

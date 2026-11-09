@@ -56,9 +56,11 @@ and a timeline so you can understand both its result and how it got there.
 ### Installation
 
 ```sh
-uv tool install shikiru
+uv tool install shikiru-cli
 shikiru --help
 ```
+
+The distribution is `shikiru-cli`; the command and the Python package are `shikiru`.
 
 Before the first PyPI release, install the wheel from the latest release on the Releases page.
 Never install a long-running copy with `--editable`: an editable install follows the working tree.
@@ -67,16 +69,21 @@ For development, see [From a checkout](CONTRIBUTING.md).
 ### Updating
 
 ```sh
-uv tool upgrade shikiru
+uv tool upgrade shikiru-cli
 ```
 
 An engine keeps the code it was started with, so run `shikiru restart` in each project with a running
 engine afterwards. `restart` refuses while a task runs unless `--force` is given.
 
+Installations from before the rename (distribution `shikiru`) must switch once: the tool changed its
+distribution name, and both provide the executable `shikiru`, so they cannot be installed together. Run
+`uv tool uninstall shikiru`, then `uv tool install shikiru-cli`, then `shikiru restart` in each project
+with a running engine.
+
 ### Going back
 
 ```sh
-uv tool install shikiru==<version>
+uv tool install shikiru-cli==<version>
 ```
 
 Replace `<version>` with the release to return to, then run `shikiru restart` in each project with a

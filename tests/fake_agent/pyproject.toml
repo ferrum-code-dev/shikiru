@@ -3,13 +3,13 @@ name = "fake-agent"
 version = "0.1.0"
 description = "Test-only process-per-turn fake agent for Shikiru's integration tests."
 requires-python = ">=3.14"
-dependencies = ["shikiru"]
+dependencies = ["shikiru-cli"]
 
 [project.entry-points."shikiru.agents"]
 fake = "fake_agent.agent:create"
 
 [tool.uv.sources]
-shikiru = { workspace = true }
+shikiru-cli = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

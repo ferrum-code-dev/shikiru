@@ -107,7 +107,7 @@ git tag v<version> && git push origin v<version>
 The Release workflow does the rest. If a run fails, fix the cause on `main` and cut a new tag; a tag
 is not moved.
 
-The owner sets up publishing once. On pypi.org, add a pending publisher for the project `shikiru`
+The owner sets up publishing once. On pypi.org, add a pending publisher for the project `shikiru-cli`
 with owner `ferrum-code-dev`, repository `shikiru`, workflow `release.yml` and environment `pypi`. On
 GitHub, create the environment `pypi` in the repository settings. No PyPI token is stored in the
 repository.

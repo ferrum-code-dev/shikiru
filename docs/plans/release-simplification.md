@@ -102,7 +102,7 @@ Acceptance criteria:
 
 ### S5 — The distribution is named `shikiru-cli`
 
-- [ ] PyPI does not allow the name `shikiru`; the distribution is `shikiru-cli`, the command and the import package stay `shikiru`.
+- [x] PyPI does not allow the name `shikiru`; the distribution is `shikiru-cli`, the command and the import package stay `shikiru`.
 
 Acceptance criteria:
 

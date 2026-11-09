@@ -1,5 +1,5 @@
 [project]
-name = "shikiru"
+name = "shikiru-cli"
 dynamic = ["version"]
 description = "Runs coding-agent tasks in tmux panes, orchestrated by an asyncio engine."
 readme = "README.md"

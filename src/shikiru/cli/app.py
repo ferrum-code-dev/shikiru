@@ -59,6 +59,7 @@ from shikiru.operator.lifecycle import (
     CLI_DASH_COMMAND,
     CLI_ENGINE_COMMAND,
     CLI_PALETTE_ORIGIN_PANE_OPTION,
+    DISTRIBUTION_NAME,
     PACKAGE_NAME,
 )
 from shikiru.operator.queries import TaskNotFoundError
@@ -190,7 +191,7 @@ app.command(name=CLI_VIEW_COMMAND, hidden=True)(view_command)
 
 def _print_version(*, show: bool) -> None:
     if show:
-        typer.echo(version(PACKAGE_NAME))
+        typer.echo(version(DISTRIBUTION_NAME))
         raise typer.Exit
 
 

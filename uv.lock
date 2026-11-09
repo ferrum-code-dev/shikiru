@@ -5,7 +5,7 @@ requires-python = ">=3.14"
 [manifest]
 members = [
     "fake-agent",
-    "shikiru",
+    "shikiru-cli",
 ]
 
 [[package]]
@@ -282,11 +282,11 @@ name = "fake-agent"
 version = "0.1.0"
 source = { editable = "tests/fake_agent" }
 dependencies = [
-    { name = "shikiru" },
+    { name = "shikiru-cli" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "shikiru", editable = "." }]
+requires-dist = [{ name = "shikiru-cli", editable = "." }]
 
 [[package]]
 name = "grimp"
@@ -1001,7 +1001,7 @@ wheels = [
 ]
 
 [[package]]
-name = "shikiru"
+name = "shikiru-cli"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },

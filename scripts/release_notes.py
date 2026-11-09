@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 REPOSITORY_ENVIRONMENT = "GITHUB_REPOSITORY"
 GITHUB_URL = "https://github.com"
-PACKAGE = "shikiru"
+PACKAGE = "shikiru_cli"
 WHEEL_NAME = "{package}-{version}-py3-none-any.whl"
 RELEASE_COMMIT_PREFIX = "chore: release"
 FEATURE_TYPE = "feat"
