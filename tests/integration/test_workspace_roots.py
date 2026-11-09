@@ -17,7 +17,7 @@ from shikiru.workspace.caches import CACHE_COW_UNSUPPORTED_WARNING, CacheCloner,
 from shikiru.workspace.git import Git
 from shikiru.workspace.roots import TaskRootBuilder, branch_name
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT, commit_all, init_repo
-from tests.support.waiting import wait_until
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -93,7 +93,7 @@ async def test_build_is_idempotent(tmp_path: Path) -> None:
     runner = SubprocessRunner()
     result = await runner.run(
         ["git", "worktree", "list", "--porcelain"],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         cwd=project_root,
         check=True,
     )
@@ -181,7 +181,7 @@ async def test_cleanup_keeps_a_worktree_whose_head_left_the_task_branch(
     builder = _builder(project_root)
     state = await builder.build(_TASK_ID, _TASK_TITLE)
     root = task_root(project_root, _TASK_ID)
-    await runner.run(["git", *leave], cwd=root, timeout=10, check=True)
+    await runner.run(["git", *leave], cwd=root, timeout=MEDIUM_WAIT_SECONDS, check=True)
     (root / "work.txt").write_text("work\n")
     await commit_all(runner, root, "work")
     head = await Git(runner, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(root, "HEAD")
@@ -219,7 +219,7 @@ async def test_build_recreates_the_worktree_when_the_branch_exists_but_it_was_re
     runner = SubprocessRunner()
     await runner.run(
         ["git", "worktree", "remove", "--force", str(root)],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         cwd=project_root,
         check=True,
     )
@@ -246,7 +246,7 @@ async def test_cleanup_is_idempotent_and_tolerates_an_already_removed_worktree(
     assert state.branch not in await _local_branches(SubprocessRunner(), project_root)
     worktrees = await SubprocessRunner().run(
         ["git", "worktree", "list", "--porcelain"],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         cwd=project_root,
         check=True,
     )
@@ -255,7 +255,10 @@ async def test_cleanup_is_idempotent_and_tolerates_an_already_removed_worktree(
 
 async def _local_branches(runner: SubprocessRunner, repo_dir: Path) -> list[str]:
     result = await runner.run(
-        ["git", "branch", "--format=%(refname:short)"], timeout=10, cwd=repo_dir, check=True
+        ["git", "branch", "--format=%(refname:short)"],
+        timeout=MEDIUM_WAIT_SECONDS,
+        cwd=repo_dir,
+        check=True,
     )
     return result.stdout.splitlines()
 

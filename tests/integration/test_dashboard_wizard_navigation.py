@@ -46,6 +46,7 @@ from tests.integration.dashboard_wizard_support import (
     set_scope,
     set_scope_text,
 )
+from tests.support.waiting import LONG_WAIT_SECONDS
 
 pytestmark = pytest.mark.asyncio
 
@@ -261,7 +262,7 @@ async def test_corrected_complexity_draft_is_written_and_resolved(
         await wait_until(config_path.is_file, timeout=UI_WAIT_SECONDS)
         await wait_until(
             lambda: bool(doctor_text(app.query_one("#doctor-report", Static)).strip()),
-            timeout=60,
+            timeout=LONG_WAIT_SECONDS,
         )
         result_button = app.query_one("#wizard-finish", Button)
         await pilot.press("escape", "ctrl+q")

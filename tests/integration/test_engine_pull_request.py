@@ -30,7 +30,7 @@ from tests.support.engine import build_fault_reporter, pr_poll_seconds, set_role
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import MergeStyle, add_bare_remote, merge_on_remote
-from tests.support.waiting import wait_until, wait_until_advancing
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until, wait_until_advancing
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -189,14 +189,16 @@ def _assert_waiting_on_open_pr(env: EngineEnv, task_id: str) -> None:
 
 
 async def _git(repo_dir: Path, *args: str) -> str:
-    result = await _RUNNER.run(["git", *args], timeout=10, cwd=repo_dir, check=True)
+    result = await _RUNNER.run(
+        ["git", *args], timeout=MEDIUM_WAIT_SECONDS, cwd=repo_dir, check=True
+    )
     return result.stdout.strip()
 
 
 async def _local_branch_exists(project_root: Path, branch: str) -> bool:
     result = await _RUNNER.run(
         ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         cwd=project_root,
     )
     return result.returncode == 0
@@ -714,7 +716,9 @@ async def _push_unrelated_change(remote_dir: Path, clone_dir: Path, filename: st
 
 async def _contains(remote_dir: Path, branch: str, commit: str) -> bool:
     result = await _RUNNER.run(
-        ["git", "merge-base", "--is-ancestor", commit, branch], timeout=10, cwd=remote_dir
+        ["git", "merge-base", "--is-ancestor", commit, branch],
+        timeout=MEDIUM_WAIT_SECONDS,
+        cwd=remote_dir,
     )
     return result.returncode == 0
 

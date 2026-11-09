@@ -85,7 +85,7 @@ from tests.support.permissions import EXECUTABLE_MODE
 from tests.support.quota_waits import record_quota_wait
 from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
-from tests.support.waiting import wait_until, wait_until_advancing
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until, wait_until_advancing
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -873,7 +873,9 @@ async def test_a_fetch_outage_delays_the_dispatch_without_escalating_and_ends_wi
     remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
     await add_bare_remote(tmp_path, remote_dir, settings.repo.remote)
     gone = ["git", "remote", "set-url", settings.repo.remote]
-    await runner.run([*gone, str(remote_dir / "gone")], timeout=10, cwd=tmp_path, check=True)
+    await runner.run(
+        [*gone, str(remote_dir / "gone")], timeout=MEDIUM_WAIT_SECONDS, cwd=tmp_path, check=True
+    )
     roots = task_root_builder(
         runner,
         tmp_path,
@@ -903,7 +905,9 @@ async def test_a_fetch_outage_delays_the_dispatch_without_escalating_and_ends_wi
     [fault] = scheduler_env.events.since(0, kinds=[EventKind.ENGINE_FAULT], task_id=task.id)
     assert fault.data["scope"] == FETCH_FAULT_SCOPE
 
-    await runner.run([*gone, str(remote_dir)], timeout=10, cwd=tmp_path, check=True)
+    await runner.run(
+        [*gone, str(remote_dir)], timeout=MEDIUM_WAIT_SECONDS, cwd=tmp_path, check=True
+    )
     assert (await scheduler.run_once()).dispatches == ()
     clock.advance(backoff_max)
     schedule = await scheduler.run_once()
@@ -1094,7 +1098,7 @@ async def _hung_remote(
     hang.write_text(_HUNG_UPLOAD_PACK.format(calls=calls, release=shlex.quote(str(release))))
     hang.chmod(EXECUTABLE_MODE)
     uploadpack = ["git", "config", f"remote.{settings.repo.remote}.uploadpack", str(hang)]
-    await runner.run(uploadpack, timeout=10, cwd=tmp_path, check=True)
+    await runner.run(uploadpack, timeout=MEDIUM_WAIT_SECONDS, cwd=tmp_path, check=True)
     roots = task_root_builder(
         runner,
         tmp_path,

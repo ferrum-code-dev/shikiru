@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.process import ProcessResult, SpawnedTerminalProcess, SubprocessRunner
-from tests.support.waiting import wait_until
+from tests.support.waiting import scaled, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -48,7 +48,7 @@ class TmuxServer:
         """Run a tmux command scoped to this server's socket."""
         return await self.runner.run(
             [TMUX_COMMAND, SOCKET_FLAG, self.socket_name, *args],
-            timeout=_TMUX_COMMAND_TIMEOUT_SECONDS,
+            timeout=scaled(_TMUX_COMMAND_TIMEOUT_SECONDS),
             env=self.env,
             check=check,
         )

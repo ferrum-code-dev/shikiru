@@ -48,6 +48,7 @@ from shikiru.agents.testing import (
 )
 from shikiru.agents.testing.resume import RESUME_RECALL_PROMPT
 from shikiru.process import SubprocessRunner
+from tests.support.waiting import MEDIUM_WAIT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -148,7 +149,10 @@ class TestFakeAgentContract(AgentContractSuite):
         else:
             assert isinstance(signals[-1], TurnEnded)
             result = await SubprocessRunner().run(
-                ["git", "log", "-1", "--format=%B"], cwd=spec.cwd, timeout=10, check=True
+                ["git", "log", "-1", "--format=%B"],
+                cwd=spec.cwd,
+                timeout=MEDIUM_WAIT_SECONDS,
+                check=True,
             )
             assert f"Task: {task_id}" in result.stdout
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.support.literal_rule import find_violations
+from tests.support.literal_rule import find_timeout_violations, find_violations
 
 _CASES: list[tuple[str, list[int], int]] = [
     ("LIMIT = 100\nTIMEOUTS = {'a': 30, 'b': 2.5}\n", [], 0),
@@ -44,3 +44,26 @@ def test_bare_numbers_and_protocol_strings_are_violations_unless_named_or_kept_w
     report = find_violations(source, Path("x.py"))
 
     assert ([violation.line for violation in report.violations], report.kept) == (lines, kept)
+
+
+_TIMEOUT_CASES: list[tuple[str, list[int]]] = [
+    ("wait_until(ready, timeout=SHORT_WAIT_SECONDS)\n", []),
+    ("run(argv, timeout=scaled(SHORT_WAIT_SECONDS))\n", []),
+    ("run(argv, timeout=0)\n", []),
+    ("wait_until(ready, timeout=5)\n", [1]),
+    ("run(argv, timeout=5.0)\n", [1]),
+    ("wait_until(ready, 5)\n", [1]),
+    ("wait_until_advancing(clock, ready, 5)\n", [1]),
+    ("@pytest.mark.timeout(240)\ndef test_x() -> None:\n    pass\n", [1]),
+    ("wait_until(ready, timeout=5)  # keep: the fake clock waits in real time\n", []),
+    ("x = scaled(5)\n", []),
+]
+
+
+@pytest.mark.parametrize(("source", "lines"), _TIMEOUT_CASES)
+def test_inline_numeric_timeouts_are_violations_unless_named_or_kept_with_a_reason(
+    source: str, lines: list[int]
+) -> None:
+    found = find_timeout_violations(source, Path("x.py"))
+
+    assert [violation.line for violation in found] == lines

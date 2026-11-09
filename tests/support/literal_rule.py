@@ -13,7 +13,11 @@ from pathlib import Path
 from tests.support.comment_rule import EXCLUSION_MARKER, IGNORED_DIRECTORIES
 
 CHECKED_ROOTS = ("src", "tests/support")
+TIMEOUT_ROOTS = ("tests",)
 PLAIN_NUMBERS = frozenset({0, 1, -1})
+TIMEOUT_KEYWORD = "timeout"
+TIMEOUT_MARK = "timeout"
+WAIT_TIMEOUT_POSITIONS = {"wait_until": 1, "wait_until_advancing": 2}
 ARGV_CALLS = frozenset({"run", "spawn", "spawn_detached", "replace"})
 NAME_KEYWORDS = frozenset({"kind", "event", "type"})
 ARGV_KEYWORD = "argv"
@@ -165,6 +169,41 @@ def find_violations(source: str, path: Path) -> LiteralReport:
     )
 
 
+def _timeout_arguments(node: ast.Call) -> list[ast.expr]:
+    arguments = [keyword.value for keyword in node.keywords if keyword.arg == TIMEOUT_KEYWORD]
+    if _call_name(node) == TIMEOUT_MARK and node.args:
+        arguments.append(node.args[0])
+    position = WAIT_TIMEOUT_POSITIONS.get(_call_name(node))
+    if position is not None and len(node.args) > position:
+        arguments.append(node.args[position])
+    return [argument for argument in arguments if _is_nonzero_number(argument)]
+
+
+def _is_nonzero_number(node: ast.expr) -> bool:
+    number = _number(node)
+    return number is not None and number != 0
+
+
+class _TimeoutScanner(ast.NodeVisitor):
+    def __init__(self, keep_lines: frozenset[int]) -> None:
+        self._keep_lines = keep_lines
+        self.found: list[tuple[int, str]] = []
+
+    def visit_Call(self, node: ast.Call) -> None:
+        for argument in _timeout_arguments(node):
+            end = argument.end_lineno or argument.lineno
+            if not self._keep_lines.intersection(range(argument.lineno, end + 1)):
+                self.found.append((argument.lineno, ast.unparse(argument)))
+        self.generic_visit(node)
+
+
+def find_timeout_violations(source: str, path: Path) -> list[LiteralViolation]:
+    """Return every inline numeric timeout or wait limit that no `keep:` excludes."""
+    scanner = _TimeoutScanner(_keep_lines(source))
+    scanner.visit(ast.parse(source))
+    return [LiteralViolation(path, line, literal) for line, literal in sorted(set(scanner.found))]
+
+
 def _python_files(roots: tuple[str, ...]) -> list[Path]:
     return sorted(
         path
@@ -180,6 +219,11 @@ def main() -> int:
         for path in _python_files(CHECKED_ROOTS)
     ]
     violations = [violation for _, report in reports for violation in report.violations]
+    violations += [
+        violation
+        for path in _python_files(TIMEOUT_ROOTS)
+        for violation in find_timeout_violations(path.read_text(encoding="utf-8"), path)
+    ]
     for violation in violations:
         sys.stderr.write(f"{violation.path}:{violation.line}: {violation.literal}\n")
     sys.stdout.write(

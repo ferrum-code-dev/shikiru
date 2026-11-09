@@ -52,7 +52,7 @@ from tests.support.dashboard import (
 from tests.support.quota_waits import record_quota_wait
 from tests.support.render import plain_text
 from tests.support.store import seed_task
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import SHORT_WAIT_SECONDS, UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -245,20 +245,22 @@ async def _open_browser_task(
     home = app.screen
     search = app.query_one("#task-browser-search", Input)
     search.value = title
-    await wait_until(lambda: _search_filter_applied(app, title, task_id), timeout=5.0)
+    await wait_until(
+        lambda: _search_filter_applied(app, title, task_id), timeout=SHORT_WAIT_SECONDS
+    )
     row = app.screen.query_one(f"#task-row-{task_id}")
-    await wait_until(lambda: is_hit_at_center(app, row), timeout=5.0)
+    await wait_until(lambda: is_hit_at_center(app, row), timeout=SHORT_WAIT_SECONDS)
     await pilot.click(f"#task-row-{task_id}")
     await wait_until(
         lambda: task_id in _static_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
-        timeout=5.0,
+        timeout=SHORT_WAIT_SECONDS,
     )
     assert app.screen is home
     app.route_task_palette(task_id, TaskPaletteRoute.INSPECT)
-    await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=5.0)
+    await wait_until(lambda: isinstance(app.screen, TaskDetailScreen), timeout=SHORT_WAIT_SECONDS)
     await wait_until(
         lambda: task_id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
-        timeout=5.0,
+        timeout=SHORT_WAIT_SECONDS,
     )
 
 
@@ -318,7 +320,7 @@ async def _open_related_task(
     await pilot.press("enter")
     await wait_until(
         lambda: task_id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static)),
-        timeout=5.0,
+        timeout=SHORT_WAIT_SECONDS,
     )
 
 
@@ -348,11 +350,11 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
         search.value = first.title
         await wait_until(
             lambda: f"task-row-{first.id}" in [child.id for child in task_list.children],
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         await focus(pilot, search)
         await pilot.press("enter", "down")
-        await wait_until(lambda: first.id in _static_text(identity), timeout=5.0)
+        await wait_until(lambda: first.id in _static_text(identity), timeout=SHORT_WAIT_SECONDS)
         panel = await _open_relationships(panel, pilot)
         await wait_until(
             lambda: any(dependency.id in row for row in _related_rows(panel)),
@@ -371,7 +373,7 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
         search.value = second.title
         await wait_until(
             lambda: f"task-row-{second.id}" in [child.id for child in task_list.children],
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         await focus(pilot, search)
         await pilot.press("enter", "down")
@@ -379,7 +381,7 @@ async def test_home_detail_discards_related_and_filter_state_when_selection_chan
             lambda: (
                 second.id in _static_text(home_panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
 
         panel = home_panel
@@ -420,7 +422,7 @@ async def _exercise_paged_relationship_navigation(
                 tasks.superseded.id
                 in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
         related = panel.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList)
@@ -428,12 +430,12 @@ async def _exercise_paged_relationship_navigation(
         await pilot.press("pageup")
         await wait_until(
             lambda: any(tasks.dependencies[0].id in row for row in _related_rows(panel)),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         assert not any(tasks.replacements[-1].id in row for row in _related_rows(panel))
         detail_screen = app.screen
         await pilot.press("escape", "escape")
-        await wait_until(lambda: app.screen is not detail_screen, timeout=5.0)
+        await wait_until(lambda: app.screen is not detail_screen, timeout=SHORT_WAIT_SECONDS)
         await _open_browser_task(app, pilot, tasks.blocked.title, tasks.blocked.id)
         await _open_related_task(app, pilot, tasks.dependencies[-1].id)
 
@@ -483,12 +485,12 @@ async def test_child_search_matches_only_the_child_and_detail_expands_the_family
                 nested.id
                 in _static_text(detail_panel.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         related_list = detail_panel.query_one(f"#{TASK_DETAIL_RELATED_LIST}", RowList)
         assert TASK_VIEW_RELATIONSHIPS not in detail_panel.open_views
         await _open_relationships(detail_panel, pilot)
-        await wait_until(lambda: related_list.region.height > 0, timeout=5.0)
+        await wait_until(lambda: related_list.region.height > 0, timeout=SHORT_WAIT_SECONDS)
         await wait_until(
             lambda: all(
                 any(task.id in row for row in _related_rows(detail_panel))
@@ -519,7 +521,7 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
             lambda: (
                 root.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
 
         root_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
@@ -530,7 +532,7 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
             lambda: (
                 nested.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
 
         nested_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
@@ -542,7 +544,7 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
                 children[0].id
                 in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
 
         await pilot.press("escape")
@@ -550,14 +552,14 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
             lambda: (
                 nested.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         await pilot.press("escape", "escape")
         await wait_until(
             lambda: (
                 root.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         root_screen = app.screen
         await pilot.press("escape", "escape")
@@ -566,7 +568,7 @@ async def test_nested_family_navigation_returns_through_each_detail_to_the_selec
                 app.screen is not root_screen
                 and root.id in _static_text(app.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
 
         assert search.value == root.title
@@ -671,7 +673,7 @@ async def test_blocked_dependency_navigation_returns_to_the_original_browser_sel
             lambda: (
                 blocked.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         dependent_detail = app.screen
         dependent_panel = await _open_relationships(
@@ -685,14 +687,14 @@ async def test_blocked_dependency_navigation_returns_to_the_original_browser_sel
                 dependency.id
                 in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         await pilot.press("escape")
         await wait_until(
             lambda: (
                 blocked.id in _static_text(app.screen.query_one(f"#{TASK_DETAIL_IDENTITY}", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         await pilot.press("escape")
         await pilot.pause()

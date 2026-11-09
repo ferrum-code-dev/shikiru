@@ -38,6 +38,7 @@ from tests.support.github import (
     without_gh_credentials,
 )
 from tests.support.permissions import EXECUTABLE_MODE
+from tests.support.waiting import MEDIUM_WAIT_SECONDS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -227,7 +228,9 @@ class Arena:
         return await run_git(RUNNER, cwd or self.root, *arguments)
 
     async def tmux(self, *arguments: str) -> int:
-        result = await RUNNER.run(["tmux", *arguments], timeout=10.0, env=self.environment)
+        result = await RUNNER.run(
+            ["tmux", *arguments], timeout=MEDIUM_WAIT_SECONDS, env=self.environment
+        )
         return result.returncode
 
     async def tmux_server_is_gone(self) -> bool:

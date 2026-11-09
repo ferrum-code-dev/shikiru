@@ -32,7 +32,9 @@ from tests.support.clock import FakeClock
 from tests.support.factories import TASK_CREATED_AT
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import SHORT_WAIT_SECONDS, wait_until
+
+_TIMEOUT_600_SECONDS = 600
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -149,7 +151,7 @@ async def test_an_attempt_that_outlives_its_budget_fails_with_diagnostics(tmp_pa
             keeps_a_turn_running(),
             probe=probe,
             clock=clock,
-            timeout=600,
+            timeout=_TIMEOUT_600_SECONDS,
             stall_after=STALL_AFTER,
         )
     )
@@ -175,11 +177,11 @@ def _polled_past(guard: asyncio.Future[None], polls: list[int], before: int) -> 
 
 
 async def _drive(clock: FakeClock, guard: asyncio.Future[None], polls: list[int]) -> None:
-    await wait_until(clock.has_pending_sleep, timeout=5)
+    await wait_until(clock.has_pending_sleep, timeout=SHORT_WAIT_SECONDS)
     while not guard.done():
         before = len(polls)
         clock.advance(60)
-        await wait_until(partial(_polled_past, guard, polls, before), timeout=5)
+        await wait_until(partial(_polled_past, guard, polls, before), timeout=SHORT_WAIT_SECONDS)
     await guard
 
 

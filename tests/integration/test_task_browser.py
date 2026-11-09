@@ -51,7 +51,7 @@ from tests.support.dashboard import (
     widget_context,
 )
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import SHORT_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -301,7 +301,7 @@ async def test_active_browser_places_a_diagnosed_stall_before_older_active_rows(
     widget = cast("QueuePanel", QueueWidget().create(context))
     async with WidgetHostApp(widget).run_test(size=(90, 35)):
         row = widget.query_one(f"#task-row-{stalled.id} > Static", Static)
-        await wait_until(lambda: "stalled" in _static_text(row), timeout=5.0)
+        await wait_until(lambda: "stalled" in _static_text(row), timeout=SHORT_WAIT_SECONDS)
         row_text = _static_text(row)
         assert "Implementing" in row_text
         assert "stalled" in row_text
@@ -346,7 +346,7 @@ async def test_home_rows_preserve_stage_and_recorded_wait_state(
                 f"task-row-{task_id}" in {item.id for item in list_view.children}
                 for task_id in row_ids
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         assert not recent_block.display
         assert not recent_list.children
@@ -391,7 +391,9 @@ async def test_terminal_rows_show_only_the_terminal_status_whatever_the_task_was
     )
 
     async with WidgetHostApp(widget).run_test(size=(100, 35)):
-        await wait_until(lambda: bool(widget.query(f"#task-row-{cancelled.id}")), timeout=5.0)
+        await wait_until(
+            lambda: bool(widget.query(f"#task-row-{cancelled.id}")), timeout=SHORT_WAIT_SECONDS
+        )
         row = _static_text(widget.query_one(f"#task-row-{cancelled.id} > Static", Static))
 
     assert "Cancelled · stopped during consult" in row
@@ -437,7 +439,7 @@ async def test_focus_recent_shows_bounded_terminal_history_without_dependency_ro
                 widget.query(f"#task-row-{task_id}")
                 for task_id in (dependent.id, cancelled.id, newest.id)
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         terminal_rows = [
             item.id.removeprefix("task-row-")
@@ -487,16 +489,22 @@ async def test_browser_keeps_selection_while_search_filter_state_and_history_cha
     widget = _home_widget(widget_context(reader, project_dir, clock, services=StubServices()))
 
     async with WidgetHostApp(widget).run_test(size=(90, 100)) as pilot:
-        await wait_until(lambda: bool(widget.query(f"#task-row-{selected.id}")), timeout=5.0)
+        await wait_until(
+            lambda: bool(widget.query(f"#task-row-{selected.id}")), timeout=SHORT_WAIT_SECONDS
+        )
         widget.select_task(selected.id)
         widget.open_search()
         widget.query_one("#task-browser-search", Input).value = "pArSeR"
         await widget.activate_filter(TaskBrowserFilter.WAITING)
-        await wait_until(lambda: bool(widget.query(f"#task-row-{queued.id}")), timeout=5.0)
+        await wait_until(
+            lambda: bool(widget.query(f"#task-row-{queued.id}")), timeout=SHORT_WAIT_SECONDS
+        )
         assert not widget.query(f"#task-row-{selected.id}")
 
         await widget.activate_filter(TaskBrowserFilter.ACTIVE)
-        await wait_until(lambda: _selected_task_id(widget) == selected.id, timeout=5.0)
+        await wait_until(
+            lambda: _selected_task_id(widget) == selected.id, timeout=SHORT_WAIT_SECONDS
+        )
 
         decision = seed_task(connection, clock, title="Parser decision")
         TaskStore(connection, clock).apply_transition(
@@ -511,17 +519,27 @@ async def test_browser_keeps_selection_while_search_filter_state_and_history_cha
             packet_path="packet.md",
             options=(EscalationOption(label=ResolutionKind.ANSWER, recommended=True),),
         )
-        await wait_until(lambda: bool(widget.query(f"#task-row-{decision.id}")), timeout=5.0)
+        await wait_until(
+            lambda: bool(widget.query(f"#task-row-{decision.id}")), timeout=SHORT_WAIT_SECONDS
+        )
         assert _selected_task_id(widget) == selected.id
         await pilot.press("up")
-        await wait_until(lambda: _selected_task_id(widget) == decision.id, timeout=5.0)
+        await wait_until(
+            lambda: _selected_task_id(widget) == decision.id, timeout=SHORT_WAIT_SECONDS
+        )
         await pilot.press("down")
-        await wait_until(lambda: _selected_task_id(widget) == selected.id, timeout=5.0)
+        await wait_until(
+            lambda: _selected_task_id(widget) == selected.id, timeout=SHORT_WAIT_SECONDS
+        )
 
         _finish_task(connection, clock, selected.id)
-        await wait_until(lambda: not widget.query(f"#task-row-{selected.id}"), timeout=5.0)
+        await wait_until(
+            lambda: not widget.query(f"#task-row-{selected.id}"), timeout=SHORT_WAIT_SECONDS
+        )
         await widget.activate_filter(TaskBrowserFilter.ALL)
-        await wait_until(lambda: _selected_task_id(widget) == selected.id, timeout=5.0)
+        await wait_until(
+            lambda: _selected_task_id(widget) == selected.id, timeout=SHORT_WAIT_SECONDS
+        )
 
 
 async def test_history_load_more_keeps_the_selected_task(
@@ -545,17 +563,23 @@ async def test_history_load_more_keeps_the_selected_task(
     async with WidgetHostApp(widget).run_test(size=(90, 100)) as pilot:
         await widget.activate_filter(TaskBrowserFilter.HISTORY)
         task_list = widget.query_one("#task-browser-list", ListView)
-        await wait_until(lambda: len(task_list.children) == PAGE_SIZE, timeout=5.0)
+        await wait_until(lambda: len(task_list.children) == PAGE_SIZE, timeout=SHORT_WAIT_SECONDS)
         first_page = tuple(item.id for item in task_list.children)
         assert selected.id not in first_page
         more = widget.query_one("#task-browser-more", Static)
-        await wait_until(lambda: more.display and more.region.height > 0, timeout=5.0)
+        await wait_until(
+            lambda: more.display and more.region.height > 0, timeout=SHORT_WAIT_SECONDS
+        )
         assert await pilot.click(more)
-        await wait_until(lambda: len(task_list.children) == PAGE_SIZE + 1, timeout=5.0)
+        await wait_until(
+            lambda: len(task_list.children) == PAGE_SIZE + 1, timeout=SHORT_WAIT_SECONDS
+        )
         assert tuple(item.id for item in task_list.children[:PAGE_SIZE]) == first_page
         assert not widget.query_one("#task-browser-more", Static).display
         assert task_list.children[-1].id == f"task-row-{selected.id}"
-        await wait_until(lambda: _selected_task_id(widget) == selected.id, timeout=5.0)
+        await wait_until(
+            lambda: _selected_task_id(widget) == selected.id, timeout=SHORT_WAIT_SECONDS
+        )
 
 
 async def test_unsearched_all_load_more_stops_after_queued_tasks_and_recent_history(
@@ -593,7 +617,7 @@ async def test_unsearched_all_load_more_stops_after_queued_tasks_and_recent_hist
                 terminal[-1].id in loaded_ids()
                 and len(loaded_ids() & {task.id for task in queued}) == PAGE_SIZE
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         visible_ids = loaded_ids()
         assert len(visible_ids & {task.id for task in queued}) == PAGE_SIZE
@@ -607,7 +631,7 @@ async def test_unsearched_all_load_more_stops_after_queued_tasks_and_recent_hist
                 queued[-1].id in _loaded_task_ids(task_list)
                 and not widget.query_one("#task-browser-more", Static).display
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         visible_ids = loaded_ids()
         assert visible_ids == {task.id for task in queued} | {task.id for task in terminal}
@@ -662,9 +686,9 @@ async def test_home_search_preserves_matching_terminal_tasks_across_loaded_pages
         count = widget.query_one("#task-browser-count", Static)
         await wait_until(
             lambda: f"search: {TERMINAL_SEARCH_QUERY}" in _static_text(count),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
-        await wait_until(lambda: len(task_list.children) == PAGE_SIZE, timeout=5.0)
+        await wait_until(lambda: len(task_list.children) == PAGE_SIZE, timeout=SHORT_WAIT_SECONDS)
         first_page_ids = tuple(
             item.id.removeprefix("task-row-") for item in task_list.children if item.id
         )
@@ -681,7 +705,7 @@ async def test_home_search_preserves_matching_terminal_tasks_across_loaded_pages
         await widget.load_more()
         await wait_until(
             lambda: len(task_list.children) == MATCHING_TERMINAL_COUNT,
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
         matched_ids = {item.id.removeprefix("task-row-") for item in task_list.children if item.id}
         assert matched_ids == {task.id for task in tasks}
@@ -716,26 +740,32 @@ async def test_history_load_more_reconciles_a_new_task_before_watch_poll(
         async with WidgetHostApp(widget).run_test(size=(90, 100)) as pilot:
             await widget.activate_filter(TaskBrowserFilter.HISTORY)
             list_view = widget.query_one("#task-browser-list", ListView)
-            await wait_until(lambda: len(list_view.children) == PAGE_SIZE, timeout=5.0)
+            await wait_until(
+                lambda: len(list_view.children) == PAGE_SIZE, timeout=SHORT_WAIT_SECONDS
+            )
             await focus(pilot, list_view)
             await pilot.pause()
             list_view.index = READING_INDEX
             await pilot.pause()
-            await wait_until(lambda: selected.id in _visible_task_ids(list_view), timeout=5.0)
+            await wait_until(
+                lambda: selected.id in _visible_task_ids(list_view), timeout=SHORT_WAIT_SECONDS
+            )
             visible_before = _visible_task_ids(list_view)
             assert selected.id in visible_before
             assert _selected_task_id(widget) == selected.id
-            await wait_until(clock.has_pending_sleep, timeout=5.0)
+            await wait_until(clock.has_pending_sleep, timeout=SHORT_WAIT_SECONDS)
 
             new_task = seed_task(connection, clock, title="Inserted before the next page")
             _finish_task(connection, clock, new_task.id)
             assert len(list_view.children) == PAGE_SIZE
 
             assert await pilot.click("#task-browser-more")
-            await wait_until(lambda: len(list_view.children) == PAGE_SIZE + 2, timeout=5.0)
+            await wait_until(
+                lambda: len(list_view.children) == PAGE_SIZE + 2, timeout=SHORT_WAIT_SECONDS
+            )
             await wait_until(
                 lambda: _visible_task_ids(list_view) == visible_before,
-                timeout=5.0,
+                timeout=SHORT_WAIT_SECONDS,
             )
 
             loaded_ids = tuple(
@@ -808,11 +838,13 @@ async def test_state_refresh_preserves_visible_list_position_and_selected_task(
 
     async with WidgetHostApp(widget).run_test(size=(90, 100)):
         list_view = widget.query_one("#task-browser-list", ListView)
-        await wait_until(lambda: len(list_view.children) == PAGE_SIZE, timeout=5.0)
+        await wait_until(lambda: len(list_view.children) == PAGE_SIZE, timeout=SHORT_WAIT_SECONDS)
         list_view.focus()
         list_view.index = READING_INDEX
         selected = tasks[READING_INDEX]
-        await wait_until(lambda: selected.id in _visible_task_ids(list_view), timeout=5.0)
+        await wait_until(
+            lambda: selected.id in _visible_task_ids(list_view), timeout=SHORT_WAIT_SECONDS
+        )
         visible_before = _visible_task_ids(list_view)
 
         TaskStore(connection, clock).set_wait_reason(tasks[-1].id, WaitReason.SLOT)
@@ -821,9 +853,11 @@ async def test_state_refresh_preserves_visible_list_position_and_selected_task(
                 "waiting on slot"
                 in _static_text(widget.query_one(f"#task-row-{tasks[-1].id} > Static", Static))
             ),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
-        await wait_until(lambda: _visible_task_ids(list_view) == visible_before, timeout=5.0)
+        await wait_until(
+            lambda: _visible_task_ids(list_view) == visible_before, timeout=SHORT_WAIT_SECONDS
+        )
 
         assert list_view.has_focus
         assert _selected_task_id(widget) == selected.id
@@ -982,5 +1016,5 @@ async def test_selecting_a_task_row_never_moves_its_text_in_either_list(
             )
             for index, item in enumerate(items):
                 list_view.index = index
-                await wait_until(lambda item=item: item.highlighted, timeout=5.0)
+                await wait_until(lambda item=item: item.highlighted, timeout=SHORT_WAIT_SECONDS)
                 assert _row_text_offsets(widget) == resting

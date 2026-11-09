@@ -28,7 +28,7 @@ from tests.support.clock import FakeClock
 from tests.support.config import MINIMAL_PROJECT_CONFIG, write_minimal_project
 from tests.support.dashboard import StubServices, WidgetHostApp, widget_context
 from tests.support.render import plain_text
-from tests.support.waiting import wait_until
+from tests.support.waiting import SHORT_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -139,7 +139,7 @@ async def test_header_applies_edited_max_parallel_when_the_engine_starts_again(
         _write_max_parallel(project_dir, "2")
         _start_engine(connection, clock)
 
-        await wait_until(lambda: "Slots 0/2" in _plain(widget.content), timeout=5.0)
+        await wait_until(lambda: "Slots 0/2" in _plain(widget.content), timeout=SHORT_WAIT_SECONDS)
 
 
 async def test_header_keeps_applied_settings_when_a_reload_is_invalid(
@@ -156,13 +156,13 @@ async def test_header_keeps_applied_settings_when_a_reload_is_invalid(
         _write_max_parallel(project_dir, '"two"')
         _start_engine(connection, clock)
 
-        await wait_until(lambda: RELOAD_ALERT in _plain(widget.content), timeout=5.0)
+        await wait_until(lambda: RELOAD_ALERT in _plain(widget.content), timeout=SHORT_WAIT_SECONDS)
         assert "Slots 0/1" in _plain(widget.content)
 
         _write_max_parallel(project_dir, "2")
         _start_engine(connection, clock)
 
-        await wait_until(lambda: "Slots 0/2" in _plain(widget.content), timeout=5.0)
+        await wait_until(lambda: "Slots 0/2" in _plain(widget.content), timeout=SHORT_WAIT_SECONDS)
         assert RELOAD_ALERT not in _plain(widget.content)
 
 
@@ -179,13 +179,15 @@ async def test_usage_gauges_apply_edited_thresholds_when_the_engine_starts_again
     )
     panel = UsagePanel(context)
     async with WidgetHostApp(panel).run_test():
-        await wait_until(lambda: GAUGE_TEXT in _painted(panel), timeout=5.0)
+        await wait_until(lambda: GAUGE_TEXT in _painted(panel), timeout=SHORT_WAIT_SECONDS)
         assert set(foregrounds(panel, GAUGE_TEXT)) == {SAGE}
 
         _write_config(project_dir, QUOTA_WARN_CONFIG)
         _start_engine(connection, clock)
 
-        await wait_until(lambda: set(foregrounds(panel, GAUGE_TEXT)) == {AMBER}, timeout=5.0)
+        await wait_until(
+            lambda: set(foregrounds(panel, GAUGE_TEXT)) == {AMBER}, timeout=SHORT_WAIT_SECONDS
+        )
 
 
 async def test_docker_refresh_applies_an_edited_cadence_when_the_engine_starts_again(
@@ -200,7 +202,7 @@ async def test_docker_refresh_applies_an_edited_cadence_when_the_engine_starts_a
     async with WidgetHostApp(panel).run_test():
         await wait_until(
             lambda: f"{DOCKER_RUNNING_BEFORE} of {DOCKER_TOTAL}" in _plain(panel.content),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
 
         services.running = DOCKER_RUNNING_AFTER
@@ -209,7 +211,7 @@ async def test_docker_refresh_applies_an_edited_cadence_when_the_engine_starts_a
 
         await wait_until(
             lambda: f"{DOCKER_RUNNING_AFTER} of {DOCKER_TOTAL}" in _plain(panel.content),
-            timeout=5.0,
+            timeout=SHORT_WAIT_SECONDS,
         )
 
 

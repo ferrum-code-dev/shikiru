@@ -12,7 +12,7 @@ import pytest
 
 from shikiru.errors import CommandFailed, CommandTimeoutError
 from shikiru.process import STDERR_KEPT_BYTES, STDOUT_DRAIN_TIMEOUT, SubprocessRunner
-from tests.support.waiting import wait_until
+from tests.support.waiting import SHORT_WAIT_SECONDS, UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from shikiru.process import ProcessIdentity
@@ -87,7 +87,10 @@ async def test_run_feeds_stdin_runs_in_the_given_cwd_and_returns_the_exit_status
     runner = SubprocessRunner()
 
     result = await runner.run(
-        ["sh", "-c", "cat; echo; pwd; exit 7"], timeout=5, input_text="from stdin", cwd=tmp_path
+        ["sh", "-c", "cat; echo; pwd; exit 7"],
+        timeout=SHORT_WAIT_SECONDS,
+        input_text="from stdin",
+        cwd=tmp_path,
     )
 
     assert result.returncode == 7
@@ -99,7 +102,7 @@ async def test_run_passes_the_given_env_and_nothing_else() -> None:
 
     result = await runner.run(
         ["sh", "-c", "echo $SHIKIRU_TEST_VAR"],
-        timeout=5,
+        timeout=SHORT_WAIT_SECONDS,
         env={"SHIKIRU_TEST_VAR": "hello", "PATH": os.environ["PATH"]},
     )
 
@@ -110,7 +113,9 @@ async def test_check_raises_command_failed_on_non_zero_exit() -> None:
     runner = SubprocessRunner()
 
     with pytest.raises(CommandFailed) as excinfo:
-        await runner.run(["sh", "-c", "echo oops >&2; exit 3"], timeout=5, check=True)
+        await runner.run(
+            ["sh", "-c", "echo oops >&2; exit 3"], timeout=SHORT_WAIT_SECONDS, check=True
+        )
 
     assert excinfo.value.returncode == 3
     assert "oops" in excinfo.value.stderr
@@ -144,7 +149,7 @@ async def test_cancellation_kills_and_reaps_the_process(tmp_path: Path) -> None:
     task = asyncio.create_task(
         runner.run(
             [sys.executable, "-c", program],
-            timeout=30,
+            timeout=UI_WAIT_SECONDS,
         )
     )
 
@@ -166,7 +171,9 @@ async def test_cancelled_while_the_process_is_still_starting_leaves_no_descendan
     pid_fifo = tmp_path / "descendant.fifo"
     os.mkfifo(pid_fifo)
     task = asyncio.create_task(
-        runner.run(["sh", "-c", f"sleep 1000 & echo $! > {pid_fifo}; wait"], timeout=30)
+        runner.run(
+            ["sh", "-c", f"sleep 1000 & echo $! > {pid_fifo}; wait"], timeout=UI_WAIT_SECONDS
+        )
     )
     started: list[ProcessIdentity | None] = []
 

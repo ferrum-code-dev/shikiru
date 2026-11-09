@@ -52,6 +52,7 @@ from tests.integration.dashboard_wizard_support import (
     wait_for_agent_setting_error,
     wait_for_finish_then_exit,
 )
+from tests.support.waiting import LONG_WAIT_SECONDS
 
 pytestmark = pytest.mark.asyncio
 
@@ -82,7 +83,7 @@ async def test_written_config_remains_truthful_when_doctor_fails(
         config_path = tmp_path / ".shikiru" / "config.toml"
         await wait_until(config_path.is_file, timeout=UI_WAIT_SECONDS)
         report = app.query_one("#doctor-report", Static)
-        await wait_until(lambda: "exit 9" in doctor_text(report), timeout=60)
+        await wait_until(lambda: "exit 9" in doctor_text(report), timeout=LONG_WAIT_SECONDS)
         config_row = app.query_one("#doctor-config", wizard_module.WizardDetailRow)
         config_value = app.query_one("#doctor-config .wizard-detail-value", Static)
         await wait_until(

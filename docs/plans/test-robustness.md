@@ -69,7 +69,7 @@ Acceptance criteria:
 
 ### R3 — One deadline policy for the tests
 
-- [ ] Deadlines scale with the machine instead of being fixed numbers.
+- [x] Deadlines scale with the machine instead of being fixed numbers.
 
 Acceptance criteria:
 

@@ -9,6 +9,7 @@ import pytest
 
 from shikiru.errors import EXIT_NOT_INITIALISED, EXIT_USAGE_ERROR
 from shikiru.process import SubprocessRunner
+from tests.support.waiting import MEDIUM_WAIT_SECONDS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -35,7 +36,7 @@ async def _run_report(env: dict[str, str], file_path: Path) -> tuple[int, str, s
     runner = SubprocessRunner()
     result = await runner.run(
         [sys.executable, "-m", "shikiru", "report", "--file", str(file_path)],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         env=env,
     )
     return result.returncode, result.stdout, result.stderr

@@ -78,6 +78,7 @@ from shikiru.process import SubprocessRunner
 from tests.e2e.diagnostics import SANDBOX_DENIAL_MARKERS
 from tests.support.clock import FakeClock
 from tests.support.factories import make_settings
+from tests.support.waiting import UI_WAIT_SECONDS
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -1264,25 +1265,31 @@ class TestCodexHeadlessContract(AgentContractSuite):
         worktree = tmp_path / "worktree"
         main_repo.mkdir()
         runner = SubprocessRunner()
-        await runner.run(["git", "init", "-b", "main"], timeout=30, cwd=main_repo, check=True)
+        await runner.run(
+            ["git", "init", "-b", "main"], timeout=UI_WAIT_SECONDS, cwd=main_repo, check=True
+        )
         await runner.run(
             ["git", "config", "user.name", _GIT_USER_NAME],
-            timeout=30,
+            timeout=UI_WAIT_SECONDS,
             cwd=main_repo,
             check=True,
         )
         await runner.run(
             ["git", "config", "user.email", _GIT_USER_EMAIL],
-            timeout=30,
+            timeout=UI_WAIT_SECONDS,
             cwd=main_repo,
             check=True,
         )
         (main_repo / _INITIAL_FILE).write_text(_INITIAL_CONTENT, encoding="utf-8")
-        await runner.run(["git", "add", _INITIAL_FILE], timeout=30, cwd=main_repo, check=True)
-        await runner.run(["git", "commit", "-m", "initial"], timeout=30, cwd=main_repo, check=True)
+        await runner.run(
+            ["git", "add", _INITIAL_FILE], timeout=UI_WAIT_SECONDS, cwd=main_repo, check=True
+        )
+        await runner.run(
+            ["git", "commit", "-m", "initial"], timeout=UI_WAIT_SECONDS, cwd=main_repo, check=True
+        )
         await runner.run(
             ["git", "worktree", "add", "-b", _WORKTREE_BRANCH, str(worktree)],
-            timeout=30,
+            timeout=UI_WAIT_SECONDS,
             cwd=main_repo,
             check=True,
         )
@@ -1291,7 +1298,10 @@ class TestCodexHeadlessContract(AgentContractSuite):
         first_signals = await self._run_turn(_with_prompt(first, _LIVE_COMMIT_PROMPT))
         session_id, usage = _latest_usage(first_signals)
         first_commit = await runner.run(
-            ["git", "show", f"HEAD:{_FIRST_FILE}"], timeout=30, cwd=worktree, check=True
+            ["git", "show", f"HEAD:{_FIRST_FILE}"],
+            timeout=UI_WAIT_SECONDS,
+            cwd=worktree,
+            check=True,
         )
         assert first_commit.stdout.strip() == _FIRST_FILE_CONTENT
         resumed = self.build_spec(
@@ -1307,9 +1317,14 @@ class TestCodexHeadlessContract(AgentContractSuite):
             denied = [marker for marker in SANDBOX_DENIAL_MARKERS if marker in transcript]
             assert not denied, f"sandbox denial {denied} in {turn.turn_dir}"
         second_commit = await runner.run(
-            ["git", "show", f"HEAD:{_SECOND_FILE}"], timeout=30, cwd=worktree, check=True
+            ["git", "show", f"HEAD:{_SECOND_FILE}"],
+            timeout=UI_WAIT_SECONDS,
+            cwd=worktree,
+            check=True,
         )
-        status = await runner.run(["git", "status", "--porcelain"], timeout=30, cwd=worktree)
+        status = await runner.run(
+            ["git", "status", "--porcelain"], timeout=UI_WAIT_SECONDS, cwd=worktree
+        )
         assert second_commit.stdout.strip() == _SECOND_FILE_CONTENT
         assert status.stdout == ""
 
@@ -1582,7 +1597,7 @@ def _install_fake_codex(directory: Path) -> None:
 
 async def _init_live_repo(path: Path) -> None:
     await asyncio.to_thread(path.mkdir, parents=True, exist_ok=True)
-    await SubprocessRunner().run(["git", "init"], timeout=30, cwd=path, check=True)
+    await SubprocessRunner().run(["git", "init"], timeout=UI_WAIT_SECONDS, cwd=path, check=True)
 
 
 @contextmanager

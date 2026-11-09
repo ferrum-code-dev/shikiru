@@ -38,7 +38,7 @@ from shikiru.tmux.session import PROJECT_DIR_ENV_VAR, SESSION_PREFIX, SessionVie
 from tests.support.clock import FakeClock
 from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -408,14 +408,14 @@ async def test_cli_lists_an_absent_tmux_server_as_empty(tmp_path: Path) -> None:
     runner = SubprocessRunner()
     human = await runner.run(
         [sys.executable, "-m", "shikiru", "ls"],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         cwd=tmp_path,
         env=env,
         check=False,
     )
     structured = await runner.run(
         [sys.executable, "-m", "shikiru", "--json", "ls"],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         cwd=tmp_path,
         env=env,
         check=False,
@@ -938,7 +938,7 @@ async def test_cli_attach_uses_a_listed_exact_target_and_tmux_context(
         env.pop("TMUX", None)
     result = await SubprocessRunner().run(
         [sys.executable, "-m", "shikiru", "attach", session],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         env=env,
         cwd=tmp_path,
     )
@@ -1042,7 +1042,7 @@ async def test_attach_from_the_only_client_already_showing_target_is_a_noop(
         env["TMUX_PANE"] = state[1]
         result = await SubprocessRunner().run(
             [sys.executable, "-m", "shikiru", "attach", session],
-            timeout=10,
+            timeout=MEDIUM_WAIT_SECONDS,
             cwd=tmp_path,
             env=env,
         )
@@ -1638,7 +1638,7 @@ asyncio.run(attach())
     }
     result = await SubprocessRunner().run(
         [sys.executable, "-c", child],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         env=env,
     )
 

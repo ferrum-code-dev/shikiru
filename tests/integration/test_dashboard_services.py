@@ -13,6 +13,7 @@ from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo, run_git
 from tests.support.github import add_bare_remote
+from tests.support.waiting import MEDIUM_WAIT_SECONDS
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -28,7 +29,9 @@ async def test_repo_status_reports_branch_ahead_behind_and_dirty_count(tmp_path:
     await init_repo(runner, repo_dir, initial_branch="main")
     (repo_dir / "a.txt").write_text("1")
     await commit_all(runner, repo_dir, "initial")
-    await runner.run(["git", "checkout", "-b", "feature"], cwd=repo_dir, timeout=10.0, check=True)
+    await runner.run(
+        ["git", "checkout", "-b", "feature"], cwd=repo_dir, timeout=MEDIUM_WAIT_SECONDS, check=True
+    )
     (repo_dir / "b.txt").write_text("2")
     await commit_all(runner, repo_dir, "feature commit")
     (repo_dir / "c.txt").write_text("dirty")
@@ -95,7 +98,9 @@ async def test_repo_status_counts_staged_and_unstaged_lines_and_classifies_other
     await commit_all(runner, repo_dir, "baseline")
 
     (repo_dir / "tracked.txt").write_text("one\nstaged\nthree\n")
-    await runner.run(["git", "add", "--", "tracked.txt"], cwd=repo_dir, timeout=10.0, check=True)
+    await runner.run(
+        ["git", "add", "--", "tracked.txt"], cwd=repo_dir, timeout=MEDIUM_WAIT_SECONDS, check=True
+    )
     (repo_dir / "tracked.txt").write_text("one\nunstaged\nthree\nfour\n")
     (repo_dir / "staged-only.txt").write_text("before\nstaged\n")
     await runner.run(
@@ -111,7 +116,7 @@ async def test_repo_status_counts_staged_and_unstaged_lines_and_classifies_other
     await runner.run(
         ["git", "mv", "--", "renamed.txt", "renamed-again.txt"],
         cwd=repo_dir,
-        timeout=10.0,
+        timeout=MEDIUM_WAIT_SECONDS,
         check=True,
     )
     (repo_dir / "deleted.txt").unlink()

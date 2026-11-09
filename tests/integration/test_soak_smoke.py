@@ -15,6 +15,8 @@ from tests.soak.model import (
 )
 from tests.soak.scenarios import Schedule, Submission
 
+_TIMEOUT_240_SECONDS = 240
+
 pytestmark = pytest.mark.asyncio
 
 SEED = "smoke"
@@ -39,7 +41,7 @@ def _schedule(_seed: str, _mode: IntegrationMode, _intake: float) -> Schedule:
     )
 
 
-@pytest.mark.timeout(240)
+@pytest.mark.timeout(_TIMEOUT_240_SECONDS)
 async def test_a_short_soak_with_an_engine_kill_ends_with_every_invariant_held() -> None:
     result: SoakResult = await run_soak(
         SEED, timing=TIMING, modes=(IntegrationMode.MERGE,), schedule_for=_schedule

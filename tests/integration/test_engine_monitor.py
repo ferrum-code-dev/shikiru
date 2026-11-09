@@ -23,7 +23,9 @@ from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, set_role_script
 from tests.support.factories import TASK_CREATED_AT
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
-from tests.support.waiting import wait_until
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until
+
+_TIMEOUT_20_SECONDS = 20
 
 if TYPE_CHECKING:
     import pytest
@@ -102,7 +104,7 @@ async def test_stalled_turn_is_stopped_then_resumed_with_continue(
         run = engine_env.runs.get_live(task.id, Role.IMPLEMENTER)
         return (role_path / "turn.pid").is_file() and run is not None and run.session_id is not None
 
-    await wait_until(first_session_started, timeout=10)
+    await wait_until(first_session_started, timeout=MEDIUM_WAIT_SECONDS)
     turn_clock.advance(_SHORT_STALL_SECONDS + 1)
     await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
@@ -254,7 +256,7 @@ async def test_cancelling_a_turn_stops_its_child_process(
         run = engine_env.runs.get_live(task.id, Role.IMPLEMENTER)
         return (role_path / "turn.pid").is_file() and run is not None and run.session_id is not None
 
-    await wait_until(process_started, timeout=10)
+    await wait_until(process_started, timeout=MEDIUM_WAIT_SECONDS)
     pid = read_turn_pid(role_path / "turn.pid").pid
     flow_task.cancel()
     with suppress(asyncio.CancelledError):
@@ -296,7 +298,7 @@ async def test_turn_pid_tracks_the_continue_process_after_in_turn_compaction(
         return "turn" in command
 
     try:
-        await wait_until(prompt_is_active_after_compaction, timeout=20)
+        await wait_until(prompt_is_active_after_compaction, timeout=_TIMEOUT_20_SECONDS)
         pid = read_turn_pid(pid_path).pid
         command = await asyncio.to_thread(psutil.Process(pid).cmdline)
         assert "turn" in command

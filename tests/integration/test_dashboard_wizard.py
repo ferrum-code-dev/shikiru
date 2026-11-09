@@ -54,6 +54,7 @@ from tests.integration.dashboard_wizard_support import (
     verify_back_navigation_and_fill_project_fields,
     wait_for_orchestration_error,
 )
+from tests.support.waiting import LONG_WAIT_SECONDS, MEDIUM_WAIT_SECONDS
 
 pytestmark = pytest.mark.asyncio
 
@@ -103,7 +104,7 @@ async def test_init_writes_mixed_multirung_ladders_and_runtime_resolves_complexi
         await wait_until(config_path.is_file, timeout=UI_WAIT_SECONDS)
         await wait_until(
             lambda: bool(doctor_text(app.query_one("#doctor-report", Static)).strip()),
-            timeout=60,
+            timeout=LONG_WAIT_SECONDS,
         )
         await click_button(pilot, "#wizard-finish")
 
@@ -123,7 +124,7 @@ async def test_init_writes_project_fields_and_orchestration_after_back_navigatio
     runner = SubprocessRunner()
     await runner.run(
         ["git", "add", LONG_TRACKER_CANDIDATE, cache_parent.relative_to(tmp_path).as_posix()],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         cwd=tmp_path,
         check=True,
     )
@@ -138,7 +139,7 @@ async def test_init_writes_project_fields_and_orchestration_after_back_navigatio
             "-qm",
             "add wizard candidates",
         ],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         cwd=tmp_path,
         check=True,
     )
@@ -168,7 +169,7 @@ async def test_init_writes_project_fields_and_orchestration_after_back_navigatio
         await wait_until(config_path.is_file, timeout=UI_WAIT_SECONDS)
         await wait_until(
             lambda: bool(doctor_text(app.query_one("#doctor-report", Static)).strip()),
-            timeout=60,
+            timeout=LONG_WAIT_SECONDS,
         )
         body = app.query_one("#wizard-body", wizard_module.InitWizardBody)
         await resize(pilot, COMPACT_WIZARD_SIZE)
@@ -292,7 +293,7 @@ async def test_invalid_orchestration_values_focus_their_field_and_boundaries_rou
         await wait_until(config_path.is_file, timeout=UI_WAIT_SECONDS)
         await wait_until(
             lambda: bool(doctor_text(app.query_one("#doctor-report", Static)).strip()),
-            timeout=60,
+            timeout=LONG_WAIT_SECONDS,
         )
         await pilot.click("#wizard-finish")
 
@@ -328,7 +329,7 @@ async def test_invalid_push_interval_focuses_its_field_and_zero_is_saved(
         await wait_until(config_path.is_file, timeout=UI_WAIT_SECONDS)
         await wait_until(
             lambda: bool(doctor_text(app.query_one("#doctor-report", Static)).strip()),
-            timeout=60,
+            timeout=LONG_WAIT_SECONDS,
         )
         await pilot.click("#wizard-finish")
 

@@ -103,8 +103,17 @@ from tests.support.flow import init_project_repo
 from tests.support.github import MergeStyle, add_bare_remote, merge_on_remote
 from tests.support.permissions import requires_enforced_permissions
 from tests.support.store import reopen_command, seed_task
-from tests.support.waiting import wait_until, wait_until_advancing
+from tests.support.waiting import (
+    LONG_WAIT_SECONDS,
+    MEDIUM_WAIT_SECONDS,
+    UI_WAIT_SECONDS,
+    wait_until,
+    wait_until_advancing,
+)
 from tests.support.workspace import task_root_builder
+
+_TIMEOUT_20_SECONDS = 20
+_TIMEOUT_40_SECONDS = 40
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
@@ -303,7 +312,7 @@ async def test_unexpected_flow_error_escalates_without_stopping_engine(
                 and bool(fetch_open_escalations(connection))
             )
 
-        await wait_until_advancing(clock, escalated, 10, step_seconds=0.25)
+        await wait_until_advancing(clock, escalated, MEDIUM_WAIT_SECONDS, step_seconds=0.25)
         assert not engine_task.done()
         escalation = fetch_open_escalations(connection)[0]
         assert escalation.reason is EscalationReason.ENGINE_ERROR
@@ -384,14 +393,14 @@ async def test_an_engine_started_while_a_liveness_probe_holds_the_lock_waits_and
     fcntl.flock(probe.fileno(), fcntl.LOCK_EX)
     engine_task = asyncio.create_task(engine.run())
     try:
-        await wait_until(clock.has_pending_sleep, timeout=10)
+        await wait_until(clock.has_pending_sleep, timeout=MEDIUM_WAIT_SECONDS)
 
         fcntl.flock(probe.fileno(), fcntl.LOCK_UN)
         probe.close()
-        await wait_until_advancing(clock, lambda: engine_is_running(lock_path), 10)
+        await wait_until_advancing(clock, lambda: engine_is_running(lock_path), MEDIUM_WAIT_SECONDS)
     finally:
         engine.request_stop()
-        await wait_until_advancing(clock, engine_task.done, 10)
+        await wait_until_advancing(clock, engine_task.done, MEDIUM_WAIT_SECONDS)
     await engine_task
 
 
@@ -454,7 +463,7 @@ async def test_an_engine_error_in_a_task_escalates_it_and_the_daemon_keeps_runni
         async def escalated() -> bool:
             return bool(fetch_open_escalations(connection))
 
-        await wait_until_advancing(clock, escalated, 20, step_seconds=0.25)
+        await wait_until_advancing(clock, escalated, _TIMEOUT_20_SECONDS, step_seconds=0.25)
         escalations = fetch_open_escalations(connection)
         assert [row.reason for row in escalations] == [EscalationReason.ENGINE_ERROR]
         packet = await asyncio.to_thread(Path(escalations[0].packet_path).read_text)
@@ -1132,7 +1141,7 @@ async def test_superseded_task_uses_shared_terminal_cleanup(
             window_closed = task.window_id is None or not await tmux.target_exists(task.window_id)
             return window_closed and not task_root(tmp_path, task_id).exists()
 
-        await wait_until_advancing(clock, cleaned, 40, step_seconds=0.25)
+        await wait_until_advancing(clock, cleaned, _TIMEOUT_40_SECONDS, step_seconds=0.25)
         superseded = tasks.get(task_id)
         assert superseded is not None
         assert superseded.status is Status.CANCELLED
@@ -1185,7 +1194,7 @@ async def test_engine_observes_two_in_process_flows_in_parallel(
         }
         return started_ids == {first_id, second_id} and live_ids == {first_id, second_id}
 
-    await wait_until_advancing(clock, both_started, 10, step_seconds=0.25)
+    await wait_until_advancing(clock, both_started, MEDIUM_WAIT_SECONDS, step_seconds=0.25)
     first_task = TaskStore(connection, clock).get(first_id)
     second_task = TaskStore(connection, clock).get(second_id)
     assert first_task is not None
@@ -1204,7 +1213,7 @@ async def _wait_for_session(runs: RunStore, clock: FakeClock, task_id: str) -> R
         run = runs.get_live(task_id, Role.IMPLEMENTER)
         return run is not None and run.session_id is not None
 
-    await wait_until_advancing(clock, session_live, 10, step_seconds=0.25)
+    await wait_until_advancing(clock, session_live, MEDIUM_WAIT_SECONDS, step_seconds=0.25)
     run = runs.get_live(task_id, Role.IMPLEMENTER)
     assert run is not None
     return run
@@ -1282,7 +1291,9 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
             handed = events.since(0, kinds=[EventKind.HANDED_BACK], task_id=task_id)
             return bool(handed) and task.step is not step and Hold.INTERVENTION not in task.holds
 
-        await wait_until_advancing(clock, handed_back_and_advanced, 30, step_seconds=0.25)
+        await wait_until_advancing(
+            clock, handed_back_and_advanced, UI_WAIT_SECONDS, step_seconds=0.25
+        )
         resumed = runs.get_live(task_id, Role.IMPLEMENTER)
         assert resumed is not None
         assert resumed.id == run.id
@@ -1351,7 +1362,7 @@ async def test_take_over_repeats_while_the_pull_request_waits_for_its_merge(
         await wait_until_advancing(
             operator.clock,
             lambda: operator.task(task_id).status is Status.DONE,
-            60,
+            LONG_WAIT_SECONDS,
             step_seconds=pr_poll_seconds(),
         )
 
@@ -1580,7 +1591,9 @@ async def _assert_failed_report_is_live(
     tasks: TaskStore,
     events: EventLog,
 ) -> tuple[dict[str, Any], Path]:
-    await wait_until(lambda: _failed_report_row(signal_path) is not None, timeout=10)
+    await wait_until(
+        lambda: _failed_report_row(signal_path) is not None, timeout=MEDIUM_WAIT_SECONDS
+    )
     failed_row = _failed_report_row(signal_path)
     assert failed_row is not None
     failed_turn = failed_row["turn"]
@@ -1648,7 +1661,7 @@ async def _assert_same_session_handback(
     async def resumed_report_is_valid() -> bool:
         return current_turn.is_symlink() and load_turn_report(current_turn.resolve()) is not None
 
-    await wait_until(resumed_report_is_valid, timeout=10)
+    await wait_until(resumed_report_is_valid, timeout=MEDIUM_WAIT_SECONDS)
     resumed = runs.get_live(task_id, Role.IMPLEMENTER)
     assert resumed is not None
     assert resumed.id == run.id
@@ -1771,7 +1784,7 @@ async def test_hand_back_clears_the_operator_colour_from_the_pane(
             pane = _required_task(tasks, task_id).panes[Role.IMPLEMENTER]
             return await _pane_color(tmux_server, pane) == HOLD_COLOR
 
-        await wait_until_advancing(clock, handed_back_on_hold, 30, step_seconds=0.25)
+        await wait_until_advancing(clock, handed_back_on_hold, UI_WAIT_SECONDS, step_seconds=0.25)
         assert events.since(0, kinds=[EventKind.HANDED_BACK], task_id=task_id)
     finally:
         if not engine_task.done():
@@ -1830,7 +1843,7 @@ class _Operator:
         async def reached() -> bool:
             return condition()
 
-        await wait_until_advancing(self.clock, reached, 30, step_seconds=0.25)
+        await wait_until_advancing(self.clock, reached, UI_WAIT_SECONDS, step_seconds=0.25)
 
 
 @asynccontextmanager
@@ -1999,7 +2012,7 @@ async def test_a_takeover_lost_with_the_tmux_server_is_handed_back_with_a_notifi
             title = await operator.pane_title(task_id, Role.IMPLEMENTER)
             return title.startswith("Implementer") and "operator" not in title
 
-        await wait_until(retitled, timeout=10)
+        await wait_until(retitled, timeout=MEDIUM_WAIT_SECONDS)
         title = await operator.pane_title(task_id, Role.IMPLEMENTER)
         assert title.startswith("Implementer")
         assert "operator" not in title
@@ -2385,7 +2398,7 @@ async def test_a_running_engine_keeps_every_shikiru_file_and_directory_owner_onl
     async def viewed() -> bool:
         return new_view.exists()
 
-    await wait_until_advancing(clock, viewed, 10, step_seconds=0.25)
+    await wait_until_advancing(clock, viewed, MEDIUM_WAIT_SECONDS, step_seconds=0.25)
     modes = _modes_below(state_dir)
     await _append_and_wait(Stop(), queue, clock)
     await engine_task

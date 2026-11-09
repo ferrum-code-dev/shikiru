@@ -14,6 +14,7 @@ import pytest
 
 from shikiru.process import SubprocessRunner
 from tests.support.spawn_hook import spawn_hook
+from tests.support.waiting import SHORT_WAIT_SECONDS, scaled
 from tests.support.xdist_workers import CPUS_PER_WORKER_ENV, worker_count
 
 if TYPE_CHECKING:
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
 
 _TMUX_DIR_PARENT = "/tmp"  # noqa: S108
 _TMUX_DEFAULT_SOCKET = "default"
+_PYTEST_TIMEOUT_MARKER = "timeout"
 
 pytest_plugins = [
     "tests.support.tmux",
@@ -40,6 +42,25 @@ def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
         message = "os.process_cpu_count() could not determine the CPU count for -n auto"
         raise RuntimeError(message)
     return worker_count(cpus, os.environ.get(CPUS_PER_WORKER_ENV))
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Scale each test's pytest-timeout limit, marker or configured, by the test time scale."""
+    configured = _configured_timeout(config)
+    for item in items:
+        marker = item.get_closest_marker(_PYTEST_TIMEOUT_MARKER)
+        limit = configured if marker is None else float(marker.args[0])
+        if limit is None:
+            continue
+        item.own_markers = [own for own in item.own_markers if own.name != _PYTEST_TIMEOUT_MARKER]
+        item.add_marker(pytest.mark.timeout(scaled(limit)))
+
+
+def _configured_timeout(config: pytest.Config) -> float | None:
+    option = config.getoption(_PYTEST_TIMEOUT_MARKER)
+    text = config.getini(_PYTEST_TIMEOUT_MARKER) if option is None else option
+    seconds = float(text or 0)
+    return seconds if seconds > 0 else None
 
 
 @pytest.fixture(autouse=True)
@@ -105,7 +126,11 @@ def private_tmux_directory() -> Iterator[Path]:
         yield directory
         leaked = list(directory.glob(f"tmux-*/{_TMUX_DEFAULT_SOCKET}"))
         if leaked:
-            asyncio.run(SubprocessRunner().run(["tmux", "kill-server"], timeout=5, check=False))
+            asyncio.run(
+                SubprocessRunner().run(
+                    ["tmux", "kill-server"], timeout=SHORT_WAIT_SECONDS, check=False
+                )
+            )
         shutil.rmtree(directory, ignore_errors=True)
     if leaked:
         message = "a test started a tmux server on the default socket"

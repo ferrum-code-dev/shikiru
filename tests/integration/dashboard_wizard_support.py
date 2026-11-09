@@ -30,7 +30,12 @@ from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.dashboard import focus
 from tests.support.factories import make_task
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import (
+    LONG_WAIT_SECONDS,
+    MEDIUM_WAIT_SECONDS,
+    UI_WAIT_SECONDS,
+    wait_until,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -137,9 +142,12 @@ async def git_project(root: Path) -> None:
     (root / "node_modules").mkdir()
     (root / "node_modules" / "cache.dat").write_text("cache\n")
     runner = SubprocessRunner()
-    await runner.run(["git", "init", "-q"], timeout=10, cwd=root, check=True)
+    await runner.run(["git", "init", "-q"], timeout=MEDIUM_WAIT_SECONDS, cwd=root, check=True)
     await runner.run(
-        ["git", "add", ".gitignore", "tasks/plan.md"], timeout=10, cwd=root, check=True
+        ["git", "add", ".gitignore", "tasks/plan.md"],
+        timeout=MEDIUM_WAIT_SECONDS,
+        cwd=root,
+        check=True,
     )
     await runner.run(
         [
@@ -152,7 +160,7 @@ async def git_project(root: Path) -> None:
             "-qm",
             "initial",
         ],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         cwd=root,
         check=True,
     )
@@ -342,7 +350,7 @@ async def click_next(
     pilot: Pilot[InitWizardResult | None], expected_page: str | None = None
 ) -> None:
     button = pilot.app.query_one("#wizard-next", Button)
-    await wait_until(lambda: not button.disabled, timeout=60)
+    await wait_until(lambda: not button.disabled, timeout=LONG_WAIT_SECONDS)
     await wait_until(
         lambda: (
             button.region.width > 0
@@ -364,7 +372,7 @@ async def click_next(
                 or bool(str(error.render()).strip())
                 or bool(str(ladder_problem.render()).strip())
             ),
-            timeout=60,
+            timeout=LONG_WAIT_SECONDS,
         )
         assert page.display, str(error.render()) or str(ladder_problem.render())
         await pilot.pause()

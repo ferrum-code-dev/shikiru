@@ -55,7 +55,12 @@ from tests.support.factories import TASK_CREATED_AT
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo, run_git
 from tests.support.store import seed_task
-from tests.support.waiting import PROCESS_WAIT_SECONDS, wait_until
+from tests.support.waiting import (
+    LONG_WAIT_SECONDS,
+    MEDIUM_WAIT_SECONDS,
+    PROCESS_WAIT_SECONDS,
+    wait_until,
+)
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -225,7 +230,9 @@ async def test_local_merge_updates_a_base_branch_that_is_not_checked_out(
 ) -> None:
     clock = FakeClock(TASK_CREATED_AT)
     project_root = await _repo(tmp_path / "project")
-    await _RUNNER.run(["git", "branch", "release"], cwd=project_root, timeout=10, check=True)
+    await _RUNNER.run(
+        ["git", "branch", "release"], cwd=project_root, timeout=MEDIUM_WAIT_SECONDS, check=True
+    )
     task, state = await _task_with_worktree(connection, project_root, base="release")
     task_root = project_root / ".shikiru" / "worktrees" / task.id
     (task_root / "README.md").write_text("release task\n")
@@ -260,7 +267,10 @@ async def test_local_merge_retries_dirty_overlap_until_checkout_is_clean(
     await wait_until(clock.has_pending_sleep, timeout=PROCESS_WAIT_SECONDS)
     (project_root / "README.md").write_text("base\n")
     await _RUNNER.run(
-        ["git", "restore", "--", "README.md"], cwd=project_root, timeout=10, check=True
+        ["git", "restore", "--", "README.md"],
+        cwd=project_root,
+        timeout=MEDIUM_WAIT_SECONDS,
+        check=True,
     )
     clock.advance(120)
 
@@ -298,7 +308,10 @@ async def test_local_merge_records_one_notified_event_naming_the_blocking_paths(
     assert Notifier.wants(waiting[0])
     (project_root / "README.md").write_text("base\n")
     await _RUNNER.run(
-        ["git", "restore", "--", "README.md"], cwd=project_root, timeout=10, check=True
+        ["git", "restore", "--", "README.md"],
+        cwd=project_root,
+        timeout=MEDIUM_WAIT_SECONDS,
+        check=True,
     )
     clock.advance(120)
     assert await merge_task
@@ -365,7 +378,9 @@ async def test_update_ref_rejects_a_stale_expected_sha_without_moving_the_branch
 ) -> None:
     project_root = await _repo(tmp_path / "project")
     git = Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT)
-    await _RUNNER.run(["git", "branch", "release"], cwd=project_root, timeout=10, check=True)
+    await _RUNNER.run(
+        ["git", "branch", "release"], cwd=project_root, timeout=MEDIUM_WAIT_SECONDS, check=True
+    )
     old_sha = await git.rev_parse(project_root, "release")
     (project_root / "README.md").write_text("new\n")
     await commit_all(_RUNNER, project_root, "advance main")
@@ -600,7 +615,7 @@ async def test_integrator_refuses_a_worktree_that_left_its_task_branch_and_keeps
     project_root = await _repo(tmp_path / "project")
     task, state = await _task_with_worktree(connection, project_root)
     task_root = project_root / ".shikiru" / "worktrees" / task.id
-    await _RUNNER.run(["git", *leave], cwd=task_root, timeout=10, check=True)
+    await _RUNNER.run(["git", *leave], cwd=task_root, timeout=MEDIUM_WAIT_SECONDS, check=True)
     (task_root / "work.txt").write_text("real work\n")
     await commit_all(_RUNNER, task_root, "real work")
     work_sha = await Git(_RUNNER, command_timeout=GIT_COMMAND_TIMEOUT).rev_parse(task_root, "HEAD")
@@ -644,7 +659,7 @@ async def test_a_task_whose_agent_left_its_branch_never_reaches_done_and_keeps_i
     )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -698,7 +713,7 @@ async def test_a_plan_task_with_uncommitted_output_escalates_and_keeps_the_workt
     )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -732,7 +747,7 @@ async def test_post_rebase_acceptance_with_uncommitted_changes_gets_rework_not_a
     )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -772,7 +787,7 @@ async def test_taskflow_fake_agent_resolves_conflict_and_repeats_changes_request
     )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -866,7 +881,7 @@ async def test_rebase_uses_fresh_fake_turns_for_each_unmerged_commit(
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}, {"kind": "accept"}])
     await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -931,7 +946,7 @@ async def test_noncontent_continue_failure_keeps_rebase_and_retry_finishes_after
     await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     [blocked] = fetch_open_escalations(engine_env.connection)
     assert blocked.reason is EscalationReason.INTEGRATION_BLOCKED
@@ -980,7 +995,7 @@ async def test_noncontent_continue_failure_keeps_rebase_and_retry_finishes_after
         Transition.stay(retried, step=Step.INTEGRATE, status=Status.INTEGRATING),
     )
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.require(task.id)
     assert final.status is Status.DONE
@@ -1043,7 +1058,7 @@ async def test_completed_conflict_reports_cannot_hide_unmerged_paths_beyond_the_
     )
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.require(task.id)
     assert final.status is Status.ESCALATED
@@ -1079,7 +1094,7 @@ async def test_uncommitted_changes_at_integration_send_the_task_back_to_implemen
     )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -1121,7 +1136,7 @@ async def test_a_pending_conflict_report_is_reviewed_after_a_clean_rebase_onto_a
     )
     await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.require(task.id)
     assert final.status is Status.DONE
@@ -1167,7 +1182,9 @@ async def test_a_new_integration_attempt_does_not_reuse_a_report_authorized_by_a
         await git.rebase(task_root, "main")
     assert await git.unmerged_paths(task_root) == ["README.md"]
     (task_root / "README.md").write_text("old resolution\n")
-    await _RUNNER.run(["git", "add", "README.md"], cwd=task_root, timeout=10, check=True)
+    await _RUNNER.run(
+        ["git", "add", "README.md"], cwd=task_root, timeout=MEDIUM_WAIT_SECONDS, check=True
+    )
     assert await git.unmerged_paths(task_root) == []
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
@@ -1216,7 +1233,7 @@ async def test_a_new_integration_attempt_does_not_reuse_a_report_authorized_by_a
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
     await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.require(task.id)
     assert final.status is Status.DONE
@@ -1252,7 +1269,7 @@ async def test_taskflow_conflict_round_limit_escalates_after_two_changes_request
     )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=60)
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None

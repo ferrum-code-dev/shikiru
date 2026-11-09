@@ -32,7 +32,7 @@ from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, WidgetHostApp, state_views, widget_context
 from tests.support.render import plain_text
 from tests.support.store import seed_task
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import SHORT_WAIT_SECONDS, UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -221,7 +221,7 @@ async def test_header_brand_is_bold_and_stays_bold_under_no_color(
     context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("HeaderPanel", HeaderWidget().create(context))
     async with WidgetHostApp(widget).run_test():
-        await wait_until(lambda: BRAND in _plain(widget.content), timeout=5.0)
+        await wait_until(lambda: BRAND in _plain(widget.content), timeout=SHORT_WAIT_SECONDS)
         brand = rendered_lines(widget)[0][: len(BRAND)]
     assert "".join(char for char, _ in brand) == BRAND
     assert all(bold for _, (bold, _) in brand)
@@ -298,7 +298,9 @@ async def test_header_shows_an_open_fault_streak_and_the_age_of_the_oldest_escal
 
         events.append(EventKind.ENGINE_RECOVERED, message="ok", data={"scope": "engine tick"})
 
-        await wait_until(lambda: "engine tick" not in _plain(widget.content), timeout=5.0)
+        await wait_until(
+            lambda: "engine tick" not in _plain(widget.content), timeout=SHORT_WAIT_SECONDS
+        )
 
 
 @pytest.mark.usefixtures("connection")
@@ -374,7 +376,9 @@ async def test_header_colours_the_publication_count_bold_and_the_push_time_grey(
     )
     widget = cast("HeaderPanel", HeaderWidget().create(context))
     async with WidgetHostApp(widget).run_test():
-        await wait_until(lambda: "5 behind origin" in _plain(widget.content), timeout=5.0)
+        await wait_until(
+            lambda: "5 behind origin" in _plain(widget.content), timeout=SHORT_WAIT_SECONDS
+        )
         assert styles(widget, "5 behind")[0] == (True, PRIMARY_TEXT_COLOR)
         assert set(foregrounds(widget, " behind origin")) == {PRIMARY_TEXT_COLOR}
         assert set(foregrounds(widget, " · push at")) == {SECONDARY_TEXT_COLOR}
@@ -392,7 +396,7 @@ async def test_header_colours_the_in_sync_mark_green(reader: StateReader, tmp_pa
     )
     widget = cast("HeaderPanel", HeaderWidget().create(context))
     async with WidgetHostApp(widget).run_test():
-        await wait_until(lambda: "✓ in sync" in _plain(widget.content), timeout=5.0)
+        await wait_until(lambda: "✓ in sync" in _plain(widget.content), timeout=SHORT_WAIT_SECONDS)
         assert set(foregrounds(widget, "✓")) == {SAGE}
 
 
@@ -472,7 +476,7 @@ async def test_header_refreshes_when_the_writer_commits(
 
         _submit_task(connection, clock)
 
-        await wait_until(lambda: "Slots 1/2" in _plain(widget.content), timeout=5.0)
+        await wait_until(lambda: "Slots 1/2" in _plain(widget.content), timeout=SHORT_WAIT_SECONDS)
 
 
 async def test_strips_shows_the_active_task_at_its_current_step(

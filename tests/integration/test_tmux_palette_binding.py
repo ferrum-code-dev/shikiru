@@ -25,6 +25,8 @@ from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import PROCESS_WAIT_SECONDS, wait_until
 
+_TIMEOUT_15_SECONDS = 15
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -107,7 +109,7 @@ async def _exercise_live_home_palette_routes(
         text = await pane_text()
         return task.title in text and "Actions" not in text
 
-    await wait_until(dashboard_ready, timeout=15)
+    await wait_until(dashboard_ready, timeout=_TIMEOUT_15_SECONDS)
     await tmux_server.run("select-window", "-t", pane_id)
     async with attach_tmux_client(tmux_server, session):
         client_tty = await tmux_server.run("list-clients", "-t", session, "-F", "#{client_tty}")

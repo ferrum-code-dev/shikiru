@@ -16,7 +16,7 @@ from shikiru.tmux.session import (
     SessionView,
     session_name,
 )
-from tests.support.waiting import wait_until
+from tests.support.waiting import SHORT_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -351,7 +351,7 @@ async def test_task_window_survives_its_process_exiting(
 
     await tmux.respawn_pane(pane_id, ("/bin/sh", "-c", "exit"), env={}, cwd=tmp_path)
 
-    await wait_until(lambda: tmux.is_pane_dead(pane_id), 5.0)
+    await wait_until(lambda: tmux.is_pane_dead(pane_id), SHORT_WAIT_SECONDS)
     assert await tmux.target_exists(window_target)
 
 
@@ -367,7 +367,7 @@ async def test_task_window_keeps_its_pane_when_its_command_exits_at_once(
         target, window_name="T-1", cwd=tmp_path, command=("sh", "-c", "exit 0")
     )
 
-    await wait_until(lambda: tmux.is_pane_dead(pane_id), 5.0)
+    await wait_until(lambda: tmux.is_pane_dead(pane_id), SHORT_WAIT_SECONDS)
     assert await tmux.target_exists(window_target)
     remain_on_exit = await tmux_server.run(
         "show-window-options", "-t", window_target, "-v", "remain-on-exit"
@@ -426,7 +426,7 @@ async def test_home_window_keeps_its_pane_when_the_home_command_exits(
     target = await view.ensure("demo", tmp_path, home_command=("sh", "-c", "exit 0"))
     home_target = f"{target}:={HOME_WINDOW_NAME}"
 
-    await wait_until(lambda: tmux.is_pane_dead(f"{home_target}"), 5.0)
+    await wait_until(lambda: tmux.is_pane_dead(f"{home_target}"), SHORT_WAIT_SECONDS)
 
     assert await tmux.target_exists(home_target)
     remain_on_exit = await tmux_server.run(

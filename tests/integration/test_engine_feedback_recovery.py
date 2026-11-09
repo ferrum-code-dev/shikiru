@@ -43,6 +43,7 @@ from tests.support.feedback_rounds import (
     open_pull,
     verdict,
 )
+from tests.support.waiting import MEDIUM_WAIT_SECONDS
 
 
 async def test_an_interrupted_reply_is_found_by_its_marker_instead_of_posted_twice(
@@ -261,7 +262,7 @@ async def test_feedback_preparation_recovers_completed_conflict_resolution(
         replies={REVIEW: "final", THREAD: "final"},
         stage=FeedbackStage.PUBLICATION,
     )
-    result = await RUNNER.run(["git", "rebase", "main"], cwd=worktree, timeout=10)
+    result = await RUNNER.run(["git", "rebase", "main"], cwd=worktree, timeout=MEDIUM_WAIT_SECONDS)
     assert result.returncode != 0
     (worktree / "README.md").write_text("recovered resolution\n")
     await git(worktree, "add", "README.md")

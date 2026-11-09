@@ -29,7 +29,7 @@ from tests.support.flow import (
     init_project_repo,
 )
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
-from tests.support.waiting import wait_until
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -115,7 +115,10 @@ async def test_a_hold_set_while_integration_waits_for_access_is_honoured_before_
 
     engine_env.tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
     await _RUNNER.run(
-        ["git", "restore", "--", "README.md"], cwd=engine_env.project_root, timeout=10, check=True
+        ["git", "restore", "--", "README.md"],
+        cwd=engine_env.project_root,
+        timeout=MEDIUM_WAIT_SECONDS,
+        check=True,
     )
     clock.advance(_RETRY_ADVANCE_SECONDS)
     await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)

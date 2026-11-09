@@ -5,7 +5,9 @@ from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
 from tests.support.clock import FakeClock
-from tests.support.waiting import wait_until_advancing, yield_control
+from tests.support.waiting import SHORT_WAIT_SECONDS, wait_until_advancing, yield_control
+
+_TIMEOUT_1_SECONDS = 1
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -60,7 +62,9 @@ async def test_completed_condition_does_not_advance_unrelated_sleeper() -> None:
     clock = FakeClock(START)
     sleeper = asyncio.create_task(clock.sleep(10))
     await yield_control()
-    await wait_until_advancing(clock, lambda: True, timeout=1, jump_while=lambda: True)
+    await wait_until_advancing(
+        clock, lambda: True, timeout=_TIMEOUT_1_SECONDS, jump_while=lambda: True
+    )
     assert clock.now() == START
     assert not sleeper.done()
     sleeper.cancel()
@@ -87,6 +91,8 @@ async def test_jump_waits_while_real_work_is_outstanding_then_reaches_the_sleepe
         idle = polls > 3
         return woken.is_set()
 
-    await wait_until_advancing(clock, became_idle, timeout=5, jump_while=lambda: idle)
+    await wait_until_advancing(
+        clock, became_idle, timeout=SHORT_WAIT_SECONDS, jump_while=lambda: idle
+    )
     assert clock.now() == START + timedelta(seconds=10)
     await sleeper

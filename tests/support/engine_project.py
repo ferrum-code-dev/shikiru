@@ -23,7 +23,7 @@ from shikiru.store.tasks import TaskStore
 from tests.support.cli_project import prepare_project, run_cli, tmux_environment
 from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.factories import CPU_UNCAPPED_PCT
-from tests.support.waiting import PROCESS_WAIT_SECONDS, WaitTimeoutError, wait_until
+from tests.support.waiting import PROCESS_WAIT_SECONDS, WaitTimeoutError, scaled, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 TASK_ID = "T-1"
 WAIT_SECONDS = 120.0
 LOG_TAIL_CHARS = 2000
-ENGINE_START_OVERRIDE = f"orchestration.engine_start_seconds={PROCESS_WAIT_SECONDS}"
+ENGINE_START_OVERRIDE = f"orchestration.engine_start_seconds={scaled(PROCESS_WAIT_SECONDS)}"
 SETTINGS = (
     "--set",
     ENGINE_START_OVERRIDE,

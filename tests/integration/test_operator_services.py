@@ -50,6 +50,8 @@ from tests.support.render import plain_text
 from tests.support.store import seed_task
 from tests.support.waiting import wait_until
 
+_TIMEOUT_1_0_SECONDS = 1.0
+
 if TYPE_CHECKING:
     from shikiru.store.reader import StateReader
     from tests.support.store import Connection
@@ -84,7 +86,7 @@ async def test_commands_distinguish_ack_timeout_from_engine_down(
     commands = OperatorCommands(queue, clock, engine_up=lambda: True)
     pending = asyncio.create_task(commands.send(Prioritize(task_id="T-1", priority=5)))
 
-    await wait_until(clock.has_pending_sleep, timeout=1.0)
+    await wait_until(clock.has_pending_sleep, timeout=_TIMEOUT_1_0_SECONDS)
     clock.advance(COMMAND_ACK_WAIT_SECONDS)
     ack = await pending
 
@@ -108,7 +110,7 @@ async def test_commands_return_done_ack_after_engine_marks_command(
     commands = OperatorCommands(queue, clock, engine_up=lambda: True)
     pending = asyncio.create_task(commands.send(Prioritize(task_id="T-1", priority=5)))
 
-    await wait_until(clock.has_pending_sleep, timeout=1.0)
+    await wait_until(clock.has_pending_sleep, timeout=_TIMEOUT_1_0_SECONDS)
     queued = queue.pending()[0]
     queue.mark_done(queued.id, {"accepted": True})
     clock.advance(COMMAND_POLL_SECONDS)

@@ -36,7 +36,9 @@ from shikiru.tmux.session import (
 )
 from tests.support.clock import FakeClock
 from tests.support.store import seed_task
-from tests.support.waiting import PROCESS_WAIT_SECONDS, wait_until
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, PROCESS_WAIT_SECONDS, wait_until
+
+_TIMEOUT_20_SECONDS = 20
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -53,9 +55,9 @@ START = datetime(2026, 1, 1, tzinfo=UTC)
 async def _git_project(root: Path) -> None:
     await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
     runner = SubprocessRunner()
-    await runner.run(["git", "init", "-q"], timeout=10, cwd=root, check=True)
+    await runner.run(["git", "init", "-q"], timeout=MEDIUM_WAIT_SECONDS, cwd=root, check=True)
     (root / "README.md").write_text("operator test\n")
-    await runner.run(["git", "add", "README.md"], timeout=10, cwd=root, check=True)
+    await runner.run(["git", "add", "README.md"], timeout=MEDIUM_WAIT_SECONDS, cwd=root, check=True)
     await runner.run(
         [
             "git",
@@ -67,7 +69,7 @@ async def _git_project(root: Path) -> None:
             "-qm",
             "initial",
         ],
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
         cwd=root,
         check=True,
     )
@@ -77,7 +79,7 @@ async def _cli(root: Path, *args: str) -> tuple[int, str, str]:
     env = dict(os.environ, NO_COLOR="1")
     result = await SubprocessRunner().run(
         [sys.executable, "-m", "shikiru", "--project", str(root), *args],
-        timeout=20,
+        timeout=_TIMEOUT_20_SECONDS,
         cwd=root,
         env=env,
     )
@@ -481,7 +483,9 @@ async def test_init_rejects_an_unborn_repository_before_writing_project_state(
     tmp_path: Path,
 ) -> None:
     await asyncio.to_thread(tmp_path.mkdir, parents=True, exist_ok=True)
-    await SubprocessRunner().run(["git", "init", "-q"], timeout=10, cwd=tmp_path, check=True)
+    await SubprocessRunner().run(
+        ["git", "init", "-q"], timeout=MEDIUM_WAIT_SECONDS, cwd=tmp_path, check=True
+    )
 
     code, stdout, stderr = await _cli(tmp_path, "init", "--yes")
     flat_stderr = " ".join(stderr.split())

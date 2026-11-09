@@ -15,6 +15,7 @@ from shikiru.agents.contracts import SHIKIRU_MODULE, module_argv
 from shikiru.process import SubprocessRunner
 from tests.support.git_repo import commit_all, init_repo, run_git
 from tests.support.permissions import EXECUTABLE_MODE
+from tests.support.waiting import scaled
 
 if TYPE_CHECKING:
     from tests.support.tmux import TmuxServer
@@ -69,7 +70,7 @@ async def run_cli(
 ) -> tuple[int, str, str]:
     result = await SubprocessRunner().run(
         module_argv(SHIKIRU_MODULE, "--project", str(project_root), *arguments),
-        timeout=CLI_TIMEOUT_SECONDS,
+        timeout=scaled(CLI_TIMEOUT_SECONDS),
         cwd=project_root,
         env=environment,
     )

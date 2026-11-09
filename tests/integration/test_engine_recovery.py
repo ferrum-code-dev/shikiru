@@ -40,7 +40,9 @@ from tests.support.flow import (
 from tests.support.git_repo import commit_all
 from tests.support.handshake import fifo_writer
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until, wait_until_advancing
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until, wait_until_advancing
+
+_TIMEOUT_20_SECONDS = 20
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -155,7 +157,7 @@ async def _start_flow(
         run = engine_env.runs.get_live(task.id, role)
         return run is not None and run.session_id is not None
 
-    await wait_until(session_started, timeout=10)
+    await wait_until(session_started, timeout=MEDIUM_WAIT_SECONDS)
     return flow_task, task.id
 
 
@@ -304,7 +306,7 @@ async def test_live_fake_agent_quota_wait_is_shown_for_its_running_task(
     quota = QuotaStore(engine_env.connection)
     await wait_until(
         lambda: quota.block_for(FAKE_RUNG.agent) is not None and clock.has_pending_sleep(),
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
     )
     reader = StateReader(database, clock)
     try:
@@ -423,7 +425,7 @@ async def test_quota_wait_during_integration_conflict_is_reported(
             and clock.has_pending_sleep()
         )
 
-    await wait_until(integration_quota_wait, timeout=20)
+    await wait_until(integration_quota_wait, timeout=_TIMEOUT_20_SECONDS)
     reader = StateReader(database, clock)
     try:
         views = state_views(
@@ -485,7 +487,9 @@ async def test_quota_wait_deadline_moves_to_a_different_agent(
         ],
     )
     quota = QuotaStore(engine_env.connection)
-    await wait_until(lambda: quota.block_for(FAKE_RUNG.agent) is not None, timeout=10)
+    await wait_until(
+        lambda: quota.block_for(FAKE_RUNG.agent) is not None, timeout=MEDIUM_WAIT_SECONDS
+    )
     extended_until = TASK_CREATED_AT + timedelta(minutes=5)
     quota.block(FAKE_RUNG.agent, extended_until, "another task", LONG_AGO)
     deadline = TASK_CREATED_AT + timedelta(seconds=120)
@@ -497,13 +501,13 @@ async def test_quota_wait_deadline_moves_to_a_different_agent(
             clock.advance(1)
         return clock.now() >= deadline or flow_task.done()
 
-    await wait_until(advance_to_deadline, timeout=10)
+    await wait_until(advance_to_deadline, timeout=MEDIUM_WAIT_SECONDS)
     await wait_until(
         lambda: (
             len([run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER])
             == 2
         ),
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
     )
     await _drive(flow_task, clock, engine_env)
 
@@ -549,7 +553,7 @@ async def test_quota_exhaustion_falls_back_to_an_earlier_unblocked_agent(
             len([run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER])
             == 2
         ),
-        timeout=10,
+        timeout=MEDIUM_WAIT_SECONDS,
     )
     await _drive(flow_task, clock, engine_env)
 
@@ -980,8 +984,10 @@ async def test_a_hold_set_during_a_quota_wait_stops_the_continue_turn_until_resu
         ],
     )
     quota = QuotaStore(engine_env.connection)
-    await wait_until(lambda: quota.block_for(FAKE_RUNG.agent) is not None, timeout=10)
-    await wait_until(clock.has_pending_sleep, timeout=10)
+    await wait_until(
+        lambda: quota.block_for(FAKE_RUNG.agent) is not None, timeout=MEDIUM_WAIT_SECONDS
+    )
+    await wait_until(clock.has_pending_sleep, timeout=MEDIUM_WAIT_SECONDS)
     engine_env.tasks.set_holds(task_id, frozenset({hold}))
     turns_before = len(list((run_dir(engine_env.project_root, task_id) / "turns").iterdir()))
 
@@ -1071,7 +1077,7 @@ async def test_a_rung_set_during_a_failing_turn_survives_the_recovery_move(
     await wait_until_advancing(
         clock,
         gated_turn_running,
-        20,
+        _TIMEOUT_20_SECONDS,
         jump_while=_no_turn_outstanding(engine_env, clock),
     )
     await apply_set_rung(

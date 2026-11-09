@@ -30,7 +30,7 @@ from tests.support.config import MINIMAL_PROJECT_CONFIG
 from tests.support.engine import build_fault_reporter, build_titles, build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.tmux import attach_tmux_client
-from tests.support.waiting import wait_until
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -236,7 +236,7 @@ async def test_dead_view_pane_is_respawned_in_place(
     async def dead() -> bool:
         return await tmux.is_pane_dead(view)
 
-    await wait_until(dead, timeout=10)
+    await wait_until(dead, timeout=MEDIUM_WAIT_SECONDS)
     restored = await layout.ensure(task)
 
     assert restored.panes[Role.IMPLEMENTER] == view
@@ -261,7 +261,7 @@ async def test_exited_taken_over_pane_queues_one_hand_back_and_stays_down(
     async def dead() -> bool:
         return await tmux.is_pane_dead(operator_pane)
 
-    await wait_until(dead, timeout=10)
+    await wait_until(dead, timeout=MEDIUM_WAIT_SECONDS)
     await layout.ensure(task)
     await layout.ensure(task)
 
@@ -290,7 +290,7 @@ async def test_dead_special_pane_is_respawned_in_place(
     async def dead() -> bool:
         return await tmux.is_pane_dead(special)
 
-    await wait_until(dead, timeout=10)
+    await wait_until(dead, timeout=MEDIUM_WAIT_SECONDS)
     await layout.ensure(task)
 
     assert await tmux.pane_exists(special)

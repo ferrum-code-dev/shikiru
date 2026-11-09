@@ -21,7 +21,7 @@ from shikiru.tmux.client import Tmux
 from shikiru.tmux.session import SessionView
 from tests.support.clock import FakeClock
 from tests.support.factories import TASK_CREATED_AT
-from tests.support.waiting import wait_until, wait_until_advancing
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -84,17 +84,17 @@ async def _advance_until_done(clock: FakeClock, work: asyncio.Task[object]) -> N
     async def finished() -> bool:
         return work.done()
 
-    await wait_until_advancing(clock, finished, 10, step_seconds=ADVANCE_SECONDS)
+    await wait_until_advancing(clock, finished, MEDIUM_WAIT_SECONDS, step_seconds=ADVANCE_SECONDS)
 
 
 async def test_stop_waits_for_the_engine_to_release_its_lock(tmp_path: Path) -> None:
     lifecycle, clock, engine, _ = await _setup(tmp_path)
     stopping = asyncio.create_task(lifecycle.stop(tmp_path, OVERRIDES, kill_session=False))
 
-    await wait_until(engine.stop_queued, timeout=10)
+    await wait_until(engine.stop_queued, timeout=MEDIUM_WAIT_SECONDS)
     engine.acknowledge_stop()
     for _ in range(3):
-        await wait_until(clock.has_pending_sleep, timeout=10)
+        await wait_until(clock.has_pending_sleep, timeout=MEDIUM_WAIT_SECONDS)
         clock.advance(ADVANCE_SECONDS)
     assert not stopping.done()
 
@@ -107,7 +107,7 @@ async def test_stop_fails_when_the_engine_outlives_its_shutdown_bound(tmp_path: 
     lifecycle, clock, engine, _ = await _setup(tmp_path)
     stopping = asyncio.create_task(lifecycle.stop(tmp_path, OVERRIDES, kill_session=False))
 
-    await wait_until(engine.stop_queued, timeout=10)
+    await wait_until(engine.stop_queued, timeout=MEDIUM_WAIT_SECONDS)
     engine.acknowledge_stop()
     await _advance_until_done(clock, stopping)
 

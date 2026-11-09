@@ -24,7 +24,7 @@ from tests.support.flow import (
     flow_settings,
     init_project_repo,
 )
-from tests.support.waiting import wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -66,7 +66,7 @@ async def test_a_rung_set_during_a_turn_is_kept_and_used_by_the_next_turn(
     )
     flow_env = build_flow(engine_env, settings)
     flow_task = asyncio.create_task(flow_env.flow.run(task.id))
-    await wait_until(lambda: bool(_implementer_models(flow_env, task.id)), timeout=30)
+    await wait_until(lambda: bool(_implementer_models(flow_env, task.id)), timeout=UI_WAIT_SECONDS)
 
     await apply_set_rung(
         engine_env,
@@ -104,7 +104,9 @@ async def test_a_rung_set_during_verify_survives_the_rejection_that_moves_the_la
     )
     flow_env = build_flow(engine_env, settings)
     flow_task = asyncio.create_task(flow_env.flow.run(task.id))
-    await wait_until(lambda: bool(_role_models(flow_env, task.id, Role.LEADER)), timeout=30)
+    await wait_until(
+        lambda: bool(_role_models(flow_env, task.id, Role.LEADER)), timeout=UI_WAIT_SECONDS
+    )
 
     await apply_set_rung(
         engine_env, flow_env, SetRung(task_id=task.id, role=pinned_role, rung=_PINNED_RUNG)
@@ -205,7 +207,9 @@ async def test_a_rung_set_during_a_turn_is_never_undone_by_the_turn_completing(
     await set_role_script(tmux_server, Role.LEADER, gated(case.leader_steps))
     flow_env = build_flow(engine_env, settings)
     flow_task = asyncio.create_task(flow_env.flow.run(task.id))
-    await wait_until(lambda: bool(_role_models(flow_env, task.id, case.gated_role)), timeout=30)
+    await wait_until(
+        lambda: bool(_role_models(flow_env, task.id, case.gated_role)), timeout=UI_WAIT_SECONDS
+    )
 
     await apply_set_rung(
         engine_env, flow_env, SetRung(task_id=task.id, role=Role.IMPLEMENTER, rung=_PINNED_RUNG)

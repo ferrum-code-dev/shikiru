@@ -22,6 +22,7 @@ from shikiru.workspace.caches import CacheCloner
 from shikiru.workspace.git import Git
 from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
+from tests.support.waiting import LONG_WAIT_SECONDS, MEDIUM_WAIT_SECONDS
 
 pytestmark = pytest.mark.asyncio
 
@@ -51,7 +52,9 @@ async def _project(tmp_path: Path, config: str = FAKE_CONFIG) -> Path:
 
 
 async def _git_init(root: Path) -> None:
-    await SubprocessRunner().run(["git", "init", "-q"], timeout=10, cwd=root, check=True)
+    await SubprocessRunner().run(
+        ["git", "init", "-q"], timeout=MEDIUM_WAIT_SECONDS, cwd=root, check=True
+    )
 
 
 def _write_config(root: Path, config: str = FAKE_CONFIG) -> Path:
@@ -66,7 +69,7 @@ async def _cli(root: Path, *args: str, **extra_environment: str) -> tuple[int, s
     environment["PATH"] = f"{Path(sys.executable).parent}{os.pathsep}{environment['PATH']}"
     result = await SubprocessRunner().run(
         [sys.executable, "-m", "shikiru", "--project", str(root), *args],
-        timeout=60,
+        timeout=LONG_WAIT_SECONDS,
         cwd=root,
         env=environment,
     )

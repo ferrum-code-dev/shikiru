@@ -55,7 +55,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_sett
 from tests.support.flow import init_project_repo
 from tests.support.git_repo import commit_all
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until, wait_until_advancing
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -271,14 +271,17 @@ def _settings(billing_mode: str | None = None) -> Settings:
 
 async def _commit_subjects(project_root: Path, since: str) -> list[str]:
     result = await _RUNNER.run(
-        ["git", "log", "--format=%s", f"{since}..HEAD"], timeout=10, cwd=project_root, check=True
+        ["git", "log", "--format=%s", f"{since}..HEAD"],
+        timeout=MEDIUM_WAIT_SECONDS,
+        cwd=project_root,
+        check=True,
     )
     return result.stdout.splitlines()
 
 
 async def _head(project_root: Path) -> str:
     result = await _RUNNER.run(
-        ["git", "rev-parse", "HEAD"], timeout=10, cwd=project_root, check=True
+        ["git", "rev-parse", "HEAD"], timeout=MEDIUM_WAIT_SECONDS, cwd=project_root, check=True
     )
     return result.stdout.strip()
 
