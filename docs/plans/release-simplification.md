@@ -58,7 +58,7 @@ Acceptance criteria:
 
 ### S3 — The release workflow: check CI once, publish to PyPI
 
-- [ ] One CI check, trusted publishing, the GitHub release.
+- [x] One CI check, trusted publishing, the GitHub release.
 
 Acceptance criteria:
 
