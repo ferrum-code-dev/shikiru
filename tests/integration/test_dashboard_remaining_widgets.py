@@ -131,8 +131,8 @@ RESOURCE_OPERATOR_SYSTEM_WINDOW = "operator-system"
 RESOURCE_SHELL_WINDOW = "project-shell"
 RESOURCE_SHELL_LAYOUT_PANE = "shell"
 RESOURCE_SYSTEM_SPLIT_SIZE_PCT = 40
-RESOURCE_UNRELATED_ALLOCATION_MULTIPLIER = 4
-RESOURCE_RSS_MATCH_TOLERANCE_BYTES = 16 * 1024**2
+RESOURCE_ALLOCATION_BYTES = 200 * 1024**2
+RESOURCE_MEMBERSHIP_TOLERANCE_BYTES = RESOURCE_ALLOCATION_BYTES // 2
 _TMUX_VARIABLES = ("TMUX", "TMUX_PANE")
 RESOURCE_TEST_RUNG = Rung("fake", "resource-test", None)
 
@@ -145,6 +145,7 @@ class _ResourceTestPanes:
     home_root: psutil.Process
     system_root: psutil.Process
     excluded_roots: tuple[psutil.Process, ...]
+    unrelated_root: psutil.Process
 
 
 @pytest.fixture
@@ -1341,17 +1342,21 @@ async def test_docker_section_shows_what_the_fake_docker_reports(
         assert shown.index("api") < shown.index("db  ")
 
 
+def _allocating_command(allocation_bytes: int) -> tuple[str, ...]:
+    return (
+        sys.executable,
+        "-c",
+        f"import os; allocation=bytearray({allocation_bytes}); os.read(0, 1)",
+    )
+
+
 async def _start_resource_test_panes(
     tmux: Tmux,
     project_dir: Path,
     other_project_dir: Path,
     task_id: str,
 ) -> _ResourceTestPanes:
-    sample_command = (
-        sys.executable,
-        "-c",
-        f"import os; allocation=bytearray({OBSERVABLE_PANE_MEMORY_BYTES}); os.read(0, 1)",
-    )
+    sample_command = _allocating_command(OBSERVABLE_PANE_MEMORY_BYTES)
     home_pane = await tmux.new_session(
         RESOURCE_PROJECT_SESSION,
         cwd=project_dir,
@@ -1363,7 +1368,11 @@ async def _start_resource_test_panes(
     await tmux.set_pane_option(home_pane, HOME_PANE_OPTION, HOME_PANE_OPTION_VALUE)
     await tmux.rename_window(home_pane, RESOURCE_RENAMED_HOME_NAME)
     session_target = f"={RESOURCE_PROJECT_SESSION}"
-    role_pane = await tmux.new_window(session_target, name=task_id, command=sample_command)
+    role_pane = await tmux.new_window(
+        session_target,
+        name=task_id,
+        command=_allocating_command(RESOURCE_ALLOCATION_BYTES),
+    )
     task_window_id = await tmux.display(role_pane, "#{window_id}")
     system_pane = await tmux.split_window(
         role_pane,
@@ -1388,18 +1397,13 @@ async def _start_resource_test_panes(
         if marker is not None:
             await tmux.set_pane_option(pane_id, LAYOUT_PANE_OPTION, marker)
         excluded_panes.append(pane_id)
-    unrelated_memory_bytes = OBSERVABLE_PANE_MEMORY_BYTES * RESOURCE_UNRELATED_ALLOCATION_MULTIPLIER
     unrelated_pane = await tmux.new_session(
         RESOURCE_OTHER_SESSION,
         cwd=other_project_dir,
         env={},
         window_name="dashboard",
         size=(120, 40),
-        command=(
-            sys.executable,
-            "-c",
-            f"import os; allocation=bytearray({unrelated_memory_bytes}); os.read(0, 1)",
-        ),
+        command=_allocating_command(RESOURCE_ALLOCATION_BYTES),
     )
     pane_ids = (role_pane, home_pane, system_pane, *excluded_panes, unrelated_pane)
     roots = tuple(
@@ -1414,16 +1418,21 @@ async def _start_resource_test_panes(
         roots[0],
         roots[1],
         roots[2],
-        roots[3:],
+        roots[3:-1],
+        roots[-1],
     )
 
 
 def _resource_panes_ready(panes: _ResourceTestPanes) -> bool:
-    roots = (panes.role_root, panes.home_root, *panes.excluded_roots)
-    return all(
-        max(process.memory_info().rss for process in [root, *root.children(recursive=True)])
-        >= MINIMUM_PANE_MEMORY_BYTES
-        for root in roots
+    roots = (panes.home_root, *panes.excluded_roots)
+    return (
+        _resource_tree_rss(panes.role_root) >= RESOURCE_ALLOCATION_BYTES
+        and _resource_tree_rss(panes.unrelated_root) >= RESOURCE_ALLOCATION_BYTES
+        and all(
+            max(process.memory_info().rss for process in [root, *root.children(recursive=True)])
+            >= MINIMUM_PANE_MEMORY_BYTES
+            for root in roots
+        )
     )
 
 
@@ -1517,11 +1526,11 @@ async def test_resources_service_excludes_panes_from_other_projects(
         + _resource_tree_rss(panes.system_root)
     )
     measured_shikiru_rss = snapshot.shikiru_rss_gb * BYTES_PER_GIB
-    assert abs(measured_shikiru_rss - expected_shikiru_rss) < RESOURCE_RSS_MATCH_TOLERANCE_BYTES
+    assert abs(measured_shikiru_rss - expected_shikiru_rss) < RESOURCE_MEMBERSHIP_TOLERANCE_BYTES
     assert snapshot.agents_rss_gb is not None
     expected_agents_rss = _resource_tree_rss(panes.role_root)
     measured_agents_rss = snapshot.agents_rss_gb * BYTES_PER_GIB
-    assert abs(measured_agents_rss - expected_agents_rss) < RESOURCE_RSS_MATCH_TOLERANCE_BYTES
+    assert abs(measured_agents_rss - expected_agents_rss) < RESOURCE_MEMBERSHIP_TOLERANCE_BYTES
     assert snapshot.agents_process_tree_empty is False
     assert snapshot.agents_cpu_pct is not None
     assert snapshot.instance_rss_gb == pytest.approx(

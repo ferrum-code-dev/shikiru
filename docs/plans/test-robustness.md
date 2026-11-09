@@ -145,7 +145,7 @@ Acceptance criteria:
 
 ### R7 — The resources test asserts membership, not live memory
 
-- [ ] `test_resources_service_excludes_panes_from_other_projects` no longer compares two live RSS readings.
+- [x] `test_resources_service_excludes_panes_from_other_projects` no longer compares two live RSS readings.
 
 The test (`tests/integration/test_dashboard_remaining_widgets.py`) asserts that the snapshot's RSS is within
 `RESOURCE_RSS_MATCH_TOLERANCE_BYTES` (16 MiB) of a second reading of the same processes taken a moment
