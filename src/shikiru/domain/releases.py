@@ -12,6 +12,9 @@ if TYPE_CHECKING:
 
 TAG_PREFIX = "v"
 NUMBER_PATTERN = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+INSTALLED_PATTERN = re.compile(
+    r"(\d+)\.(\d+)\.(\d+)(?:a\d+|b\d+|rc\d+|\.dev\d+)?(?:\+[0-9A-Za-z.]+)?"
+)
 CHECKSUM_LINE = re.compile(r"([0-9a-f]{64}) [ *](.+)")
 UTF8 = "utf-8"
 
@@ -47,6 +50,15 @@ class Release:
 def parse_number(text: str) -> ReleaseNumber | None:
     """Return the numbers of `major.minor.patch`, or None when `text` has another form."""
     matched = NUMBER_PATTERN.fullmatch(text)
+    if matched is None:
+        return None
+    major, minor, patch = matched.groups()
+    return int(major), int(minor), int(patch)
+
+
+def parse_installed_number(text: str) -> ReleaseNumber | None:
+    """Return the release segment of an installed version: `0.1.4.dev3+gabc` gives `0.1.4`."""
+    matched = INSTALLED_PATTERN.fullmatch(text)
     if matched is None:
         return None
     major, minor, patch = matched.groups()

@@ -6,7 +6,6 @@ import re
 import shlex
 import subprocess
 import sys
-import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -133,11 +132,11 @@ REWRITES = (
 )
 
 
-def read_current_version(pyproject: Path) -> Version:
-    raw = str(tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"]["version"])
-    current = parse_version(raw)
+def read_current_version(runner: CommandRunner, repo: Path) -> Version:
+    tag = git(runner, repo, "describe", "--tags", "--abbrev=0", "--match", f"{TAG_PREFIX}*")
+    current = parse_version(tag.removeprefix(TAG_PREFIX))
     if current is None:
-        message = f"{PYPROJECT_NAME} has version {raw}, which is not <x.y.z>"
+        message = f"the latest tag {tag} is not {TAG_PREFIX}<x.y.z>"
         raise ReleaseError(message)
     return current
 
@@ -202,7 +201,7 @@ def release(
     dry_run: bool,
     report: Callable[[str], None],
 ) -> None:
-    current = read_current_version(repo / PYPROJECT_NAME)
+    current = read_current_version(runner, repo)
     version = next_version(current, request)
     old_text = format_version(current)
     new_text = format_version(version)

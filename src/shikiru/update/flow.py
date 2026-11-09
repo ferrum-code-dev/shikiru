@@ -12,7 +12,7 @@ from shikiru.domain.releases import (
     checksum_for,
     digest_matches,
     newest_release,
-    parse_number,
+    parse_installed_number,
 )
 from shikiru.errors import EXIT_GENERIC_ERROR
 from shikiru.operator.lifecycle import PACKAGE_NAME
@@ -130,10 +130,10 @@ async def roll_back_on_demand(
 
 
 def installed_number(installed: str) -> ReleaseNumber:
-    """Return the numbers of the installed version, which must be `major.minor.patch`."""
-    number = parse_number(installed)
+    """Return the release numbers of the installed version, such as 0.1.4 for 0.1.4.dev3+gabc."""
+    number = parse_installed_number(installed)
     if number is None:
-        message = f"the installed version {installed} is not major.minor.patch"
+        message = f"the installed version {installed} has no major.minor.patch release"
         raise ReleaseStepError(message)
     return number
 

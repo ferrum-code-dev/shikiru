@@ -1002,7 +1002,6 @@ wheels = [
 
 [[package]]
 name = "shikiru"
-version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },

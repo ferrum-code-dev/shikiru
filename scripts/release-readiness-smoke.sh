@@ -273,9 +273,14 @@ record env -i \
     "UV_TOOL_DIR=$BASE_TOOL_DIR" \
     "UV_TOOL_BIN_DIR=$BASE_TOOL_BIN_DIR" \
     "PATH=$BASE_PATH" \
-    "$UV_BIN" tool install "${WHEELS[0]}"
+    "$UV_BIN" tool install "${FROM_SDIST_WHEELS[0]}"
 [[ -x "$BASE_TOOL_BIN_DIR/shikiru" ]]
 record env -i "HOME=$HOME_DIR" "PATH=$BASE_PATH" "$BASE_TOOL_BIN_DIR/shikiru" --help
+SDIST_VERSION="$(basename "${SDISTS[0]}" .tar.gz)"
+SDIST_VERSION="${SDIST_VERSION#shikiru-}"
+INSTALLED_FROM_SDIST_VERSION="$(env -i "HOME=$HOME_DIR" "PATH=$BASE_PATH" "$BASE_TOOL_BIN_DIR/shikiru" --version)"
+printf '%s\n' "$INSTALLED_FROM_SDIST_VERSION" | tee -a "$LOG"
+[[ "$INSTALLED_FROM_SDIST_VERSION" == "$SDIST_VERSION" ]]
 
 record env -i \
     "HOME=$HOME_DIR" \

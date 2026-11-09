@@ -52,17 +52,17 @@ jobs:
           python-version: "3.14"
           enable-cache: false
 
-      - name: Check the tag matches the project version
+      - name: Build the distributions
+        run: uv build
+
+      - name: Check the build carries the tag's version
         run: |
-          VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
-          if [[ "$TAG" != "v$VERSION" ]]; then
-            echo "::error::tag $TAG does not match pyproject.toml version $VERSION" >&2
+          VERSION="${TAG#v}"
+          if [[ ! -f "dist/shikiru-$VERSION-py3-none-any.whl" ]]; then
+            echo "::error::tag $TAG does not build as shikiru $VERSION" >&2
             exit 1
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Build the distributions
-        run: uv build
 
       - name: Write the checksums
         run: cd dist && sha256sum * > SHA256SUMS

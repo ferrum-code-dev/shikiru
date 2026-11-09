@@ -9,6 +9,7 @@ from shikiru.domain.releases import (
     ReleaseRuleError,
     checksum_for,
     newest_release,
+    parse_installed_number,
     parse_number,
 )
 
@@ -63,6 +64,23 @@ def test_version_text_must_be_major_minor_patch(
     text: str, expected: tuple[int, int, int] | None
 ) -> None:
     assert parse_number(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        pytest.param("0.1.4", (0, 1, 4), id="release"),
+        pytest.param("0.1.4.dev3+gabc", (0, 1, 4), id="development-build"),
+        pytest.param("1.0.0rc1", (1, 0, 0), id="release-candidate"),
+        pytest.param("v0.1.4", None, id="tag-prefix"),
+        pytest.param("0.1.4.1", None, id="extra-part"),
+        pytest.param("0.1", None, id="incomplete"),
+    ],
+)
+def test_installed_version_takes_its_release_segment(
+    text: str, expected: tuple[int, int, int] | None
+) -> None:
+    assert parse_installed_number(text) == expected
 
 
 @pytest.mark.parametrize(

@@ -10,7 +10,7 @@ its own entry when complete.
 
 ### S1 — The version comes from the git tag
 
-- [ ] Use `hatch-vcs`; no file holds the version.
+- [x] Use `hatch-vcs`; no file holds the version.
 
 Acceptance criteria:
 

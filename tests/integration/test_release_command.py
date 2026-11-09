@@ -25,7 +25,10 @@ NEUTRAL_GIT_ENVIRONMENT = {
     "GIT_CONFIG_SYSTEM": os.devnull,
 }
 RELEASE_TAG = "v0.1.10"
+CURRENT_TAG = "v0.1.9"
+DESCRIBE_LATEST_TAG = ("git", "describe", "--tags", "--abbrev=0", "--match", "v*")
 CHECKS_ON_A_CLEAN_MAIN = (
+    DESCRIBE_LATEST_TAG,
     ("git", "branch", "--show-current"),
     ("git", "status", "--porcelain"),
     ("git", "fetch", "--quiet", "origin"),
@@ -42,6 +45,7 @@ MUTATIONS = (
 )
 FAKE_HEAD = "0123456789abcdef0123456789abcdef01234567"
 FAKE_ANSWERS: dict[tuple[str, ...], str] = {
+    DESCRIBE_LATEST_TAG: f"{CURRENT_TAG}\n",
     ("git", "branch", "--show-current"): "main\n",
     ("git", "rev-parse", "HEAD"): f"{FAKE_HEAD}\n",
     ("git", "rev-parse", "origin/main"): f"{FAKE_HEAD}\n",
@@ -70,6 +74,7 @@ async def make_project(root: Path) -> Path:
     (checkout / "uv.lock").write_text(LOCKFILE, encoding="utf-8")
     (checkout / "README.md").write_text(README, encoding="utf-8")
     await commit_all(runner, checkout, "feat: start the project")
+    await run_git(runner, checkout, "tag", CURRENT_TAG)
     await run_git(runner, checkout, "remote", "add", "origin", str(origin))
     await run_git(runner, checkout, "push", "origin", "main")
     return checkout
@@ -87,8 +92,12 @@ async def leave_unpushed_commit(checkout: Path) -> None:
     await commit_all(SubprocessRunner(), checkout, "feat: not pushed", allow_empty=True)
 
 
-async def leave_tag_in_place(checkout: Path) -> None:
-    await run_git(SubprocessRunner(), checkout, "tag", RELEASE_TAG)
+async def leave_tag_on_another_commit(checkout: Path) -> None:
+    runner = SubprocessRunner()
+    await run_git(runner, checkout, "checkout", "-b", "side")
+    await commit_all(runner, checkout, "feat: side work", allow_empty=True)
+    await run_git(runner, checkout, "tag", RELEASE_TAG)
+    await run_git(runner, checkout, "checkout", release.RELEASE_BRANCH)
 
 
 def neutral_runner() -> release.SubprocessRunner:
@@ -101,7 +110,9 @@ def neutral_runner() -> release.SubprocessRunner:
         pytest.param(leave_main, "the branch is feature", id="not-on-main"),
         pytest.param(leave_untracked_file, "uncommitted or untracked", id="dirty-work-tree"),
         pytest.param(leave_unpushed_commit, "is not origin/main", id="head-ahead-of-origin"),
-        pytest.param(leave_tag_in_place, "the tag v0.1.10 already exists", id="tag-exists"),
+        pytest.param(
+            leave_tag_on_another_commit, "the tag v0.1.10 already exists", id="tag-exists"
+        ),
     ],
 )
 async def test_refuses_an_unready_checkout_and_changes_nothing(
@@ -135,7 +146,7 @@ async def test_dry_run_prints_every_change_and_command_and_changes_nothing(tmp_p
     assert "would run: git tag v0.2.0" in messages
     assert (checkout / "pyproject.toml").read_text(encoding="utf-8") == PYPROJECT
     assert await run_git(SubprocessRunner(), checkout, "rev-parse", "HEAD") == head_before
-    assert await run_git(SubprocessRunner(), checkout, "tag", "--list") == ""
+    assert await run_git(SubprocessRunner(), checkout, "tag", "--list") == CURRENT_TAG
 
 
 async def test_release_commits_tags_and_pushes_main_and_the_tag(tmp_path: Path) -> None:
