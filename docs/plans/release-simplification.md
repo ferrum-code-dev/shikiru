@@ -99,3 +99,26 @@ Acceptance criteria:
    directory) leaves the database unmigrated; the too-new error names the backup.
 4. `docs/design.md` already describes this; the README "Recovery" or state part gets two lines on where the
    backups are. The gate passes.
+
+### S5 — The distribution is named `shikiru-cli`
+
+- [ ] PyPI does not allow the name `shikiru`; the distribution is `shikiru-cli`, the command and the import package stay `shikiru`.
+
+Acceptance criteria:
+
+1. `pyproject.toml`: `name = "shikiru-cli"`. `[project.scripts]` still defines `shikiru`, and the package
+   under `src/shikiru` is unchanged. Run `uv lock` once and commit its result. Wheels and sdists are named
+   `shikiru_cli-<version>...` and `shikiru_cli-<version>.tar.gz`.
+2. Everything that names the distribution follows: README install and update lines
+   (`uv tool install shikiru-cli`, `uv tool upgrade shikiru-cli`, `uv tool install shikiru-cli==<version>`), the
+   project URLs, the install line and the wheel file name in `scripts/release_notes.py` and its tests, the release
+   smoke script and CI steps that glob for the wheel, and `docs/design.md` (the "Installing and updating"
+   paragraph). Anything that reads the installed distribution's metadata by name uses the new name (search for
+   `importlib.metadata` and `distribution(`).
+3. README "Updating" gets a short note for existing installations: the tool changed its distribution name, so
+   run `uv tool uninstall shikiru` and then `uv tool install shikiru-cli` once (both provide the executable
+   `shikiru`, so they cannot be installed together), then `shikiru restart` in each project.
+4. The commit subject is `build(package)!: ...` with a `BREAKING CHANGE:` line saying the same, so the
+   release notes show it.
+5. The gate passes, and `uv build` produces `shikiru_cli-*` files whose `shikiru --version` works when
+   installed in an isolated environment (the release smoke script does this).
