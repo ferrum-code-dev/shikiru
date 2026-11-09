@@ -736,7 +736,7 @@ class InitWizardApp(App[InitWizardResult | None]):
                 clean=False,
                 changes=changes,
             )
-        if self._config_path is not None:
+        if self._config_path is not None or not self._wizard_mounted():
             return
         self.query_one(f"#{REPOSITORY_CHECKOUT_ID}", WizardDetailRow).update_value(checkout)
 
@@ -872,6 +872,8 @@ class InitWizardApp(App[InitWizardResult | None]):
                 self._model_catalogs[agent] = catalog
             else:
                 self._catalog_errors[agent] = "agent reported no offered model identifiers"
+        if not self._wizard_mounted():
+            return
         self.query_one("#ladder-editor", LadderEditor).set_model_catalogs(
             self._model_catalogs, self._catalog_errors
         )
@@ -1127,6 +1129,9 @@ class InitWizardApp(App[InitWizardResult | None]):
         self.query_one("#wizard-body", InitWizardBody).scroll_to_widget(
             error, animate=False, immediate=True
         )
+
+    def _wizard_mounted(self) -> bool:
+        return len(self.query("#wizard-frame")) > 0
 
     def _update_pages(self) -> None:
         self.query_one("#wizard-title", Static).update(_step_title(self._step))

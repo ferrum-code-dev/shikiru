@@ -130,7 +130,7 @@ Acceptance criteria:
 
 ### R6 — Textual apps end their workers before the test leaves
 
-- [ ] No `WorkerFailed` from a screen dismissed under a running worker.
+- [x] No `WorkerFailed` from a screen dismissed under a running worker.
 
 Acceptance criteria:
 

@@ -38,7 +38,7 @@ from tests.support.dashboard import (
     with_dashboard,
 )
 from tests.support.store import seed_task
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, leave_app, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -202,6 +202,7 @@ async def test_popup_starts_on_its_useful_control_and_closes_with_escape_or_its_
         assert popup_app.focused is close
         await pilot.press("enter")
         await wait_until(lambda: popup_app.screen is origin, timeout=UI_WAIT_SECONDS)
+        await leave_app(popup_app)
 
 
 @pytest.mark.parametrize(

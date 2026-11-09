@@ -13,10 +13,13 @@ from contextlib import suppress
 from typing import TYPE_CHECKING, cast
 
 from textual.css.query import NoMatches
+from textual.worker import WorkerCancelled
 
 from tests.support.spawn_hook import processes_in_flight
 
 if TYPE_CHECKING:
+    from textual.app import App
+
     from tests.support.clock import FakeClock
 
 TIME_SCALE_ENV = "SHIKIRU_TEST_TIME_SCALE"
@@ -36,6 +39,7 @@ LONG_WAIT_SECONDS = 60.0
 ACTION_CONFIRMATION_SECONDS = 60
 ACTION_CONFIRMATION_EXPIRY_SECONDS = 5
 ENGINE_STOP_SECONDS = 30.0
+LEAVE_APP_SECONDS = 10.0
 
 _Predicate = Callable[[], bool | Awaitable[bool]]
 
@@ -151,6 +155,21 @@ async def stop_engine(task: asyncio.Task[object], clock: FakeClock) -> None:
     await wait_until_advancing(clock, task.done, timeout=ENGINE_STOP_SECONDS)
     with suppress(asyncio.CancelledError):
         await task
+
+
+async def leave_app[T](app: App[T]) -> None:
+    """Cancel every worker of `app` and wait, bounded, until all of them have ended.
+
+    Workers that follow the database run until cancelled, and the app's own shutdown cancels them
+    the same way, so cancelling here only moves that step before the test's `run_test` block ends.
+    A cancelled worker makes `wait_for_complete` raise `WorkerCancelled`, which is expected; the
+    wait can also return once the first worker has ended, so the manager is then polled until empty.
+    """
+    app.workers.cancel_all()
+    with suppress(WorkerCancelled):
+        async with asyncio.timeout(scaled(LEAVE_APP_SECONDS)):
+            await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
+    await wait_until(lambda: not app.workers, timeout=LEAVE_APP_SECONDS)
 
 
 async def _sample[T](sample: Callable[[], T | Awaitable[T]]) -> T:

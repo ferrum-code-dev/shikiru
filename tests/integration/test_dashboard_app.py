@@ -161,6 +161,7 @@ from tests.support.tmux import (
 from tests.support.waiting import (
     ACTION_CONFIRMATION_SECONDS,
     UI_WAIT_SECONDS,
+    leave_app,
     wait_for,
     wait_until,
 )
@@ -2164,6 +2165,7 @@ async def test_dashboard_engine_action_tracks_lock_and_refuses_a_stale_stop(
                 timeout=UI_WAIT_SECONDS,
             )
             assert queue.pending() == []
+            await leave_app(first_app)
     finally:
         if engine_up():
             lock.release()
@@ -2305,6 +2307,7 @@ async def test_palette_resume_is_safe_when_home_has_no_task_detail(
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
             app.refresh_task_detail_after_resume()
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -3999,6 +4002,7 @@ async def test_task_context_menu_closes_and_opens_secondary_views_without_comman
             await _exercise_home_help_route(app, pilot, task)
             await _exercise_inspector_mouse_and_native_escape(app, pilot, task, queue)
             await _exercise_task_secondary_menu_routes(app, pilot, task, queue)
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -4130,6 +4134,7 @@ async def test_contextual_message_draft_survives_back_and_action_change(
                 timeout=UI_WAIT_SECONDS,
             )
             await _exercise_back_and_action_change_draft(app, pilot, home, role_task, queue)
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -4255,6 +4260,7 @@ async def test_empty_home_footer_actions_are_mouse_reachable_and_read_only(
             assert app.focused.id == "focus-footer-actions"
 
             assert queue.pending() == []
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -4469,6 +4475,7 @@ async def test_compact_task_evidence_fold_opens_and_returns_to_home_selection(
             assert app.query_one("#task-browser-search", Input).value == ""
             assert list_view.index is None
             assert queue.pending() == []
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -4921,6 +4928,7 @@ async def test_dashboard_terminal_palette_event_keeps_home_mounted_under_actions
             assert app.focused is search
             assert task.id in _rendered_text(home.query_one("#task-detail-identity", Static))
             assert CommandQueue(connection, clock).pending() == queued_before
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -5002,6 +5010,7 @@ async def test_home_shared_detail_is_current_after_a_task_detail_popup_closes(
                 lambda: Hold.PAUSED.value in _rendered_text(task_row),
                 timeout=UI_WAIT_SECONDS,
             )
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -5387,6 +5396,7 @@ async def test_dashboard_palette_lists_and_opens_external_widgets_under_extensio
             assert await pilot.click("#workspace-help-close")
             await pilot.pause()
             assert app.screen is workspace_screen
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -5497,6 +5507,7 @@ async def test_mounted_role_action_popups_focus_role_and_keep_tab_order(
                 hand_back.query_one("#palette-submit", Button),
             )
             assert queue.pending() == pending_before
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -5567,6 +5578,7 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
             assert opened == ["", ""]
             queue.mark_done(queued[0].id, {"task_id": "T-2"})
             clock.advance(0.25)
+            await leave_app(app_instance)
     finally:
         reader.close()
 

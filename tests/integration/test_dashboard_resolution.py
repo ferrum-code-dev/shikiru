@@ -53,7 +53,7 @@ from tests.support.escalations import (
     wait_for_resolution,
 )
 from tests.support.store import seed_task
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, leave_app, wait_until
 
 if TYPE_CHECKING:
     from textual.pilot import Pilot
@@ -878,6 +878,7 @@ async def test_every_entry_route_opens_the_resolution_screen_without_dispatching
         screen = await wait_for_resolution(app)
         assert f"{escalation.id} · {task.id}" in resolution_title(screen)
         assert queue.pending() == []
+        await leave_app(app)
 
 
 def _bar_row(app: DashboardApp, route: str) -> Widget:

@@ -134,7 +134,7 @@ from tests.support.factories import IMPLEMENTER_RUNGS, LEADER_RUNG
 from tests.support.git_repo import commit_all, init_repo
 from tests.support.render import plain_text, rendered_lines
 from tests.support.store import seed_task
-from tests.support.waiting import UI_WAIT_SECONDS, WaitTimeoutError, wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, WaitTimeoutError, leave_app, wait_until
 from tests.support.workspace import task_root_builder
 
 pytestmark = pytest.mark.asyncio
@@ -2187,6 +2187,7 @@ async def test_compact_task_detail_keeps_decisions_usage_and_actions_reachable(
 
                 if (width, height) == _RESPONSIVE_TASK_SIZES[0]:
                     await _assert_task_context_keeps_priority(app, pilot)
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -2230,6 +2231,7 @@ async def test_compact_palette_form_keeps_visible_text_cursor_and_run_after_resi
             assert "second line" in _visible_text_area_text(request)
             assert submit.region.y >= 0
             assert submit.region.bottom <= app.size.height
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -2355,6 +2357,7 @@ async def test_task_detail_refreshes_durable_ownership_after_palette_closes(
             assert "Paused by operator" in _text(briefing)
             assert "Pause hold" in _text(briefing)
             assert briefing.region.y >= body.region.y
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -2454,6 +2457,7 @@ async def test_resume_waits_for_every_hand_back_and_keeps_the_other_holds_until_
             queue.mark_done(resume_command.id)
             reader_clock.advance(DASHBOARD_CHANGE_POLL_SECONDS)
             await wait_until(lambda: not _text(ownership), timeout=UI_WAIT_SECONDS)
+            await leave_app(app)
     finally:
         reader.close()
 
@@ -2491,6 +2495,7 @@ async def test_resume_availability_includes_an_intervention_only_hold(
             queued = queue.pending()[0]
             assert isinstance(queued.command, Resume)
             assert queued.command.task_id == task.id
+            await leave_app(app)
     finally:
         reader.close()
 

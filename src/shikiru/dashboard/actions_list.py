@@ -620,6 +620,8 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
 
     async def _rebuild(self, groups: tuple[ActionGroup, ...]) -> None:
         await self._list.clear()
+        if not self._content_mounted():
+            return
         items: list[ListItem] = []
         for group in groups:
             items.append(GroupTitleItem(group.title))
