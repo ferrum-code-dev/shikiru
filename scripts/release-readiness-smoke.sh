@@ -107,7 +107,7 @@ data = {
     "source_diff_fingerprint": sys.argv[6],
     "failed_stage": sys.argv[7] if os.environ["SMOKE_EXIT_STATUS"] != "0" else None,
     "status": "passed" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "failed",
-    "installation": ["uv tool install <built wheel>", "uv tool install <built wheel> --with <fake-agent wheel> --with pytest --with pytest-asyncio --with pytest-xdist"],
+    "installation": ["uv tool install <built wheel>", "uv tool install <built wheel> --with <fake-agent wheel> --with pytest --with pytest-asyncio --with pytest-timeout --with pytest-xdist"],
     "fresh_disposable_home": True,
     "runtime_isolation": ["HOME", "XDG directories", "uv cache/tools/bin", "private tmux socket"],
     "installed_package_data_and_entrypoints": "verified" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
@@ -119,7 +119,7 @@ data = {
     "home_dashboard_pane_after_merge": sys.argv[8],
     "task_result": "T-1 merged on main and A1 ticked from interactive quickstart" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
     "agent_cost": "unknown; test-only fake agent reports no billed cost",
-    "limitation": "The existing test-only fake-agent plugin, pytest and pytest-xdist (needed by its test-kit import and conftest hooks) were injected only into this disposable tool environment for repeatable unauthenticated packaging and CLI smoke coverage; no paid-provider or real-project reliability claim is made.",
+    "limitation": "The existing test-only fake-agent plugin, pytest, pytest-timeout and pytest-xdist (needed by its test-kit import and conftest hooks) were injected only into this disposable tool environment for repeatable unauthenticated packaging and CLI smoke coverage; no paid-provider or real-project reliability claim is made.",
     "log": f"build/release-readiness/{sys.argv[4]}.log",
 }
 artifact.write_text(json.dumps(data, indent=2) + "\n")
@@ -302,7 +302,7 @@ record env -i \
     "UV_TOOL_DIR=$TOOL_DIR" \
     "UV_TOOL_BIN_DIR=$TOOL_BIN_DIR" \
     "PATH=$PATH" \
-    "$UV_BIN" tool install "${WHEELS[0]}" --with "${FAKE_AGENT_WHEELS[0]}" --with pytest --with pytest-asyncio --with pytest-xdist
+    "$UV_BIN" tool install "${WHEELS[0]}" --with "${FAKE_AGENT_WHEELS[0]}" --with pytest --with pytest-asyncio --with pytest-timeout --with pytest-xdist
 
 TOOL_BIN="$TOOL_BIN_DIR/shikiru"
 PACKAGE_PYTHON="$(sed -n '1{s/^#!//;p;}' "$TOOL_BIN")"
