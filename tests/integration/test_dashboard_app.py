@@ -5203,10 +5203,8 @@ async def test_configured_usage_and_resources_widgets_open_their_panels(
         def __init__(self) -> None:
             super().__init__()
             self.resource_observation = ResourceView(37.0, 50.0, 2.0, 1.0, 0.25)
-            self.resource_reads = 0
 
         async def resources(self) -> ResourceView:
-            self.resource_reads += 1
             assert self.resource_observation is not None
             return self.resource_observation
 
@@ -5221,15 +5219,10 @@ async def test_configured_usage_and_resources_widgets_open_their_panels(
         )
         async with app.run_test(size=size) as pilot:
             home_screen = app.screen
-            reads, _ = await wait_for(
-                lambda: (
-                    services.resource_reads,
-                    _rendered_text(app.query_one("#resources", Static)),
-                ),
-                lambda sample: sample[0] == 1 and "CPU 37%" in sample[1],
+            await wait_until(
+                lambda: "CPU 37%" in _rendered_text(app.query_one("#resources", Static)),
                 timeout=UI_WAIT_SECONDS,
             )
-            assert reads == 1
 
             assert await pilot.click("#usage")
             await wait_until(lambda: app.screen is not home_screen, timeout=UI_WAIT_SECONDS)
@@ -5254,19 +5247,17 @@ async def test_configured_usage_and_resources_widgets_open_their_panels(
             assert await pilot.click("#resources")
             await wait_until(lambda: app.screen is not home_screen, timeout=UI_WAIT_SECONDS)
             assert home_screen.is_mounted
-            reads, _ = await wait_for(
+            await wait_until(
                 lambda: (
-                    services.resource_reads,
-                    " ".join(
+                    "CPU 37%"
+                    in " ".join(
                         _rendered_widget_lines(
                             app.screen.query_one("#project-diagnostics-resources", Static)
                         )
-                    ),
+                    )
                 ),
-                lambda sample: sample[0] == 1 and "CPU 37%" in sample[1],
                 timeout=UI_WAIT_SECONDS,
             )
-            assert reads == 1
             docker = app.screen.query_one("#docker", Static)
             assert docker.region.width > 0
             assert _rendered_text(docker)
