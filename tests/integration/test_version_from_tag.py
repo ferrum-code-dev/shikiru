@@ -17,7 +17,7 @@ UV_BUILD_ARGS = ("build", "--wheel", "--offline")
 DISTRIBUTIONS_DIRECTORY = "dist"
 TAG = "v9.9.9"
 VERSION = "9.9.9"
-WHEEL_PREFIX = f"shikiru-{VERSION}-"
+WHEEL_PREFIX = f"shikiru_cli-{VERSION}-"
 BUILD_TIMEOUT_SECONDS = 120.0
 
 

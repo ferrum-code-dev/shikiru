@@ -19,4 +19,4 @@ async def test_version_flag_prints_the_installed_package_version() -> None:
     )
 
     assert result.returncode == 0
-    assert result.stdout.strip() == version("shikiru")
+    assert result.stdout.strip() == version("shikiru-cli")
