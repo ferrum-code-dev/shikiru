@@ -102,6 +102,7 @@ from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
 from tests.support.github import MergeStyle, add_bare_remote, merge_on_remote
 from tests.support.permissions import requires_enforced_permissions
+from tests.support.spawn_hook import processes_in_flight
 from tests.support.store import reopen_command, seed_task
 from tests.support.waiting import (
     LONG_WAIT_SECONDS,
@@ -907,7 +908,9 @@ async def test_a_pull_request_close_that_failed_is_retried_and_repeated_after_a_
         fake_github.fail_next("close", attempts)
 
         outcome = await operator.send(Cancel(task_id=escalated.task.id))
-        await operator.advance_until(lambda: fake_github.calls("close") == attempts)
+        await operator.advance_until(
+            lambda: fake_github.calls("close") == attempts and processes_in_flight() == 0
+        )
         await operator.advance_until(
             lambda: bool(operator.events.since(0, kinds=[EventKind.ENGINE_FAULT]))
         )
