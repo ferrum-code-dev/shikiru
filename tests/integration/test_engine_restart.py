@@ -256,8 +256,6 @@ def _settings(billing_mode: str | None = None) -> Settings:
         panes=[
             PaneLeaf(pane="leader"),
             PaneLeaf(pane="implementer"),
-            PaneLeaf(pane="system"),
-            PaneLeaf(pane="shell"),
         ],
     )
     return settings.model_copy(

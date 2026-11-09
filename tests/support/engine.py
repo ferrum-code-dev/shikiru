@@ -77,7 +77,6 @@ ENGINE_LAYOUT = LayoutSplit(
         PaneLeaf(pane="leader"),
         PaneLeaf(pane="implementer"),
         PaneLeaf(pane="system"),
-        PaneLeaf(pane="shell"),
     ],
 )
 

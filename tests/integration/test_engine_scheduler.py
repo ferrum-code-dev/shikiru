@@ -149,8 +149,6 @@ _LAYOUT = LayoutSplit(
     panes=[
         PaneLeaf(pane="leader"),
         PaneLeaf(pane="implementer"),
-        PaneLeaf(pane="system"),
-        PaneLeaf(pane="shell"),
     ],
 )
 
