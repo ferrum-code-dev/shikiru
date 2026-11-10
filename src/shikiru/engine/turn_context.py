@@ -15,10 +15,12 @@ from shikiru.paths import task_root
 from shikiru.prompts.renderer import PromptName
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from shikiru.config.settings import Settings
     from shikiru.domain.feedback import FeedbackInput
+    from shikiru.domain.reports import Report
     from shikiru.domain.tasks import Task
     from shikiru.engine.history import ReportHistory
     from shikiru.engine.task_facts import TaskFacts
@@ -129,13 +131,7 @@ class TurnContextPreparer:
             ContextKey.TRACKERS: list(self._settings.project.trackers),
             ContextKey.REPORTS: self._history.context(history),
         }
-        if template is PromptName.CONSULT:
-            context[ContextKey.QUESTION] = self._history.latest_question(history)
-            context[ContextKey.OPERATOR_DECISION] = (
-                self._escalation_store.latest_answer(task.id)
-                if task.counters.consults == 0
-                else None
-            )
+        context.update(self._decision_context(task, template, history))
         fresh = session_handoff and not continue_turn
         handoff = (fresh and bool(history)) or next_turn.handoff
         needs_facts = (
@@ -164,6 +160,24 @@ class TurnContextPreparer:
             facts=facts_text,
             feedback=feedback,
         )
+
+    def _decision_context(
+        self, task: Task, template: PromptName, history: Sequence[tuple[str, Report]]
+    ) -> dict[str, object]:
+        if template is PromptName.CONSULT:
+            return {
+                ContextKey.QUESTION: self._history.latest_question(history),
+                ContextKey.OPERATOR_DECISION: (
+                    self._escalation_store.latest_answer(task.id)
+                    if task.counters.consults == 0
+                    else None
+                ),
+            }
+        if template is PromptName.FEEDBACK_ANALYSIS:
+            return {
+                ContextKey.OPERATOR_DECISION: self._escalation_store.latest_feedback_answer(task.id)
+            }
+        return {}
 
     @staticmethod
     def _feedback_context(

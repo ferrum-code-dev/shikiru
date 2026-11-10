@@ -9,6 +9,7 @@ from pydantic import TypeAdapter
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import Escalation, EscalationOption, EscalationStatus
 from shikiru.domain.events import EventKind
+from shikiru.domain.reports import ReportKind
 from shikiru.domain.tasks import EscalationReason, Step
 from shikiru.store.database import (
     dump_json,
@@ -31,6 +32,8 @@ ESCALATION_SEQUENCE = "escalation"
 ANSWER_RESOLUTION_PREFIX = f"{ResolutionKind.ANSWER.value} "
 ANSWER_ESCALATION_ID_JSON_PATH = "$.escalation_id"
 TURN_STEP_JSON_PATH = "$.step"
+REPORT_KIND_JSON_PATH = "$.report_kind"
+FEEDBACK_REASON = EscalationReason.FEEDBACK_NEEDS_OPERATOR.value
 
 _OPTIONS_ADAPTER: TypeAdapter[tuple[EscalationOption, ...]] = TypeAdapter(
     tuple[EscalationOption, ...]
@@ -166,11 +169,11 @@ class EscalationStore:
         """Return the Operator answer that the task's unfinished consult still acts on.
 
         Retries of a consult that the answer started are skipped, so the answer survives
-        them; any other escalation ends the search.
+        them; any other escalation, including a feedback question, ends the search.
         """
         rows = self._connection.execute(
             """
-            SELECT id, step, resolution FROM escalations
+            SELECT id, step, reason, resolution FROM escalations
             WHERE task_id = ? AND status = ?
             ORDER BY resolved_at DESC, CAST(substr(id, 3) AS INTEGER) DESC
             """,
@@ -180,17 +183,70 @@ class EscalationStore:
             ),
         )
         for row in rows:
+            if row["reason"] == FEEDBACK_REASON:
+                return None
             resolution = row["resolution"]
             if resolution is not None and resolution.startswith(ANSWER_RESOLUTION_PREFIX):
-                if self._answer_was_consumed(task_id, row["id"]):
+                if self._answer_was_consumed(
+                    task_id, row["id"], turn_path=TURN_STEP_JSON_PATH, turn_value=Step.CONSULT.value
+                ):
                     return None
                 return resolution[len(ANSWER_RESOLUTION_PREFIX) :]
             if row["step"] != Step.CONSULT.value:
                 return None
         return None
 
-    def _answer_was_consumed(self, task_id: str, escalation_id: str) -> bool:
-        resolution_event = self._connection.execute(
+    def latest_feedback_answer(self, task_id: str) -> str | None:
+        """Return the Operator answer to the latest feedback question until its round reads it."""
+        row = self._connection.execute(
+            """
+            SELECT id, resolution FROM escalations
+            WHERE task_id = ? AND reason = ? AND status = ?
+            ORDER BY resolved_at DESC, CAST(substr(id, 3) AS INTEGER) DESC
+            LIMIT 1
+            """,
+            (task_id, FEEDBACK_REASON, EscalationStatus.RESOLVED.value),
+        ).fetchone()
+        if row is None:
+            return None
+        resolution = row["resolution"]
+        if resolution is None or not resolution.startswith(ANSWER_RESOLUTION_PREFIX):
+            return None
+        if self._feedback_answer_spent(task_id, row["id"]):
+            return None
+        return resolution[len(ANSWER_RESOLUTION_PREFIX) :]
+
+    def _feedback_answer_spent(self, task_id: str, escalation_id: str) -> bool:
+        """Return whether an analysis read the answer, or a newer round started after it."""
+        resolved_at = self._resolution_event_id(task_id, escalation_id)
+        if resolved_at is None:
+            return False
+        analysed = self._event_after(
+            task_id,
+            resolved_at,
+            EventKind.TURN_COMPLETED,
+            path=REPORT_KIND_JSON_PATH,
+            value=ReportKind.FEEDBACK_ANALYSIS.value,
+        )
+        restarted = self._event_after(task_id, resolved_at, EventKind.FEEDBACK_STARTED)
+        return analysed or restarted
+
+    def _answer_was_consumed(
+        self, task_id: str, escalation_id: str, *, turn_path: str, turn_value: str
+    ) -> bool:
+        resolved_at = self._resolution_event_id(task_id, escalation_id)
+        if resolved_at is None:
+            return False
+        return self._event_after(
+            task_id,
+            resolved_at,
+            EventKind.TURN_COMPLETED,
+            path=turn_path,
+            value=turn_value,
+        )
+
+    def _resolution_event_id(self, task_id: str, escalation_id: str) -> int | None:
+        row = self._connection.execute(
             """
             SELECT id FROM events
             WHERE task_id = ? AND kind = ? AND json_extract(data, ?) = ?
@@ -203,23 +259,26 @@ class EscalationStore:
                 escalation_id,
             ),
         ).fetchone()
-        if resolution_event is None:
-            return False
-        consult_turn = self._connection.execute(
+        return row["id"] if row is not None else None
+
+    def _event_after(
+        self,
+        task_id: str,
+        after_id: int,
+        kind: EventKind,
+        *,
+        path: str | None = None,
+        value: str | None = None,
+    ) -> bool:
+        row = self._connection.execute(
             """
             SELECT 1 FROM events
-            WHERE task_id = ? AND kind = ? AND id > ? AND json_extract(data, ?) = ?
+            WHERE task_id = ? AND kind = ? AND id > ? AND (? IS NULL OR json_extract(data, ?) = ?)
             LIMIT 1
             """,
-            (
-                task_id,
-                EventKind.TURN_COMPLETED.value,
-                resolution_event["id"],
-                TURN_STEP_JSON_PATH,
-                Step.CONSULT.value,
-            ),
+            (task_id, kind.value, after_id, path, path, value),
         ).fetchone()
-        return consult_turn is not None
+        return row is not None
 
     def settle_open(self, task_id: str, resolution: str) -> None:
         """Resolve every open escalation of `task_id`, so none can act on its later state."""

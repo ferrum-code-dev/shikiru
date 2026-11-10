@@ -8,6 +8,17 @@ You are the Leader analysing the pull request review feedback below for this tas
 ## Feedback
 
 {{ feedback_snapshot | fenced("json") }}
+{% if operator_decision is not none %}
+
+## Decision from the Operator on the previous questions
+
+{{ operator_decision | fenced("text") }}
+
+This is the Operator's answer to the questions you raised on this feedback before. Decide every
+source again with it: it may settle a question you asked, and a source it does not settle still
+needs its own decision. Do not raise the same questions again unless the answer is unclear or
+contradicts the request.
+{% endif %}
 
 Decide every source item exactly once, by its `id`. A discussion is given whole, with the earlier
 answers that were already posted in it. Its messages marked `"new": true` are the ones to answer;

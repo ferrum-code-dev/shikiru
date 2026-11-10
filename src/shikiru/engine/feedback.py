@@ -38,7 +38,7 @@ from shikiru.domain.reports import (
     FeedbackVerdict,
     ReportKind,
 )
-from shikiru.domain.tasks import Role
+from shikiru.domain.tasks import EscalationReason, Role
 from shikiru.engine.integration import (
     PUBLISHED_BASE_KEY,
     PUBLISHED_TIP_KEY,
@@ -96,6 +96,12 @@ _REMOTE_REF = "+refs/heads/{branch}:refs/remotes/{remote}/{branch}"
 
 class FeedbackBlocked(IntegrationBlocked):
     """A feedback round cannot go on without the Operator."""
+
+
+class FeedbackQuestion(FeedbackBlocked):
+    """A feedback analysis asks the Operator questions; an answer lets the round analyse again."""
+
+    reason = EscalationReason.FEEDBACK_NEEDS_OPERATOR
 
 
 class FeedbackSuperseded(Exception):
@@ -203,6 +209,7 @@ class FeedbackRounds:
                         questions=questions,
                         links=self._source_links(active),
                     ),
+                    error=FeedbackQuestion,
                 )
             case FeedbackStep.IMPLEMENT:
                 await self._align_with_remote(current, active)
@@ -549,9 +556,15 @@ class FeedbackRounds:
         if current.held:
             raise IntegrationHeld
 
-    def _blocked(self, active: FeedbackRound, question: str) -> FeedbackBlocked:
+    def _blocked(
+        self,
+        active: FeedbackRound,
+        question: str,
+        *,
+        error: type[FeedbackBlocked] = FeedbackBlocked,
+    ) -> FeedbackBlocked:
         self._store.set_blocked(active.id, blocked=True)
-        return FeedbackBlocked(question)
+        return error(question)
 
     def _analysis_of(self, active: FeedbackRound) -> FeedbackAnalysis:
         if active.analysis is None:

@@ -45,6 +45,7 @@ def _full_context(name: PromptName) -> dict[str, Any]:
         context["final_round"] = False
     if name in _FEEDBACK_PROMPTS:
         context["mode"] = "implement"
+        context["operator_decision"] = None
         context["feedback_snapshot"] = "{}"
         context["feedback_analysis"] = "{}"
         context["feedback_work"] = ['{"id": "w1"}']

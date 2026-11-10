@@ -137,8 +137,9 @@ ladder after call failures or unusable answers within one shared timeout. Its ou
 before recovery uses it.
 
 An escalation retains the question, evidence, what was tried and applicable resolutions. Operator
-answers can return to Leader consultation; retry, accept-as-is or cancellation is offered only
-where applicable. An escalated or held task does not prevent independent eligible tasks from
+answers can return to Leader consultation, and an answer to a pull request feedback question
+returns to that round's analysis instead; retry, accept-as-is or cancellation is offered only
+where applicable, and a feedback question offers its answer (recommended) or cancellation. An escalated or held task does not prevent independent eligible tasks from
 progressing. Engine infrastructure faults are recorded and retried with backoff; repeated
 unexpected faults can stop the engine instead of looping silently.
 
@@ -204,7 +205,10 @@ The Leader analyses the batch, the Implementer edits, the Leader verifies the re
 the replies, and the Engine alone publishes and replies. A `clarify` decision asks the reviewer for
 information only they can supply: its question is verified and posted like any reply, never
 escalates or blocks the round's other decisions, and does not start a round; the reviewer's answer
-starts the next one through the usual trigger. A round needs a scheduler-owned slot: the
+starts the next one through the usual trigger. A `needs_operator` decision escalates the round as
+a feedback question with its questions and source links, offering an answer (recommended) or
+cancellation, never a retry. An answer re-runs the analysis of the same frozen batch, shown only to
+that analysis; the Leader may ask again, which opens a new answerable question. A round needs a scheduler-owned slot: the
 task becomes `queued` and is dispatched like any other, then returns to the PR wait. The Engine
 never dismisses reviews, resolves threads, approves or merges. Before edits it records the remote
 head and pushes with `--force-with-lease` on that value; preparing publication reruns the

@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 from typing import TYPE_CHECKING, Any
 
-from shikiru.domain.commands import ResolutionKind
+from shikiru.domain.commands import AnswerResolution, ResolutionKind, Resolve
 from shikiru.domain.escalation import transition_for_resolution
 from shikiru.domain.events import EventKind
+from shikiru.domain.reports import REPORT_KIND_FILENAME, ReportKind
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
+from shikiru.engine.events import REPORT_KIND_FIELD
 from shikiru.engine.feedback_intake import FeedbackIntake
+from shikiru.engine.handlers.escalations import ResolveHandler
 from shikiru.engine.integration import PullRequest
-from shikiru.paths import task_root
+from shikiru.paths import run_dir, task_root
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
@@ -23,6 +27,7 @@ from shikiru.workspace.git import Git
 from shikiru.workspace.github import GitHub
 from tests.support.clock import FakeClock
 from tests.support.engine import build_fault_reporter, pr_poll_seconds, set_role_script
+from tests.support.escalations import handler_context
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import COMMIT_IDENTITY_ARGS, GIT_COMMAND_TIMEOUT
 from tests.support.github import (
@@ -126,9 +131,10 @@ class _Pull:
         self.cleanup: Callable[[Task], Awaitable[None]]
         self.store = FeedbackStore(env.connection)
         self.events = EventLog(env.connection, env.clock)
-        self.flow = self._start()
+        self._command_ids = itertools.count(1)
+        self.flow = self._start(resumed=True)
 
-    def _start(self) -> asyncio.Task[None]:
+    def _start(self, *, resumed: bool) -> asyncio.Task[None]:
         env = self.env
         fetched = FetchedBaseRefs(
             Git(RUNNER, command_timeout=GIT_COMMAND_TIMEOUT),
@@ -171,25 +177,29 @@ class _Pull:
         )
         assert built.cleanup is not None
         self.cleanup = built.cleanup
-        return asyncio.create_task(built.flow.run(self.task.id, resumed=True))
+        return asyncio.create_task(built.flow.run(self.task.id, resumed=resumed))
 
     async def stop(self) -> None:
         await stop_engine(self.flow, self.clock)
 
     async def restart(self) -> None:
         await self.stop()
-        self.flow = self._start()
+        self.flow = self._start(resumed=True)
 
     async def dispatch(self) -> None:
         """Admit the queued task the way the scheduler does, then run its flow again."""
         queued = self.env.tasks.require(self.task.id)
         assert queued.status is Status.QUEUED
         assert queued.slot is None
+        self._admit()
+
+    def _admit(self, *, resumed: bool = True) -> None:
+        queued = self.env.tasks.require(self.task.id)
         self.env.tasks.apply_transition(
             queued.id, Transition.stay(queued, step=queued.step, status=Status.INTEGRATING)
         )
         self.env.tasks.set_slot(queued.id, _SLOT)
-        self.flow = self._start()
+        self.flow = self._start(resumed=resumed)
 
     async def await_poll(self, views: int) -> None:
         await wait_until(
@@ -233,12 +243,26 @@ class _Pull:
             escalated, reason, step=Step.INTEGRATE, resolution=ResolutionKind.RETRY
         )
         self.env.tasks.apply_transition(self.task.id, resolved)
-        queued = self.env.tasks.require(self.task.id)
-        self.env.tasks.apply_transition(
-            queued.id, Transition.stay(queued, step=queued.step, status=Status.INTEGRATING)
+        self._admit()
+
+    async def answer(self, text: str) -> None:
+        """Resolve the open feedback question with `text` and admit the task again."""
+        [escalation] = fetch_open_escalations(self.env.connection)
+        assert escalation.reason is EscalationReason.FEEDBACK_NEEDS_OPERATOR
+        await ResolveHandler(
+            handler_context(self.env.connection, self.env.clock, self.env.project_root)
+        ).handle(
+            Resolve(
+                escalation_id=escalation.id,
+                resolution=AnswerResolution(text=text),
+                command_id=next(self._command_ids),
+            )
         )
-        self.env.tasks.set_slot(queued.id, _SLOT)
-        self.flow = self._start()
+        self._admit(resumed=False)
+
+    def turn_kinds(self) -> list[str]:
+        started = self.events.since(0, kinds=[EventKind.TURN_STARTED], task_id=self.task.id)
+        return [str(event.data[REPORT_KIND_FIELD]) for event in started]
 
     def escalation_question(self) -> str:
         [escalation] = fetch_open_escalations(self.env.connection)
@@ -274,6 +298,30 @@ class _Pull:
             reviews=[review_node(1, REVIEW, "CHANGES_REQUESTED", body="please fix")],
             reviewThreads=threads,
         )
+
+
+OPERATOR_DECISION_HEADING = "## Decision from the Operator on the previous questions"
+
+
+def analysis_prompts(env: EngineEnv, task_id: str) -> list[str]:
+    """Return the prompts of every feedback analysis turn of `task_id`, oldest first."""
+    turn_dirs = sorted((run_dir(env.project_root, task_id) / "turns").iterdir())
+    return [
+        (turn_dir / "prompt.md").read_text()
+        for turn_dir in turn_dirs
+        if (turn_dir / REPORT_KIND_FILENAME).read_text().strip()
+        == ReportKind.FEEDBACK_ANALYSIS.value
+    ]
+
+
+def operator_decision_section(prompt: str) -> str:
+    """Return the text of the prompt's Operator decision section, or an empty string."""
+    start = prompt.find(OPERATOR_DECISION_HEADING)
+    if start == -1:
+        return ""
+    body = prompt[start + len(OPERATOR_DECISION_HEADING) :]
+    end = body.find("\n## ")
+    return body if end == -1 else body[:end]
 
 
 async def git(repo_dir: Path, *args: str) -> str:

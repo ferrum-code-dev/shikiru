@@ -31,21 +31,46 @@ def test_every_reason_has_exactly_one_recommended_option() -> None:
 
 
 @pytest.mark.parametrize(
-    ("reason", "recommended_label"),
+    ("reason", "recommended_label", "offered_labels"),
     [
-        (EscalationReason.DECISION_REQUIRED, ResolutionKind.ANSWER),
-        (EscalationReason.ITERATIONS_EXHAUSTED, ResolutionKind.ANSWER),
-        (EscalationReason.AGENT_ERROR, ResolutionKind.RETRY),
+        (
+            EscalationReason.DECISION_REQUIRED,
+            ResolutionKind.ANSWER,
+            {ResolutionKind.ANSWER, ResolutionKind.CANCEL},
+        ),
+        (
+            EscalationReason.FEEDBACK_NEEDS_OPERATOR,
+            ResolutionKind.ANSWER,
+            {ResolutionKind.ANSWER, ResolutionKind.CANCEL},
+        ),
+        (
+            EscalationReason.INTEGRATION_BLOCKED,
+            ResolutionKind.RETRY,
+            {ResolutionKind.RETRY, ResolutionKind.CANCEL},
+        ),
+        (
+            EscalationReason.ITERATIONS_EXHAUSTED,
+            ResolutionKind.ANSWER,
+            {ResolutionKind.ANSWER, ResolutionKind.ACCEPT, ResolutionKind.CANCEL},
+        ),
+        (
+            EscalationReason.AGENT_ERROR,
+            ResolutionKind.RETRY,
+            {ResolutionKind.RETRY, ResolutionKind.CANCEL},
+        ),
     ],
-    ids=["decision", "exhausted", "retry-family"],
+    ids=["decision", "feedback-question", "integration-blocked", "exhausted", "retry-family"],
 )
-def test_recommended_option_matches_the_reason_family(
-    reason: EscalationReason, recommended_label: ResolutionKind
+def test_options_offer_the_recommended_answer_or_retry(
+    reason: EscalationReason,
+    recommended_label: ResolutionKind,
+    offered_labels: set[ResolutionKind],
 ) -> None:
     options = options_for(reason)
 
     recommended = next(option for option in options if option.recommended)
     assert recommended.label is recommended_label
+    assert {option.label for option in options} == offered_labels
 
 
 def test_only_iterations_exhausted_offers_accept() -> None:
@@ -83,6 +108,14 @@ def test_only_iterations_exhausted_offers_accept() -> None:
             None,
             Step.CONSULT,
             Counters(rejections_on_rung=7, conflict_rounds=4),
+        ),
+        _ResolutionCase(
+            EscalationReason.FEEDBACK_NEEDS_OPERATOR,
+            Step.INTEGRATE,
+            ResolutionKind.ANSWER,
+            None,
+            Step.INTEGRATE,
+            Counters(rejections_on_rung=7, consults=3),
         ),
         _ResolutionCase(
             EscalationReason.INTEGRATION_CONFLICT,

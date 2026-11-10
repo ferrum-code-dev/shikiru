@@ -21,6 +21,7 @@ ESCALATION_REASON_LABELS: dict[EscalationReason, str] = {
     EscalationReason.ITERATIONS_EXHAUSTED: "Iterations exhausted",
     EscalationReason.INTEGRATION_CONFLICT: "Integration conflict",
     EscalationReason.INTEGRATION_BLOCKED: "Integration blocked",
+    EscalationReason.FEEDBACK_NEEDS_OPERATOR: "Feedback question",
     EscalationReason.UNCOMMITTED_WORK: "Uncommitted work",
     EscalationReason.OFF_TASK_BRANCH: "Off task branch",
     EscalationReason.PR_CLOSED: "Pull request closed",
@@ -40,6 +41,9 @@ ESCALATION_CAUSES: dict[EscalationReason, str] = {
     EscalationReason.ITERATIONS_EXHAUSTED: "The final review round still requested changes.",
     EscalationReason.INTEGRATION_CONFLICT: "Rebase conflicts could not be resolved automatically.",
     EscalationReason.INTEGRATION_BLOCKED: "Integration is blocked: see the question.",
+    EscalationReason.FEEDBACK_NEEDS_OPERATOR: (
+        "Pull request feedback needs an Operator decision: see the questions."
+    ),
     EscalationReason.UNCOMMITTED_WORK: (
         "The task workspace has uncommitted changes; commit or discard them, then retry."
     ),
@@ -60,7 +64,7 @@ ESCALATION_CAUSES: dict[EscalationReason, str] = {
 }
 
 RESOLUTION_CONSEQUENCES: dict[ResolutionKind, str] = {
-    ResolutionKind.ANSWER: "Give the Leader guidance; the task continues from a consult turn.",
+    ResolutionKind.ANSWER: "Give the Leader guidance; the Leader acts on it in its next turn.",
     ResolutionKind.RETRY: "Re-run the step that raised this escalation.",
     ResolutionKind.ACCEPT: "Integrate the work as it stands.",
     ResolutionKind.CANCEL: (
@@ -101,6 +105,7 @@ _OPTIONS_BY_REASON: dict[EscalationReason, tuple[EscalationOption, ...]] = {
     ),
     EscalationReason.INTEGRATION_CONFLICT: _RETRY_OR_CANCEL,
     EscalationReason.INTEGRATION_BLOCKED: _RETRY_OR_CANCEL,
+    EscalationReason.FEEDBACK_NEEDS_OPERATOR: _ANSWER_OR_CANCEL,
     EscalationReason.UNCOMMITTED_WORK: _RETRY_OR_CANCEL,
     EscalationReason.OFF_TASK_BRANCH: _RETRY_OR_CANCEL,
     EscalationReason.PR_CLOSED: _RETRY_OR_CANCEL,
@@ -127,6 +132,7 @@ def reset_for_resolution(counters: Counters, reason: EscalationReason) -> Counte
     if reason in (
         EscalationReason.INTEGRATION_CONFLICT,
         EscalationReason.INTEGRATION_BLOCKED,
+        EscalationReason.FEEDBACK_NEEDS_OPERATOR,
         EscalationReason.PR_CLOSED,
     ):
         return counters.model_copy(update={"conflict_rounds": 0})
@@ -148,7 +154,9 @@ def transition_for_resolution(
     target_step = step or task.step
     status = Status.QUEUED
     if resolution is ResolutionKind.ANSWER:
-        target_step = Step.CONSULT
+        target_step = (
+            Step.INTEGRATE if reason is EscalationReason.FEEDBACK_NEEDS_OPERATOR else Step.CONSULT
+        )
     elif resolution is ResolutionKind.ACCEPT:
         target_step = Step.INTEGRATE
         counters = reset_for_integration_attempt(counters)
