@@ -707,7 +707,6 @@ class _CommandStatusLine(Button):
         super().__init__(
             "",
             id=_HOME_FOOTER_COMMAND_STATUS,
-            tooltip="Open full command history",
             flat=True,
         )
         self._views = views
