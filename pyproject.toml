@@ -176,6 +176,7 @@ runtime-evaluated-decorators = [
 "tests/support/git_repo.py" = ["ASYNC240"]
 "src/shikiru/process.py" = ["TID251"]
 "scripts/release_notes.py" = ["TID251", "S603", "S607", "INP001"] # standalone stdlib-only release script: the release workflow runs it, it is not a package, and git is called through subprocess
+"scripts/next_version.py" = ["TID251", "S603", "S607", "INP001"] # standalone stdlib-only release script like release_notes.py: the release workflow runs it, and it imports release_notes from its own folder
 "src/shikiru/clock.py" = ["TID251"]
 "src/shikiru/config/loader.py" = ["ANN401"]
 "tests/support/waiting.py" = ["TID251"]
@@ -334,6 +335,7 @@ modules = ["shikiru.plugins.agents.claude", "shikiru.plugins.agents.codex"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+pythonpath = ["scripts"] # standalone release scripts import each other by file name, as when run from their folder
 markers = [
   "e2e: real-agent scenarios excluded from the default gate (poe e2e)",
   "real_e2e: real Claude and Codex scenarios requiring SHIKIRU_E2E=1",

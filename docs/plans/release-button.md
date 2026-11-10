@@ -24,7 +24,7 @@ Acceptance criteria:
 
 ### B2 — Propose the next version
 
-- [ ] `scripts/next_version.py` (stdlib only, reusing the parsing in `release_notes.py`; the scripts run
+- [x] `scripts/next_version.py` (stdlib only, reusing the parsing in `release_notes.py`; the scripts run
   from the `scripts/` folder, so `import release_notes` works).
 
 Acceptance criteria:

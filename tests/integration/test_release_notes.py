@@ -2,53 +2,23 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
 from scripts import release_notes
 
-from shikiru.process import SubprocessRunner
-from tests.support.git_repo import commit_all, init_repo, run_git
+from tests.support.release_history import INITIAL_COMMIT, Tag, build_history
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
     from pathlib import Path
 
 REPO = "ferrum-code-dev/shikiru"
 COMMIT_URL = f"https://github.com/{REPO}/commit"
-INITIAL_COMMIT = "initial commit"
 SHORT_SHA_LENGTH = 7
 BREAKING = release_notes.Section.BREAKING
 FEATURES = release_notes.Section.FEATURES
 FIXES = release_notes.Section.FIXES
 OTHER = release_notes.Section.OTHER
-
-
-@dataclass(frozen=True)
-class Tag:
-    name: str
-
-
-type Step = str | Tag
-
-
-async def build_history(path: Path, steps: Sequence[Step]) -> dict[str, str]:
-    """Commit `steps` in order on a fresh repo whose first commit is `INITIAL_COMMIT`.
-
-    Returns the full sha of each commit, keyed by its subject line.
-    """
-    runner = SubprocessRunner()
-    await init_repo(runner, path)
-    await commit_all(runner, path, INITIAL_COMMIT, allow_empty=True)
-    shas: dict[str, str] = {}
-    for step in steps:
-        if isinstance(step, Tag):
-            await run_git(runner, path, "tag", step.name)
-        else:
-            await commit_all(runner, path, step, allow_empty=True)
-            shas[step.partition("\n")[0]] = await run_git(runner, path, "rev-parse", "HEAD")
-    return shas
 
 
 def grouped(notes: str) -> dict[str, list[str]]:
