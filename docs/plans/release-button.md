@@ -149,3 +149,32 @@ Acceptance criteria:
 2. No custom release script remains. Tests never run git-cliff or the network; the owner verifies the notes
    and the proposal by running git-cliff on the repository, so report the exact commands for that.
 3. The gate passes. Nothing is pushed or released by the task.
+
+### B5 — A daily release marked Latest
+
+- [ ] Schedule the Release workflow.
+
+Make the release run itself every day and mark it Latest. The target behavior is "Releasing is automatic" in
+`docs/design.md`. Change `.github/workflows/release.yml` and the docs only.
+
+1. Triggers: add `schedule` with `cron: "0 0 * * *"` to the existing `workflow_dispatch`.
+2. Nothing to release is not a failure. When the proposal equals the last release tag (the case that fails
+   today with "nothing to release"), `prepare` writes "Nothing to release since <tag>" to the job summary,
+   sets an output `release` to `false` and succeeds; otherwise `release` is `true`. `build`, `pypi` and
+   `github` run only when `release == 'true'` (`if:` on each job, so a skipped run is green). A given
+   `version` input still means `release == true`.
+3. Latest: `gh release create` gets `--latest` and loses `--prerelease` in all cases (GitHub does not let a
+   pre-release be Latest). Remove the code that chose the pre-release flag by major version.
+4. Docs: `CONTRIBUTING.md` "Releasing" says the release runs every day at 00:00 UTC without approval, can be
+   started on demand, ends quietly when nothing changed, and how to recover from a failed run (fix `main`;
+   the next run or a manual run starts clean). Remove every sentence about approving `pypi`. Keep the
+   one-time setup paragraph, adding that the `pypi` environment has no reviewer and allows only the `main`
+   branch (configured by the owner in the repository settings, not in code). Mention in `README.md` only
+   what it already says about releases if it contradicts this (pre-release, approval).
+
+Acceptance criteria:
+* The workflow test checks the triggers (schedule and manual), the permissions, the job order and that
+  `build`, `pypi` and `github` depend on the `release` output; the pin test still passes.
+* `gh release create` carries `--latest` and no `--prerelease` (a test on the workflow text).
+* No custom script is added. Nothing is pushed or released by the task.
+* The gate passes.
