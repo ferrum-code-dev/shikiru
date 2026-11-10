@@ -178,3 +178,34 @@ Acceptance criteria:
 * `gh release create` carries `--latest` and no `--prerelease` (a test on the workflow text).
 * No custom script is added. Nothing is pushed or released by the task.
 * The gate passes.
+
+### B6 — A resilient daily release
+
+- [ ] Filter by commit type, guard, smoke test, retry-safe publish.
+
+Make the daily release resilient and stop it from releasing for documentation alone. See "Releasing is
+automatic" and "Release notes come from commits" in `docs/design.md`. Change `cliff.toml`,
+`.github/workflows/release.yml` and the docs only.
+
+1. `cliff.toml`: in `commit_parsers`, before the catch-all `Other changes` parser, add
+   `{ message = "^(docs|test|chore|ci|build|style|refactor)", skip = true }`. The two breaking-change parsers
+   stay first, so a breaking `docs!` is still listed and still releases. Prototyped: docs/chore/test-only
+   commits propose the current version ("nothing to bump"), `docs` plus `fix` proposes the next patch with
+   only the fix in the notes.
+2. `prepare`: the newest green commit must be a descendant of the last release tag
+   (`git merge-base --is-ancestor <tag> <sha>`); otherwise treat it as nothing to release.
+3. `build`: after the build and the file name check, install the wheel in a clean environment and check its
+   version: `uv run --isolated --no-project --with dist/<wheel> shikiru --version`, whose output must contain
+   the release version; fail otherwise.
+4. `pypi`: set `skip-existing: true` on the publish action. `github`: stop downloading `dist` and attaching it
+   (`gh release create` gets no files); it keeps the notes, `--target`, `--latest`.
+5. Docs: `CONTRIBUTING.md` "Releasing" says what is left out of releases (the list above), that a failed run is
+   finished by the next run (or a manual run), and that the release has no attached files.
+
+Acceptance criteria:
+* The workflow test checks the `skip-existing` setting, that `github` does not download `dist`, the
+  smoke step before upload, and the ancestor check; the pin test still passes.
+* A test parses `cliff.toml` and checks the skip parser comes after both breaking-change parsers and before
+  the catch-all.
+* No custom script is added. Nothing is pushed or released by the task.
+* The gate passes.
