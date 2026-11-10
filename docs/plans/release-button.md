@@ -77,3 +77,75 @@ Acceptance criteria:
    remove the sentence "Before the first PyPI release, install the wheel ..." and, if the Releases page is
    mentioned as the place to download a wheel, say the package manager is the way to install.
 8. The gate passes. Nothing is pushed or released by the task.
+
+### B4 — git-cliff writes the notes and the version
+
+- [ ] Replace `scripts/release_notes.py` and `scripts/next_version.py` with git-cliff.
+
+Use an existing, dedicated tool instead of our own scripts. Prototyped with git-cliff 2.14.2 on a clone: it
+proposes `v0.3.0` for a breaking change and `v0.2.1` for anything else below 1.0, and `v1.1.0` for a `feat`
+from 1.0, which is the rule in the design. With no commit since the last tag it prints "There is nothing to
+bump" and the last tag. Its notes matched our format. Start from this `cliff.toml` (validated; keep the
+behavior, adjust only what the checks below need):
+
+```toml
+[changelog]
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+* [{{ commit.id | truncate(length=7, end="") }}](https://github.com/ferrum-code-dev/shikiru/commit/{{ commit.id }}): {{ commit.raw_message | split(pat="\n") | first }}
+{%- endfor %}
+{% endfor %}
+{% if previous.version %}**Full Changelog**: [{{ previous.version }}...{{ version }}](https://github.com/ferrum-code-dev/shikiru/compare/{{ previous.version }}...{{ version }})
+{% endif %}
+### Install
+
+```sh
+uv tool install shikiru-cli=={{ version | trim_start_matches(pat="v") }}
+```
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+tag_pattern = "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+sort_commits = "newest"
+commit_parsers = [
+  { message = "^[a-z]+(\\([^)]*\\))?!:", group = "Breaking changes" },
+  { body = "BREAKING CHANGE:", group = "Breaking changes" },
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Fixes" },
+  { message = ".*", group = "Other changes" },
+]
+
+[bump]
+features_always_bump_minor = false
+breaking_always_bump_major = false
+```
+
+1. Add `cliff.toml` (above) at the repository root.
+2. `.github/workflows/release.yml`:
+   - `prepare`: after the step that finds the newest green commit, `git checkout --detach <sha>`, then run
+     `orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1` with `version: v2.14.2` and
+     `args: --bumped-version`; its `content` output is the proposed tag (strip the `v`). A non-empty
+     `version` input replaces the proposal (no other validation: PyPI and `gh release create` reject a
+     version that exists). The step fails with a clear message when the proposal equals the last release tag
+     (nothing to release). Delete the step that runs `next_version.py` .
+   - `github`: with the same action pinned the same way, `args: --unreleased --tag v<version> --strip all`
+     on the checkout of the release commit; write its `content` output to the notes file instead of running
+     `scripts/release_notes.py`.
+   - Everything else (pre-release flag below 1.0, `--target`, trusted publishing, job order) stays.
+3. Delete `scripts/release_notes.py`, `scripts/next_version.py`, their tests, their entries in `pyproject.toml`
+   lint and type settings, and every reference to them (CONTRIBUTING.md, docs, workflow comments).
+4. Update the workflow and pin tests; add a test that `cliff.toml` parses as TOML and keeps `tag_pattern`
+   limited to final tags.
+
+Acceptance criteria:
+
+1. As above. The workflow stays valid: `actionlint` is not required, but the job graph and outputs are
+   consistent and the existing workflow tests pass.
+2. No custom release script remains. Tests never run git-cliff or the network; the owner verifies the notes
+   and the proposal by running git-cliff on the repository, so report the exact commands for that.
+3. The gate passes. Nothing is pushed or released by the task.
