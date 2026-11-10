@@ -25,7 +25,7 @@ jobs:
       actions: read
     outputs:
       version: ${{ steps.propose.outputs.version }}
-      sha: ${{ steps.propose.outputs.sha }}
+      sha: ${{ steps.green.outputs.sha }}
     env:
       BRANCH: ${{ github.ref_name }}
       REQUESTED_VERSION: ${{ inputs.version }}
@@ -38,8 +38,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Propose the version of the newest green commit
-        id: propose
+      - name: Find the newest green commit on main
+        id: green
         run: |
           if [[ "$BRANCH" != main ]]; then
             echo "::error::release from main; this run is on $BRANCH" >&2
@@ -55,19 +55,45 @@ jobs:
             echo "::error::$sha is not on origin/main" >&2
             exit 1
           fi
-          arguments=(--commit "$sha")
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the newest green commit
+        env:
+          SHA: ${{ steps.green.outputs.sha }}
+        run: git checkout --detach "$SHA"
+
+      - name: Propose the next version with git-cliff
+        id: cliff
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
+        with:
+          version: v2.14.2
+          args: --bumped-version
+
+      - name: Choose the version and summarize the run
+        id: propose
+        env:
+          PROPOSED: ${{ steps.cliff.outputs.content }}
+          SHA: ${{ steps.green.outputs.sha }}
+        run: |
           if [[ -n "$REQUESTED_VERSION" ]]; then
-            arguments+=(--version "$REQUESTED_VERSION")
+            version="$REQUESTED_VERSION"
+          else
+            version="$(tr -d '[:space:]' <<< "$PROPOSED")"
+            version="${version#v}"
+            if [[ -z "$version" ]]; then
+              echo "::error::git-cliff proposed no version" >&2
+              exit 1
+            fi
+            if git rev-parse --quiet --verify "refs/tags/v$version" >/dev/null; then
+              echo "::error::nothing to release: v$version is already the last release" >&2
+              exit 1
+            fi
           fi
-          version="$(python3 scripts/next_version.py "${arguments[@]}")"
-          {
-            echo "version=$version"
-            echo "sha=$sha"
-          } >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
           {
             echo "## Release v$version"
             echo
-            echo "Commit: \`$sha\`"
+            echo "Commit: \`$SHA\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   build:
@@ -155,10 +181,17 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Write the release notes
-        run: |
-          python3 scripts/release_notes.py "$TAG" --commit "$SHA" \
-            > "$RUNNER_TEMP/release-notes.md"
+      - name: Generate the release notes
+        id: notes
+        uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
+        with:
+          version: v2.14.2
+          args: --unreleased --tag v${{ needs.prepare.outputs.version }} --strip all
+
+      - name: Save the release notes
+        env:
+          NOTES: ${{ steps.notes.outputs.content }}
+        run: printf '%s\n' "$NOTES" > "$RUNNER_TEMP/release-notes.md"
 
       - name: Create the GitHub release
         env:

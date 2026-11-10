@@ -1,0 +1,34 @@
+[changelog]
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+{% for commit in commits %}
+* [{{ commit.id | truncate(length=7, end="") }}](https://github.com/ferrum-code-dev/shikiru/commit/{{ commit.id }}): {{ commit.raw_message | split(pat="\n") | first }}
+{%- endfor %}
+{% endfor %}
+{% if previous.version %}**Full Changelog**: [{{ previous.version }}...{{ version }}](https://github.com/ferrum-code-dev/shikiru/compare/{{ previous.version }}...{{ version }})
+{% endif %}
+### Install
+
+```sh
+uv tool install shikiru-cli=={{ version | trim_start_matches(pat="v") }}
+```
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = false
+tag_pattern = "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+sort_commits = "newest"
+commit_parsers = [
+  { message = "^[a-z]+(\\([^)]*\\))?!:", group = "Breaking changes" },
+  { body = "BREAKING CHANGE:", group = "Breaking changes" },
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Fixes" },
+  { message = ".*", group = "Other changes" },
+]
+
+[bump]
+features_always_bump_minor = false
+breaking_always_bump_major = false

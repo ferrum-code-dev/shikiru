@@ -80,7 +80,7 @@ Acceptance criteria:
 
 ### B4 — git-cliff writes the notes and the version
 
-- [ ] Replace `scripts/release_notes.py` and `scripts/next_version.py` with git-cliff.
+- [x] Replace `scripts/release_notes.py` and `scripts/next_version.py` with git-cliff.
 
 Use an existing, dedicated tool instead of our own scripts. Prototyped with git-cliff 2.14.2 on a clone: it
 proposes `v0.3.0` for a breaking change and `v0.2.1` for anything else below 1.0, and `v1.1.0` for a `feat`
