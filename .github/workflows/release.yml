@@ -1,19 +1,36 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release this <major>.<minor>.<patch> version instead of the proposed one"
+        required: false
+        type: string
+        default: ""
 
 permissions: {}
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  check:
-    name: Check CI passed on the tagged commit
+  prepare:
+    name: Propose the version of the newest green commit on main
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
       actions: read
+    outputs:
+      version: ${{ steps.propose.outputs.version }}
+      sha: ${{ steps.propose.outputs.sha }}
+    env:
+      BRANCH: ${{ github.ref_name }}
+      REQUESTED_VERSION: ${{ inputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -21,34 +38,52 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check the tagged commit is on main and CI passed on it
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
+      - name: Propose the version of the newest green commit
+        id: propose
         run: |
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
-            echo "::error::the tag must point at a commit on main" >&2
+          if [[ "$BRANCH" != main ]]; then
+            echo "::error::release from main; this run is on $BRANCH" >&2
             exit 1
           fi
-          passed="$(gh run list --workflow ci.yml --commit "$GITHUB_SHA" --json conclusion \
-            --jq 'any(.[]; .conclusion == "success")')"
-          if [[ "$passed" != true ]]; then
-            echo "::error::CI has not passed on this commit; wait for it and push the tag again" >&2
+          sha="$(gh run list --workflow ci.yml --branch main --event push --status success \
+            --limit 1 --json headSha --jq '.[0].headSha // empty')"
+          if [[ -z "$sha" ]]; then
+            echo "::error::CI has not passed on main" >&2
             exit 1
           fi
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::$sha is not on origin/main" >&2
+            exit 1
+          fi
+          arguments=(--commit "$sha")
+          if [[ -n "$REQUESTED_VERSION" ]]; then
+            arguments+=(--version "$REQUESTED_VERSION")
+          fi
+          version="$(python3 scripts/next_version.py "${arguments[@]}")"
+          {
+            echo "version=$version"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Release v$version"
+            echo
+            echo "Commit: \`$sha\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: Build the distributions
-    needs: check
+    needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      SETUPTOOLS_SCM_PRETEND_VERSION: ${{ needs.prepare.outputs.version }}
       UV_NO_PROGRESS: "true"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -61,11 +96,10 @@ jobs:
       - name: Build the distributions
         run: uv build
 
-      - name: Check the build carries the tag's version
+      - name: Check the build carries the proposed version
         run: |
-          VERSION="${TAG#v}"
           if [[ ! -f "dist/shikiru_cli-$VERSION-py3-none-any.whl" ]]; then
-            echo "::error::tag $TAG does not build as shikiru-cli $VERSION" >&2
+            echo "::error::the commit does not build as shikiru-cli $VERSION" >&2
             exit 1
           fi
 
@@ -98,17 +132,20 @@ jobs:
 
   github:
     name: Create the GitHub release
-    needs: pypi
+    needs: [prepare, pypi]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
     env:
-      TAG: ${{ github.ref_name }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: v${{ needs.prepare.outputs.version }}
+      SHA: ${{ needs.prepare.outputs.sha }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -120,17 +157,16 @@ jobs:
 
       - name: Write the release notes
         run: |
-          python3 scripts/release_notes.py "$TAG" --repo "$GITHUB_REPOSITORY" \
+          python3 scripts/release_notes.py "$TAG" --commit "$SHA" \
             > "$RUNNER_TEMP/release-notes.md"
 
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version="${TAG#v}"
           prerelease=()
-          if [[ "${version%%.*}" == "0" ]]; then
+          if [[ "${VERSION%%.*}" == "0" ]]; then
             prerelease+=(--prerelease)
           fi
-          gh release create "$TAG" dist/* --verify-tag --title "$TAG" \
+          gh release create "$TAG" dist/* --target "$SHA" --title "$TAG" \
             --notes-file "$RUNNER_TEMP/release-notes.md" "${prerelease[@]}"

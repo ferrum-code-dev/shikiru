@@ -48,7 +48,7 @@ Acceptance criteria:
 
 ### B3 — The Release workflow starts from a button
 
-- [ ] Replace the tag trigger of `.github/workflows/release.yml`; update docs.
+- [x] Replace the tag trigger of `.github/workflows/release.yml`; update docs.
 
 Acceptance criteria:
 

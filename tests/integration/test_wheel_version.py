@@ -1,7 +1,8 @@
-"""A wheel built from a release tag is named for the tag's version."""
+"""A wheel built without a release tag is named for the version given to the build."""
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -14,8 +15,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 GIT_COMMAND = "git"
 UV_COMMAND = "uv"
 UV_BUILD_ARGS = ("build", "--wheel", "--offline")
+VERSION_VARIABLE = "SETUPTOOLS_SCM_PRETEND_VERSION"
 DISTRIBUTIONS_DIRECTORY = "dist"
-TAG = "v9.9.9"
 VERSION = "9.9.9"
 WHEEL_PREFIX = f"shikiru_cli-{VERSION}-"
 BUILD_TIMEOUT_SECONDS = 120.0
@@ -25,16 +26,16 @@ BUILD_TIMEOUT_SECONDS = 120.0
     shutil.which(GIT_COMMAND) is None or shutil.which(UV_COMMAND) is None,
     reason="needs git and uv",
 )
-async def test_wheel_built_from_a_tagged_clone_is_named_for_the_tag(tmp_path: Path) -> None:
+async def test_wheel_built_without_a_tag_is_named_for_the_given_version(tmp_path: Path) -> None:
     runner = SubprocessRunner()
     clone = tmp_path / "clone"
-    await run_git(runner, None, "clone", "--local", str(REPOSITORY_ROOT), str(clone))
-    await run_git(runner, clone, "tag", TAG)
+    await run_git(runner, None, "clone", "--local", "--no-tags", str(REPOSITORY_ROOT), str(clone))
 
     await runner.run(
         (UV_COMMAND, *UV_BUILD_ARGS),
         timeout=BUILD_TIMEOUT_SECONDS,
         cwd=clone,
+        env={**os.environ, VERSION_VARIABLE: VERSION},
         check=True,
     )
 

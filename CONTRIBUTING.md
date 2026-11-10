@@ -97,15 +97,15 @@ to spend usage on; `doctor --probe` is also a live check.
 
 ## Releasing
 
-A release is the commit tagged `v<version>`; see [the design](docs/design.md#releases-and-deployment).
-Push the tag on a commit of `main` whose CI has passed:
+A release is one run of the Release workflow, started by hand: Actions, Release, Run workflow, on
+`main`. The run releases the newest commit of `main` on which CI has passed and proposes the next
+version from the commits since the last release. To release another version, enter it in the optional
+`version` input (`<major>.<minor>.<patch>`, higher than the last release). See
+[the design](docs/design.md#releases-and-deployment) for the rules.
 
-```sh
-git tag v<version> && git push origin v<version>
-```
-
-The Release workflow does the rest. If a run fails, fix the cause on `main` and cut a new tag; a tag
-is not moved.
+The run builds the wheel and sdist, then waits for your approval of the `pypi` environment before it
+publishes to PyPI. Approving it also creates the GitHub release and the tag `v<version>` on that commit.
+If a run fails, it leaves no tag: fix the cause on `main` and run the workflow again.
 
 The owner sets up publishing once. On pypi.org, add a pending publisher for the project `shikiru-cli`
 with owner `ferrum-code-dev`, repository `shikiru`, workflow `release.yml` and environment `pypi`. On

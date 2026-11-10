@@ -62,7 +62,6 @@ shikiru --help
 
 The distribution is `shikiru-cli`; the command and the Python package are `shikiru`.
 
-Before the first PyPI release, install the wheel from the latest release on the Releases page.
 Never install a long-running copy with `--editable`: an editable install follows the working tree.
 For development, see [From a checkout](CONTRIBUTING.md).
 

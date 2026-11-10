@@ -1,4 +1,4 @@
-"""The release workflow publishes after one CI check, keeps full history and pins its actions."""
+"""The release workflow starts from a button, runs its jobs in order and pins its actions."""
 
 from __future__ import annotations
 
@@ -10,13 +10,32 @@ import pytest
 import yaml
 
 WORKFLOW = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "release.yml"
+YAML_BOOLEAN_KEY_FOR_ON = True
 CHECKOUT_ACTION = "actions/checkout@"
 PINNED_USE = re.compile(r"uses: \S+@[0-9a-f]{40} # v\d+\.\d+\.\d+$")
 NO_NEEDS: list[str] = []
 
 
-def load_workflow() -> dict[str, Any]:
-    return cast("dict[str, Any]", yaml.safe_load(WORKFLOW.read_text(encoding="utf-8")))
+def load_workflow() -> dict[Any, Any]:
+    return cast("dict[Any, Any]", yaml.safe_load(WORKFLOW.read_text(encoding="utf-8")))
+
+
+def test_the_workflow_starts_only_from_the_button() -> None:
+    assert set(load_workflow()[YAML_BOOLEAN_KEY_FOR_ON]) == {"workflow_dispatch"}
+
+
+def test_the_button_takes_an_optional_version() -> None:
+    version = load_workflow()[YAML_BOOLEAN_KEY_FOR_ON]["workflow_dispatch"]["inputs"]["version"]
+    assert version["type"] == "string"
+    assert version["required"] is False
+
+
+def test_releases_are_serialized_and_never_cancelled() -> None:
+    assert load_workflow()["concurrency"] == {"group": "release", "cancel-in-progress": False}
+
+
+def test_the_workflow_grants_no_token_scopes_by_default() -> None:
+    assert load_workflow()["permissions"] == {}
 
 
 def test_every_checkout_keeps_full_history_for_the_tag_checks_and_notes() -> None:
@@ -29,10 +48,10 @@ def test_every_checkout_keeps_full_history_for_the_tag_checks_and_notes() -> Non
 @pytest.mark.parametrize(
     ("job", "needs"),
     [
-        ("check", NO_NEEDS),
-        ("build", ["check"]),
+        ("prepare", NO_NEEDS),
+        ("build", ["prepare"]),
         ("pypi", ["build"]),
-        ("github", ["pypi"]),
+        ("github", ["prepare", "pypi"]),
     ],
 )
 def test_each_job_waits_for_the_one_before_it(job: str, needs: list[str]) -> None:
@@ -43,7 +62,7 @@ def test_each_job_waits_for_the_one_before_it(job: str, needs: list[str]) -> Non
 @pytest.mark.parametrize(
     ("job", "permissions"),
     [
-        ("check", {"contents": "read", "actions": "read"}),
+        ("prepare", {"contents": "read", "actions": "read"}),
         ("build", {}),
         ("pypi", {"id-token": "write"}),
         ("github", {"contents": "write"}),
