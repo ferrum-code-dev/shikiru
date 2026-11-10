@@ -99,14 +99,20 @@ to spend usage on; `doctor --probe` is also a live check.
 
 The Release workflow runs every day at 00:00 UTC. It releases the newest commit of `main` on which CI has
 passed, without approval, and proposes the next version from the commits since the last release. It
-builds the wheel and sdist, publishes them to PyPI and creates the GitHub release marked Latest with the
-tag `v<version>` on that commit. If nothing has changed since the last release, the run ends successfully
-and releases nothing. To release now, start the workflow by hand: Actions, Release, Run workflow, on
-`main`. To release another version, enter it in the optional `version` input (`<major>.<minor>.<patch>`,
-higher than the last release). See [the design](docs/design.md#releases-and-deployment) for the rules.
+builds the wheel and sdist, checks that the installed wheel reports the version, publishes the files to PyPI
+and creates the GitHub release marked Latest with the tag `v<version>` on that commit. The release has no
+attached files, because the package is on PyPI. If nothing has changed since the last release, the run ends
+successfully and releases nothing. To release now, start the workflow by hand: Actions, Release, Run
+workflow, on `main`. To release another version, enter it in the optional `version` input
+(`<major>.<minor>.<patch>`, higher than the last release). See
+[the design](docs/design.md#releases-and-deployment) for the rules.
 
-If a run fails, it leaves no tag. Fix the cause on `main`; the next scheduled run or a manual run starts
-clean.
+Commits of type `docs`, `test`, `chore`, `ci`, `build`, `style` and `refactor` are left out of the notes and
+do not release by themselves; a breaking one (a `!` after the type, or a `BREAKING CHANGE:` line) still
+does. A commit older than the last release does not release either.
+
+If a run fails, it leaves no tag. Fix the cause on `main`; the next scheduled run or a manual run finishes
+the release. Files PyPI already accepted are skipped, and the GitHub release is created.
 
 The owner sets up publishing once. On pypi.org, add a pending publisher for the project `shikiru-cli`
 with owner `ferrum-code-dev`, repository `shikiru`, workflow `release.yml` and environment `pypi`. On

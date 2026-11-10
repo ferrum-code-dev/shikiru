@@ -16,10 +16,28 @@ DAILY_AT_MIDNIGHT_UTC = "0 0 * * *"
 RELEASE_CONDITION = "needs.prepare.outputs.release == 'true'"
 PINNED_USE = re.compile(r"uses: \S+@[0-9a-f]{40} # v\d+\.\d+\.\d+$")
 NO_NEEDS: list[str] = []
+PYPI_PUBLISH_ACTION = "pypa/gh-action-pypi-publish@"
+DOWNLOAD_ACTION = "actions/download-artifact@"
+UPLOAD_ACTION = "actions/upload-artifact@"
+CLEAN_INSTALL_COMMAND = "uv run --isolated --no-project"
+ANCESTOR_CHECK = "git merge-base --is-ancestor"
 
 
 def load_workflow() -> dict[Any, Any]:
     return cast("dict[Any, Any]", yaml.safe_load(WORKFLOW.read_text(encoding="utf-8")))
+
+
+def job_steps(job: str) -> list[dict[str, Any]]:
+    return cast("list[dict[str, Any]]", load_workflow()["jobs"][job]["steps"])
+
+
+def step_index(steps: list[dict[str, Any]], marker: str) -> int:
+    (index,) = [
+        position
+        for position, step in enumerate(steps)
+        if marker in str(step.get("uses", "")) or marker in str(step.get("run", ""))
+    ]
+    return index
 
 
 def test_the_workflow_runs_daily_and_on_the_button() -> None:
@@ -101,3 +119,26 @@ def test_every_action_is_pinned_to_a_full_sha_with_its_version() -> None:
     ]
     assert uses_lines
     assert all(PINNED_USE.search(line.strip()) for line in uses_lines)
+
+
+def test_prepare_releases_only_commits_after_the_last_release() -> None:
+    assert any(ANCESTOR_CHECK in str(step.get("run", "")) for step in job_steps("prepare"))
+
+
+def test_the_built_wheel_is_installed_in_a_clean_environment_before_upload() -> None:
+    steps = job_steps("build")
+    assert step_index(steps, CLEAN_INSTALL_COMMAND) < step_index(steps, UPLOAD_ACTION)
+
+
+def test_the_pypi_upload_skips_files_pypi_already_has() -> None:
+    publish = next(
+        step for step in job_steps("pypi") if PYPI_PUBLISH_ACTION in str(step.get("uses", ""))
+    )
+    assert publish["with"]["skip-existing"] is True
+
+
+def test_the_github_release_downloads_and_attaches_no_files() -> None:
+    steps = job_steps("github")
+    assert not any(DOWNLOAD_ACTION in str(step.get("uses", "")) for step in steps)
+    (release,) = [step for step in steps if "gh release create" in str(step.get("run", ""))]
+    assert "dist/" not in str(release["run"])

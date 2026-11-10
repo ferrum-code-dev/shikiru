@@ -181,7 +181,7 @@ Acceptance criteria:
 
 ### B6 — A resilient daily release
 
-- [ ] Filter by commit type, guard, smoke test, retry-safe publish.
+- [x] Filter by commit type, guard, smoke test, retry-safe publish.
 
 Make the daily release resilient and stop it from releasing for documentation alone. See "Releasing is
 automatic" and "Release notes come from commits" in `docs/design.md`. Change `cliff.toml`,

@@ -79,6 +79,8 @@ jobs:
           SHA: ${{ steps.green.outputs.sha }}
         run: |
           release=true
+          last="$(git for-each-ref --count=1 --sort=-v:refname --format='%(refname:short)' \
+            'refs/tags/v[0-9]*.[0-9]*.[0-9]*')"
           if [[ -n "$REQUESTED_VERSION" ]]; then
             version="$REQUESTED_VERSION"
           else
@@ -89,6 +91,8 @@ jobs:
               exit 1
             fi
             if git rev-parse --quiet --verify "refs/tags/v$version" >/dev/null; then
+              release=false
+            elif [[ -n "$last" ]] && ! git merge-base --is-ancestor "$last" "$SHA"; then
               release=false
             fi
           fi
@@ -101,7 +105,7 @@ jobs:
               echo "Commit: \`$SHA\`"
             } >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Nothing to release since v$version" >> "$GITHUB_STEP_SUMMARY"
+            echo "Nothing to release since $last" >> "$GITHUB_STEP_SUMMARY"
           fi
 
   build:
@@ -138,6 +142,15 @@ jobs:
             exit 1
           fi
 
+      - name: Install the wheel in a clean environment and check its version
+        run: |
+          reported="$(uv run --isolated --no-project \
+            --with "dist/shikiru_cli-$VERSION-py3-none-any.whl" shikiru --version)"
+          if [[ "$reported" != *"$VERSION"* ]]; then
+            echo "::error::the installed wheel reports '$reported', not $VERSION" >&2
+            exit 1
+          fi
+
       - name: Upload the distributions
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -165,6 +178,8 @@ jobs:
 
       - name: Publish with trusted publishing
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          skip-existing: true
 
   github:
     name: Create the GitHub release
@@ -185,12 +200,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Download the distributions
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: dist
-          path: dist/
-
       - name: Generate the release notes
         id: notes
         uses: orhun/git-cliff-action@a9a95522b26fe6403f7bb24031f21fb573d0f5ff # v4.9.1
@@ -207,5 +216,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$TAG" dist/* --target "$SHA" --title "$TAG" \
+          gh release create "$TAG" --target "$SHA" --title "$TAG" \
             --notes-file "$RUNNER_TEMP/release-notes.md" --latest
