@@ -209,3 +209,17 @@ Acceptance criteria:
   the catch-all.
 * No custom script is added. Nothing is pushed or released by the task.
 * The gate passes.
+
+### B7 — The package smoke is CI's, so it lives with CI
+
+- [ ] Move `scripts/release-readiness-smoke.sh` to `.github/scripts/release-readiness-smoke.sh`.
+
+Only CI runs the smoke; nobody needs it by hand. Acceptance criteria:
+
+1. `git mv` the script. Fix the way it finds the repository root (it is one level deeper now). Remove the
+   empty `scripts/` folder and any lint or type setting that names the old path.
+2. `ci.yml` runs the new path.
+3. `CONTRIBUTING.md`: remove the command that runs the smoke by hand and keep the paragraph that says what
+   the package smoke covers, saying CI runs it. Old plans under `docs/plans/` keep their history; do not
+   edit them.
+4. The gate passes. Nothing is pushed or released by the task.
