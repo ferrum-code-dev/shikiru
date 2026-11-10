@@ -9,7 +9,7 @@ Replaces "push a tag" (`release-simplification.md`, S2/S3). Each task checks onl
 
 ### B1 — The notes name the commit and install the exact version
 
-- [ ] `scripts/release_notes.py` works before the tag exists.
+- [x] `scripts/release_notes.py` works before the tag exists.
 
 Acceptance criteria:
 

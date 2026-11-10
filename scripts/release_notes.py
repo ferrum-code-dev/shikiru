@@ -16,9 +16,8 @@ if TYPE_CHECKING:
 
 REPOSITORY_ENVIRONMENT = "GITHUB_REPOSITORY"
 GITHUB_URL = "https://github.com"
-PACKAGE = "shikiru_cli"
-WHEEL_NAME = "{package}-{version}-py3-none-any.whl"
-RELEASE_COMMIT_PREFIX = "chore: release"
+DISTRIBUTION = "shikiru-cli"
+INSTALL_COMMAND = "uv tool install {distribution}=={version}"
 FEATURE_TYPE = "feat"
 FIX_TYPE = "fix"
 BREAKING_LINE = re.compile(r"^BREAKING CHANGE:", re.MULTILINE)
@@ -91,9 +90,8 @@ def entry_line(commit: Commit, repository: str) -> str:
     return f"* [{short_sha}]({GITHUB_URL}/{repository}/commit/{commit.sha}): {commit.subject}"
 
 
-def install_command(tag: str, repository: str) -> str:
-    wheel = WHEEL_NAME.format(package=PACKAGE, version=tag.removeprefix("v"))
-    return f"uv tool install {GITHUB_URL}/{repository}/releases/download/{tag}/{wheel}"
+def install_command(tag: str) -> str:
+    return INSTALL_COMMAND.format(distribution=DISTRIBUTION, version=tag.removeprefix("v"))
 
 
 def render_notes(tag: str, previous: str | None, commits: Sequence[Commit], repository: str) -> str:
@@ -107,7 +105,7 @@ def render_notes(tag: str, previous: str | None, commits: Sequence[Commit], repo
     if previous is not None:
         compare = f"{GITHUB_URL}/{repository}/compare/{previous}...{tag}"
         blocks.append(f"**Full Changelog**: [{previous}...{tag}]({compare})")
-    blocks.append(f"### Install\n\n```sh\n{install_command(tag, repository)}\n```")
+    blocks.append(f"### Install\n\n```sh\n{install_command(tag)}\n```")
     return "\n\n".join(blocks) + "\n"
 
 
@@ -125,8 +123,8 @@ def git(*args: str) -> str:
     return completed.stdout
 
 
-def read_commits(previous: str | None, tag: str) -> list[Commit]:
-    revision = tag if previous is None else f"{previous}..{tag}"
+def read_commits(previous: str | None, commit: str) -> list[Commit]:
+    revision = commit if previous is None else f"{previous}..{commit}"
     output = git("log", "--no-merges", COMMIT_LOG_FORMAT, revision)
     commits: list[Commit] = []
     for record in output.split(RECORD_SEPARATOR):
@@ -137,7 +135,7 @@ def read_commits(previous: str | None, tag: str) -> list[Commit]:
     return commits
 
 
-def build_notes(tag: str, repository: str | None) -> str:
+def build_notes(tag: str, commit: str, repository: str | None) -> str:
     version = parse_version(tag)
     if version is None:
         message = f"{tag} is not a release tag v<major>.<minor>.<patch>"
@@ -146,21 +144,22 @@ def build_notes(tag: str, repository: str | None) -> str:
         message = f"no repository: pass --repo or set {REPOSITORY_ENVIRONMENT}"
         raise NotesError(message)
     previous = previous_tag(version, git("tag", "--list").split())
-    commits = [
-        commit
-        for commit in read_commits(previous, tag)
-        if not commit.subject.startswith(RELEASE_COMMIT_PREFIX)
-    ]
+    commits = read_commits(previous, commit)
     return render_notes(tag, previous, commits, repository)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Print the release notes of one tag.")
     parser.add_argument("tag")
+    parser.add_argument("--commit", help="last commit of the notes; default: the tag")
     parser.add_argument("--repo", default=os.environ.get(REPOSITORY_ENVIRONMENT))
     arguments = parser.parse_args(argv)
     try:
-        notes = build_notes(arguments.tag, arguments.repo)
+        notes = build_notes(
+            arguments.tag,
+            arguments.commit or arguments.tag,
+            arguments.repo,
+        )
     except NotesError as error:
         sys.stderr.write(f"{error}\n")
         return EXIT_FAILURE

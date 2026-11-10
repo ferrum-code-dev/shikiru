@@ -99,11 +99,6 @@ GROUPING_ROWS = [
         {OTHER: ["Speed up the dashboard"]},
         id="non-conventional-subject-as-written",
     ),
-    pytest.param(
-        ["chore: release 0.1.1"],
-        {},
-        id="release-commits-are-skipped",
-    ),
 ]
 
 
@@ -138,7 +133,6 @@ async def test_full_notes_order_sections_and_link_commits_compare_and_install(
             "feat(cli): add ls",
             "Tidy the readme",
             "feat(api)!: rename the id field",
-            "chore: release 0.1.1",
             Tag("v0.1.1"),
         ],
     )
@@ -151,17 +145,52 @@ async def test_full_notes_order_sections_and_link_commits_compare_and_install(
     fix = entry(shas["fix(parser): stop on blank input"], "fix(parser): stop on blank input")
     tidy = entry(shas["Tidy the readme"], "Tidy the readme")
     docs = entry(shas["docs: explain the layout"], "docs: explain the layout")
-    wheel = f"https://github.com/{REPO}/releases/download/v0.1.1/shikiru_cli-0.1.1-py3-none-any.whl"
     blocks = [
         f"{BREAKING.value}\n\n{breaking}",
         f"{FEATURES.value}\n\n{feature}",
         f"{FIXES.value}\n\n{fix}",
         f"{OTHER.value}\n\n{tidy}\n{docs}",
         f"**Full Changelog**: [v0.1.0...v0.1.1](https://github.com/{REPO}/compare/v0.1.0...v0.1.1)",
-        f"### Install\n\n```sh\nuv tool install {wheel}\n```",
+        "### Install\n\n```sh\nuv tool install shikiru-cli==0.1.1\n```",
     ]
     assert status == release_notes.EXIT_SUCCESS
     assert capsys.readouterr().out == "\n\n".join(blocks) + "\n"
+
+
+async def test_install_line_pins_the_distribution_to_the_version(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    await build_history(tmp_path, [Tag("v0.1.0"), "fix: a fix", Tag("v0.2.3")])
+    monkeypatch.chdir(tmp_path)
+
+    status = release_notes.main(["v0.2.3", "--repo", REPO])
+
+    assert status == release_notes.EXIT_SUCCESS
+    install_block = "### Install\n\n```sh\nuv tool install shikiru-cli==0.2.3\n```"
+    assert install_block in capsys.readouterr().out
+
+
+async def test_commit_option_lists_history_up_to_it_before_the_tag_exists(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    shas = await build_history(
+        tmp_path,
+        [Tag("v0.1.0"), "fix: before the release", "feat: after the release"],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    status = release_notes.main(
+        ["v0.1.1", "--repo", REPO, "--commit", shas["fix: before the release"]],
+    )
+
+    output = capsys.readouterr().out
+    assert status == release_notes.EXIT_SUCCESS
+    assert grouped(output) == {FIXES: ["fix: before the release"]}
+    assert "**Full Changelog**: [v0.1.0...v0.1.1]" in output
 
 
 async def test_previous_tag_is_chosen_by_number_not_text(
