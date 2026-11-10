@@ -152,7 +152,7 @@ Acceptance criteria:
 
 ### B5 — A daily release marked Latest
 
-- [ ] Schedule the Release workflow.
+- [x] Schedule the Release workflow.
 
 Make the release run itself every day and mark it Latest. The target behavior is "Releasing is automatic" in
 `docs/design.md`. Change `.github/workflows/release.yml` and the docs only.

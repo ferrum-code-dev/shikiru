@@ -97,17 +97,19 @@ to spend usage on; `doctor --probe` is also a live check.
 
 ## Releasing
 
-A release is one run of the Release workflow, started by hand: Actions, Release, Run workflow, on
-`main`. The run releases the newest commit of `main` on which CI has passed and proposes the next
-version from the commits since the last release. To release another version, enter it in the optional
-`version` input (`<major>.<minor>.<patch>`, higher than the last release). See
-[the design](docs/design.md#releases-and-deployment) for the rules.
+The Release workflow runs every day at 00:00 UTC. It releases the newest commit of `main` on which CI has
+passed, without approval, and proposes the next version from the commits since the last release. It
+builds the wheel and sdist, publishes them to PyPI and creates the GitHub release marked Latest with the
+tag `v<version>` on that commit. If nothing has changed since the last release, the run ends successfully
+and releases nothing. To release now, start the workflow by hand: Actions, Release, Run workflow, on
+`main`. To release another version, enter it in the optional `version` input (`<major>.<minor>.<patch>`,
+higher than the last release). See [the design](docs/design.md#releases-and-deployment) for the rules.
 
-The run builds the wheel and sdist, then waits for your approval of the `pypi` environment before it
-publishes to PyPI. Approving it also creates the GitHub release and the tag `v<version>` on that commit.
-If a run fails, it leaves no tag: fix the cause on `main` and run the workflow again.
+If a run fails, it leaves no tag. Fix the cause on `main`; the next scheduled run or a manual run starts
+clean.
 
 The owner sets up publishing once. On pypi.org, add a pending publisher for the project `shikiru-cli`
 with owner `ferrum-code-dev`, repository `shikiru`, workflow `release.yml` and environment `pypi`. On
-GitHub, create the environment `pypi` in the repository settings. No PyPI token is stored in the
-repository.
+GitHub, create the environment `pypi` in the repository settings, with no required reviewer and a
+deployment branch rule that allows only `main`; this is configured in the repository settings, not in
+code. No PyPI token is stored in the repository.

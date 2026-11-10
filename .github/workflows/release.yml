@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  schedule:
+    - cron: "0 0 * * *"
   workflow_dispatch:
     inputs:
       version:
@@ -24,6 +26,7 @@ jobs:
       contents: read
       actions: read
     outputs:
+      release: ${{ steps.propose.outputs.release }}
       version: ${{ steps.propose.outputs.version }}
       sha: ${{ steps.green.outputs.sha }}
     env:
@@ -75,6 +78,7 @@ jobs:
           PROPOSED: ${{ steps.cliff.outputs.content }}
           SHA: ${{ steps.green.outputs.sha }}
         run: |
+          release=true
           if [[ -n "$REQUESTED_VERSION" ]]; then
             version="$REQUESTED_VERSION"
           else
@@ -85,20 +89,25 @@ jobs:
               exit 1
             fi
             if git rev-parse --quiet --verify "refs/tags/v$version" >/dev/null; then
-              echo "::error::nothing to release: v$version is already the last release" >&2
-              exit 1
+              release=false
             fi
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          {
-            echo "## Release v$version"
-            echo
-            echo "Commit: \`$SHA\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          if [[ "$release" == true ]]; then
+            {
+              echo "## Release v$version"
+              echo
+              echo "Commit: \`$SHA\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Nothing to release since v$version" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   build:
     name: Build the distributions
     needs: prepare
+    if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -138,7 +147,8 @@ jobs:
 
   pypi:
     name: Publish to PyPI
-    needs: build
+    needs: [prepare, build]
+    if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment:
@@ -159,12 +169,12 @@ jobs:
   github:
     name: Create the GitHub release
     needs: [prepare, pypi]
+    if: needs.prepare.outputs.release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
     env:
-      VERSION: ${{ needs.prepare.outputs.version }}
       TAG: v${{ needs.prepare.outputs.version }}
       SHA: ${{ needs.prepare.outputs.sha }}
 
@@ -197,9 +207,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prerelease=()
-          if [[ "${VERSION%%.*}" == "0" ]]; then
-            prerelease+=(--prerelease)
-          fi
           gh release create "$TAG" dist/* --target "$SHA" --title "$TAG" \
-            --notes-file "$RUNNER_TEMP/release-notes.md" "${prerelease[@]}"
+            --notes-file "$RUNNER_TEMP/release-notes.md" --latest
