@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from importlib.metadata import version
 from typing import TYPE_CHECKING
 
 from rich.cells import cell_len
@@ -46,6 +47,8 @@ MERGE_INTEGRATION = "merge"
 SQUASH_INTEGRATION = "squash"
 PULL_REQUEST_INTEGRATION = "pr"
 IN_SYNC_MARKER = "✓"
+DISTRIBUTION_NAME = "shikiru-cli"
+VERSION_COLOR = "white"
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +83,8 @@ def _home_header_text(
     include_alerts: bool,
     width: int,
 ) -> Text:
-    identity = f"SHIKIRU {view.project}"
+    version_label = f"v{version(DISTRIBUTION_NAME)}"
+    identity = f"SHIKIRU {version_label} · {view.project}"
     if view.repo.root is not None:
         identity = f"{identity} ({view.repo.root})"
     identity_width = cell_len(identity)
@@ -95,7 +99,9 @@ def _home_header_text(
     compact_header = identity_width + runtime_width + MIN_HEADER_GAP > width
     identity_text = Text.assemble(
         ("SHIKIRU", f"{STYLE_BOLD} {STEEL_BLUE}"),
-        (f" {view.project}", PRIMARY_TEXT_COLOR),
+        (f" {version_label}", VERSION_COLOR),
+        (" · ", PRIMARY_TEXT_COLOR),
+        (view.project, f"{PRIMARY_TEXT_COLOR} {STYLE_BOLD}"),
     )
     if view.repo.root is not None:
         identity_text.append(f" ({view.repo.root})", style=SECONDARY_TEXT_COLOR)

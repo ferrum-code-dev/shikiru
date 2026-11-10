@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
@@ -173,7 +174,7 @@ async def test_header_preserves_stale_and_unavailable_checkout_facts(
         async with WidgetHostApp(widget).run_test() as pilot:
             await pilot.pause()
             rendered = _plain(widget.content)
-            assert "SHIKIRU demo" in rendered
+            assert re.search(r"SHIKIRU v\d+\.\d+\.\d+.* · demo", rendered)
             assert str(project_dir.resolve()) in rendered
             assert all(fact in rendered for fact in expected_facts)
 
@@ -221,10 +222,22 @@ async def test_header_brand_is_bold_and_stays_bold_under_no_color(
     context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("HeaderPanel", HeaderWidget().create(context))
     async with WidgetHostApp(widget).run_test():
-        await wait_until(lambda: BRAND in _plain(widget.content), timeout=SHORT_WAIT_SECONDS)
-        brand = rendered_lines(widget)[0][: len(BRAND)]
+        await wait_until(
+            lambda: bool(re.search(rf"{BRAND} v\d+\.\d+\.\d+.* · demo", _plain(widget.content))),
+            timeout=SHORT_WAIT_SECONDS,
+        )
+        line = rendered_lines(widget)[0]
+        brand = line[: len(BRAND)]
+        text = "".join(char for char, _ in line)
+        version_start = text.index("v")
+        version_end = text.index(" · ", version_start)
+        project_start = text.index("demo")
     assert "".join(char for char, _ in brand) == BRAND
     assert all(bold for _, (bold, _) in brand)
+    version_styles = line[version_start:version_end]
+    project_styles = line[project_start : project_start + len("demo")]
+    assert all(not bold and color == "#c4c4c4" for _, (bold, color) in version_styles)
+    assert all(bold for _, (bold, _) in project_styles)
 
 
 async def test_header_does_not_count_an_escalated_slot_as_occupied(
