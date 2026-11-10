@@ -74,6 +74,11 @@ uv tool upgrade shikiru-cli
 An engine keeps the code it was started with, so run `shikiru restart` in each project with a running
 engine afterwards. `restart` refuses while a task runs unless `--force` is given.
 
+The existing tmux session and dashboard keep running their old code. To also reload the dashboard,
+either run `shikiru stop --kill-session && shikiru start` (which closes the session and its panes),
+or run `shikiru restart`, select the dashboard window, and enter `respawn-window -k` at the tmux
+command prompt (`Ctrl+b`, then `:`). The latter restarts the dashboard window in the existing session.
+
 Installations from before the rename (distribution `shikiru`) must switch once: the tool changed its
 distribution name, and both provide the executable `shikiru`, so they cannot be installed together. Run
 `uv tool uninstall shikiru`, then `uv tool install shikiru-cli`, then `shikiru restart` in each project
