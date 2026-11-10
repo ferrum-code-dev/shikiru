@@ -166,3 +166,26 @@ Acceptance criteria:
    under 8 parallel runs of the file) and 10 consecutive runs while 24 busy loops run
    (`yes > /dev/null &`, killed afterwards). Report the commands and results.
 4. The gate passes.
+
+## R8 — The package smoke clicks again when a click is lost
+
+- [ ] `click_button` in `tests/support/release_wait.py` retries a click that did not navigate.
+
+CI run 42829345466 (Ubuntu) failed in the package smoke, stage "normal-size interactive wizard": after the
+ladders were edited, the click on `Next` did not move the wizard to "SHIKIRU · Trackers" within 20 s, and the
+last pane capture still showed the ladders page. The smoke passes locally on the same commit. The click is a
+single mouse event sent into the pane; the wizard may redraw between the capture that finds the button and
+the event, or may still be handling the last key, and one lost event fails the whole release smoke.
+
+Acceptance criteria:
+
+1. `click_button` sends the click, waits a short interval (a named constant, a few seconds, scaled like the
+   other waits) for `expected`, and when it did not appear captures the pane again, finds the button again and
+   clicks again. It gives up after a named number of attempts or at the existing overall deadline, with the
+   last capture on stderr as today. Before every attempt it checks `expected` first, so a click that landed
+   late is never repeated.
+2. The helper's unit tests (use the existing fakes for tmux) cover: the first click works; the first click is
+   lost and the second works; the button is gone because the page already changed; every attempt fails and
+   the error carries the last capture.
+3. No other timeout in the smoke or in the waiting helpers is raised.
+4. The gate passes. Nothing is pushed by the task.
