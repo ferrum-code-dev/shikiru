@@ -189,3 +189,25 @@ Acceptance criteria:
    the error carries the last capture.
 3. No other timeout in the smoke or in the waiting helpers is raised.
 4. The gate passes. Nothing is pushed by the task.
+
+## R9 — Name what fills the macOS runner's disk
+
+- [ ] CI prints disk use before and after the gate, so the next "No space left on device" names its cause.
+
+CI run 42836381544 (macOS) passed the quality gate (2560 passed) and then failed in "Build and exercise
+package distributions" right after "installed entry points, defaults, prompt, migration and artwork
+resources verified"; the runner's last line is `No space left on device` for its own log folder. The
+runner's disk filled during the gate or the smoke. pytest already keeps temporary folders only for failed
+tests (`tmp_path_retention_policy = "failed"`), so something else leaves large data behind. Nothing here is
+known yet; this task finds out, it does not guess.
+
+Acceptance criteria:
+
+1. In `.github/workflows/ci.yml`, add a step before the quality gate, one after it and one after the
+   package smoke (the last two with `if: always()`) that print `df -h` for `/` and the temporary folder and
+   the ten largest entries (`du -sk`, depth 1, sorted) of `$TMPDIR`, `/tmp` (or `/private/tmp`),
+   `$RUNNER_TEMP` and `$HOME`. The steps never fail the job (`|| true`) and print at most 40 lines each.
+2. No other change to the workflow, no cleanup yet, no timeout change.
+3. Tests: the workflow test checks the three steps exist, run on both operating systems and cannot fail the
+   job.
+4. The gate passes. Nothing is pushed by the task.
