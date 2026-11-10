@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 require_tool() {
     local path
@@ -89,7 +89,7 @@ finish() {
     SOURCE_FINGERPRINT="$(
         {
             "$GIT_BIN" -C "$ROOT" diff HEAD --binary
-            sha256 "$ROOT/scripts/release-readiness-smoke.sh"
+            sha256 "$ROOT/.github/scripts/release-readiness-smoke.sh"
             sha256 "$ROOT/tests/support/release_wait.py"
         } | sha256 | awk '{print $1}'
     )"

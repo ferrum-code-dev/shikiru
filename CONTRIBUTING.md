@@ -16,7 +16,6 @@ Thank you for helping. Before you start:
 ```sh
 uv sync --locked
 PYTEST_ADDOPTS='--dist=loadfile' uv run poe check
-bash scripts/release-readiness-smoke.sh
 ```
 
 The quality gate covers formatting, lint, boundaries, types, unused-code checks and behavior tests.

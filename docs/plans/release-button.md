@@ -212,7 +212,7 @@ Acceptance criteria:
 
 ### B7 — The package smoke is CI's, so it lives with CI
 
-- [ ] Move `scripts/release-readiness-smoke.sh` to `.github/scripts/release-readiness-smoke.sh`.
+- [x] Move `scripts/release-readiness-smoke.sh` to `.github/scripts/release-readiness-smoke.sh`.
 
 Only CI runs the smoke; nobody needs it by hand. Acceptance criteria:
 

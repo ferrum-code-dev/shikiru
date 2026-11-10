@@ -101,4 +101,4 @@ jobs:
         run: uv run --locked poe check
 
       - name: Build and exercise package distributions
-        run: bash scripts/release-readiness-smoke.sh
+        run: bash .github/scripts/release-readiness-smoke.sh
