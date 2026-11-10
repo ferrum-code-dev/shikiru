@@ -14,8 +14,14 @@ answers that were already posted in it. Its messages marked `"new": true` are th
 the unmarked ones are context, and `reply` answers only the marked ones. Each item may raise several points: list all of
 them in `points` and cover each in `detail` and `reply`. Choose `address` for a request to accept,
 `already_addressed` when the Git facts or files show it is done (a moved or outdated location is
-not proof), `disagree` for a request to decline with a specific reason, and `needs_operator`
-when evidence is missing or requirements conflict; never invent a fix for those.
+not proof), `disagree` for a request to decline with a specific reason, and `clarify` or
+`needs_operator` as set out here; never invent a fix for either.
+
+`clarify` covers information the comment lacks that only the reviewer can supply: `detail` names
+what is missing and `reply` asks for exactly that. Missing permission, a scope decision or
+conflicting requirements is `needs_operator`, not `clarify`. `clarify` is not a way to avoid
+deciding: use it only when no reasonable reading of the comment, the code and the repository
+answers the point.
 
 Put each piece of implementation work in `work` with a concrete instruction, and point every
 `address` decision at it by `work_id`. Duplicate requests share one `work` entry but keep their own

@@ -201,7 +201,10 @@ or comment never start a round. All new reviews and comments present at round st
 wait for the next round. A discussion enters the batch whole, with its new comments marked, so the
 Leader sees its own earlier answers. Handled review and comment IDs are persisted with the round.
 The Leader analyses the batch, the Implementer edits, the Leader verifies the result and
-the replies, and the Engine alone publishes and replies. A round needs a scheduler-owned slot: the
+the replies, and the Engine alone publishes and replies. A `clarify` decision asks the reviewer for
+information only they can supply: its question is verified and posted like any reply, never
+escalates or blocks the round's other decisions, and does not start a round; the reviewer's answer
+starts the next one through the usual trigger. A round needs a scheduler-owned slot: the
 task becomes `queued` and is dispatched like any other, then returns to the PR wait. The Engine
 never dismisses reviews, resolves threads, approves or merges. Before edits it records the remote
 head and pushes with `--force-with-lease` on that value; preparing publication reruns the

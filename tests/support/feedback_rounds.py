@@ -252,6 +252,11 @@ class _Pull:
     def replies(self) -> list[str]:
         return [body for body in self.comments() if _REPLY_MARKER in body]
 
+    def thread_replies(self, thread_id: str) -> list[str]:
+        record = self.github.pull_requests()[0]
+        [thread] = [found for found in record["reviewThreads"] if found["id"] == thread_id]
+        return [c["body"] for c in thread["comments"] if _REPLY_MARKER in c["body"]]
+
     async def remote_branch(self) -> str:
         assert self.task.repo is not None
         return await git(self.remote_dir, "rev-parse", self.task.repo.branch)

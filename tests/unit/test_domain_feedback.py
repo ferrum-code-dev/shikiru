@@ -18,6 +18,7 @@ from shikiru.domain.feedback import (
     operator_questions,
     publishable_replies,
 )
+from shikiru.domain.feedback_rounds import fixed_source_ids
 from shikiru.domain.reports import FeedbackAnalysis, FeedbackVerdict
 
 REVIEW = "review-1"
@@ -189,6 +190,18 @@ _STEPS = {
         [_decision(THREAD, "disagree"), _decision(REVIEW, "needs_operator")],
         FeedbackStep.ESCALATE,
     ),
+    "clarify-with-work": (
+        [_decision(THREAD, "address"), _decision(REVIEW, "clarify")],
+        FeedbackStep.IMPLEMENT,
+    ),
+    "clarify-only": (
+        [_decision(THREAD, "clarify"), _decision(REVIEW, "disagree")],
+        FeedbackStep.VERIFY,
+    ),
+    "operator-beats-clarify": (
+        [_decision(THREAD, "clarify"), _decision(REVIEW, "needs_operator")],
+        FeedbackStep.ESCALATE,
+    ),
 }
 
 
@@ -197,6 +210,29 @@ def test_next_step_follows_the_decisions(
     decisions: list[dict[str, Any]], expected: FeedbackStep
 ) -> None:
     assert next_feedback_step(_analysis(*decisions)) is expected
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        _decision(REVIEW, "clarify", reply=""),
+        _decision(REVIEW, "clarify", work_id="w1"),
+    ],
+    ids=["no-question", "work-attached"],
+)
+def test_a_clarify_decision_asks_a_question_and_carries_no_work(decision: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError):
+        _analysis(decision)
+
+
+def test_only_an_addressed_source_is_reported_as_fixed() -> None:
+    analysis = _analysis(
+        _decision(THREAD, "address"),
+        _decision(REVIEW, "clarify"),
+        _decision(DUPLICATE, "disagree"),
+    )
+
+    assert fixed_source_ids(analysis) == {THREAD}
 
 
 def test_needs_operator_keeps_the_source_and_question() -> None:
@@ -214,8 +250,9 @@ def _verified_input(*decisions: dict[str, Any]) -> tuple[FeedbackInput, Feedback
     return FeedbackInput(snapshot=snapshot, analysis=analysis), analysis
 
 
-def test_an_accepting_verdict_must_verify_the_reply_of_every_decided_source() -> None:
-    feedback, _ = _verified_input(_decision(REVIEW, "disagree"), _decision(THREAD, "address"))
+@pytest.mark.parametrize("action", ["disagree", "clarify"])
+def test_an_accepting_verdict_must_verify_the_reply_of_every_decided_source(action: str) -> None:
+    feedback, _ = _verified_input(_decision(REVIEW, action), _decision(THREAD, "address"))
 
     check_feedback_report(feedback, _verdict("accept", REVIEW, THREAD))
     with pytest.raises(FeedbackContractError, match="replies"):

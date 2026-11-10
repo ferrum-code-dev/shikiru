@@ -323,6 +323,7 @@ class FeedbackAction(StrEnum):
 
     ADDRESS = auto()
     ALREADY_ADDRESSED = auto()
+    CLARIFY = auto()
     DISAGREE = auto()
     NEEDS_OPERATOR = auto()
 
@@ -346,7 +347,8 @@ class FeedbackDecision(DomainModel):
     detail: _Text = Field(
         description=(
             "address: the concrete work requested; already_addressed: the commit or file that "
-            "shows it; disagree: the specific reason; needs_operator: the question to ask."
+            "shows it; disagree: the specific reason; clarify: the information missing from the "
+            "comment; needs_operator: the question to ask."
         )
     )
     work_id: str = Field(

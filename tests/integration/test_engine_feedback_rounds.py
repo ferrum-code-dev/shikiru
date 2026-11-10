@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from shikiru.config.settings import ANY_COMMENT_FEEDBACK
 from shikiru.domain.events import EventKind
 from shikiru.domain.feedback import (
@@ -29,8 +31,6 @@ from tests.support.github import (
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    import pytest
-
     from tests.support.engine import EngineEnv
     from tests.support.github import FakeGitHub
     from tests.support.tmux import TmuxServer
@@ -46,6 +46,52 @@ from tests.support.feedback_rounds import (
     open_pull,
     verdict,
 )
+
+CLARIFIED = "T2"
+
+
+async def test_an_accepted_change_is_published_while_a_clarify_thread_gets_its_question(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmux_server: TmuxServer,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(engine_env, fake_github, tmp_path_factory)
+    before = await pull.remote_branch()
+    await pull.request_changes(with_thread=False)
+    fake_github.set_fields(
+        1,
+        reviewThreads=[
+            thread_node(THREAD, [comment_node(1, 11, "rename it", review_id=REVIEW)]),
+            thread_node(CLARIFIED, [comment_node(1, 12, "use the palette", review_id=REVIEW)]),
+        ],
+    )
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [
+            feedback_analysis(
+                decision(REVIEW, "disagree"),
+                decision(THREAD, "address"),
+                decision(CLARIFIED, "clarify"),
+            ),
+            verdict("accept", REVIEW, THREAD, CLARIFIED),
+        ],
+    )
+    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
+    await pull.until(pull.flow.done)
+    await pull.dispatch()
+    await wait_until(lambda: pull.handled() and pull.waiting(), WAIT_SECONDS)
+
+    after = await pull.remote_branch()
+    assert after != before
+    assert not pull.escalated()
+    [fix] = pull.thread_replies(THREAD)
+    assert f"Fixed in {after[:12]}" in fix
+    [question] = pull.thread_replies(CLARIFIED)
+    assert "Fixed in" not in question
+    assert len(pull.replies()) == 3
+    await pull.stop()
 
 
 async def test_requested_changes_are_reworked_published_and_answered(
@@ -242,7 +288,9 @@ async def test_a_reply_in_a_discussion_whose_review_was_dismissed_starts_no_roun
     await pull.stop()
 
 
-async def test_a_round_that_only_disagrees_replies_without_publishing(
+@pytest.mark.parametrize("action", ["disagree", "clarify"])
+async def test_a_round_without_accepted_work_replies_without_publishing(
+    action: str,
     engine_env: EngineEnv,
     fake_github: FakeGitHub,
     tmux_server: TmuxServer,
@@ -254,7 +302,7 @@ async def test_a_round_that_only_disagrees_replies_without_publishing(
     await set_role_script(
         tmux_server,
         Role.LEADER,
-        [feedback_analysis(decision(REVIEW, "disagree")), verdict("accept", REVIEW)],
+        [feedback_analysis(decision(REVIEW, action)), verdict("accept", REVIEW)],
     )
     await pull.until(pull.flow.done)
     await pull.dispatch()
