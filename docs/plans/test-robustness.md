@@ -192,7 +192,7 @@ Acceptance criteria:
 
 ## R9 — Name what fills the macOS runner's disk
 
-- [ ] CI prints disk use before and after the gate, so the next "No space left on device" names its cause.
+- [x] CI prints disk use before and after the gate, so the next "No space left on device" names its cause.
 
 CI run 42836381544 (macOS) passed the quality gate (2560 passed) and then failed in "Build and exercise
 package distributions" right after "installed entry points, defaults, prompt, migration and artwork

@@ -97,8 +97,19 @@ jobs:
           asyncio.run(check_versions())
           PY
 
+      - name: Report disk use before the quality gate
+        run: bash .github/scripts/disk-usage.sh || true
+
       - name: Run quality gate
         run: uv run --locked poe check
 
+      - name: Report disk use after the quality gate
+        if: always()
+        run: bash .github/scripts/disk-usage.sh || true
+
       - name: Build and exercise package distributions
         run: bash .github/scripts/release-readiness-smoke.sh
+
+      - name: Report disk use after the package smoke
+        if: always()
+        run: bash .github/scripts/disk-usage.sh || true
