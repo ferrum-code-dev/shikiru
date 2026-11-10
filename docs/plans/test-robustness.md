@@ -169,7 +169,7 @@ Acceptance criteria:
 
 ## R8 — The package smoke clicks again when a click is lost
 
-- [ ] `click_button` in `tests/support/release_wait.py` retries a click that did not navigate.
+- [x] `click_button` in `tests/support/release_wait.py` retries a click that did not navigate.
 
 CI run 42829345466 (Ubuntu) failed in the package smoke, stage "normal-size interactive wizard": after the
 ladders were edited, the click on `Next` did not move the wizard to "SHIKIRU · Trackers" within 20 s, and the

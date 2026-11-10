@@ -11,13 +11,15 @@ from shikiru.clock import SystemClock
 from shikiru.errors import CommandTimeoutError
 from shikiru.process import SubprocessRunner
 from tests.support.tmux import CONFIG_FLAG, SOCKET_FLAG
-from tests.support.waiting import WaitTimeoutError, wait_until
+from tests.support.waiting import WaitTimeoutError, wait_for, wait_until
 
 RUNNER = SubprocessRunner()
 CLOCK = SystemClock()
 CONTROL_REARM_INTERVAL = timedelta(seconds=Button().active_effect_duration)
 WAIT_TIMEOUT = 20
 COMMAND_TIMEOUT = 5
+CLICK_CONFIRM_SECONDS = 4.0
+CLICK_ATTEMPTS = 3
 INVALID_MODE_EXIT_CODE = 2
 TASK_WAIT_TIMEOUT = 120
 TASK_STATUS_DONE = "done"
@@ -208,18 +210,41 @@ async def _click_at(tmux: str, socket: str, target: str, x: int, y: int) -> None
             raise RuntimeError(result.stderr)
 
 
+async def _pane_shows(tmux: str, socket: str, target: str, expected: str) -> bool:
+    try:
+        await wait_for(
+            lambda: capture_pane(tmux, socket, target),
+            lambda capture: expected in capture,
+            timeout=CLICK_CONFIRM_SECONDS,
+        )
+    except WaitTimeoutError:
+        return False
+    return True
+
+
 async def click_button(tmux: str, socket: str, target: str, label: str, expected: str) -> None:
     await _wait_for_control_rearm()
+    for attempt in range(1, CLICK_ATTEMPTS + 1):
+        capture = await capture_pane(tmux, socket, target)
+        if expected and expected in capture:
+            return
+        position = _button_position(capture, label)
+        if position is None:
+            if attempt == 1:
+                message = f"navigation button is not visible: {label}"
+                raise RuntimeError(message)
+            await wait_for_pane(tmux, socket, target, expected)
+            return
+        await _click_at(tmux, socket, target, *position)
+        if not expected or await _pane_shows(tmux, socket, target, expected):
+            return
     capture = await capture_pane(tmux, socket, target)
-    if expected and expected in capture:
-        return
-    position = _button_position(capture, label)
-    if position is None:
-        message = f"navigation button is not visible: {label}"
-        raise RuntimeError(message)
-    await _click_at(tmux, socket, target, *position)
-    if expected:
-        await wait_for_pane(tmux, socket, target, expected)
+    sys.stderr.write(capture + "\n")
+    message = (
+        f"{label} did not reach {expected!r} after {CLICK_ATTEMPTS} clicks; "
+        f"last capture:\n{capture}"
+    )
+    raise RuntimeError(message)
 
 
 async def set_ladder(tmux: str, socket: str, target: str, scope: str, value: str) -> None:
@@ -279,4 +304,5 @@ MODES = {
 }
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
