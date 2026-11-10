@@ -48,7 +48,7 @@ SQUASH_INTEGRATION = "squash"
 PULL_REQUEST_INTEGRATION = "pr"
 IN_SYNC_MARKER = "✓"
 DISTRIBUTION_NAME = "shikiru-cli"
-VERSION_COLOR = "white"
+VERSION_COLOR = SECONDARY_TEXT_COLOR
 
 
 @dataclass(frozen=True, slots=True)

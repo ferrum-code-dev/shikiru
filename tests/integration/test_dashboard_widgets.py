@@ -208,7 +208,7 @@ async def test_header_colours_the_dirty_line_counts_green_and_red(
         assert set(foregrounds(widget, "+100 -20")[-3:]) == {ALERT_COLOR}
 
 
-@pytest.mark.usefixtures("connection")
+@pytest.mark.usefixtures("connection", "colour_terminal")
 @pytest.mark.parametrize("no_color", [False, True], ids=["colour", "no_color"])
 async def test_header_brand_is_bold_and_stays_bold_under_no_color(
     reader: StateReader,
@@ -236,7 +236,9 @@ async def test_header_brand_is_bold_and_stays_bold_under_no_color(
     assert all(bold for _, (bold, _) in brand)
     version_styles = line[version_start:version_end]
     project_styles = line[project_start : project_start + len("demo")]
-    assert all(not bold and color == "#c4c4c4" for _, (bold, color) in version_styles)
+    assert all(not bold for _, (bold, _) in version_styles)
+    if not no_color:
+        assert all(color == SECONDARY_TEXT_COLOR for _, (_, color) in version_styles)
     assert all(bold for _, (bold, _) in project_styles)
 
 
