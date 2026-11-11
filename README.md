@@ -75,7 +75,7 @@ shikiru restart          # refuses while a task runs; add --force to override
 
 The tmux dashboard also keeps its old code. Reload it with either:
 
-- `shikiru stop --kill-session && shikiru start` (closes the session and its panes), or
+- `shikiru restart --kill-session` (closes the session and its panes, then starts a new one), or
 - `shikiru restart`, then in the dashboard window enter `respawn-window -k` at the tmux prompt (`Ctrl+b`, then `:`).
 
 Go back to a release:
@@ -118,8 +118,8 @@ explicitly. `--help` on each command lists its options.
 | --- | --- |
 | `init` | Configure a repository. `--yes` writes defaults. |
 | `start` | Start or reuse the engine and its tmux session. `--attach` enters it. |
-| `stop` | Stop orchestration, keep state and panes. `--kill-session` also closes tmux. |
-| `restart` | Stop and start the engine so it runs installed code. |
+| `stop` | Stop orchestration, keep state and panes. `--kill-session` also closes the tmux session. |
+| `restart` | Stop and start the engine so it runs installed code. `--kill-session` also replaces the tmux session. |
 | `submit "REQUEST"` | Queue work and print its task ID. |
 | `status` | Engine, queue, tasks, escalations, usage. `status T-1` for one task; `--watch` for updates. |
 | `ls` | List project sessions. `--host HOST` queries over SSH. |
@@ -136,6 +136,10 @@ shikiru --project /path/to/project --set orchestration.max_parallel=1 start
 
 - `--after` is repeatable. `--leader` and `--implementer` pin a role as `agent:model[:effort]`.
 - `--json` gives machine-readable output.
+- `--kill-session` on `stop` or `restart` closes the project's tmux session only after the engine has
+  stopped. Closing it disconnects every attached client and terminates the processes in its panes,
+  including the dashboard. Run it from a shell outside that session, since closing the session also
+  ends the command running in it. `restart` then creates a new session.
 - A task ID means the request was recorded, not finished. Check `status` or the dashboard.
 - Deleting `.shikiru/` loses its state. `init` creates new state; it does not recover old tasks.
 - One attached client per project session. Detach the first client before attaching from another terminal.

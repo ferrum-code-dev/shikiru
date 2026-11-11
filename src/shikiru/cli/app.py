@@ -119,7 +119,7 @@ FORCE_OPTION = typer.Option(
 KILL_SESSION_OPTION = typer.Option(
     "--kill-session",
     help=(
-        "Close the project session even if the engine is stopped. "
+        "Close the project tmux session, disconnecting clients and ending processes in its panes. "
         "[bold]Default:[/] keep the session."
     ),
 )
@@ -319,12 +319,15 @@ def restart(
     context: typer.Context,
     *,
     force: Annotated[bool, FORCE_OPTION] = False,
+    kill_session: Annotated[bool, KILL_SESSION_OPTION] = False,
 ) -> None:
-    """Stop the project's engine if one runs, then start it again."""
+    """Stop the engine if one runs, then start it again. `--kill-session` also replaces tmux."""
     try:
         state = state_from(context)
         root = project_root(state)
-        result = _run(build_lifecycle().restart(root, state.overrides, force=force))
+        result = _run(
+            build_lifecycle().restart(root, state.overrides, force=force, kill_session=kill_session)
+        )
     except ShikiruError as error:
         _fail(error)
     _emit_value(state, result, restart_renderable(result))

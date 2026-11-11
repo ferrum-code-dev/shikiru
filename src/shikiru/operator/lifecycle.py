@@ -191,18 +191,22 @@ class ProjectLifecycle:
         overrides: Sequence[str],
         *,
         force: bool,
+        kill_session: bool,
     ) -> RestartResult:
-        """Stop a running engine, refusing while tasks run unless forced, then start it again."""
+        """Stop the engine, refusing while tasks run unless forced, then start it again.
+
+        With `kill_session`, the tmux session is closed once the stop is confirmed (or at once
+        when no engine runs) and a fresh one is created. A failed stop leaves the session alone.
+        """
         settings = load_settings(root, overrides)
         restarted = self._engine_up(root)
-        if restarted:
-            if not force:
-                running = self._running_task_ids(root, settings)
-                if running:
-                    raise RestartRefusedError(running)
-            ack = await self.stop(root, overrides, kill_session=False)
-            if ack.status is not AckStatus.DONE:
-                raise ShikiruError(ack.message or STOP_NOT_CONFIRMED_MESSAGE)
+        if restarted and not force:
+            running = self._running_task_ids(root, settings)
+            if running:
+                raise RestartRefusedError(running)
+        ack = await self.stop(root, overrides, kill_session=kill_session)
+        if ack.status is not AckStatus.DONE:
+            raise ShikiruError(ack.message or STOP_NOT_CONFIRMED_MESSAGE)
         started = await self.start(root, overrides, attach=False)
         return RestartResult(restarted=restarted, engine=started.engine, session=started.session)
 
