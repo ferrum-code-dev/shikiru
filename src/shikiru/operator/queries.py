@@ -50,7 +50,7 @@ from shikiru.domain.reports import (
 from shikiru.domain.runs import Run, RunStatus, has_positive_token_evidence
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.status_tasks import select_human_status_tasks
-from shikiru.domain.steps import task_acting_role
+from shikiru.domain.steps import TURN_LIFECYCLE_KINDS, acting_role
 from shikiru.domain.tasks import ACTIVE_STATUSES, Role, Status, Task
 from shikiru.domain.timeline import (
     TIMELINE_ACTIVITY_CATEGORY,
@@ -700,11 +700,12 @@ class OperatorQueries:
         )
 
     def task_action_role(self, task_id: str) -> Role:
-        """Return the role at this task's current or first scheduled step."""
+        """Return the role of the turn running on this task, else its step's default role."""
         task = self._reader.get_task(task_id)
         if task is None:
             return Role.LEADER
-        return task_acting_role(task)
+        latest = self._reader.latest_events(1, kinds=TURN_LIFECYCLE_KINDS, task_id=task_id)
+        return acting_role(task, latest[0] if latest else None)
 
     def get_task(self, task_id: str) -> TaskDetail | None:
         """Return one task, its runs and its event timeline, or `None` when absent."""

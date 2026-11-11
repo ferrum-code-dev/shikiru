@@ -15,7 +15,7 @@ from shikiru.agents.contracts import COST_BASIS_API_EQUIVALENT, COST_BASIS_BILLE
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.levels import usage_level
 from shikiru.domain.runs import NO_USAGE, RunStatus, context_title, cost_title
-from shikiru.domain.steps import ACTING_ROLE
+from shikiru.domain.steps import TURN_LIFECYCLE_KINDS, acting_role
 from shikiru.domain.tasks import Hold, Role, Status, Step
 from shikiru.paths import run_dir
 from shikiru.ui.glyphs import (
@@ -58,6 +58,7 @@ if TYPE_CHECKING:
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
     from shikiru.engine.quota_waits import QuotaWaits, TaskQuotaWait
+    from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
     from shikiru.tmux.decorator import PaneDecorator
@@ -82,7 +83,7 @@ def _quota_shown(task: Task) -> bool:
     )
 
 
-def _window_state(task: Task, quota: TaskQuotaWait | None) -> tuple[str, str]:
+def _window_state(task: Task, quota: TaskQuotaWait | None, role: Role) -> tuple[str, str]:
     if Hold.PAUSED in task.holds:
         return HOLD_COLOR, GLYPH_PAUSED
     if Hold.INTERVENTION in task.holds:
@@ -93,7 +94,7 @@ def _window_state(task: Task, quota: TaskQuotaWait | None) -> tuple[str, str]:
         return AMBER, QUOTA_MARKER
     if task.step is None:
         return ENGINE_COLOR, GLYPH_ENGINE
-    return ROLE_COLORS[ACTING_ROLE[task.step]], _STEP_GLYPHS[task.step]
+    return ROLE_COLORS[role], _STEP_GLYPHS[task.step]
 
 
 def _pane_state(
@@ -156,6 +157,7 @@ class TaskTitles:
         settings: Settings,
         *,
         waits: QuotaWaits,
+        events: EventLog,
         project_root: Path,
     ) -> None:
         """Decorate via `decorator` using current task rows, live run usage and quota `waits`.
@@ -168,6 +170,7 @@ class TaskTitles:
         self._tasks = tasks
         self._settings = settings
         self._waits = waits
+        self._events = events
         self._project_root = project_root
         self._refresh_lock = asyncio.Lock()
         self._published: dict[str, TaskQuotaWait | None] = {}
@@ -197,7 +200,9 @@ class TaskTitles:
     async def _refresh_window(
         self, task: Task, window_target: str, quota: TaskQuotaWait | None
     ) -> None:
-        color, glyph = _window_state(task, quota)
+        latest_turn = self._events.latest(1, kinds=TURN_LIFECYCLE_KINDS, task_id=task.id)
+        role = acting_role(task, latest_turn[0] if latest_turn else None)
+        color, glyph = _window_state(task, quota, role)
         fields = {"task_id": task.id, "title": task.title}
         await self._decorator.refresh_window(
             window_target,

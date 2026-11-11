@@ -168,6 +168,7 @@ def build_titles(
             clock=clock,
             settings=settings,
         ),
+        events=EventLog(connection, clock),
         project_root=project_root,
     )
 

@@ -807,6 +807,7 @@ def build_engine(
             clock=resolved_clock,
             settings=resolved_settings,
         ),
+        events=events,
         project_root=project_root,
     )
     monitor = TurnMonitor(

@@ -689,7 +689,10 @@ async def test_dialogue_filters_noise_and_enter_shows_the_full_implementer_text(
     context = widget_context(reader, project_dir, clock)
     bubbles = context.views.dialogue()
     assert len(bubbles) == 20
-    assert bubbles[0].text == "helper-3"
+    assert bubbles[0].text == "helper-11"
+    assert [bubble.text for bubble in bubbles if bubble.role is Role.LEADER][:-1] == [
+        f"Leader turn {index}" for index in range(8)
+    ]
     assert bubbles[-2].text == (
         "A concise report summary.\nDoes this need another test?\nThe question has a second line."
     )

@@ -6,6 +6,7 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import (
     REJECTIONS_FIELD,
     move_up,
@@ -38,6 +39,7 @@ from shikiru.domain.tasks import (
 if TYPE_CHECKING:
     from shikiru.agents.contracts import Rung
     from shikiru.config.settings import ComplexityName, Settings
+    from shikiru.domain.events import Event
 
 CONSULT_LIMIT = 3
 CONFLICT_ROUNDS = 2
@@ -161,6 +163,30 @@ def task_acting_role(task: Task) -> Role:
     """Return the role for the current step or the task's first scheduled step."""
     step = task.step if task.step is not None else first_step(task).step
     return Role.LEADER if step is None else ACTING_ROLE[step]
+
+
+TURN_LIFECYCLE_KINDS = (
+    EventKind.TURN_STARTED,
+    EventKind.TURN_COMPLETED,
+    EventKind.TURN_FAILED,
+    EventKind.TURN_STOPPED,
+)
+
+
+def acting_role(task: Task, latest_turn: Event | None) -> Role:
+    """Return the role of the turn running on `task`, else the step's default role.
+
+    `latest_turn` is the task's newest event of `TURN_LIFECYCLE_KINDS`: a turn runs only while
+    that event starts a turn of the task's current step.
+    """
+    if (
+        latest_turn is not None
+        and latest_turn.kind is EventKind.TURN_STARTED
+        and task.step is not None
+        and latest_turn.data.get("step") == task.step.value
+    ):
+        return Role(str(latest_turn.data["role"]))
+    return task_acting_role(task)
 
 
 def _triaged_complexity(task: Task, outcome: TriageReport) -> ComplexityName | None:

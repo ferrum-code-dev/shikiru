@@ -74,10 +74,14 @@ def fetch_latest_events(
     limit: int,
     *,
     kinds: Sequence[EventKind] | None = None,
-    implementer_turns_only: bool = False,
+    hide_verdict_duplicates: bool = False,
     task_id: str | None = None,
 ) -> list[Event]:
-    """Read the latest matching events in chronological order."""
+    """Read the latest matching events in chronological order.
+
+    With `hide_verdict_duplicates`, a Leader `turn_completed` is left out when a `verdict` of
+    the same task and turn records it, so the verdict stands for that turn.
+    """
     if limit < 1:
         message = "event limit must be positive"
         raise ValueError(message)
@@ -90,10 +94,22 @@ def fetch_latest_events(
     if task_id is not None:
         clauses.append("task_id = ?")
         params.append(task_id)
-    if implementer_turns_only:
-        clauses.append("(kind != ? OR json_extract(data, ?) = ?)")
+    if hide_verdict_duplicates:
+        clauses.append(
+            "NOT (kind = ? AND json_extract(data, ?) IS ? AND EXISTS ("
+            "SELECT 1 FROM events AS verdict WHERE verdict.task_id = events.task_id"
+            " AND verdict.kind = ?"
+            " AND json_extract(verdict.data, ?) = json_extract(events.data, ?)))"
+        )
         params.extend(
-            (EventKind.TURN_COMPLETED.value, _EVENT_ROLE_JSON_PATH, Role.IMPLEMENTER.value)
+            (
+                EventKind.TURN_COMPLETED.value,
+                _EVENT_ROLE_JSON_PATH,
+                Role.LEADER.value,
+                EventKind.VERDICT.value,
+                _EVENT_TURN_JSON_PATH,
+                _EVENT_TURN_JSON_PATH,
+            )
         )
     where = f"WHERE {' AND '.join(clauses)} " if clauses else ""
     rows = connection.execute(

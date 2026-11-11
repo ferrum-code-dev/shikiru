@@ -1,17 +1,20 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Literal
 
 import pytest
 
 from shikiru.agents.contracts import Rung
 from shikiru.config.settings import ComplexityLadder
+from shikiru.domain.events import Event, EventKind
 from shikiru.domain.ladder import pick_rung
 from shikiru.domain.steps import (
     CONFLICT_ROUNDS,
     CONSULT_LIMIT,
     Outcome,
     Transition,
+    acting_role,
     first_step,
     next_step,
     task_acting_role,
@@ -39,6 +42,7 @@ from tests.support.factories import (
 )
 
 _SETTINGS = make_settings()
+NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _next(task: Task, outcome: Outcome) -> Transition:
@@ -71,6 +75,44 @@ def test_task_acting_role_uses_current_or_first_scheduled_step(
     task = make_task(mode=mode, step=step)
 
     assert task_acting_role(task) is expected
+
+
+@pytest.mark.parametrize(
+    ("turn_kind", "turn_role", "expected"),
+    [
+        (EventKind.TURN_STARTED, Role.LEADER, Role.LEADER),
+        (EventKind.TURN_STARTED, Role.IMPLEMENTER, Role.IMPLEMENTER),
+        (EventKind.TURN_COMPLETED, Role.LEADER, Role.IMPLEMENTER),
+    ],
+)
+def test_acting_role_is_the_running_turn_role_in_its_step_else_the_step_default(
+    turn_kind: EventKind, turn_role: Role, expected: Role
+) -> None:
+    task = make_task(mode=Mode.IMPLEMENT, step=Step.INTEGRATE)
+    latest = Event(
+        id=1,
+        ts=NOW,
+        task_id=task.id,
+        kind=turn_kind,
+        message="",
+        data={"step": Step.INTEGRATE.value, "role": turn_role.value},
+    )
+
+    assert acting_role(task, latest) is expected
+
+
+def test_acting_role_ignores_a_running_turn_from_another_step() -> None:
+    task = make_task(mode=Mode.IMPLEMENT, step=Step.INTEGRATE)
+    latest = Event(
+        id=1,
+        ts=NOW,
+        task_id=task.id,
+        kind=EventKind.TURN_STARTED,
+        message="",
+        data={"step": Step.VERIFY.value, "role": Role.LEADER.value},
+    )
+
+    assert acting_role(task, latest) is Role.IMPLEMENTER
 
 
 def test_triage_implement_starts_the_first_implement_at_iteration_one() -> None:

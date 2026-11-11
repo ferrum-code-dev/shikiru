@@ -249,7 +249,7 @@ class StateReader:
         limit: int,
         *,
         kinds: Sequence[EventKind] | None = None,
-        implementer_turns_only: bool = False,
+        hide_verdict_duplicates: bool = False,
         task_id: str | None = None,
     ) -> list[Event]:
         """Read the latest matching events in chronological order."""
@@ -257,7 +257,7 @@ class StateReader:
             self._connection,
             limit,
             kinds=kinds,
-            implementer_turns_only=implementer_turns_only,
+            hide_verdict_duplicates=hide_verdict_duplicates,
             task_id=task_id,
         )
 

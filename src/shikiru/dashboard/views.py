@@ -108,7 +108,12 @@ from shikiru.domain.scheduling import (
     running_quota_wait_moves,
     task_agents,
 )
-from shikiru.domain.steps import ACTING_ROLE, Step, task_acting_role
+from shikiru.domain.steps import (
+    TURN_LIFECYCLE_KINDS,
+    Step,
+    acting_role,
+    task_acting_role,
+)
 from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Role, Status, Task
 from shikiru.domain.timeline import TIMELINE_EVIDENCE_CATEGORY
 from shikiru.domain.timeline_phrases import GLYPH_ATTENTION, Tone
@@ -870,6 +875,10 @@ class StateDashboardViews:
             has_more=offset + len(rows) < page.matching_count,
         )
 
+    def _acting_role(self, task: Task) -> Role:
+        latest = self._state.latest_events(1, kinds=TURN_LIFECYCLE_KINDS, task_id=task.id)
+        return acting_role(task, latest[0] if latest else None)
+
     def _task_browser_row(
         self,
         task: Task,
@@ -881,7 +890,7 @@ class StateDashboardViews:
         now: datetime,
         task_filter: TaskBrowserFilter,
     ) -> TaskBrowserRow:
-        role = ACTING_ROLE.get(task.step) if task.step is not None else None
+        role = self._acting_role(task) if task.step is not None else None
         group_label = None
         if task_filter is TaskBrowserFilter.WAITING:
             group_label = "Queued" if task.status is Status.QUEUED else "Started waiting"
@@ -996,7 +1005,7 @@ class StateDashboardViews:
             for event in self._state.latest_events(
                 DIALOGUE_LINE_LIMIT,
                 kinds=_ACTIVITY_KINDS,
-                implementer_turns_only=True,
+                hide_verdict_duplicates=True,
                 task_id=task_id,
             )
         ]
@@ -1187,7 +1196,7 @@ class StateDashboardViews:
             mode=task.mode.value if task.mode is not None else None,
             complexity=task.complexity,
             step=_step_label(task.status, task.step, task.iteration),
-            acting_role=task_acting_role(task).value,
+            acting_role=self._acting_role(task).value,
             iteration=task.iteration,
             holds=tuple(sorted(hold.value for hold in task.holds)),
             wait_reason=task.wait_reason,
@@ -1249,7 +1258,7 @@ class StateDashboardViews:
         )
 
     def _can_take_over(self, task: Task) -> bool:
-        availability = self._queries.task_action_availability(task.id, task_acting_role(task))
+        availability = self._queries.task_action_availability(task.id, self._acting_role(task))
         return any(
             item.action is OperatorTaskAction.TAKE_OVER and item.enabled for item in availability
         )
@@ -1850,7 +1859,7 @@ class StateDashboardViews:
     def _strip_with_motion(
         self, task: Task, motion: TaskMotionFrame, cost_usd: float | None
     ) -> TaskStripData:
-        data = task_strip_data(task, self._settings.current())
+        data = task_strip_data(task, self._settings.current(), self._acting_role(task))
         panels = list(data.panels)
         active_index = next(
             (index for index, panel in enumerate(panels) if panel.state is PanelState.ACTIVE),

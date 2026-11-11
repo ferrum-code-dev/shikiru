@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shikiru.domain.ladder import pick_rung
-from shikiru.domain.steps import ACTING_ROLE, Step
-from shikiru.domain.tasks import Hold, Status, Task
+from shikiru.domain.steps import Step
+from shikiru.domain.tasks import Hold, Role, Status, Task
 from shikiru.ui.glyphs import (
     GLYPH_DONE,
     GLYPH_ENGINE,
@@ -40,8 +40,8 @@ _PANEL_INDEX: dict[Step, int] = {
 }
 
 
-def task_strip_data(task: Task, settings: Settings) -> TaskStripData:
-    """Build the render data for one task using the configured role ladder."""
+def task_strip_data(task: Task, settings: Settings, role: Role) -> TaskStripData:
+    """Build the render data for one task; `role` is the active stage's acting role."""
     if task.status is Status.CANCELLED:
         return _unstarted_strip_data(task)
     if task.step is None:
@@ -67,7 +67,7 @@ def task_strip_data(task: Task, settings: Settings) -> TaskStripData:
             PanelState.DONE
             if index < current_index
             else (active_state if index == current_index else PanelState.PENDING),
-            step=task.step,
+            role=role,
             task=task,
             settings=settings,
         )
@@ -134,11 +134,10 @@ def _active_panel_state(task: Task) -> PanelState:
 
 
 def _panel_view(
-    label: str, glyph: str, state: PanelState, *, step: Step, task: Task, settings: Settings
+    label: str, glyph: str, state: PanelState, *, role: Role, task: Task, settings: Settings
 ) -> PanelView:
     if state not in (PanelState.ACTIVE, PanelState.ESCALATED):
         return PanelView(label=label, stage_glyph=glyph, state=state)
-    role = ACTING_ROLE[step]
     rung = pick_rung(task, role, settings)
     detail = f"iter {task.iteration}" if task.iteration else ""
     role_line = f"{ROLE_GLYPHS[role]} {rung.agent}/{rung.model}"

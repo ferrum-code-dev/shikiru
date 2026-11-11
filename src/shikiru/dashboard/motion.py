@@ -18,7 +18,7 @@ from shikiru.domain.motion import (
 )
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME
 from shikiru.domain.runs import RunStatus
-from shikiru.domain.steps import ACTING_ROLE, Step
+from shikiru.domain.steps import TURN_LIFECYCLE_KINDS, Step, acting_role
 from shikiru.domain.tasks import Role, Status, Task
 from shikiru.paths import run_dir
 from shikiru.view_log import TURN_DIR_ITERATION_MARKER, TURN_DIR_SEPARATOR, view_log_path
@@ -107,9 +107,8 @@ class DashboardMotion:
 
     def current_cost(self, task: Task) -> float | None:
         """Return the acting run's latest cost when that run is known."""
-        if task.step is None:
-            return None
-        run = self._run_for_role(task, ACTING_ROLE[task.step])
+        role = self._acting_role(task, self._events_for(task))
+        run = self._run_for_role(task, role) if role is not None else None
         return run.usage.cost_usd if run is not None else None
 
     def _sync_event_cache(self) -> None:
@@ -134,14 +133,15 @@ class DashboardMotion:
         step_started_at, actual_step_started_at, turn_started_at, turn_active, stamp = (
             self._event_timing(task, events)
         )
+        role = self._acting_role(task, events)
         (
             last_signal_at,
             last_signal,
             tool_running,
             turn_active,
             last_words,
-        ) = self._current_activity(task, turn_active, turn_started_at)
-        held = self._is_held(task)
+        ) = self._current_activity(task, role, turn_active, turn_started_at)
+        held = self._is_held(task, role)
         engine_driven = self._engine_driven(task, events)
         stamp = self._merge_stamp(task.id, stamp)
         return TaskMotionState(
@@ -193,7 +193,6 @@ class DashboardMotion:
         turn_started_at = None
         turn_active = False
         stamp: MotionStamp | None = None
-        role = ACTING_ROLE.get(task.step) if task.step is not None else None
         latest_stage_entry = next(
             (event for event in reversed(events) if event.kind is EventKind.STEP_STARTED),
             None,
@@ -220,11 +219,10 @@ class DashboardMotion:
                     MotionStampKind.VERDICT,
                     str(event.data["decision"]),
                 )
-            if role is None or task.step is None:
+            if task.step is None:
                 continue
             matching_turn = (
                 event.data.get("step") == task.step.value
-                and event.data.get("role") == role.value
                 and event.data.get("iteration") == task.iteration
             )
             if event.kind is EventKind.TURN_STARTED and matching_turn:
@@ -239,10 +237,22 @@ class DashboardMotion:
                 turn_active = False
         return step_started_at, actual_step_started_at, turn_started_at, turn_active, stamp
 
+    @staticmethod
+    def _acting_role(task: Task, events: tuple[Event, ...]) -> Role | None:
+        if task.step is None:
+            return None
+        latest_turn = next(
+            (event for event in reversed(events) if event.kind in TURN_LIFECYCLE_KINDS), None
+        )
+        return acting_role(task, latest_turn)
+
     def _current_activity(
-        self, task: Task, turn_active: bool, turn_started_at: datetime | None
+        self,
+        task: Task,
+        role: Role | None,
+        turn_active: bool,
+        turn_started_at: datetime | None,
     ) -> tuple[datetime | None, str | None, bool, bool, str | None]:
-        role = ACTING_ROLE.get(task.step) if task.step is not None else None
         last_signal_at = None
         last_signal = None
         tool_running = False
@@ -255,7 +265,7 @@ class DashboardMotion:
                 False,
                 last_words,
             )
-        turn_name = self._current_turn_name(task)
+        turn_name = self._current_turn_name(task, role)
         if turn_name is None:
             return (
                 last_signal_at,
@@ -290,8 +300,7 @@ class DashboardMotion:
             last_words,
         )
 
-    def _is_held(self, task: Task) -> bool:
-        role = ACTING_ROLE.get(task.step) if task.step is not None else None
+    def _is_held(self, task: Task, role: Role | None) -> bool:
         run = self._run_for_role(task, role) if role is not None else None
         held = (
             bool(task.holds)
@@ -310,10 +319,9 @@ class DashboardMotion:
             return MotionStamp(merge.ts, MotionStampKind.MERGED)
         return stamp
 
-    def _current_turn_name(self, task: Task) -> str | None:
+    def _current_turn_name(self, task: Task, role: Role) -> str | None:
         if task.step is None:
             return None
-        role = ACTING_ROLE[task.step]
         link = run_dir(self._project_root, task.id) / role.value / CURRENT_TURN_LINK_NAME
         try:
             if not link.is_symlink():
