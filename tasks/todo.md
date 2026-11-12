@@ -36,10 +36,16 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - Spike: check whether the engine's `prompt.md` is in `turn_dir` when a turn starts, and decide between reusing it and writing a prompt file.
 - Confirmed: `TurnManager._prepare_turn_dir` writes `turn_dir/prompt.md` before `TurnManager.run` invokes `on_start`; the agent's `start_turn` runs afterward in `_attempts`. Muse can pass that existing file to `--prompt-file`; retain the plan's write-if-missing fallback as a defensive path.
 
-- [ ] 7. Measure Muse doctor and catalog latency
+- [x] 7. Measure Muse doctor and catalog latency
 
 ## Acceptance criteria
 - Measure `muse --version`, `muse usage --json` and the `muse serve` catalog round trip (cold and warm) to set the doctor and catalog timeouts.
+- Measured with Muse 1.4.15, logged in, `MUSE_NO_AUTO_UPDATE=1`; wall clock from spawn to exit (version, usage) or to the `model/list` reply, then stdin closed and exit awaited (catalog). Warm: the normal data home, 10 runs. Cold: a fresh `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` per run, 5 runs; the OS page cache was not dropped (no root). Each catalog call starts its own `muse serve`, so cold and warm differ by Muse's on-disk state, not by process start.
+- `muse --version`: warm median 10 ms (9–12, n=10); cold median 10 ms (9–11, n=5).
+- `muse usage --json`: warm median 2.19 s (1.33–2.60 s, n=10); cold median 1.70 s (0.92–2.29 s, n=5); every run exited 0 with an allowance. Network-bound. Without the auto-update guard (n=5): median 1.47 s (1.10–2.46 s), no clear difference.
+- Catalog round trip: warm median 458 ms (455–493 ms, n=10), `providerCatalog` with 4 models, shutdown 9 ms. Initialize and `model/list` replies arrive about 1 ms apart, so the round trip is almost all server start-up.
+- Catalog, cold: median 484 ms (483–494 ms, n=5) with the login credential copied but no cached catalog. It returns `bundledCatalog` with **zero models** and no error, and three consecutive cold calls did the same. Neither `muse serve` nor `muse usage` wrote the cache, so a machine without it would show no Muse models. The source of the cache is not established. The catalog must treat an empty bundled catalog as not authoritative (an error), never as "no models".
+- Timeouts (for entries 20 and 25): `muse --version` and `muse usage --json` use the shared `DOCTOR_TIMEOUT_SECONDS` (60 s, about 23× the slowest usage run), so no Muse-specific doctor constant. Catalog: 10 s, about 20× the slowest round trip of 494 ms. Claude uses 20 s.
 
 - [ ] 8. Check default model handling
 
