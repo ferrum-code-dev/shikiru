@@ -14,6 +14,7 @@ from shikiru.agents.contracts import (
     PERCENT,
     QUOTA_WINDOW_FIVE_HOUR,
     QUOTA_WINDOW_SEVEN_DAY,
+    RUNTIME_DEFAULT_MODEL,
     AgentSignal,
     FailureKind,
     Message,
@@ -29,8 +30,25 @@ from shikiru.agents.contracts import (
     UsageReported,
     is_exhausted,
 )
-from shikiru.agents.sdk.turn import EMPTY_OUTPUT
+from shikiru.agents.sdk.turn import (
+    EMPTY_OUTPUT,
+    TurnProcess,
+    TurnProcessResult,
+    TurnProcessSequence,
+    write_prompt_if_missing,
+)
 from shikiru.plugins.agents.muse.options import (
+    EXEC_SUBCOMMAND,
+    HARD_THRESHOLD_FLAG,
+    HARD_THRESHOLD_MARGIN,
+    JSON_FLAG,
+    MODEL_FLAG,
+    MUSE_COMMAND,
+    NO_AUTO_UPDATE_ENV_VAR,
+    NO_AUTO_UPDATE_VALUE,
+    PROMPT_FILE_FLAG,
+    PROMPT_FILENAME,
+    REASONING_EFFORT_FLAG,
     RECORD_PAYLOAD_KEY,
     RECORD_PAYLOAD_TYPE_KEY,
     RECORD_STREAM_KEY,
@@ -38,6 +56,8 @@ from shikiru.plugins.agents.muse.options import (
     RUN_TERMINAL_COMPLETED_TYPE,
     RUN_TERMINAL_FAILED_TYPE,
     RUN_USAGE_TYPE,
+    SESSION_ID_FLAG,
+    SOFT_THRESHOLD_FLAG,
     STREAM_ID_KEY,
     STREAM_KIND_KEY,
     STREAM_KIND_SESSION,
@@ -49,6 +69,7 @@ from shikiru.plugins.agents.muse.options import (
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
+    from shikiru.agents.contracts import TurnSpec
     from shikiru.agents.sdk.reset_time import ResetTimeParser
     from shikiru.clock import Clock
 
@@ -79,6 +100,13 @@ _RATE_LIMIT_STATUS_PATTERN = re.compile(r"\b429\b")
 _QUOTA_TEXTS = ("quota", "usage limit")
 _OTHER_TEXTS = ("does not exist or you lack access", "did not reach a terminal state")
 _UNAVAILABLE_TEXTS = ("overloaded", "temporarily unavailable", "service unavailable")
+_CONTEXT_TEXTS = (
+    "context length",
+    "context window",
+    "context_length_exceeded",
+    "context exceeded",
+    "too many tokens",
+)
 _SERVER_ERROR_STATUS_PATTERN = re.compile(
     r"\b(?:HTTP|status)(?:\s+code)?[\s:=/]*5\d{2}\b"
     r"|\b5\d{2}\s+(?:internal server error|bad gateway|service unavailable|gateway timeout)\b",
@@ -147,6 +175,13 @@ class MuseTurnParser:
             self._malformed = True
             return session
         return [*session, *payload]
+
+    @property
+    def context_exceeded(self) -> bool:
+        """Return whether this process ended with a failure caused by a full context window."""
+        return isinstance(self._terminal, _FailedRun) and _contains(
+            self._terminal.reason.lower(), _CONTEXT_TEXTS
+        )
 
     def finish(
         self, exit_code: int, stderr: str, *, interrupted: bool = False
@@ -247,6 +282,87 @@ class MuseTurnParser:
             cost_basis=COST_BASIS_UNKNOWN,
             context_used_pct=base.context_used_pct,
         )
+
+
+class MuseTurnSequence(TurnProcessSequence):
+    """Build Muse's `exec --json` process and one retry after a context-window failure."""
+
+    def __init__(
+        self,
+        *,
+        args: Sequence[str],
+        base_environment: Mapping[str, str],
+        clock: Clock,
+        reset_time: ResetTimeParser,
+        compact_at_pct: float,
+    ) -> None:
+        self._args = tuple(args)
+        self._base_environment = base_environment
+        self._clock = clock
+        self._reset_time = reset_time
+        self._compact_at_pct = compact_at_pct
+        self._session_id: str | None = None
+        self._usage: Usage | None = None
+        self._parser: MuseTurnParser | None = None
+        self._retried = False
+
+    def start(self, spec: TurnSpec) -> TurnProcess:
+        self._session_id = spec.session_id
+        self._usage = spec.usage
+        self._retried = False
+        return self._process(spec)
+
+    def advance(self, spec: TurnSpec, previous: TurnProcessResult) -> TurnProcess | None:
+        self._remember_state(previous.signals)
+        if self._retried or self._parser is None or not self._parser.context_exceeded:
+            return None
+        self._retried = True
+        return self._process(spec)
+
+    def _process(self, spec: TurnSpec) -> TurnProcess:
+        write_prompt_if_missing(spec.turn_dir / PROMPT_FILENAME, spec.prompt)
+        parser = MuseTurnParser(self._clock, self._reset_time, self._usage)
+        self._parser = parser
+        return TurnProcess(
+            argv=self._argv(spec),
+            cwd=spec.cwd,
+            env=self._environment(spec),
+            parser=parser,
+        )
+
+    def _argv(self, spec: TurnSpec) -> tuple[str, ...]:
+        argv = [MUSE_COMMAND, EXEC_SUBCOMMAND, JSON_FLAG]
+        if self._session_id is not None:
+            argv.extend((SESSION_ID_FLAG, self._session_id))
+        if spec.rung.model != RUNTIME_DEFAULT_MODEL:
+            argv.extend((MODEL_FLAG, spec.rung.model))
+        if spec.rung.effort is not None:
+            argv.extend((REASONING_EFFORT_FLAG, spec.rung.effort))
+        soft, hard = compaction_thresholds(self._compact_at_pct)
+        argv.extend((SOFT_THRESHOLD_FLAG, str(soft), HARD_THRESHOLD_FLAG, str(hard)))
+        argv.extend(self._args)
+        argv.extend((PROMPT_FILE_FLAG, str(spec.turn_dir / PROMPT_FILENAME)))
+        return tuple(argv)
+
+    def _environment(self, spec: TurnSpec) -> dict[str, str]:
+        return {
+            **self._base_environment,
+            **spec.env,
+            NO_AUTO_UPDATE_ENV_VAR: NO_AUTO_UPDATE_VALUE,
+        }
+
+    def _remember_state(self, signals: Sequence[AgentSignal]) -> None:
+        for signal in signals:
+            if isinstance(signal, SessionStarted):
+                self._session_id = signal.session_id
+            elif isinstance(signal, UsageReported):
+                self._usage = signal.usage
+
+
+def compaction_thresholds(compact_at_pct: float) -> tuple[float, float]:
+    """Return Muse's soft and hard compaction thresholds as fractions of the context window."""
+    soft = compact_at_pct / PERCENT
+    return soft, soft + HARD_THRESHOLD_MARGIN
 
 
 def classify_failure(

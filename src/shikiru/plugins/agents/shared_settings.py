@@ -15,8 +15,8 @@ BILLING_MODE_KEY = "billing_mode"
 ARGS_KEY = "args"
 
 
-def compact_threshold_setting(default: float) -> AgentSetting:
-    """Return the context-compaction threshold setting with the plugin's `default`."""
+def compact_threshold_setting(default: float, maximum: float = PERCENT) -> AgentSetting:
+    """Return the context-compaction threshold setting with the plugin's `default` and `maximum`."""
     return AgentSetting(
         key=COMPACT_AT_PCT_KEY,
         label="Compact at",
@@ -25,7 +25,7 @@ def compact_threshold_setting(default: float) -> AgentSetting:
         default=default,
         unit="percent",
         minimum=0,
-        maximum=PERCENT,
+        maximum=maximum,
     )
 
 

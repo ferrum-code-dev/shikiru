@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from shikiru.agents.contracts import PERCENT, BillingMode
+from shikiru.agents.contracts import BillingMode
 from shikiru.plugins.agents.shared_settings import (
     billing_declaration_setting,
     cli_args_setting,
@@ -24,6 +24,8 @@ PROMPT_FILE_FLAG = "--prompt-file"
 OUTPUT_SCHEMA_FLAG = "--output-schema"
 MODEL_FLAG = "--model"
 REASONING_EFFORT_FLAG = "--reasoning-effort"
+SOFT_THRESHOLD_FLAG = "--context-compaction-soft-threshold"
+HARD_THRESHOLD_FLAG = "--context-compaction-hard-threshold"
 TRUST_WORKSPACE_FLAG = "--trust-workspace"
 DISABLE_SANDBOX_FLAG = "--disable-sandbox"
 DISABLE_SHELL_FLAG = "--disable-shell"
@@ -32,6 +34,11 @@ DISABLE_REMINDERS_FLAG = "--disable-reminders"
 NO_SESSION_LOG_FLAG = "--no-session-log"
 DEFAULT_ARGS = (TRUST_WORKSPACE_FLAG, DISABLE_SANDBOX_FLAG)
 DEFAULT_COMPACT_AT_PCT = 80.0
+HARD_THRESHOLD_MARGIN = 0.005
+MAX_COMPACT_AT_PCT = 99.0
+PROMPT_FILENAME = "prompt.md"
+NO_AUTO_UPDATE_ENV_VAR = "MUSE_NO_AUTO_UPDATE"
+NO_AUTO_UPDATE_VALUE = "1"
 
 RECORD_STREAM_KEY = "stream"
 RECORD_PAYLOAD_KEY = "payload"
@@ -79,12 +86,12 @@ class MuseOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     args: list[str] = Field(default_factory=lambda: list(DEFAULT_ARGS))
-    compact_at_pct: float = Field(default=DEFAULT_COMPACT_AT_PCT, ge=0, le=PERCENT)
+    compact_at_pct: float = Field(default=DEFAULT_COMPACT_AT_PCT, ge=0, le=MAX_COMPACT_AT_PCT)
     billing_mode: BillingMode | None = None
 
 
 MUSE_SETTINGS: tuple[AgentSetting, ...] = (
-    compact_threshold_setting(DEFAULT_COMPACT_AT_PCT),
+    compact_threshold_setting(DEFAULT_COMPACT_AT_PCT, maximum=MAX_COMPACT_AT_PCT),
     billing_declaration_setting(),
     cli_args_setting(DEFAULT_ARGS),
 )

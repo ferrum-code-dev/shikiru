@@ -99,10 +99,10 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `session_log.py`: locate the session log, read compaction and `model_completed` events, count compactions at turn start.
 
-- [ ] 16. Run Muse turn processes
+- [x] 16. Run Muse turn processes
 
 ## Acceptance criteria
-- `MuseTurnSequence.start/advance`: argv (`exec --json`, optional `--session-id`, `--model`, `--reasoning-effort`, compaction thresholds, `args`, `--prompt-file`), environment with `MUSE_NO_AUTO_UPDATE=1`, one retry after a context failure. Omit `--model` for the `default` rung.
+- `MuseTurnSequence.start/advance`: argv (`exec --json`, optional `--session-id`, `--model`, `--reasoning-effort`, compaction thresholds, `args`, `--prompt-file`), environment with `MUSE_NO_AUTO_UPDATE=1`, one retry after a context failure. Omit `--model` for the `default` rung. Create `prompt.md` from `spec.prompt` when the engine has not written it; `compact_at_pct` accepts 0 to 99.0.
 
 - [ ] 17. Report Muse compaction and context usage
 

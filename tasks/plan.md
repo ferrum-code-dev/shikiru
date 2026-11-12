@@ -156,7 +156,8 @@ process-per-turn, so `exec` is the better fit; these practices carry over:
    sandbox disabled, like Claude's `bypassPermissions`.
 4. **Environment:** the turn environment is `os.environ` plus `spec.env` plus `MUSE_NO_AUTO_UPDATE=1`.
 5. **Compaction:** `compact_at_pct` (default 80, like Codex) becomes `--context-compaction-soft-threshold`
-   = pct/100 and a hard threshold a fixed margin above it, capped below 1. `Compacted` signals are read from
+   = pct/100 and a hard threshold a fixed 0.005 margin above it. `compact_at_pct` accepts 0 to 99.0, so the
+   hard threshold stays above the soft one and below 1; larger values are rejected, not clamped. `Compacted` signals are read from
    the session log's `context_compaction_installed` events after the process ends (same approach as
    Codex's rollout). Where the hard threshold would fall under the startup prompt, `doctor` reports it.
 6. **Quota:** `QuotaReported` from `run.usage.allowance` (`window` -> `5h`, `weekly` -> `7d`, as read from

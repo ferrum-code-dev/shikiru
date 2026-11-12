@@ -13,7 +13,7 @@ from shikiru.agents.contracts import (
     TurnFailed,
     TurnSpec,
 )
-from shikiru.private import append_private_bytes, make_private_dir
+from shikiru.private import append_private_bytes, create_private_text, make_private_dir
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -35,6 +35,13 @@ def stream_log_path(turn_dir: Path, role: str) -> Path:
 def stderr_log_path(turn_dir: Path, role: str) -> Path:
     """Return where a turn keeps `role`'s captured stderr."""
     return turn_dir / f"{role}{STDERR_FILENAME_SUFFIX}"
+
+
+def write_prompt_if_missing(path: Path, prompt: str) -> None:
+    """Create the owner-only prompt file `path` with `prompt` unless it already exists."""
+    make_private_dir(path.parent)
+    if not path.exists():
+        create_private_text(path, prompt)
 
 
 def _append_raw(path: Path, content: bytes) -> None:
