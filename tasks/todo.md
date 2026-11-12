@@ -47,10 +47,13 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - Catalog, cold: median 484 ms (483–494 ms, n=5) with the login credential copied but no cached catalog. It returns `bundledCatalog` with **zero models** and no error, and three consecutive cold calls did the same. Neither `muse serve` nor `muse usage` wrote the cache, so a machine without it would show no Muse models. The source of the cache is not established. The catalog must treat an empty bundled catalog as not authoritative (an error), never as "no models".
 - Timeouts (for entries 20 and 25): `muse --version` and `muse usage --json` use the shared `DOCTOR_TIMEOUT_SECONDS` (60 s, about 23× the slowest usage run), so no Muse-specific doctor constant. Catalog: 10 s, about 20× the slowest round trip of 494 ms. Claude uses 20 s.
 
-- [ ] 8. Check default model handling
+- [x] 8. Check default model handling
 
 ## Acceptance criteria
 - Check how `claude` and `codex` treat the `default` model that non-interactive `init` writes, and decide Muse's behaviour to match.
+- Claude Code 2.1.322 documents `default` as a model selection resolved to the account, organization, or configured runtime default. Its bounded local CLI probe produced no output before interruption, so this finding is based on [Claude's model configuration docs](https://code.claude.com/docs/en/model-config).
+- Codex CLI 0.167.1 documents `--model` as overriding the configured model, and `codex debug models` lists concrete slugs without a `default` entry. The local `codex exec --model default` probe failed before model validation because the app server could not initialize (`Operation not permitted`). Runtime handling is therefore **unverified**; do not infer rejection from catalog absence.
+- Decision for Muse: support the `default` sentinel so generated `muse:default` works, matching Claude's documented behavior. Add `ModelCatalog.supports_runtime_default`; `assess_model_choice` accepts the sentinel only when declared, so `PluginChecks`, Doctor and the ladder editor agree. Muse declares it, skips model context lookup for the sentinel, and omits `--model` at turn start, using its observed runtime default (`muse-ember-1.0`) rather than the catalog default (`muse-wonder-1.0`). This expands later catalog, shared assessment, turn sequence and integration-test entries as recorded in `tasks/plan.md`.
 
 - [ ] 9. Review wizard and plugin checks
 
@@ -68,6 +71,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 ## Acceptance criteria
 - `plugins/agents/muse/__init__.py`, `options.py`: constants (`muse`, `exec`, `--json`, `--session-id`, `--prompt-file`, `--output-schema`, flags, record types), `MuseOptions` (`args` default `--trust-workspace --disable-sandbox`, `compact_at_pct`, `billing_mode`), `MUSE_SETTINGS` from `shared_settings`.
+- Shared `ModelCatalog.supports_runtime_default` capability and `assess_model_choice` behavior: `default` is supported only when the catalog declares it.
 
 - [ ] 12. Parse Muse turn streams
 
@@ -82,7 +86,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [ ] 14. Test Muse stream parsing and failure rules
 
 ## Acceptance criteria
-- Unit tests over the Phase 0 fixtures: one table per rule, including unrecognised text -> `UNKNOWN`.
+- Unit tests over the Phase 0 fixtures: one table per rule, including unrecognised text -> `UNKNOWN`; test shared model-choice assessment with and without runtime-default support.
 
 ### Phase 2: process sequence and compaction
 
@@ -94,7 +98,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [ ] 16. Run Muse turn processes
 
 ## Acceptance criteria
-- `MuseTurnSequence.start/advance`: argv (`exec --json`, optional `--session-id`, `--model`, `--reasoning-effort`, compaction thresholds, `args`, `--prompt-file`), environment with `MUSE_NO_AUTO_UPDATE=1`, one retry after a context failure.
+- `MuseTurnSequence.start/advance`: argv (`exec --json`, optional `--session-id`, `--model`, `--reasoning-effort`, compaction thresholds, `args`, `--prompt-file`), environment with `MUSE_NO_AUTO_UPDATE=1`, one retry after a context failure. Omit `--model` for the `default` rung.
 
 - [ ] 17. Report Muse compaction and context usage
 
@@ -121,7 +125,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [ ] 21. Check Muse models and compaction in doctor
 
 ## Acceptance criteria
-- `doctor(models)`: add model checks against the catalog and the compaction threshold versus the startup prompt; no turn is run.
+- `doctor(models)`: add model checks against the catalog and the compaction threshold versus the startup prompt; no turn is run. Preserve the declared `default` sentinel through shared checks and skip model-specific context lookup for it.
 
 - [ ] 22. Expose and validate Muse settings
 
@@ -148,19 +152,19 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [ ] 26. Expose the Muse model catalog
 
 ## Acceptance criteria
-- `MuseAgent.model_catalog()` with caching and an error catalog on failure; `complete=True`, each model `offered`; ambiguous-`args` error like Codex; bounded by the measured timeout. The wizard lists an agent in ladders only when this succeeds, so this phase gates wizard support.
+- `MuseAgent.model_catalog()` with caching and an error catalog on failure; `complete=True`, each model `offered`; `supports_runtime_default=True`; ambiguous-`args` error like Codex; bounded by the measured timeout. The wizard lists an agent in ladders only when this succeeds, so this phase gates wizard support.
 
 - [ ] 27. Test Muse model catalog discovery
 
 ## Acceptance criteria
-- Tests: parser unit tests; integration test against the fake executable speaking the same lines.
+- Tests: parser unit tests; integration test against the fake executable speaking the same lines; assert the catalog advertises runtime-default support without adding a synthetic model choice.
 
 ### Phase 5: helper headless
 
 - [ ] 28. Implement Muse headless calls
 
 ## Acceptance criteria
-- `headless.py`: `MuseHeadless.ask` (prompt and schema in a temp directory, flags per the plan, timeout, parse the final JSON object, `HeadlessOutputError` on missing or invalid output).
+- `headless.py`: `MuseHeadless.ask` (prompt and schema in a temp directory, flags per the plan, timeout, parse the final JSON object, `HeadlessOutputError` on missing or invalid output); omit `--model` when the rung is `default`.
 
 - [ ] 29. Expose Muse headless support
 
@@ -192,7 +196,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [ ] 34. Test Muse setup and wizard integration
 
 ## Acceptance criteria
-- Wizard/init integration tests with a fake `muse` on `PATH`: offered when installed and logged in or `META_API_KEY` only; absent when missing or logged out; selectable for Leader, Implementer and Helper; slow `muse serve` shows the catalog error; generated `[agents.muse]` section.
+- Wizard/init integration tests with a fake `muse` on `PATH`: offered when installed and logged in or `META_API_KEY` only; absent when missing or logged out; selectable for Leader, Implementer and Helper; `default` validates only for catalogs that declare runtime-default support through `PluginChecks`, Doctor and the ladder editor; slow `muse serve` shows the catalog error; generated `[agents.muse]` section.
 
 - [ ] 35. Document Muse design and trust boundaries
 

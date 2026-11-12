@@ -173,13 +173,15 @@ process-per-turn, so `exec` is the better fit; these practices carry over:
 8. **Billing:** `billing_mode` option, `BILLING_SOURCE_OPERATOR_CONFIG`, as in Codex. Cost stays unknown;
    `Usage.cost_basis` is `unknown`.
 9. **Headless:** `muse exec --json --prompt-file P --output-schema S --disable-shell --no-session-log
-   --disable-web-tools --disable-reminders --model M --reasoning-effort E`, run in the given `cwd` with
-   the timeout, then parse the JSON object from the final terminal text. Errors raise
-   `HeadlessOutputError` like Codex's. No sandbox flags are added: the call does not write.
+   --disable-web-tools --disable-reminders [--model M] --reasoning-effort E`, run in the given `cwd` with
+   the timeout, then parse the JSON object from the final terminal text. Omit `--model` for the `default`
+   rung. Errors raise `HeadlessOutputError` like Codex's. No sandbox flags are added: the call does not write.
 10. **Interactive take-over:** `muse resume <session id> --model M [--reasoning-effort E] <args>`; the
-    command runs in the task root.
+    command runs in the task root. For the `default` rung, omit `--model`.
 11. **Catalog:** `model_catalog()` runs `muse serve` for one request, caches the result, and maps
     `variants` to `ModelChoice.efforts`; the context window feeds the compaction check in `doctor`.
+    The Muse catalog declares the shared `supports_runtime_default` capability without adding a synthetic
+    model choice; this capability describes the `default` selection, not an extra provider model.
 
 ## Layout
 
@@ -234,9 +236,12 @@ if the plugin satisfies these obligations, each of which is a requirement of thi
 2. **Model catalog is mandatory, not optional.** The wizard's ladder editor lists an agent only when
    `model_catalog()` returned an authoritative catalog with at least one `offered` model; otherwise the
    agent is shown with its error and cannot be added to a ladder, and `assess_model_choice` needs
-   `complete=True` to reject unknown models and efforts. The wizard calls it with options `{}` while the
-   screen shows "Discovering supported agent model choices…", so the `muse serve` call must be fast, bounded
-   by a timeout, closed cleanly, and return `ModelCatalog(error=…)` on any failure. If the operator's `args`
+   `complete=True` to reject unknown models and efforts. The shared `ModelCatalog.supports_runtime_default`
+   capability lets `assess_model_choice` accept the `default` sentinel only for agents that declare it;
+   `PluginChecks`, Doctor and the ladder editor all use this assessment. Muse declares the capability,
+   preserves the sentinel in `doctor(models)`, and skips context lookup for it. The wizard calls it with
+   options `{}` while showing "Discovering supported agent model choices…", so the `muse serve` call must
+   be fast, bounded by a timeout, closed cleanly, and return `ModelCatalog(error=…)` on any failure. If the operator's `args`
    select a model or profile, the catalog is reported ambiguous with an error, as Codex does.
 3. **Headless is required for the Helper role.** The ladder editor offers only agents whose
    `headless()` is non-`None` for the Helper scope, so `MuseHeadless` (Phase 5) is what makes Muse
@@ -251,13 +256,17 @@ if the plugin satisfies these obligations, each of which is a requirement of thi
 5. **Generated config.** `render_config` writes an `[agents.muse]` section for every passing plugin and
    uses `project.agents[0]` (alphabetical: `claude`, `codex`, `muse`) with the model `default` for the
    non-interactive default ladders. Muse is therefore the default only when it is the sole installed agent,
-   and then `muse:default` is rejected by `muse exec --model default`. Codex and Claude have the same
-   sentinel; before implementing, check how they treat it and match that behaviour (Phase 0). If neither
-   handles it, `doctor` with a complete catalog already says "unsupported model 'default'; use …", which is
-   the visible, non-silent outcome; no special case in core.
+   and `muse:default` must work. Claude resolves `default` to its runtime default. Codex's local catalog
+   exposes concrete slugs, but its runtime handling of `--model default` remains unverified. Muse will
+   support the sentinel explicitly: add `supports_runtime_default` to `ModelCatalog`, have
+   `assess_model_choice` accept `default` only when the agent declares that capability, and set it for Muse.
+   This makes `PluginChecks` preserve the model for the plugin doctor and lets the Doctor and ladder editor
+   validate it through the same assessment. The catalog stays provider-accurate instead of adding a fake
+   model. Muse's turn, headless and interactive invocation paths omit `--model` for this rung. That selects
+   Muse's observed runtime default `muse-ember-1.0`, not the catalog's `muse-wonder-1.0`.
 6. **Doctor at the wizard's last step.** The final Doctor run passes the configured ladder models and the
-   catalog, so Muse's `doctor(models)` must accept model names that are valid per the catalog, report
-   efforts only through the catalog, and not require a turn.
+   catalog, so Muse's `doctor(models)` must accept model names that are valid per the catalog and the
+   declared runtime-default sentinel, report efforts only through the catalog, and not require a turn.
 
 ## Testing strategy
 
@@ -271,12 +280,15 @@ own classes; no sleeping; coverage stays at or above 80%.
    that cannot be produced (quota exhaustion, overload) are written by hand and labelled synthetic in the
    README.
 2. **Unit tests:** `MuseTurnParser` over each fixture; failure classification table (one table per rule);
-   reset selection; threshold-to-flag mapping; version parsing; catalog parsing.
+   reset selection; threshold-to-flag mapping; version parsing; catalog parsing; shared catalog choice
+   assessment for the runtime-default capability.
 3. **Integration tests:** `tests/integration/test_muse_headless_contract.py` subclassing
    `AgentContractSuite`; invocation cases for new, resumed, model-change and environment; a headless test
    against a fake `muse` executable script placed on `PATH` that replays fixtures, so the real
    `SubprocessRunner` is exercised; `doctor` against the fake executable for the missing binary, logged-out
-   and logged-in cases.
+   and logged-in cases. Integration coverage verifies the `default` rung survives `PluginChecks`, passes
+   Doctor and the ladder editor only when the catalog declares runtime-default support, and starts Muse
+   without a `--model` argument for turn, headless and interactive commands.
 4. **Contract suite adjustment:** `test_offline_compaction_continues_within_one_turn` requires a recorded
    `Compacted` signal and the three `CompactionCase` scenarios. Muse compacts internally, so the
    `THRESHOLD` case checks the flags passed, `CONTEXT_FAILURE` and `FAILED_RECOVERY` cover the failure
@@ -313,7 +325,8 @@ own classes; no sleeping; coverage stays at or above 80%.
 - **Session log shape:** the first line is a permission-transaction frame; the reader must unwrap
   `children[].record_json` as well as plain records (see Compaction).
 - **Default model:** a plain `muse exec` without `--model` ran `muse-ember-1.0` (run source `startup`), not
-  the catalog default `muse-wonder-1.0`. Resolve with Phase 0 entry 8.
+  the catalog default `muse-wonder-1.0`. Phase 0 entry 8 decides to map the `default` sentinel to that
+  runtime behavior by omitting `--model`.
 - **Approval behaviour unattended:** with the sandbox disabled and approvals judged by Muse's LLM judge,
   a denied command would surface as a failed tool, not a hang. Verify in the live E2E; `--approval-mode`
   stays operator-configurable through `args`.
