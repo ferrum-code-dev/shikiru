@@ -64,7 +64,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - Open for the plan: a catalog error reaches the final Doctor as "could not be fully verified" (`_model_choices_check`), so the plugin still passes. The ladder step reads its catalog with options `{}` before the Agents step, so `args` that select a model are caught only at Doctor time. Codex behaves the same. Decide whether Muse should fail Doctor in that case.
 - Muse's catalog should set `complete=True`, as Codex does. Claude's catalog leaves it `False`, so `assess_model_choice` would not reject unknown models for Claude.
 
-- [ ] 10. Document Muse fixtures
+- [x] 10. Document Muse fixtures
 
 ## Acceptance criteria
 - Write `tests/fixtures/agents/muse/README.md` (version, date, what is redacted, what is synthetic).
