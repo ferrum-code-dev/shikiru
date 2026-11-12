@@ -30,10 +30,11 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - Spike: confirm the allowance `window` length (5 hours?) from `usage/changed` `windowDurationMins`.
 - Confirmed: `windowDurationMins` is `300` (5 hours). The Muse SDK project recorded a `usage/changed` observation of a 300-minute window after a short turn ([issue #44](https://github.com/meta-models/muse-code-sdk/issues/44)); the protocol schema describes it as the provider's 5-hour-class block ([field reference](https://meta-models.github.io/muse-code-sdk/next/generated/msp/types/subscriptionusagewindow/)). Local reproduction was unavailable because this Muse CLI session is not logged in.
 
-- [ ] 6. Verify turn prompt file availability
+- [x] 6. Verify turn prompt file availability
 
 ## Acceptance criteria
 - Spike: check whether the engine's `prompt.md` is in `turn_dir` when a turn starts, and decide between reusing it and writing a prompt file.
+- Confirmed: `TurnManager._prepare_turn_dir` writes `turn_dir/prompt.md` before `TurnManager.run` invokes `on_start`; the agent's `start_turn` runs afterward in `_attempts`. Muse can pass that existing file to `--prompt-file`; retain the plan's write-if-missing fallback as a defensive path.
 
 - [ ] 7. Measure Muse doctor and catalog latency
 
