@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from shikiru.agents.contracts import ModelCatalog, ModelChoice, assess_model_choice
@@ -12,6 +14,11 @@ _COMPLETE_CATALOG = ModelCatalog(
         ModelChoice(model="gpt-5.6-terra", efforts=()),
         ModelChoice(model="gpt-hidden", efforts=None, offered=False),
     ),
+    complete=True,
+)
+_RUNTIME_DEFAULT_CATALOG = replace(_COMPLETE_CATALOG, supports_runtime_default=True)
+_LISTED_DEFAULT_CATALOG = ModelCatalog(
+    models=(ModelChoice(model="default", efforts=("low",)),),
     complete=True,
 )
 _PARTIAL_CATALOG = ModelCatalog(
@@ -30,10 +37,23 @@ _PARTIAL_CATALOG = ModelCatalog(
         (_COMPLETE_CATALOG, "gpt-5.6-sol", "high", None, "could not be verified"),
         (_COMPLETE_CATALOG, "gpt-5.6-terra", "high", False, "no explicit effort choices"),
         (_COMPLETE_CATALOG, "gpt-hidden", None, True, "native effort default"),
+        (_COMPLETE_CATALOG, "default", None, False, "does not declare a runtime default"),
+        (_COMPLETE_CATALOG, "default", "high", False, "does not declare a runtime default"),
+        (_LISTED_DEFAULT_CATALOG, "default", None, False, "does not declare a runtime default"),
+        (_PARTIAL_CATALOG, "default", None, False, "does not declare a runtime default"),
+        (_RUNTIME_DEFAULT_CATALOG, "default", None, True, "runtime default model is selected"),
+        (_RUNTIME_DEFAULT_CATALOG, "default", "high", None, "could not be verified"),
         (_PARTIAL_CATALOG, "missing-model", None, None, "catalog is incomplete"),
         (
             ModelCatalog(error="native discovery failed"),
             "gpt-6-luna",
+            None,
+            None,
+            "catalog unavailable",
+        ),
+        (
+            ModelCatalog(error="native discovery failed"),
+            "default",
             None,
             None,
             "catalog unavailable",

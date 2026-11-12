@@ -132,7 +132,7 @@ name = "doctor-project"
 [agents.fake]
 
 [roles.leader]
-ladder = [{agent = "fake", model = "default", effort = "extreme"}]
+ladder = [{agent = "fake", model = "strong", effort = "extreme"}]
 
 [roles.implementer]
 escalate_after = 2
@@ -188,41 +188,32 @@ async def test_doctor_keeps_existing_choices_usable_when_catalog_discovery_is_un
     assert "unsupported model" not in catalog_check["detail"]
 
 
-async def test_doctor_reports_one_actionable_invalid_codex_model_failure(
-    tmp_path: Path,
-) -> None:
-    config = """
-[project]
-name = "doctor-project"
+_GPT_6_LUNA_CATALOG = json.dumps(
+    {
+        "models": [
+            {
+                "slug": "gpt-6-luna",
+                "context_window": 200_000,
+                "visibility": "list",
+                "supported_in_api": True,
+                "supported_reasoning_levels": [{"effort": "low"}],
+            }
+        ]
+    }
+)
 
-[agents.codex]
 
-[roles.leader]
-ladder = [{agent = "codex", model = "GPT-6-Luna"}]
+_CODEX_CAPTURE_NAME = "codex-invocations.txt"
 
-[roles.implementer]
-escalate_after = 2
-ladder = [{agent = "codex", model = "GPT-6-Luna"}]
 
-[roles.helper]
-ladder = [{agent = "codex", model = "GPT-6-Luna"}]
-"""
-    root = await _project(tmp_path, config)
+def _debug_model_invocations(tmp_path: Path) -> int:
+    capture = tmp_path / _CODEX_CAPTURE_NAME
+    return capture.read_text(encoding="utf-8").splitlines().count("debug models")
+
+
+def _fake_codex_environment(tmp_path: Path, catalog: str) -> dict[str, str]:
     executable_directory = tmp_path / "bin"
     executable_directory.mkdir()
-    catalog = json.dumps(
-        {
-            "models": [
-                {
-                    "slug": "gpt-6-luna",
-                    "context_window": 200_000,
-                    "visibility": "list",
-                    "supported_in_api": True,
-                    "supported_reasoning_levels": [{"effort": "low"}],
-                }
-            ]
-        }
-    )
     executable = executable_directory / "codex"
     executable.write_text(
         "\n".join(
@@ -251,14 +242,37 @@ ladder = [{agent = "codex", model = "GPT-6-Luna"}]
     executable.chmod(0o755)
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
-    capture = tmp_path / "codex-invocations.txt"
+    capture = tmp_path / _CODEX_CAPTURE_NAME
 
-    env = {
+    return {
         "PATH": f"{executable_directory}{os.pathsep}{os.environ['PATH']}",
         "CODEX_HOME": str(codex_home),
         "SHIKIRU_TEST_CODEX_CATALOG": catalog,
         "SHIKIRU_TEST_CODEX_CAPTURE": str(capture),
     }
+
+
+async def test_doctor_reports_one_actionable_invalid_codex_model_failure(
+    tmp_path: Path,
+) -> None:
+    config = """
+[project]
+name = "doctor-project"
+
+[agents.codex]
+
+[roles.leader]
+ladder = [{agent = "codex", model = "GPT-6-Luna"}]
+
+[roles.implementer]
+escalate_after = 2
+ladder = [{agent = "codex", model = "GPT-6-Luna"}]
+
+[roles.helper]
+ladder = [{agent = "codex", model = "GPT-6-Luna"}]
+"""
+    root = await _project(tmp_path, config)
+    env = _fake_codex_environment(tmp_path, _GPT_6_LUNA_CATALOG)
     code, stdout, stderr = await _cli(root, "--json", "doctor", **env)
     human_code, human_stdout, human_stderr = await _cli(root, "doctor", **env)
 
@@ -278,7 +292,42 @@ ladder = [{agent = "codex", model = "GPT-6-Luna"}]
     assert human_stdout.count("use 'gpt-6-luna'") == 1
     assert "context window" not in human_stdout
     assert "compaction" not in human_stdout
-    assert capture.read_text(encoding="utf-8").splitlines().count("debug models") == 2
+    assert _debug_model_invocations(tmp_path) == 2
+
+
+async def test_doctor_rejects_codex_runtime_default_as_an_undeclared_model(
+    tmp_path: Path,
+) -> None:
+    config = """
+[project]
+name = "doctor-project"
+
+[agents.codex]
+
+[roles.leader]
+ladder = [{agent = "codex", model = "default"}]
+
+[roles.implementer]
+escalate_after = 2
+ladder = [{agent = "codex", model = "default"}]
+
+[roles.helper]
+ladder = [{agent = "codex", model = "default"}]
+"""
+    root = await _project(tmp_path, config)
+    env = _fake_codex_environment(tmp_path, _GPT_6_LUNA_CATALOG)
+
+    code, stdout, stderr = await _cli(root, "--json", "doctor", **env)
+
+    report = json.loads(stdout)
+    checks = {check["name"]: check for check in report["checks"]}
+    choices = checks["plugin:codex:model_choices"]
+    assert code == 1
+    assert stderr == ""
+    assert report["ok"] is False
+    assert choices["ok"] is False
+    assert "unsupported model 'default'" in choices["detail"]
+    assert "does not declare a runtime default" in choices["detail"]
 
 
 FAKE_VERSION_SCRIPT = """#!/bin/sh
@@ -441,9 +490,9 @@ ladder = [{agent = "fake", model = "default"}, {agent = "fake", model = "strong"
 ladder = [{agent = "fake", model = "strong", effort = "high"}]
 
 [roles.helper]
-ladder = [{agent = "fake", model = "default", effort = "low"}]
+ladder = [{agent = "fake", model = "smoke", effort = "low"}]
 """
-MULTI_RUNG_PROBES = ["probe:fake:default", "probe:fake:strong:high", "probe:fake:default:low"]
+MULTI_RUNG_PROBES = ["probe:fake:default", "probe:fake:strong:high", "probe:fake:smoke:low"]
 
 
 def _probe_checks(stdout: str) -> dict[str, dict[str, object]]:

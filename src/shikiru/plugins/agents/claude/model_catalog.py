@@ -20,7 +20,10 @@ def parse_model_catalog(output: str, request_id: str) -> ModelCatalog:
     raw_models = response.get("models")
     if not isinstance(raw_models, list) or not raw_models:
         raise TypeError(_INVALID_RESPONSE)
-    return ModelCatalog(models=_catalog_choices(cast("list[object]", raw_models)))
+    return ModelCatalog(
+        models=_catalog_choices(cast("list[object]", raw_models)),
+        supports_runtime_default=True,
+    )
 
 
 def _matching_initialize_response(output: str, request_id: str) -> Mapping[str, Any]:

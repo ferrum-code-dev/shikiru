@@ -5,7 +5,14 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 import shikiru.agents.registry as registry_module
-from shikiru.agents.contracts import Agent, AgentContext, CheckResult, assess_model_choice
+from shikiru.agents.contracts import (
+    Agent,
+    AgentContext,
+    CheckResult,
+    ModelCatalog,
+    ModelChoice,
+    assess_model_choice,
+)
 from shikiru.agents.registry import AgentRegistry
 from shikiru.errors import ConfigError
 from shikiru.operator.detectors import ProjectDetectors
@@ -33,13 +40,26 @@ class _BrokenAgent:
         return [CheckResult(name="binary", ok=False, detail="binary is missing")]
 
 
-def _registry_for(agent: _BrokenAgent) -> AgentRegistry:
+class _CatalogAgent:
+    def __init__(self, catalog: ModelCatalog) -> None:
+        self._catalog = catalog
+        self.doctored_models: tuple[str, ...] = ()
+
+    async def model_catalog(self) -> ModelCatalog:
+        return self._catalog
+
+    async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
+        self.doctored_models = tuple(models)
+        return [CheckResult(name="binary", ok=True, detail="binary is present")]
+
+
+def _registry_for(agent: object, name: str = "broken") -> AgentRegistry:
     registry = AgentRegistry()
 
     def _create(_context: AgentContext) -> Agent:
         return cast("Agent", agent)
 
-    registry.register("broken", _create)
+    registry.register(name, _create)
     return registry
 
 
@@ -93,6 +113,51 @@ async def test_plugins_without_catalog_keep_checks_and_report_unknown_choices() 
     assert assess_model_choice("configured-model", None, result.catalog).supported is None
     assert not result.ok
     assert result.checks[0].detail == "binary is missing"
+
+
+@pytest.mark.parametrize(
+    ("catalog", "expected_models"),
+    [
+        (
+            ModelCatalog(
+                models=(
+                    ModelChoice(model="default", efforts=None),
+                    ModelChoice(model="gpt-6-luna", efforts=None),
+                ),
+                complete=True,
+            ),
+            ("gpt-6-luna",),
+        ),
+        (
+            ModelCatalog(
+                models=(ModelChoice(model="gpt-6-luna", efforts=None),),
+                complete=True,
+                supports_runtime_default=True,
+            ),
+            ("default", "gpt-6-luna"),
+        ),
+        (
+            ModelCatalog(models=(ModelChoice(model="gpt-6-luna", efforts=None),)),
+            ("default", "gpt-6-luna"),
+        ),
+    ],
+)
+async def test_runtime_default_reaches_plugin_doctor_only_when_catalog_declares_it(
+    catalog: ModelCatalog, expected_models: tuple[str, ...]
+) -> None:
+    agent = _CatalogAgent(catalog)
+    checks = PluginChecks(
+        _registry_for(agent, name="catalogued"),
+        SubprocessRunner(),
+        FakeClock(TASK_CREATED_AT),
+    )
+
+    result = await checks.check(
+        "catalogued", {}, ("default", "gpt-6-luna"), include_model_catalog=True
+    )
+
+    assert result.ok
+    assert agent.doctored_models == expected_models
 
 
 @pytest.mark.parametrize(

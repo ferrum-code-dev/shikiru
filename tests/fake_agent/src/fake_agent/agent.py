@@ -46,6 +46,7 @@ _FAKE_MODEL_CATALOG = ModelCatalog(
         ModelChoice(model="claude-fable-5-1[1m]", efforts=("high",)),
     ),
     complete=True,
+    supports_runtime_default=True,
 )
 
 

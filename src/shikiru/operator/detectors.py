@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from shikiru.agents.contracts import ModelCatalog, Rung, short_rung_text
+from shikiru.agents.contracts import RUNTIME_DEFAULT_MODEL, ModelCatalog, Rung, short_rung_text
 from shikiru.config.loader import validate_project_config_text
 from shikiru.errors import ConfigError, ProjectNotRepositoryRootError, RepositoryHasNoCommitsError
 from shikiru.operator.toml_text import toml_key, toml_value
@@ -42,7 +42,6 @@ CACHE_NAMES = (
     ".gradle",
     ".pytest_cache",
 )
-DEFAULT_MODEL = "default"
 LEADER_ROLE = "leader"
 IMPLEMENTER_ROLE = "implementer"
 HELPER_ROLE = "helper"
@@ -289,7 +288,7 @@ def render_config(
     selected_ladders = (
         ladders
         if ladders is not None
-        else {role: (Rung(agent=agent, model=DEFAULT_MODEL),) for role in ROLE_NAMES}
+        else {role: (Rung(agent=agent, model=RUNTIME_DEFAULT_MODEL),) for role in ROLE_NAMES}
     )
     for role in ROLE_NAMES:
         lines.append(f"[roles.{role}]")

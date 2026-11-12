@@ -1,0 +1,1 @@
+"""Muse Code agent plugin."""

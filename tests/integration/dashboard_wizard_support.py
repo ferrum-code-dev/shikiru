@@ -474,7 +474,7 @@ async def configure_helper_rung(pilot: Pilot[InitWizardResult | None]) -> None:
         model=MODEL_WITH_LITERAL_BRACKETS,
         effort="high",
     )
-    await assign_rung(pilot, agent="fake", model="default", effort="high")
+    await assign_rung(pilot, agent="fake", model="strong", effort="high")
 
 
 def app_field_value(pilot: Pilot[InitWizardResult | None]) -> str:
@@ -652,7 +652,7 @@ def assert_written_ladders(tmp_path: Path, result: InitWizardResult) -> None:
     )
     assert settings.roles.helper.ladder == [
         Rung(agent="fake-copy", model=MODEL_WITH_LITERAL_BRACKETS, effort="high"),
-        Rung(agent="fake", model="default", effort="high"),
+        Rung(agent="fake", model="strong", effort="high"),
     ]
 
 

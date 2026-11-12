@@ -252,7 +252,7 @@ async def test_corrected_complexity_draft_is_written_and_resolved(
     async with app.run_test(size=WIZARD_SIZE) as pilot:
         await click_next(pilot, "#wizard-page-1")
         await set_base_ladders(pilot)
-        await set_scope_text(pilot, LADDER_SCOPES[4], "fake:default:high")
+        await set_scope_text(pilot, LADDER_SCOPES[4], "fake:strong:high")
         await click_next(pilot, "#wizard-page-2")
         await click_next(pilot, "#wizard-page-3")
         await click_next(pilot, "#wizard-page-4")
@@ -274,13 +274,13 @@ async def test_corrected_complexity_draft_is_written_and_resolved(
     settings = load_settings(tmp_path)
     assert settings.roles.implementer.complexity.keys() == {"high"}
     assert settings.roles.implementer.complexity["high"].ladder == [
-        Rung(agent="fake", model="default", effort="high"),
+        Rung(agent="fake", model="strong", effort="high"),
     ]
     assert pick_rung(make_task(complexity="normal"), Role.IMPLEMENTER, settings) == Rung(
         agent="fake", model="smoke", effort="low"
     )
     assert pick_rung(make_task(complexity="high"), Role.IMPLEMENTER, settings) == Rung(
-        agent="fake", model="default", effort="high"
+        agent="fake", model="strong", effort="high"
     )
 
 

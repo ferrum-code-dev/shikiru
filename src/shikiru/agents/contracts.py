@@ -34,6 +34,7 @@ SHIKIRU_MODULE = "shikiru"
 DOCTOR_TIMEOUT_SECONDS = 60.0
 PERCENT = 100
 MODEL_SUGGESTION_CUTOFF = 0.6
+RUNTIME_DEFAULT_MODEL = "default"
 COST_BASIS_UNKNOWN = "unknown"
 COST_BASIS_BILLED = "billed"
 COST_BASIS_API_EQUIVALENT = "api_equivalent"
@@ -206,6 +207,7 @@ class ModelCatalog:
     models: tuple[ModelChoice, ...] = ()
     error: str | None = None
     complete: bool = False
+    supports_runtime_default: bool = False
 
 
 @dataclass(frozen=True)
@@ -484,6 +486,8 @@ def assess_model_choice(
     if catalog.error is not None:
         supported = None
         detail = f"model catalog unavailable: {catalog.error}"
+    elif model == RUNTIME_DEFAULT_MODEL:
+        supported, detail = _runtime_default_assessment(effort, catalog.supports_runtime_default)
     else:
         model_choice = next((choice for choice in catalog.models if choice.model == model), None)
         if model_choice is None:
@@ -520,6 +524,20 @@ def assess_model_choice(
             supported = issue is None
             detail = issue or f"model {model_choice.model!r} supports effort {effort!r}"
     return ModelChoiceAssessment(supported, detail)
+
+
+def _runtime_default_assessment(effort: str | None, declared: bool) -> tuple[bool | None, str]:
+    if not declared:
+        return False, (
+            f"unsupported model {RUNTIME_DEFAULT_MODEL!r}; this agent does not declare "
+            "a runtime default model"
+        )
+    if effort is None:
+        return True, "runtime default model is selected; native effort default is selected"
+    return None, (
+        f"effort {effort!r} for the runtime default model could not be verified because "
+        "the catalog does not report its effort choices; leave effort unset"
+    )
 
 
 def _unsupported_effort_issue(

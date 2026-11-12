@@ -71,7 +71,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 ### Phase 1: options and parser
 
-- [ ] 11. Add Muse options and protocol constants
+- [x] 11. Add Muse options and protocol constants
 
 ## Acceptance criteria
 - `plugins/agents/muse/__init__.py`, `options.py`: constants (`muse`, `exec`, `--json`, `--session-id`, `--prompt-file`, `--output-schema`, flags, record types), `MuseOptions` (`args` default `--trust-workspace --disable-sandbox`, `compact_at_pct`, `billing_mode`), `MUSE_SETTINGS` from `shared_settings`.
