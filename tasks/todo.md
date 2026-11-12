@@ -131,7 +131,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `doctor(models)`: add model checks against the catalog and the compaction threshold versus the startup prompt; no turn is run. Preserve the declared `default` sentinel through shared checks and skip model-specific context lookup for it.
 
-- [ ] 22. Expose and validate Muse settings
+- [x] 22. Expose and validate Muse settings
 
 ## Acceptance criteria
 - Settings: exactly `compact_at_pct`, `billing_mode`, `args` (default `--trust-workspace --disable-sandbox`); `create()` rejects unknown keys via `options_error`.
