@@ -9,6 +9,11 @@ import pytest
 
 from shikiru.agents.contracts import Compacted
 from shikiru.plugins.agents.muse.options import (
+    BUDGET_AFTER_KEY,
+    BUDGET_BEFORE_KEY,
+    COMPACTION_INSTALLED_EVENT,
+    ESTIMATED_PROMPT_TOKENS_KEY,
+    EVENT_KIND_KEY,
     PERMISSION_TRANSACTION_FRAME,
     XDG_DATA_HOME_ENV_VAR,
 )
@@ -17,8 +22,10 @@ from shikiru.plugins.agents.muse.session_log import (
     SessionLogError,
     compaction_count,
     compactions_after,
+    mark_of,
     model_completions,
     muse_home,
+    progress_since,
     session_records,
 )
 
@@ -99,6 +106,22 @@ def test_model_completed_events_carry_exact_call_usage() -> None:
             estimated_prompt_tokens=31082,
         )
     ]
+
+
+def test_progress_since_a_mark_reports_only_new_compactions_and_prompt_estimates() -> None:
+    original_records = session_records(_fixture_lines())
+    mark = mark_of(original_records)
+    new_compaction = json.loads(_MODEL_COMPLETED_LINE)
+    new_compaction["payload"]["event"][EVENT_KIND_KEY] = COMPACTION_INSTALLED_EVENT
+    new_compaction["payload"]["event"][BUDGET_BEFORE_KEY] = {ESTIMATED_PROMPT_TOKENS_KEY: 40000}
+    new_compaction["payload"]["event"][BUDGET_AFTER_KEY] = {ESTIMATED_PROMPT_TOKENS_KEY: 20000}
+    new_completion = json.loads(_MODEL_COMPLETED_LINE)
+    new_completion["payload"]["event"][ESTIMATED_PROMPT_TOKENS_KEY] = 22000
+
+    progress = progress_since([*original_records, new_compaction, new_completion], mark)
+
+    assert progress.compactions == [Compacted(pre_tokens=40000, post_tokens=20000)]
+    assert progress.latest_prompt_tokens == 22000
 
 
 @pytest.mark.parametrize("line", ["not json", "[1, 2]"])

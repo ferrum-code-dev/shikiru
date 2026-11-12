@@ -109,7 +109,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - Compaction signals from the session log; `context_used_pct` from the prompt estimate.
 
-- [ ] 18. Test Muse thresholds and session logs
+- [x] 18. Test Muse thresholds and session logs
 
 ## Acceptance criteria
 - Unit tests for threshold-to-flag mapping and log parsing.
