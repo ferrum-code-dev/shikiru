@@ -77,7 +77,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - `plugins/agents/muse/__init__.py`, `options.py`: constants (`muse`, `exec`, `--json`, `--session-id`, `--prompt-file`, `--output-schema`, flags, record types), `MuseOptions` (`args` default `--trust-workspace --disable-sandbox`, `compact_at_pct`, `billing_mode`), `MUSE_SETTINGS` from `shared_settings`.
 - Shared `ModelCatalog.supports_runtime_default` capability and `assess_model_choice` behavior: `default` is supported only when the catalog declares it.
 
-- [ ] 12. Parse Muse turn streams
+- [x] 12. Parse Muse turn streams
 
 ## Acceptance criteria
 - `turn.py`: `MuseTurnParser.feed/finish` mapping records to signals (session, message, tools, usage, quota, terminal), malformed-line handling, interrupted turns, resumed usage accumulation.
