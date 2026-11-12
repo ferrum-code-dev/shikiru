@@ -4,7 +4,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 ### Phase 0: captures and spikes (no code)
 
-- [ ] 1. Capture redacted genuine exec --json streams in an empty scratch git repository
+- [x] 1. Capture redacted genuine exec --json streams in an empty scratch git repository
 
 ## Acceptance criteria
 - Capture redacted genuine `exec --json` streams in an empty scratch git repository: first turn, resumed turn (`--session-id`), tool turn, stopped turn (`SIGTERM`), headless `--output-schema` result.

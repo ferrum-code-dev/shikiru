@@ -1,0 +1,2 @@
+muse: workspace root: /private/tmp/scratch-repo (cwd default)
+muse: workspace trust: trusted source=run-flag
