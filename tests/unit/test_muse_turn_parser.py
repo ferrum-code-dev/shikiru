@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from shikiru.agents.contracts import FailureKind, SessionStarted, TurnFailed
+from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.plugins.agents.muse.options import (
     RECORD_PAYLOAD_KEY,
     RECORD_PAYLOAD_TYPE_KEY,
@@ -18,6 +19,7 @@ from shikiru.plugins.agents.muse.options import (
     STREAM_KIND_SESSION,
 )
 from shikiru.plugins.agents.muse.turn import MuseTurnParser
+from tests.support.clock import LONG_AGO, FakeClock
 
 _SESSION_ID = "muse-session"
 _INVALID_PERCENTAGES = (10**400, float("inf"), float("-inf"), float("nan"))
@@ -26,7 +28,8 @@ _INVALID_PERCENTAGE_IDS = ("integer-overflow", "positive-infinity", "negative-in
 
 @pytest.mark.parametrize("used_percent", _INVALID_PERCENTAGES, ids=_INVALID_PERCENTAGE_IDS)
 def test_invalid_allowance_percentage_fails_turn_as_malformed(used_percent: Any) -> None:
-    parser = MuseTurnParser()
+    clock = FakeClock(LONG_AGO)
+    parser = MuseTurnParser(clock, ResetTimeParser(clock))
     line = json.dumps(
         {
             RECORD_STREAM_KEY: {

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from math import isfinite
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
@@ -26,6 +27,7 @@ from shikiru.agents.contracts import (
     TurnFailed,
     Usage,
     UsageReported,
+    is_exhausted,
 )
 from shikiru.agents.sdk.turn import EMPTY_OUTPUT
 from shikiru.plugins.agents.muse.options import (
@@ -46,6 +48,9 @@ from shikiru.plugins.agents.muse.options import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+    from shikiru.agents.sdk.reset_time import ResetTimeParser
+    from shikiru.clock import Clock
 
 _TEXT_KEY = "text"
 _REASON_KEY = "reason"
@@ -69,6 +74,22 @@ _TOOL_OUTCOME_SUCCESS = "success"
 _MILLISECONDS_PER_SECOND = 1000
 _MALFORMED_MESSAGE = "Muse emitted malformed JSONL"
 _NO_TERMINAL_MESSAGE = "Muse turn ended without a terminal record"
+_AUTH_TEXTS = ("rejected", "missing meta credentials", "not logged in")
+_RATE_LIMIT_STATUS_PATTERN = re.compile(r"\b429\b")
+_QUOTA_TEXTS = ("quota", "usage limit")
+_OTHER_TEXTS = ("does not exist or you lack access", "did not reach a terminal state")
+_UNAVAILABLE_TEXTS = ("overloaded", "temporarily unavailable", "service unavailable")
+_SERVER_ERROR_STATUS_PATTERN = re.compile(
+    r"\b(?:HTTP|status)(?:\s+code)?[\s:=/]*5\d{2}\b"
+    r"|\b5\d{2}\s+(?:internal server error|bad gateway|service unavailable|gateway timeout)\b",
+    re.IGNORECASE,
+)
+_RESETS_AT_PATTERN = re.compile(
+    r"resets at\s+(?P<instant>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?"
+    r"(?:Z|[+-]\d{2}:\d{2})?)",
+    re.IGNORECASE,
+)
+_LONGEST_QUOTA_WINDOW = timedelta(days=7)
 
 
 class _MalformedRecordError(Exception):
@@ -81,14 +102,26 @@ class _TurnTotals(NamedTuple):
     cached_tokens: int
 
 
+class _FailedRun(NamedTuple):
+    reason: str
+
+
 class MuseTurnParser:
     """Map Muse `exec --json` records into agent signals, holding the terminal until finish."""
 
-    def __init__(self, initial_usage: Usage | None = None) -> None:
+    def __init__(
+        self,
+        clock: Clock,
+        reset_time: ResetTimeParser,
+        initial_usage: Usage | None = None,
+    ) -> None:
+        self._clock = clock
+        self._reset_time = reset_time
         self._initial_usage = initial_usage or Usage(0, 0, 0, 0, None, COST_BASIS_UNKNOWN, None)
         self._session_started = False
         self._pending_tools: list[str] = []
-        self._terminal: TurnEnded | TurnFailed | None = None
+        self._windows: tuple[QuotaWindow, ...] = ()
+        self._terminal: TurnEnded | _FailedRun | None = None
         self._malformed = False
         self._handlers: dict[str, Callable[[Mapping[str, Any]], list[AgentSignal]]] = {
             RUN_OUTPUT_DELTA_TYPE: self._output_delta,
@@ -169,6 +202,7 @@ class MuseTurnParser:
         windows = _allowance_windows(payload.get(_ALLOWANCE_KEY))
         signals: list[AgentSignal] = [UsageReported(self._cumulative_usage(totals))]
         if windows:
+            self._windows = windows
             signals.append(QuotaReported(windows))
         return signals
 
@@ -177,7 +211,7 @@ class MuseTurnParser:
         return []
 
     def _failed(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
-        self._terminal = TurnFailed(FailureKind.UNKNOWN, _text(payload, _REASON_KEY), None)
+        self._terminal = _FailedRun(_text(payload, _REASON_KEY))
         return []
 
     def _terminal_signals(
@@ -185,8 +219,8 @@ class MuseTurnParser:
     ) -> list[AgentSignal]:
         if isinstance(self._terminal, TurnEnded):
             return [self._terminal]
-        if isinstance(self._terminal, TurnFailed):
-            return [] if interrupted else [self._terminal]
+        if isinstance(self._terminal, _FailedRun):
+            return [] if interrupted else [self._classify(self._terminal.reason)]
         if interrupted:
             return []
         tail = stderr or EMPTY_OUTPUT
@@ -199,6 +233,9 @@ class MuseTurnParser:
             )
         ]
 
+    def _classify(self, reason: str) -> TurnFailed:
+        return classify_failure(reason, self._windows, self._clock.now(), self._reset_time)
+
     def _cumulative_usage(self, totals: _TurnTotals) -> Usage:
         base = self._initial_usage
         return Usage(
@@ -210,6 +247,59 @@ class MuseTurnParser:
             cost_basis=COST_BASIS_UNKNOWN,
             context_used_pct=base.context_used_pct,
         )
+
+
+def classify_failure(
+    reason: str,
+    windows: Sequence[QuotaWindow],
+    now: datetime,
+    reset_time: ResetTimeParser,
+) -> TurnFailed:
+    """Classify a Muse failure text against the failed turn's allowance windows.
+
+    A quota failure's reset is the latest future instant, within the longest quota window, of
+    the exhausted windows' resets and of an ISO timestamp the text gives after `resets at`.
+    """
+    lowered = reason.lower()
+    if _contains(lowered, _AUTH_TEXTS):
+        return TurnFailed(FailureKind.AUTH, reason, None)
+    if _is_quota_failure(reason, lowered, windows):
+        return TurnFailed(FailureKind.QUOTA, reason, _quota_reset(reason, windows, now, reset_time))
+    if _contains(lowered, _OTHER_TEXTS):
+        return TurnFailed(FailureKind.OTHER, reason, None)
+    if _contains(lowered, _UNAVAILABLE_TEXTS) or _SERVER_ERROR_STATUS_PATTERN.search(reason):
+        return TurnFailed(FailureKind.UNAVAILABLE, reason, None)
+    return TurnFailed(FailureKind.UNKNOWN, reason, None)
+
+
+def _is_quota_failure(reason: str, lowered: str, windows: Sequence[QuotaWindow]) -> bool:
+    rate_limited = _RATE_LIMIT_STATUS_PATTERN.search(reason) is not None
+    return (rate_limited and _contains(lowered, _QUOTA_TEXTS)) or any(
+        is_exhausted(window) for window in windows
+    )
+
+
+def _quota_reset(
+    reason: str, windows: Sequence[QuotaWindow], now: datetime, reset_time: ResetTimeParser
+) -> datetime | None:
+    candidates = [window.resets_at for window in windows if is_exhausted(window)]
+    candidates.append(_reset_from_text(reason, reset_time))
+    horizon = now + _LONGEST_QUOTA_WINDOW
+    plausible = [
+        candidate
+        for candidate in candidates
+        if candidate is not None and now < candidate <= horizon
+    ]
+    return max(plausible, default=None)
+
+
+def _reset_from_text(reason: str, reset_time: ResetTimeParser) -> datetime | None:
+    match = _RESETS_AT_PATTERN.search(reason)
+    return None if match is None else reset_time.parse(match.group("instant"))
+
+
+def _contains(value: str, fragments: Sequence[str]) -> bool:
+    return any(fragment in value for fragment in fragments)
 
 
 def _mapping(value: object) -> Mapping[str, Any]:

@@ -82,7 +82,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `turn.py`: `MuseTurnParser.feed/finish` mapping records to signals (session, message, tools, usage, quota, terminal), malformed-line handling, interrupted turns, resumed usage accumulation.
 
-- [ ] 13. Classify Muse failures and reset times
+- [x] 13. Classify Muse failures and reset times
 
 ## Acceptance criteria
 - Failure classification (auth, quota with reset selection, unavailable, other, unknown) as a pure function; reset selection through `ResetTimeParser`.
