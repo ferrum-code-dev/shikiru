@@ -55,10 +55,14 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - Codex CLI 0.167.1 documents `--model` as overriding the configured model, and `codex debug models` lists concrete slugs without a `default` entry. The local `codex exec --model default` probe failed before model validation because the app server could not initialize (`Operation not permitted`). Runtime handling is therefore **unverified**; do not infer rejection from catalog absence.
 - Decision for Muse: support the `default` sentinel so generated `muse:default` works, matching Claude's documented behavior. Add `ModelCatalog.supports_runtime_default`; `assess_model_choice` accepts the sentinel only when declared, so `PluginChecks`, Doctor and the ladder editor agree. Muse declares it, skips model context lookup for the sentinel, and omits `--model` at turn start, using its observed runtime default (`muse-ember-1.0`) rather than the catalog default (`muse-wonder-1.0`). This expands later catalog, shared assessment, turn sequence and integration-test entries as recorded in `tasks/plan.md`.
 
-- [ ] 9. Review wizard and plugin checks
+- [x] 9. Review wizard and plugin checks
 
 ## Acceptance criteria
 - Read the wizard and `PluginChecks` flow once more against the plan's "Init, the wizard and doctor" section.
+- Reviewed against `plan.md` "Init, the wizard and doctor" (items 1–6). Matches the code: detection runs `PluginChecks.check(name, {})` with no models and no catalog (`ProjectDetectors._agents`); the ladder picker lists only agents with an error-free catalog and at least one `offered` model (`InitWizardApp._load_model_catalogs`); headless gates the Helper scope; blank `args` writes `[]` and `options_rejection` focuses the rejected key; `render_config` uses the alphabetically first passing agent; the final Doctor passes configured models and the catalog (`Doctor._plugin_checks`); core code names no provider.
+- Not yet present, as the plan expects: `ModelCatalog.supports_runtime_default`, the `default` sentinel, and the Muse plugin (entries 11 and 19–25).
+- Open for the plan: a catalog error reaches the final Doctor as "could not be fully verified" (`_model_choices_check`), so the plugin still passes. The ladder step reads its catalog with options `{}` before the Agents step, so `args` that select a model are caught only at Doctor time. Codex behaves the same. Decide whether Muse should fail Doctor in that case.
+- Muse's catalog should set `complete=True`, as Codex does. Claude's catalog leaves it `False`, so `assess_model_choice` would not reject unknown models for Claude.
 
 - [ ] 10. Document Muse fixtures
 
