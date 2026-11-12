@@ -104,7 +104,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `MuseTurnSequence.start/advance`: argv (`exec --json`, optional `--session-id`, `--model`, `--reasoning-effort`, compaction thresholds, `args`, `--prompt-file`), environment with `MUSE_NO_AUTO_UPDATE=1`, one retry after a context failure. Omit `--model` for the `default` rung. Create `prompt.md` from `spec.prompt` when the engine has not written it; `compact_at_pct` accepts 0 to 99.0.
 
-- [ ] 17. Report Muse compaction and context usage
+- [x] 17. Report Muse compaction and context usage
 
 ## Acceptance criteria
 - Compaction signals from the session log; `context_used_pct` from the prompt estimate.

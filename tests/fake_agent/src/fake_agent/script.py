@@ -23,6 +23,8 @@ class _StepModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     quota_windows: list[QuotaWindowStep] = Field(default_factory=list)
+    evidence_fault: str | None = None
+    evidence_recovered: bool = False
     release_fifo: str = ""
     context_used_pct: float | None = None
 

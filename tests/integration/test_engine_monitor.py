@@ -14,6 +14,7 @@ import psutil
 from shikiru.clock import SystemClock
 from shikiru.config.settings import AgentConfig
 from shikiru.domain.events import EventKind
+from shikiru.domain.faults import DETAIL_KEY, open_fault_streaks
 from shikiru.domain.tasks import Mode, Role, Status, Step
 from shikiru.engine.turn_processes import read_turn_pid
 from shikiru.plugins.agents.claude.agent import create as create_claude_agent
@@ -26,6 +27,7 @@ from tests.support.flow import build_flow, build_flow_task, flow_settings, init_
 from tests.support.waiting import MEDIUM_WAIT_SECONDS, stop_engine, wait_until
 
 _TIMEOUT_20_SECONDS = 20
+_SESSION_LOG_FAULT = "Muse session log is missing"
 
 if TYPE_CHECKING:
     import pytest
@@ -82,6 +84,40 @@ async def test_monitor_records_quota_compaction_usage_and_turn_view(
     assert "UsageReported" in signals
     assert "TurnEnded" in signals
     assert not (role_path / "turn.pid").exists()
+
+
+async def test_monitor_records_unreadable_session_evidence_as_an_engine_fault(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [
+            {"kind": "needs_decision", "evidence_fault": _SESSION_LOG_FAULT},
+            {"kind": "accept", "evidence_recovered": True},
+        ],
+    )
+    flow_env = build_flow(engine_env, flow_settings())
+
+    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+
+    faults = flow_env.events.since(0, kinds=[EventKind.ENGINE_FAULT], task_id=task.id)
+    assert [event.data[DETAIL_KEY] for event in faults] == [_SESSION_LOG_FAULT]
+    recoveries = flow_env.events.since(0, kinds=[EventKind.ENGINE_RECOVERED], task_id=task.id)
+    assert [event.data["scope"] for event in recoveries] == ["implementer session log"]
+    assert (
+        open_fault_streaks(
+            flow_env.events.since(
+                0, kinds=[EventKind.ENGINE_FAULT, EventKind.ENGINE_RECOVERED], task_id=task.id
+            )
+        )
+        == []
+    )
+    role_path = run_dir(engine_env.project_root, task.id) / "implementer"
+    rows = [json.loads(line) for line in (role_path / "view.jsonl").read_text().splitlines()]
+    assert "EvidenceFault" in [row["signal"] for row in rows]
 
 
 async def test_stalled_turn_is_stopped_then_resumed_with_continue(

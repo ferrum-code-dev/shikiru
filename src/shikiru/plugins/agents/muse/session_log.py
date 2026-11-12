@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator, Sequence
 
 _MALFORMED_RECORD_MESSAGE = "Muse session log holds a malformed record"
+_UNREADABLE_MESSAGE = "Muse session log could not be read"
 
 
 class SessionLogError(Exception):
@@ -55,6 +56,25 @@ class ModelCompletion:
     output_tokens: int
     cached_tokens: int
     estimated_prompt_tokens: int | None
+
+
+@dataclass(frozen=True)
+class SessionLogMark:
+    """How many compactions and model calls a session log held at some point."""
+
+    compactions: int
+    model_calls: int
+
+
+NO_SESSION_LOG_MARK = SessionLogMark(compactions=0, model_calls=0)
+
+
+@dataclass(frozen=True)
+class SessionLogProgress:
+    """What a session log gained after a mark: its compactions and the latest prompt estimate."""
+
+    compactions: list[Compacted]
+    latest_prompt_tokens: int | None
 
 
 def muse_home(environ: Mapping[str, str], user_home: Path) -> Path:
@@ -75,7 +95,50 @@ def locate_session_log(home: Path, session_id: str) -> Path | None:
 
 def read_session_records(path: Path) -> list[Mapping[str, Any]]:
     """Read a session log's records, unwrapping permission-transaction frames."""
-    return session_records(path.read_text(encoding="utf-8").splitlines())
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as error:
+        raise SessionLogError(_UNREADABLE_MESSAGE) from error
+    return session_records(text.splitlines())
+
+
+def read_session_log(home: Path, session_id: str) -> list[Mapping[str, Any]] | None:
+    """Return the session's records, or `None` when the session has no log yet."""
+    log = locate_session_log(home, session_id)
+    return None if log is None else read_session_records(log)
+
+
+def mark_of(records: Sequence[Mapping[str, Any]]) -> SessionLogMark:
+    """Return how many compactions and model calls the records hold now."""
+    return SessionLogMark(
+        compactions=compaction_count(records), model_calls=len(model_completions(records))
+    )
+
+
+def start_mark(home: Path, session_id: str | None) -> SessionLogMark | None:
+    """Return the session's mark before a process runs, or `None` when its log is unavailable."""
+    if session_id is None:
+        return NO_SESSION_LOG_MARK
+    try:
+        records = read_session_log(home, session_id)
+        return None if records is None else mark_of(records)
+    except SessionLogError:
+        return None
+
+
+def progress_since(
+    records: Sequence[Mapping[str, Any]], mark: SessionLogMark
+) -> SessionLogProgress:
+    """Return the compactions and the latest known prompt estimate recorded after `mark`."""
+    estimates = [
+        completion.estimated_prompt_tokens
+        for completion in model_completions(records)[mark.model_calls :]
+        if completion.estimated_prompt_tokens is not None
+    ]
+    return SessionLogProgress(
+        compactions=compactions_after(records, mark.compactions),
+        latest_prompt_tokens=estimates[-1] if estimates else None,
+    )
 
 
 def session_records(lines: Iterable[str]) -> list[Mapping[str, Any]]:

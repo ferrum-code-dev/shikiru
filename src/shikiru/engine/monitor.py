@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 from shikiru.agents.contracts import (
     AgentSignal,
     Compacted,
+    EvidenceFault,
+    EvidenceRecovered,
     Message,
     QuotaReported,
     SessionStarted,
@@ -25,6 +27,14 @@ from shikiru.agents.contracts import (
 )
 from shikiru.domain.activity import is_stalled, seconds_until_stall
 from shikiru.domain.events import EventKind
+from shikiru.domain.faults import (
+    DETAIL_KEY,
+    ERROR_KEY,
+    RECOVERABLE_KEY,
+    REPEAT_KEY,
+    SCOPE_KEY,
+    open_fault_streaks,
+)
 from shikiru.domain.recovery import ProtocolError, Stalled
 from shikiru.private import append_private_text, make_private_dir
 from shikiru.ui.glyphs import GLYPH_STALLED, ROLE_GLYPHS
@@ -53,6 +63,7 @@ if TYPE_CHECKING:
     from shikiru.tmux.decorator import PaneDecorator
 
 _LINE_ENDING = "\n"
+_EVIDENCE_SCOPE_SUFFIX = "session log"
 
 
 class TurnMonitor:
@@ -274,6 +285,35 @@ class TurnMonitor:
                     "post_tokens": signal.post_tokens,
                 },
             )
+        elif isinstance(signal, EvidenceFault):
+            self._events.append(
+                EventKind.ENGINE_FAULT,
+                task_id=task.id,
+                message=f"{task.id} {role.value} {signal.message}",
+                data={
+                    SCOPE_KEY: f"{role.value} {_EVIDENCE_SCOPE_SUFFIX}",
+                    ERROR_KEY: EvidenceFault.__name__,
+                    RECOVERABLE_KEY: True,
+                    REPEAT_KEY: 1,
+                    DETAIL_KEY: signal.message,
+                },
+            )
+        elif isinstance(signal, EvidenceRecovered):
+            scope = f"{role.value} {_EVIDENCE_SCOPE_SUFFIX}"
+            open_faults = open_fault_streaks(
+                self._events.since(
+                    0,
+                    kinds=[EventKind.ENGINE_FAULT, EventKind.ENGINE_RECOVERED],
+                    task_id=task.id,
+                )
+            )
+            if any(fault.scope == scope for fault in open_faults):
+                self._events.append(
+                    EventKind.ENGINE_RECOVERED,
+                    task_id=task.id,
+                    message=f"{scope} recovered",
+                    data={SCOPE_KEY: scope},
+                )
 
     async def _wait_for_signal(
         self, signal_task: asyncio.Task[AgentSignal], timeout: float

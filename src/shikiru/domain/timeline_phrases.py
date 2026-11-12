@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, cast
 
 from shikiru.agents.contracts import (
     Compacted,
+    EvidenceFault,
+    EvidenceRecovered,
     Message,
     QuotaReported,
     SessionStarted,
@@ -42,6 +44,8 @@ _BOOKKEEPING = frozenset(
         UsageReported.__name__,
         QuotaReported.__name__,
         Compacted.__name__,
+        EvidenceFault.__name__,
+        EvidenceRecovered.__name__,
     }
 )
 _WORD_SEPARATOR = " "

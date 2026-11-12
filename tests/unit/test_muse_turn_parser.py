@@ -40,7 +40,8 @@ from shikiru.plugins.agents.muse.options import (
     STREAM_KIND_SESSION,
     TOOL_RESULT_TYPE,
 )
-from shikiru.plugins.agents.muse.turn import MuseTurnParser
+from shikiru.plugins.agents.muse.session_log import NO_SESSION_LOG_MARK
+from shikiru.plugins.agents.muse.turn import MuseTurnParser, SessionWatch, context_pct
 from tests.support.clock import LONG_AGO, FakeClock
 
 if TYPE_CHECKING:
@@ -58,6 +59,8 @@ _BASH = "bash"
 _FIRST_SESSION_ID = "00000000-0000-7000-9000-000000000002"
 _TOOL_SESSION_ID = "00000000-0000-7000-9000-00000000005e"
 _AS_OF_MS = 1794502385942
+_NO_LOG_HOME = Path("muse-home-without-sessions")
+_CONTEXT_WINDOW = 1000
 _FIVE_HOUR_RESET_MS = 1794514840000
 _SEVEN_DAY_RESET_MS = 1794787200000
 _PRIOR_USAGE = Usage(1_000, 5, 7, 3, None, COST_BASIS_UNKNOWN, 40.0)
@@ -106,6 +109,15 @@ def _instant(milliseconds: int) -> datetime:
     return datetime.fromtimestamp(milliseconds / _MILLISECONDS, tz=UTC)
 
 
+def _no_log_watch() -> SessionWatch:
+    return SessionWatch(
+        home=_NO_LOG_HOME,
+        session_id=None,
+        context_window_tokens=_CONTEXT_WINDOW,
+        mark=NO_SESSION_LOG_MARK,
+    )
+
+
 def _signals(
     lines: Sequence[str],
     exit_code: int = _EXIT_OK,
@@ -115,7 +127,7 @@ def _signals(
     interrupted: bool = False,
 ) -> list[AgentSignal]:
     clock = FakeClock(_NOW)
-    parser = MuseTurnParser(clock, ResetTimeParser(clock), initial_usage)
+    parser = MuseTurnParser(clock, ResetTimeParser(clock), _no_log_watch(), initial_usage)
     fed = [signal for line in lines for signal in parser.feed(line)]
     return [*fed, *parser.finish(exit_code, stderr, interrupted=interrupted)]
 
@@ -372,9 +384,24 @@ def test_malformed_records_fail_the_turn_unless_interrupted(
     assert [failure.kind for failure in failures] == ([kind] if kind is not None else [])
 
 
+@pytest.mark.parametrize(
+    ("prompt_tokens", "previous", "expected"),
+    [
+        (None, 40.0, 40.0),
+        (250, None, 25.0),
+        (1500, 40.0, 100.0),
+    ],
+    ids=("no-estimate-keeps-previous", "estimate-is-share-of-window", "over-window-is-capped"),
+)
+def test_context_usage_is_the_latest_estimate_over_the_window(
+    prompt_tokens: int | None, previous: float | None, expected: float
+) -> None:
+    assert context_pct(prompt_tokens, _CONTEXT_WINDOW, previous) == expected
+
+
 def test_records_outside_the_mapping_produce_no_signal() -> None:
     clock = FakeClock(_NOW)
-    parser = MuseTurnParser(clock, ResetTimeParser(clock))
+    parser = MuseTurnParser(clock, ResetTimeParser(clock), _no_log_watch())
     output = _first_record(_fixture_lines("turn_first"), RUN_OUTPUT_DELTA_TYPE)
     parser.feed(_fixture_lines("turn_first")[0])
 
@@ -390,7 +417,7 @@ _INVALID_PERCENTAGE_IDS = ("integer-overflow", "positive-infinity", "negative-in
 @pytest.mark.parametrize("used_percent", _INVALID_PERCENTAGES, ids=_INVALID_PERCENTAGE_IDS)
 def test_invalid_allowance_percentage_fails_turn_as_malformed(used_percent: Any) -> None:
     clock = FakeClock(LONG_AGO)
-    parser = MuseTurnParser(clock, ResetTimeParser(clock))
+    parser = MuseTurnParser(clock, ResetTimeParser(clock), _no_log_watch())
     line = json.dumps(
         {
             RECORD_STREAM_KEY: {

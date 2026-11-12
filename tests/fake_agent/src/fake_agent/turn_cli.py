@@ -63,6 +63,8 @@ _EVENT_TOOL_FINISHED = "tool_finished"
 _EVENT_USAGE_REPORTED = "usage_reported"
 _EVENT_QUOTA_REPORTED = "quota_reported"
 _EVENT_COMPACTED = "compacted"
+_EVENT_EVIDENCE_FAULT = "evidence_fault"
+_EVENT_EVIDENCE_RECOVERED = "evidence_recovered"
 _EVENT_TURN_ENDED = "turn_ended"
 _EVENT_TURN_FAILED = "turn_failed"
 _WORK_TOOL_NAME = "read"
@@ -96,6 +98,16 @@ def _emit(entry: Mapping[str, object]) -> None:
 
 def _session_started(session_id: str) -> None:
     _emit({"event": _EVENT_SESSION_STARTED, "session_id": session_id})
+
+
+def _emit_evidence_fault(message: str | None) -> None:
+    if message is not None:
+        _emit({"event": _EVENT_EVIDENCE_FAULT, "message": message})
+
+
+def _emit_evidence_recovered(recovered: bool) -> None:
+    if recovered:
+        _emit({"event": _EVENT_EVIDENCE_RECOVERED})
 
 
 def _failure(step: FailStep) -> None:
@@ -211,6 +223,8 @@ async def run_turn(session_id: str, prompt: str, compact_at_pct: float | None) -
                 "windows": [window.model_dump() for window in step.quota_windows],
             }
         )
+    _emit_evidence_fault(step.evidence_fault)
+    _emit_evidence_recovered(step.evidence_recovered)
     if isinstance(step, CrashStep):
         sys.stderr.write(CRASH_STDERR + "\n")
         return 1

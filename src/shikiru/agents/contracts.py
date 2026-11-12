@@ -279,6 +279,18 @@ class Compacted:
 
 
 @dataclass(frozen=True)
+class EvidenceFault:
+    """Evidence the agent keeps for the turn could not be read; the turn's result still stands."""
+
+    message: str
+
+
+@dataclass(frozen=True)
+class EvidenceRecovered:
+    """Evidence the agent keeps for the turn is readable again."""
+
+
+@dataclass(frozen=True)
 class TurnEnded:
     """A turn finished; `last_message` is the agent's final message for it."""
 
@@ -302,6 +314,8 @@ type AgentSignal = (
     | UsageReported
     | QuotaReported
     | Compacted
+    | EvidenceFault
+    | EvidenceRecovered
     | TurnEnded
     | TurnFailed
 )

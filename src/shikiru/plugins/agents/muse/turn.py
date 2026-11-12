@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from math import isfinite
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -16,6 +17,8 @@ from shikiru.agents.contracts import (
     QUOTA_WINDOW_SEVEN_DAY,
     RUNTIME_DEFAULT_MODEL,
     AgentSignal,
+    EvidenceFault,
+    EvidenceRecovered,
     FailureKind,
     Message,
     QuotaReported,
@@ -65,14 +68,28 @@ from shikiru.plugins.agents.muse.options import (
     TOOL_RESULT_TYPE,
     TOOL_TASK_KIND_PREFIX,
 )
+from shikiru.plugins.agents.muse.session_log import (
+    SessionLogError,
+    SessionLogProgress,
+    mark_of,
+    muse_home,
+    progress_since,
+    read_session_log,
+    start_mark,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+    from pathlib import Path
 
     from shikiru.agents.contracts import TurnSpec
     from shikiru.agents.sdk.reset_time import ResetTimeParser
     from shikiru.clock import Clock
+    from shikiru.plugins.agents.muse.session_log import SessionLogMark
 
+_MISSING_LOG_MESSAGE = "Muse session log is missing; compactions and context usage are unknown"
+_UNAVAILABLE_AT_START_MESSAGE = "Muse session log was missing or unreadable before the turn started"
+_NO_PROGRESS = SessionLogProgress(compactions=[], latest_prompt_tokens=None)
 _TEXT_KEY = "text"
 _REASON_KEY = "reason"
 _EVENT_KEY = "event"
@@ -134,6 +151,20 @@ class _FailedRun(NamedTuple):
     reason: str
 
 
+@dataclass(frozen=True)
+class SessionWatch:
+    """Where a turn process finds its session log, and what the log held before the process ran.
+
+    A `None` mark means the log was unreadable before the process ran, so the turn cannot tell
+    what it added: it reports an evidence fault and keeps its own result.
+    """
+
+    home: Path
+    session_id: str | None
+    context_window_tokens: int
+    mark: SessionLogMark | None
+
+
 class MuseTurnParser:
     """Map Muse `exec --json` records into agent signals, holding the terminal until finish."""
 
@@ -141,12 +172,15 @@ class MuseTurnParser:
         self,
         clock: Clock,
         reset_time: ResetTimeParser,
+        watch: SessionWatch,
         initial_usage: Usage | None = None,
     ) -> None:
         self._clock = clock
         self._reset_time = reset_time
+        self._watch = watch
         self._initial_usage = initial_usage or Usage(0, 0, 0, 0, None, COST_BASIS_UNKNOWN, None)
-        self._session_started = False
+        self._session_id: str | None = None
+        self._totals: _TurnTotals | None = None
         self._pending_tools: list[str] = []
         self._windows: tuple[QuotaWindow, ...] = ()
         self._terminal: TurnEnded | _FailedRun | None = None
@@ -190,16 +224,19 @@ class MuseTurnParser:
             ToolFinished(name, None, None) for name in self._pending_tools
         ]
         if self._malformed and not interrupted:
-            return [*unfinished, TurnFailed(FailureKind.UNKNOWN, _MALFORMED_MESSAGE, None)]
-        return [*unfinished, *self._terminal_signals(exit_code, stderr, interrupted=interrupted)]
+            return [*unfinished, _malformed_failure()]
+        return [
+            *unfinished,
+            *self._reports(),
+            *self._terminal_signals(exit_code, stderr, interrupted=interrupted),
+        ]
 
     def _session_signals(self, record: Mapping[str, Any]) -> list[AgentSignal]:
         stream = _mapping(record.get(RECORD_STREAM_KEY))
-        if self._session_started or stream.get(STREAM_KIND_KEY) != STREAM_KIND_SESSION:
+        if self._session_id is not None or stream.get(STREAM_KIND_KEY) != STREAM_KIND_SESSION:
             return []
-        session_id = _text(stream, STREAM_ID_KEY)
-        self._session_started = True
-        return [SessionStarted(session_id)]
+        self._session_id = _text(stream, STREAM_ID_KEY)
+        return [SessionStarted(self._session_id)]
 
     def _payload_signals(self, record: Mapping[str, Any]) -> list[AgentSignal]:
         payload = _mapping(record.get(RECORD_PAYLOAD_KEY))
@@ -233,13 +270,51 @@ class MuseTurnParser:
         return signals
 
     def _usage(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
-        totals = _turn_totals(_models(payload.get(_MODELS_KEY)))
+        self._totals = _turn_totals(_models(payload.get(_MODELS_KEY)))
         windows = _allowance_windows(payload.get(_ALLOWANCE_KEY))
-        signals: list[AgentSignal] = [UsageReported(self._cumulative_usage(totals))]
-        if windows:
-            self._windows = windows
-            signals.append(QuotaReported(windows))
-        return signals
+        if not windows:
+            return []
+        self._windows = windows
+        return [QuotaReported(windows)]
+
+    def _reports(self) -> list[AgentSignal]:
+        if self._watch.mark is None:
+            try:
+                records = (
+                    None
+                    if self._watch.session_id is None
+                    else read_session_log(self._watch.home, self._watch.session_id)
+                )
+                recovery_mark = None if records is None else mark_of(records)
+            except SessionLogError:
+                recovery_mark = None
+            signals: list[AgentSignal] = [EvidenceFault(_UNAVAILABLE_AT_START_MESSAGE)]
+            if recovery_mark is not None:
+                signals.append(EvidenceRecovered())
+            return [*signals, *self._usage_reports(_NO_PROGRESS)]
+        try:
+            progress = self._progress()
+        except SessionLogError as error:
+            return [EvidenceFault(str(error)), *self._usage_reports(_NO_PROGRESS)]
+        recovered = [EvidenceRecovered()] if self._session_id is not None else []
+        return [*recovered, *progress.compactions, *self._usage_reports(progress)]
+
+    def _usage_reports(self, progress: SessionLogProgress) -> list[AgentSignal]:
+        if self._totals is None:
+            return []
+        usage = self._cumulative_usage(self._totals, progress.latest_prompt_tokens)
+        return [UsageReported(usage)]
+
+    def _progress(self) -> SessionLogProgress:
+        if self._session_id is None:
+            return _NO_PROGRESS
+        mark = self._watch.mark
+        if mark is None:
+            raise SessionLogError(_UNAVAILABLE_AT_START_MESSAGE)
+        records = read_session_log(self._watch.home, self._session_id)
+        if records is None:
+            raise SessionLogError(_MISSING_LOG_MESSAGE)
+        return progress_since(records, mark)
 
     def _completed(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         self._terminal = TurnEnded(_text(payload, _TEXT_KEY))
@@ -271,7 +346,7 @@ class MuseTurnParser:
     def _classify(self, reason: str) -> TurnFailed:
         return classify_failure(reason, self._windows, self._clock.now(), self._reset_time)
 
-    def _cumulative_usage(self, totals: _TurnTotals) -> Usage:
+    def _cumulative_usage(self, totals: _TurnTotals, latest_prompt_tokens: int | None) -> Usage:
         base = self._initial_usage
         return Usage(
             input_tokens=base.input_tokens + totals.input_tokens,
@@ -280,7 +355,9 @@ class MuseTurnParser:
             cache_write_tokens=base.cache_write_tokens,
             cost_usd=None,
             cost_basis=COST_BASIS_UNKNOWN,
-            context_used_pct=base.context_used_pct,
+            context_used_pct=context_pct(
+                latest_prompt_tokens, self._watch.context_window_tokens, base.context_used_pct
+            ),
         )
 
 
@@ -294,12 +371,16 @@ class MuseTurnSequence(TurnProcessSequence):
         base_environment: Mapping[str, str],
         clock: Clock,
         reset_time: ResetTimeParser,
+        user_home: Path,
+        context_window_tokens: int,
         compact_at_pct: float,
     ) -> None:
         self._args = tuple(args)
         self._base_environment = base_environment
         self._clock = clock
         self._reset_time = reset_time
+        self._user_home = user_home
+        self._context_window_tokens = context_window_tokens
         self._compact_at_pct = compact_at_pct
         self._session_id: str | None = None
         self._usage: Usage | None = None
@@ -321,12 +402,20 @@ class MuseTurnSequence(TurnProcessSequence):
 
     def _process(self, spec: TurnSpec) -> TurnProcess:
         write_prompt_if_missing(spec.turn_dir / PROMPT_FILENAME, spec.prompt)
-        parser = MuseTurnParser(self._clock, self._reset_time, self._usage)
+        environment = self._environment(spec)
+        home = muse_home(environment, self._user_home)
+        watch = SessionWatch(
+            home=home,
+            session_id=self._session_id,
+            context_window_tokens=self._context_window_tokens,
+            mark=start_mark(home, self._session_id),
+        )
+        parser = MuseTurnParser(self._clock, self._reset_time, watch, self._usage)
         self._parser = parser
         return TurnProcess(
             argv=self._argv(spec),
             cwd=spec.cwd,
-            env=self._environment(spec),
+            env=environment,
             parser=parser,
         )
 
@@ -359,6 +448,15 @@ class MuseTurnSequence(TurnProcessSequence):
                 self._usage = signal.usage
 
 
+def context_pct(
+    prompt_tokens: int | None, window_tokens: int, previous: float | None
+) -> float | None:
+    """Return the share of the context window the latest prompt estimate fills, else `previous`."""
+    if prompt_tokens is None:
+        return previous
+    return min(prompt_tokens / window_tokens * PERCENT, PERCENT)
+
+
 def compaction_thresholds(compact_at_pct: float) -> tuple[float, float]:
     """Return Muse's soft and hard compaction thresholds as fractions of the context window."""
     soft = compact_at_pct / PERCENT
@@ -386,6 +484,10 @@ def classify_failure(
     if _contains(lowered, _UNAVAILABLE_TEXTS) or _SERVER_ERROR_STATUS_PATTERN.search(reason):
         return TurnFailed(FailureKind.UNAVAILABLE, reason, None)
     return TurnFailed(FailureKind.UNKNOWN, reason, None)
+
+
+def _malformed_failure() -> TurnFailed:
+    return TurnFailed(FailureKind.UNKNOWN, _MALFORMED_MESSAGE, None)
 
 
 def _is_quota_failure(reason: str, lowered: str, windows: Sequence[QuotaWindow]) -> bool:

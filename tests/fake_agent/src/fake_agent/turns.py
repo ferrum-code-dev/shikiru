@@ -14,6 +14,8 @@ from fake_agent.headless import FakeHeadlessAgent
 from shikiru.agents.contracts import (
     AgentSignal,
     Compacted,
+    EvidenceFault,
+    EvidenceRecovered,
     FailureKind,
     Message,
     QuotaReported,
@@ -160,6 +162,14 @@ def _compacted(entry: Mapping[str, Any]) -> AgentSignal:
     return Compacted(entry["pre_tokens"], entry["post_tokens"])
 
 
+def _evidence_fault(entry: Mapping[str, Any]) -> AgentSignal:
+    return EvidenceFault(entry["message"])
+
+
+def _evidence_recovered(_entry: Mapping[str, Any]) -> AgentSignal:
+    return EvidenceRecovered()
+
+
 def _turn_ended(entry: Mapping[str, Any]) -> AgentSignal:
     return TurnEnded(entry["last_message"])
 
@@ -177,6 +187,8 @@ _SIGNAL_BUILDERS: dict[str, Callable[[Mapping[str, Any]], AgentSignal]] = {
     "usage_reported": _usage_reported,
     "quota_reported": _quota_reported,
     "compacted": _compacted,
+    "evidence_fault": _evidence_fault,
+    "evidence_recovered": _evidence_recovered,
     "turn_ended": _turn_ended,
     "turn_failed": _turn_failed,
 }

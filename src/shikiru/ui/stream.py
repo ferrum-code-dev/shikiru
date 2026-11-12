@@ -8,6 +8,8 @@ from rich.text import Text
 
 from shikiru.agents.contracts import (
     Compacted,
+    EvidenceFault,
+    EvidenceRecovered,
     Message,
     QuotaReported,
     SessionStarted,
@@ -57,6 +59,8 @@ class StreamLine:
             UsageReported.__name__: _usage,
             QuotaReported.__name__: _silent,
             Compacted.__name__: _compacted,
+            EvidenceFault.__name__: _evidence_fault,
+            EvidenceRecovered.__name__: _silent,
             TurnEnded.__name__: _turn_ended,
             TurnFailed.__name__: _turn_failed,
         }
@@ -142,6 +146,10 @@ def _usage(row: ViewRow) -> Text:
 
 def _compacted(_row: ViewRow) -> Text:
     return Text(f"{GLYPH_PENDING} context compacted", style=STYLE_DIM)
+
+
+def _evidence_fault(row: ViewRow) -> Text:
+    return Text(f"{GLYPH_ESCALATED} {row['message']}", style=ALERT_COLOR)
 
 
 def _turn_ended(_row: ViewRow) -> Text:
