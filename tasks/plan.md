@@ -102,13 +102,28 @@ reasoningEffortVariants, contextLimit, outputLimit}]}`. Right now: `muse-wonder-
   `--context-compaction-soft-threshold` and `--context-compaction-hard-threshold` (fractions of the
   window). The startup prompt is about 22.5k tokens (2.2%); a hard threshold below that makes the run
   refuse to start (`startup prompt estimate … reaches hard threshold`).
-- `exec --json` prints no compaction record. The on-disk session log does:
-  `<muse home>/sessions/YYYY/MM/DD/<session id>/session.jsonl`, muse home `~/.local/share/muse`
-  (`museHome` in the `initialize` result). Its `runtime.session` events include
-  `context_compaction_candidate` (`trigger`, `timing`, `status`, `strategy`, `budget_before`,
-  `estimated_budget_after`), `context_compaction_fallback` (`reason`, `can_continue`) and
-  `context_compaction_installed`. A rejected candidate with `hard_threshold_failed` was captured; a
-  successful `installed` event has not been captured yet.
+- `exec --json` prints no compaction record. The on-disk session log does, at
+  `<muse home>/sessions/YYYY/MM/DD/<session id>/session.jsonl`. Verified in Phase 0 entry 4:
+  - **Session id to path:** the session id is the `stream.id` of the session records and names the
+    directory. A resumed turn appends to the same file. The date directory is the session's creation date;
+    every run was observed between 17:00 and 18:10 UTC, so local versus UTC is not distinguished, and a
+    resume across a day boundary is untested.
+  - **Muse home:** `$XDG_DATA_HOME/muse` when `XDG_DATA_HOME` is set, otherwise `~/.local/share/muse`. This
+    matches `museHome` in the `initialize` result. Setting `XDG_DATA_HOME` moves the log; the default home
+    is not written.
+  - **Frame shape:** `session.jsonl` is mixed. Line 1 is a `session_permission_transaction` frame whose
+    `children[].record_json` strings each hold one record; every other line is a plain record. The reader
+    must unwrap frames and accept both shapes.
+  - **Successful compaction:** a `context_compaction_candidate` (`candidate_id`, `trigger`, `timing`,
+    `status`, `strategy`, `replacement`) is followed by `context_compaction_installed` (`install_id`,
+    `candidate_id`, `trigger`, `timing`, `strategy_id`, `summarized_through`, `replacement`,
+    `preserved_segment`, `budget_before` and `budget_after` each with `estimated_prompt_tokens`,
+    `prompt_cache_boundary`, `summarizer_usage`, `replay_model_messages`). The first compaction of the spike
+    is in `tests/fixtures/agents/muse/session_compaction.jsonl`, with the home path redacted.
+  - **Triggers observed:** with soft 2.5% and hard 3.0% thresholds, every candidate was
+    `trigger: hard_threshold_blocking`, `timing: mid_turn`. A soft-threshold-only trigger was not observed.
+  - A rejected candidate with `hard_threshold_failed` was captured earlier. The `context_compaction_fallback`
+    event (`reason`, `can_continue`) has not been captured.
 - The session log also carries `model_completed` records with exact per-call usage.
 
 ## What t3code teaches
@@ -265,9 +280,10 @@ own classes; no sleeping; coverage stays at or above 80%.
 4. **Contract suite adjustment:** `test_offline_compaction_continues_within_one_turn` requires a recorded
    `Compacted` signal and the three `CompactionCase` scenarios. Muse compacts internally, so the
    `THRESHOLD` case checks the flags passed, `CONTEXT_FAILURE` and `FAILED_RECOVERY` cover the failure
-   text and the rejected-candidate fallback. If a real `installed` event cannot be captured, the suite is
-   extended so a plugin can declare its compaction as internal, with the scenarios it supports; that
-   contract change is its own commit.
+   text and the rejected-candidate fallback. A real `installed` event was captured (Phase 0, entry 4), so the
+   suite keeps requiring a `Compacted` signal, and the `THRESHOLD` case must force a candidate with a long
+   conversation as the spike did. The internal-compaction extension is needed only if that case cannot be
+   made reliable.
    Existing tests that pin the built-in agent set must learn about Muse:
    `tests/integration/test_operator_plugin_checks.py` (`settings` defaults parametrized over `claude` and
    `codex`: add `("muse", ["--trust-workspace", "--disable-sandbox"])`, which also checks the three setting
@@ -284,15 +300,20 @@ own classes; no sleeping; coverage stays at or above 80%.
 
 ## Risks and open items
 
-- **Compaction record shape:** the successful `context_compaction_installed` event is unobserved. A spike
-  forces one with a long conversation (soft and hard thresholds a little above the 2.2% startup size) and
-  captures the event; until then the parser reads only fields confirmed from the rejected candidate.
+- **Compaction record shape:** resolved for hard-threshold compactions. The successful
+  `context_compaction_installed` event and its candidate are captured (see Compaction). Still open: whether a
+  soft-threshold-only trigger produces a candidate, and the `context_compaction_fallback` shape.
 - **Quota and overload texts:** unobserved; classification is text based and conservative, with
   `UNKNOWN` as the default, so an unrecognised failure escalates instead of being retried blindly.
-- **Session log location:** `<muse home>` comes from the server's `initialize` result; the plugin
-  derives it from `XDG_DATA_HOME` (default `~/.local/share/muse`) and `doctor` verifies it exists. A
-  missing log degrades usage and compaction signals but never the turn result; the parser records that as
-  a visible `doctor`/fault entry, not a silent fallback.
+- **Session log location:** verified (see Compaction). `<muse home>` is `$XDG_DATA_HOME/muse`, else
+  `~/.local/share/muse`, and matches `museHome` from the server's `initialize` result; the log path is
+  `sessions/YYYY/MM/DD/<session id>/session.jsonl`. The date directory's timezone and cross-day resume are
+  unverified. `doctor` verifies the log exists. A missing log degrades usage and compaction signals but
+  never the turn result; the parser records that as a visible `doctor`/fault entry, not a silent fallback.
+- **Session log shape:** the first line is a permission-transaction frame; the reader must unwrap
+  `children[].record_json` as well as plain records (see Compaction).
+- **Default model:** a plain `muse exec` without `--model` ran `muse-ember-1.0` (run source `startup`), not
+  the catalog default `muse-wonder-1.0`. Resolve with Phase 0 entry 8.
 - **Approval behaviour unattended:** with the sandbox disabled and approvals judged by Muse's LLM judge,
   a denied command would surface as a failed tool, not a hang. Verify in the live E2E; `--approval-mode`
   stays operator-configurable through `args`.
@@ -303,4 +324,5 @@ own classes; no sleeping; coverage stays at or above 80%.
 - **Catalog latency:** `muse serve` starts a full runtime; measure it (Phase 0) and set the timeout from the
   measurement, not a guess.
 - **Interactive resume:** `muse resume <id>` was read from help only; verify in tmux during the E2E.
-- **Cost:** the probes used about 25 tiny turns; the E2E rung should stay at one small turn per role.
+- **Cost:** the probes used about 25 tiny turns; the E2E rung should stay at one small turn per role. A forced
+  compaction run (Phase 0 entry 4) made 4 model calls with 133k input tokens, so it stays out of the default gate.

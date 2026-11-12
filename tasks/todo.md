@@ -19,7 +19,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - Capture `muse --version`, `muse usage --json` (logged in and logged out) and a `model/list` reply.
 
-- [ ] 4. Capture a successful Muse compaction
+- [x] 4. Capture a successful Muse compaction
 
 ## Acceptance criteria
 - Spike: force a successful compaction (long conversation, thresholds just above the 2.2% startup prompt) and capture the `context_compaction_installed` event from `session.jsonl`; record how a session id maps to the log path and whether `XDG_DATA_HOME` moves it.
