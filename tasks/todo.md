@@ -24,10 +24,11 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - Spike: force a successful compaction (long conversation, thresholds just above the 2.2% startup prompt) and capture the `context_compaction_installed` event from `session.jsonl`; record how a session id maps to the log path and whether `XDG_DATA_HOME` moves it.
 
-- [ ] 5. Confirm the allowance window length
+- [x] 5. Confirm the allowance window length
 
 ## Acceptance criteria
 - Spike: confirm the allowance `window` length (5 hours?) from `usage/changed` `windowDurationMins`.
+- Confirmed: `windowDurationMins` is `300` (5 hours). The Muse SDK project recorded a `usage/changed` observation of a 300-minute window after a short turn ([issue #44](https://github.com/meta-models/muse-code-sdk/issues/44)); the protocol schema describes it as the provider's 5-hour-class block ([field reference](https://meta-models.github.io/muse-code-sdk/next/generated/msp/types/subscriptionusagewindow/)). Local reproduction was unavailable because this Muse CLI session is not logged in.
 
 - [ ] 6. Verify turn prompt file availability
 
