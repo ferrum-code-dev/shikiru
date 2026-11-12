@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 MUSE_COMMAND = "muse"
 EXEC_SUBCOMMAND = "exec"
+RESUME_SUBCOMMAND = "resume"
 JSON_FLAG = "--json"
 SESSION_ID_FLAG = "--session-id"
 PROMPT_FILE_FLAG = "--prompt-file"

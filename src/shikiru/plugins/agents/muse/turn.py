@@ -161,7 +161,7 @@ class SessionWatch:
 
     home: Path
     session_id: str | None
-    context_window_tokens: int
+    context_window_tokens: int | None
     mark: SessionLogMark | None
 
 
@@ -372,7 +372,7 @@ class MuseTurnSequence(TurnProcessSequence):
         clock: Clock,
         reset_time: ResetTimeParser,
         user_home: Path,
-        context_window_tokens: int,
+        context_window_tokens: int | None,
         compact_at_pct: float,
     ) -> None:
         self._args = tuple(args)
@@ -449,10 +449,13 @@ class MuseTurnSequence(TurnProcessSequence):
 
 
 def context_pct(
-    prompt_tokens: int | None, window_tokens: int, previous: float | None
+    prompt_tokens: int | None, window_tokens: int | None, previous: float | None
 ) -> float | None:
-    """Return the share of the context window the latest prompt estimate fills, else `previous`."""
-    if prompt_tokens is None:
+    """Return the share of the context window the latest prompt estimate fills, else `previous`.
+
+    `previous` also stands while the context window is unknown.
+    """
+    if prompt_tokens is None or window_tokens is None:
         return previous
     return min(prompt_tokens / window_tokens * PERCENT, PERCENT)
 

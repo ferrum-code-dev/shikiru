@@ -116,7 +116,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 ### Phase 3: agent, doctor, quota, interactive
 
-- [ ] 19. Implement the Muse agent
+- [x] 19. Implement the Muse agent
 
 ## Acceptance criteria
 - `agent.py`: `MuseAgent.start_turn` (`StreamingTurn.start`), `interactive_command`, `settings`, `billing_declaration`, `create` with `options_error`.
