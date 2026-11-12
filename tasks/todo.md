@@ -87,7 +87,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - Failure classification (auth, quota with reset selection, unavailable, other, unknown) as a pure function; reset selection through `ResetTimeParser`.
 
-- [ ] 14. Test Muse stream parsing and failure rules
+- [x] 14. Test Muse stream parsing and failure rules
 
 ## Acceptance criteria
 - Unit tests over the Phase 0 fixtures: one table per rule, including unrecognised text -> `UNKNOWN`; test shared model-choice assessment with and without runtime-default support.
