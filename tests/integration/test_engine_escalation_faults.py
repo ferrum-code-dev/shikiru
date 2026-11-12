@@ -32,7 +32,7 @@ from tests.support.engine import (
 )
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
-from tests.support.waiting import wait_until, wait_until_advancing
+from tests.support.waiting import LONG_WAIT_SECONDS, wait_until, wait_until_advancing
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
     from tests.support.tmux import TmuxServer
 
-_WAIT_SECONDS = 15
+_WAIT_SECONDS = LONG_WAIT_SECONDS
 _TICKS_AFTER_FAILURE = 200
 _EVIDENCE = "evidence that survives the failure"
 

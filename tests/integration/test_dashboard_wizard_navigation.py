@@ -383,6 +383,26 @@ async def test_ladder_draft_and_caret_survive_scope_changes(
         await click_button(pilot, "#wizard-cancel")
 
 
+async def test_stale_input_change_does_not_replace_the_shown_ladder(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await git_project(tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", no_entry_points)
+    app = await app_with_agents(tmp_path, {"fake": create_fake_agent})
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await click_next(pilot, "#wizard-page-1")
+        await set_base_ladders(pilot)
+        await set_scope(pilot, LADDER_SCOPES[0])
+        field = app.query_one("#ladder-input", Input)
+        field.post_message(Input.Changed(field, ""))
+        await pilot.pause()
+        await click_next(pilot, "#wizard-page-2")
+        assert not str(app.query_one("#ladder-problem", Static).render()).strip()
+        await click_button(pilot, "#wizard-cancel")
+
+
 async def test_agent_and_model_changes_clear_dependent_add_choices(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,

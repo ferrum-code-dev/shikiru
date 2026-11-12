@@ -335,6 +335,9 @@ class _CountingRunner(SubprocessRunner):
 
 
 _ACTIVE_TASK_COUNT = 3
+_AGENT_PAIR_LAYOUT = LayoutSplit(
+    split="h", panes=[PaneLeaf(pane="leader"), PaneLeaf(pane="implementer")]
+)
 
 
 async def test_healthy_restore_makes_one_tmux_call_whatever_the_task_count(
@@ -344,7 +347,7 @@ async def test_healthy_restore_makes_one_tmux_call_whatever_the_task_count(
     runner = _CountingRunner()
     tmux = Tmux(runner, socket=tmux_server.socket_name, env=tmux_server.env)
     layout, tasks, events, first_id = await _task_window(
-        connection, clock, tmux_server, tmp_path, tmux=tmux
+        connection, clock, tmux_server, tmp_path, layout_tree=_AGENT_PAIR_LAYOUT, tmux=tmux
     )
     queue = CommandQueue(connection, clock)
     for index in range(_ACTIVE_TASK_COUNT - 1):

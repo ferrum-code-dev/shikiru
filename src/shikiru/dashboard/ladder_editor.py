@@ -173,7 +173,7 @@ class LadderEditor(Vertical):
 
     @on(Input.Changed, LADDER_INPUT)
     def _ladder_changed(self, event: Input.Changed) -> None:
-        self._drafts[self._scope_key()] = event.value
+        self._drafts[self._scope_key()] = event.input.value
         self._draft_cursors[self._scope_key()] = event.input.cursor_position
         self._refresh_rows()
         self._refresh_problem()
