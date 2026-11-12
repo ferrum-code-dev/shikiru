@@ -141,7 +141,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `read_quota`: `muse usage --json` -> `QuotaReading` (null allowance -> `None`).
 
-- [ ] 24. Test Muse doctor and quota integration
+- [x] 24. Test Muse doctor and quota integration
 
 ## Acceptance criteria
 - Integration tests with a fake `muse` executable on `PATH`: missing binary, logged out, logged in, quota probe.
