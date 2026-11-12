@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -10,19 +11,26 @@ from pydantic import ValidationError
 
 from shikiru.agents.contracts import (
     BILLING_SOURCE_OPERATOR_CONFIG,
+    DOCTOR_TIMEOUT_SECONDS,
     RUNTIME_DEFAULT_MODEL,
     UNKNOWN_BILLING_DECLARATION,
     BillingDeclaration,
+    CheckResult,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.clock import from_local
+from shikiru.errors import ShikiruError
 from shikiru.plugins.agents.muse.options import (
+    API_KEY_ENV_VAR,
     MODEL_FLAG,
     MUSE_COMMAND,
     MUSE_SETTINGS,
     REASONING_EFFORT_FLAG,
     RESUME_SUBCOMMAND,
+    TESTED_MUSE_VERSION,
+    USAGE_ARGV,
+    VERSION_ARGV,
     MuseOptions,
 )
 from shikiru.plugins.agents.muse.turn import MuseTurnSequence
@@ -35,6 +43,13 @@ if TYPE_CHECKING:
     from shikiru.agents.settings import AgentSetting
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
+
+_VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+")
+_UNAVAILABLE_DETAIL = "binary unavailable"
+_AUTHENTICATED_DETAIL = "authenticated"
+_CREDENTIALS_UNVERIFIED_DETAIL = f"{API_KEY_ENV_VAR} set; credentials not verified by doctor"
+_NO_DIAGNOSTIC_DETAIL = "no diagnostic output"
+_UNTESTED_VERSION_DETAIL = "{version} (warning: verified with {tested})"
 
 
 class MuseAgent:
@@ -89,9 +104,76 @@ class MuseAgent:
         argv.extend(self._options.args)
         return tuple(argv)
 
+    async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
+        """Check Muse's binary, version and login."""
+        del models
+        binary = await self._check_binary()
+        if not binary.ok:
+            return [
+                binary,
+                CheckResult("version", False, _UNAVAILABLE_DETAIL),
+                CheckResult("login", False, _UNAVAILABLE_DETAIL),
+            ]
+        return [binary, await self._check_version(), await self._check_login()]
+
     def settings(self) -> tuple[AgentSetting, ...]:
         """Return the options worth writing to the project config."""
         return MUSE_SETTINGS
+
+    def _subprocess_environment(self) -> dict[str, str]:
+        return dict(os.environ)
+
+    async def _check_binary(self) -> CheckResult:
+        try:
+            result = await self._runner.run(
+                VERSION_ARGV,
+                timeout=DOCTOR_TIMEOUT_SECONDS,
+                env=self._subprocess_environment(),
+                check=False,
+            )
+        except (FileNotFoundError, ShikiruError) as error:
+            return CheckResult("binary", False, str(error))
+        if result.returncode != 0:
+            return CheckResult("binary", False, result.stderr.strip())
+        return CheckResult("binary", True, MUSE_COMMAND)
+
+    async def _check_version(self) -> CheckResult:
+        try:
+            result = await self._runner.run(
+                VERSION_ARGV,
+                timeout=DOCTOR_TIMEOUT_SECONDS,
+                env=self._subprocess_environment(),
+                check=False,
+            )
+        except (FileNotFoundError, ShikiruError) as error:
+            return CheckResult("version", False, str(error))
+        detail = result.stdout.strip() or result.stderr.strip()
+        if result.returncode == 0 and not _is_tested_version(detail):
+            detail = _UNTESTED_VERSION_DETAIL.format(version=detail, tested=TESTED_MUSE_VERSION)
+        return CheckResult("version", result.returncode == 0, detail)
+
+    async def _check_login(self) -> CheckResult:
+        environment = self._subprocess_environment()
+        if environment.get(API_KEY_ENV_VAR):
+            return CheckResult("login", True, _CREDENTIALS_UNVERIFIED_DETAIL)
+        try:
+            result = await self._runner.run(
+                USAGE_ARGV,
+                timeout=DOCTOR_TIMEOUT_SECONDS,
+                env=environment,
+                check=False,
+            )
+        except (FileNotFoundError, ShikiruError) as error:
+            return CheckResult("login", False, str(error))
+        if result.returncode == 0:
+            return CheckResult("login", True, _AUTHENTICATED_DETAIL)
+        detail = result.stderr.strip() or result.stdout.strip() or _NO_DIAGNOSTIC_DETAIL
+        return CheckResult("login", False, detail)
+
+
+def _is_tested_version(output: str) -> bool:
+    match = _VERSION_PATTERN.search(output)
+    return match is not None and match.group() == TESTED_MUSE_VERSION
 
 
 def create(context: AgentContext) -> MuseAgent:

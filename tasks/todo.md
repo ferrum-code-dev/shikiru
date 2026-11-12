@@ -121,7 +121,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `agent.py`: `MuseAgent.start_turn` (`StreamingTurn.start`), `interactive_command`, `settings`, `billing_declaration`, `create` with `options_error`.
 
-- [ ] 20. Add Muse installation and login checks
+- [x] 20. Add Muse installation and login checks
 
 ## Acceptance criteria
 - `doctor([])` (the init/wizard detection gate): binary, version (warn off the tested `1.4.15`), login = `muse usage --json` exit 0 **or** non-empty `META_API_KEY` ("not verified by doctor"). Quick, bounded, deterministic; failing any check hides Muse from init and the wizard.
