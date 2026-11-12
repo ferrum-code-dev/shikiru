@@ -94,7 +94,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 ### Phase 2: process sequence and compaction
 
-- [ ] 15. Read Muse session logs
+- [x] 15. Read Muse session logs
 
 ## Acceptance criteria
 - `session_log.py`: locate the session log, read compaction and `model_completed` events, count compactions at turn start.
