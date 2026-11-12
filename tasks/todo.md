@@ -17,6 +17,12 @@ imports resolve to it.
 - [ ] Spike: confirm the allowance `window` length (5 hours?) from `usage/changed` `windowDurationMins`.
 - [ ] Spike: check whether the engine's `prompt.md` is in `turn_dir` when a turn starts, and decide
       between reusing it and writing a prompt file.
+- [ ] Measure `muse --version`, `muse usage --json` and the `muse serve` catalog round trip (cold and
+      warm) to set the doctor and catalog timeouts.
+- [ ] Check how `claude` and `codex` treat the `default` model that non-interactive `init` writes, and
+      decide Muse's behaviour to match.
+- [ ] Read the wizard and `PluginChecks` flow once more against the plan's "Init, the wizard and doctor"
+      section.
 - [ ] Write `tests/fixtures/agents/muse/README.md` (version, date, what is redacted, what is synthetic).
 
 ## Phase 1: options and parser
@@ -47,8 +53,13 @@ imports resolve to it.
 
 - [ ] `agent.py`: `MuseAgent.start_turn` (`StreamingTurn.start`), `interactive_command`, `settings`,
       `billing_declaration`, `create` with `options_error`.
-- [ ] `doctor`: binary, version (warn off the tested `1.4.15`), login via `muse usage --json`, model
-      checks against the catalog, compaction threshold versus startup prompt.
+- [ ] `doctor([])` (the init/wizard detection gate): binary, version (warn off the tested `1.4.15`),
+      login = `muse usage --json` exit 0 **or** non-empty `META_API_KEY` ("not verified by doctor").
+      Quick, bounded, deterministic; failing any check hides Muse from init and the wizard.
+- [ ] `doctor(models)`: add model checks against the catalog and the compaction threshold versus the
+      startup prompt; no turn is run.
+- [ ] Settings: exactly `compact_at_pct`, `billing_mode`, `args` (default
+      `--trust-workspace --disable-sandbox`); `create()` rejects unknown keys via `options_error`.
 - [ ] `read_quota`: `muse usage --json` -> `QuotaReading` (null allowance -> `None`).
 - [ ] Integration tests with a fake `muse` executable on `PATH`: missing binary, logged out, logged in,
       quota probe.
@@ -58,7 +69,9 @@ imports resolve to it.
 
 - [ ] `catalog.py`: one-shot `muse serve --disable-shell --disable-write --no-session-log` client
       (`initialize`, `initialized`, `model/list`), timeouts, clean shutdown, parse into `ModelCatalog`.
-- [ ] `MuseAgent.model_catalog()` with caching and an error catalog on failure.
+- [ ] `MuseAgent.model_catalog()` with caching and an error catalog on failure; `complete=True`, each
+      model `offered`; ambiguous-`args` error like Codex; bounded by the measured timeout. The wizard
+      lists an agent in ladders only when this succeeds, so this phase gates wizard support.
 - [ ] Tests: parser unit tests; integration test against the fake executable speaking the same lines.
 - [ ] Commit: `feat(agents): list Muse Code models and efforts`.
 
@@ -66,7 +79,8 @@ imports resolve to it.
 
 - [ ] `headless.py`: `MuseHeadless.ask` (prompt and schema in a temp directory, flags per the plan,
       timeout, parse the final JSON object, `HeadlessOutputError` on missing or invalid output).
-- [ ] `MuseAgent.headless()` returns it; add the `PLR0917` ignore.
+- [ ] `MuseAgent.headless()` returns it; add the `PLR0917` ignore. The wizard offers an agent for the
+      Helper scope only when this is non-`None`.
 - [ ] Tests: success, invalid JSON, missing result, non-zero exit, via the fake executable.
 - [ ] Commit: `feat(helper): run the helper on Muse Code`.
 
@@ -76,6 +90,11 @@ imports resolve to it.
 - [ ] `tests/integration/test_muse_headless_contract.py` on `AgentContractSuite`; adjust the suite for
       internal compaction if no real `installed` event could be captured (separate commit
       `test(agents): allow agents that compact internally`).
+- [ ] Update `tests/integration/test_operator_plugin_checks.py` (settings defaults for `muse`) and any test
+      enumerating the registered agents.
+- [ ] Wizard/init integration tests with a fake `muse` on `PATH`: offered when installed and logged in or
+      `META_API_KEY` only; absent when missing or logged out; selectable for Leader, Implementer and
+      Helper; slow `muse serve` shows the catalog error; generated `[agents.muse]` section.
 - [ ] `docs/design.md`: agent list, quota rule, compaction, trust boundary (sandbox disabled).
 - [ ] `README.md`, `CONTRIBUTING.md`: built-in agents, prerequisites (`muse login`), live-test constants.
 - [ ] Commit: `docs(agents): document the Muse Code agent`.

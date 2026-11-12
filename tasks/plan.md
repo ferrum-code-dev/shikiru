@@ -200,6 +200,50 @@ change: `plugins` already depends only on `agents.contracts`, `agents.sdk` and `
 | `TurnEnded` | `run.terminal.completed.text` |
 | `TurnFailed` | `run.terminal.failed.reason`, classified as above; interrupted turns end without a failure |
 
+## Init, the wizard and doctor
+
+`shikiru init` and the dashboard wizard are generic: core code never names a provider (`docs/design.md`,
+"Configuration, observability and extensions"). They reach every plugin through
+`operator.plugin_checks.PluginChecks` and `operator.detectors.ProjectDetectors`, so Muse appears there only
+if the plugin satisfies these obligations, each of which is a requirement of this plan:
+
+1. **Detection gate.** `ProjectDetectors._agents()` runs `doctor([])` with options `{}` for every
+   registered plugin and keeps only those whose checks all pass. A Muse that is installed but fails any
+   check is silently absent from init and the wizard (the error is raised only when no plugin passes).
+   So the no-models doctor must be exactly the binary, version and login checks, quick (each bounded by
+   `DOCTOR_TIMEOUT_SECONDS`), and must pass for a working install. The login check accepts a stored login
+   (`muse usage --json` exits 0) **or** a non-empty `META_API_KEY` in the environment, reported as
+   "credentials not verified by doctor", like Codex's custom-provider case; otherwise a host that
+   authenticates through the API key would not see Muse in the wizard. Model and compaction-threshold
+   checks run only when models are passed.
+2. **Model catalog is mandatory, not optional.** The wizard's ladder editor lists an agent only when
+   `model_catalog()` returned an authoritative catalog with at least one `offered` model; otherwise the
+   agent is shown with its error and cannot be added to a ladder, and `assess_model_choice` needs
+   `complete=True` to reject unknown models and efforts. The wizard calls it with options `{}` while the
+   screen shows "Discovering supported agent model choices…", so the `muse serve` call must be fast, bounded
+   by a timeout, closed cleanly, and return `ModelCatalog(error=…)` on any failure. If the operator's `args`
+   select a model or profile, the catalog is reported ambiguous with an error, as Codex does.
+3. **Headless is required for the Helper role.** The ladder editor offers only agents whose
+   `headless()` is non-`None` for the Helper scope, so `MuseHeadless` (Phase 5) is what makes Muse
+   selectable there, as well as what lets the helper run.
+4. **Settings.** The wizard renders `settings()` generically and the plugin factory validates the result
+   (`options_rejection` calls `create()` with the chosen options). Muse offers exactly the three settings
+   the other built-in plugins offer: `compact_at_pct`, `billing_mode`, `args`. The default `args`
+   (`--trust-workspace --disable-sandbox`) is shown in the wizard and written to the config like Claude's
+   `--permission-mode bypassPermissions`; a blank field means the operator removed it, and the docs say what
+   that does (writes outside the worktree are refused). `create()` rejects unknown keys through
+   `options_error` so the wizard focuses the offending field.
+5. **Generated config.** `render_config` writes an `[agents.muse]` section for every passing plugin and
+   uses `project.agents[0]` (alphabetical: `claude`, `codex`, `muse`) with the model `default` for the
+   non-interactive default ladders. Muse is therefore the default only when it is the sole installed agent,
+   and then `muse:default` is rejected by `muse exec --model default`. Codex and Claude have the same
+   sentinel; before implementing, check how they treat it and match that behaviour (Phase 0). If neither
+   handles it, `doctor` with a complete catalog already says "unsupported model 'default'; use …", which is
+   the visible, non-silent outcome; no special case in core.
+6. **Doctor at the wizard's last step.** The final Doctor run passes the configured ladder models and the
+   catalog, so Muse's `doctor(models)` must accept model names that are valid per the catalog, report
+   efforts only through the catalog, and not require a turn.
+
 ## Testing strategy
 
 Per `AGENTS.md`: unit tests for the parser and pure rules; integration tests for the rest; no mocks of our
@@ -224,6 +268,15 @@ own classes; no sleeping; coverage stays at or above 80%.
    text and the rejected-candidate fallback. If a real `installed` event cannot be captured, the suite is
    extended so a plugin can declare its compaction as internal, with the scenarios it supports; that
    contract change is its own commit.
+   Existing tests that pin the built-in agent set must learn about Muse:
+   `tests/integration/test_operator_plugin_checks.py` (`settings` defaults parametrized over `claude` and
+   `codex`: add `("muse", ["--trust-workspace", "--disable-sandbox"])`, which also checks the three setting
+   keys and the unknown-option rejection), and any test enumerating `AgentRegistry().names()`.
+   Wizard coverage uses the fake agent and the real `PluginChecks`: add integration cases that run the
+   detection gate, catalog discovery and Helper filtering against a fake `muse` executable on `PATH`
+   (installed and logged in, installed and logged out, `META_API_KEY` only, missing binary, slow
+   `muse serve`), asserting what the operator can observe: whether Muse is offered, selectable in the
+   Leader/Implementer/Helper scopes, and what the generated config contains.
 5. **Live checks:** gated like the others (`runs_live_checks_in_default_gate = False`); constants for the
    live model and effort are added to the test module and to `CONTRIBUTING.md`.
 6. **E2E rung:** an opt-in `muse` entry in the real-agent e2e configuration (the current constants name
@@ -245,5 +298,9 @@ own classes; no sleeping; coverage stays at or above 80%.
   stays operator-configurable through `args`.
 - **Version drift:** tested version constant (`1.4.15`) with a `doctor` warning on other versions, as for
   Codex.
+- **Wizard visibility:** a plugin whose no-models doctor fails is dropped from init without a message, so a
+  slow or flaky Muse check hides the agent. Keep the checks cheap, deterministic and bounded.
+- **Catalog latency:** `muse serve` starts a full runtime; measure it (Phase 0) and set the timeout from the
+  measurement, not a guess.
 - **Interactive resume:** `muse resume <id>` was read from help only; verify in tmux during the E2E.
 - **Cost:** the probes used about 25 tiny turns; the E2E rung should stay at one small turn per role.
