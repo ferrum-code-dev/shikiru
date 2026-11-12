@@ -14,7 +14,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - Capture the failure streams and stderr: rejected `META_API_KEY`, missing credentials (empty `XDG_CONFIG_HOME`), unknown model, step cap.
 
-- [ ] 3. Capture Muse version, usage and model catalog
+- [x] 3. Capture Muse version, usage and model catalog
 
 ## Acceptance criteria
 - Capture `muse --version`, `muse usage --json` (logged in and logged out) and a `model/list` reply.
