@@ -136,7 +136,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - Settings: exactly `compact_at_pct`, `billing_mode`, `args` (default `--trust-workspace --disable-sandbox`); `create()` rejects unknown keys via `options_error`.
 
-- [ ] 23. Read Muse quota
+- [x] 23. Read Muse quota
 
 ## Acceptance criteria
 - `read_quota`: `muse usage --json` -> `QuotaReading` (null allowance -> `None`).

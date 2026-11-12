@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from pathlib import Path
@@ -33,13 +34,15 @@ from shikiru.plugins.agents.muse.options import (
     VERSION_ARGV,
     MuseOptions,
 )
+from shikiru.plugins.agents.muse.quota import parse_usage
 from shikiru.plugins.agents.muse.turn import MuseTurnSequence
 from shikiru.plugins.agents.shared_settings import options_error
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
-    from shikiru.agents.contracts import AgentContext, Rung, Turn, TurnSpec
+    from shikiru.agents.contracts import AgentContext, QuotaReading, Rung, Turn, TurnSpec
     from shikiru.agents.settings import AgentSetting
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
@@ -115,6 +118,24 @@ class MuseAgent:
                 CheckResult("login", False, _UNAVAILABLE_DETAIL),
             ]
         return [binary, await self._check_version(), await self._check_login()]
+
+    def read_quota(self, since: datetime) -> QuotaReading | None:
+        """Return Muse's allowance reading observed after `since`, from `muse usage --json`.
+
+        The engine calls this on a thread of its own, so the process is awaited there.
+        """
+        try:
+            result = asyncio.run(
+                self._runner.run(
+                    USAGE_ARGV,
+                    timeout=DOCTOR_TIMEOUT_SECONDS,
+                    env=self._subprocess_environment(),
+                    check=True,
+                )
+            )
+        except FileNotFoundError as error:
+            raise ShikiruError(str(error)) from error
+        return parse_usage(result.stdout, since)
 
     def settings(self) -> tuple[AgentSetting, ...]:
         """Return the options worth writing to the project config."""

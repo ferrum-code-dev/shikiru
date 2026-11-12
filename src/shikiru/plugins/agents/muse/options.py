@@ -85,6 +85,12 @@ USAGE_KEY = "usage"
 INPUT_TOKENS_KEY = "input_tokens"
 OUTPUT_TOKENS_KEY = "output_tokens"
 CACHED_TOKENS_KEY = "cached_tokens"
+USAGE_ALLOWANCE_KEY = "allowance"
+USAGE_WINDOW_KEY = "window"
+USAGE_WEEKLY_KEY = "weekly"
+USAGE_USED_PERCENT_KEY = "usedPercent"
+USAGE_RESETS_AT_KEY = "resetsAtMs"
+USAGE_AS_OF_KEY = "asOfMs"
 
 
 class MuseOptions(BaseModel):
