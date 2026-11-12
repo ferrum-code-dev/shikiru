@@ -1,0 +1,3 @@
+muse: workspace root: /private/tmp/scratch-repo (cwd default)
+muse: workspace trust: trusted source=run-flag
+run ended with Failed: model `x` does not exist or you lack access [request_id=00000000-0000-7000-9000-000000000001]

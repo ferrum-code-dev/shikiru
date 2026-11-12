@@ -9,7 +9,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - Capture redacted genuine `exec --json` streams in an empty scratch git repository: first turn, resumed turn (`--session-id`), tool turn, stopped turn (`SIGTERM`), headless `--output-schema` result.
 
-- [ ] 2. Capture the failure streams and stderr
+- [x] 2. Capture the failure streams and stderr
 
 ## Acceptance criteria
 - Capture the failure streams and stderr: rejected `META_API_KEY`, missing credentials (empty `XDG_CONFIG_HOME`), unknown model, step cap.
