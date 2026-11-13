@@ -222,7 +222,7 @@ change: `plugins` already depends only on `agents.contracts`, `agents.sdk` and `
 | `Message` | `run.output.delta.text` |
 | `ToolStarted(name, name)` | `task.lifecycle.proposed` with `task_kind` `tool.<name>`, emitted when proposed so a running tool is visible; a `tool.result` with no earlier proposal emits it too |
 | `ToolFinished` | `tool.result`: `exit_code` from the JSON in `text`; outcome is `FAILURE` for a non-zero exit, else `SUCCESS` when `correlation_facts.outcome` is `success`, else unknown. A proposed tool with no result is closed with an unknown outcome at finish |
-| `UsageReported` | `run.usage` summed over `models[]`, added to `spec.usage` when resuming; `cost_usd=None`, `cost_basis="unknown"`, `context_used_pct` from the session log's `estimated_prompt_tokens` over the catalog window when available |
+| `UsageReported` | `run.usage` summed over `models[]`, added to `spec.usage` when resuming; `cost_usd=None`, `cost_basis="unknown"`, `context_used_pct` from the session log's `estimated_prompt_tokens` over the rung model's window in the catalog, read in `start_turn`, capped at 100; when the catalog is unavailable or lacks the model, `context_used_pct` is `None` and an `EvidenceFault` names the reason, never a guessed window (T-160) |
 | `QuotaReported` | `run.usage.allowance` windows |
 | `Compacted(pre, post)` | session log `context_compaction_installed` events newer than the count at turn start |
 | `TurnEnded` | `run.terminal.completed.text` |

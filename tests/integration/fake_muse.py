@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING
 from shikiru.plugins.agents.muse.options import API_KEY_ENV_VAR, MUSE_COMMAND
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import pytest
 
 _FIXTURES = Path(__file__).parents[1] / "fixtures" / "agents" / "muse"
@@ -23,6 +25,9 @@ _USAGE_EXIT_ENV = "FAKE_MUSE_USAGE_EXIT"
 _USAGE_STDERR_ENV = "FAKE_MUSE_USAGE_STDERR"
 _SERVE_MODE_ENV = "FAKE_MUSE_SERVE_MODE"
 _MODEL_LIST_ENV = "FAKE_MUSE_MODEL_LIST"
+_EXEC_SESSION_LOG_ENV = "FAKE_MUSE_EXEC_SESSION_LOG"
+_EXEC_SESSION_LINES_ENV = "FAKE_MUSE_EXEC_SESSION_LINES"
+_EXEC_STREAM_ENV = "FAKE_MUSE_EXEC_STREAM"
 _SERVE_ANSWERS = "answers"
 _SERVE_SILENT = "silent"
 _MODEL_LIST = [
@@ -33,6 +38,7 @@ _FAKE_MUSE = """
 import json
 import os
 import sys
+from pathlib import Path
 
 if sys.argv[1:] == ["--version"]:
     sys.stdout.write(os.environ["FAKE_MUSE_VERSION"])
@@ -55,6 +61,15 @@ if sys.argv[1:2] == ["serve"]:
         reply = {"jsonrpc": "2.0", "id": request["id"], "result": result}
         sys.stdout.write(json.dumps(reply) + "\\n")
         sys.stdout.flush()
+    sys.exit(0)
+if sys.argv[1:2] == ["exec"]:
+    session_log = Path(os.environ["FAKE_MUSE_EXEC_SESSION_LOG"])
+    session_log.parent.mkdir(parents=True, exist_ok=True)
+    session_lines = json.loads(os.environ["FAKE_MUSE_EXEC_SESSION_LINES"])
+    with session_log.open("a", encoding="utf-8") as handle:
+        handle.write("".join(line + "\\n" for line in session_lines))
+    stream_lines = json.loads(os.environ["FAKE_MUSE_EXEC_STREAM"])
+    sys.stdout.write("".join(line + "\\n" for line in stream_lines))
     sys.exit(0)
 sys.exit(2)
 """
@@ -84,6 +99,19 @@ def install_fake_muse(
     monkeypatch.setenv(_USAGE_STDERR_ENV, "" if logged_in else LOGGED_OUT_STDERR)
     monkeypatch.setenv(_SERVE_MODE_ENV, _SERVE_ANSWERS if serve_answers else _SERVE_SILENT)
     monkeypatch.setenv(_MODEL_LIST_ENV, json.dumps(_MODEL_LIST))
+
+
+def install_fake_exec(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    session_log: Path,
+    session_lines: Sequence[str],
+    stream_lines: Sequence[str],
+) -> None:
+    """Make the fake `muse exec` append `session_lines` to `session_log` and print the stream."""
+    monkeypatch.setenv(_EXEC_SESSION_LOG_ENV, str(session_log))
+    monkeypatch.setenv(_EXEC_SESSION_LINES_ENV, json.dumps(list(session_lines)))
+    monkeypatch.setenv(_EXEC_STREAM_ENV, json.dumps(list(stream_lines)))
 
 
 def remove_muse_from_path(monkeypatch: pytest.MonkeyPatch) -> None:

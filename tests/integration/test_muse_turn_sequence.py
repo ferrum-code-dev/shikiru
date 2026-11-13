@@ -64,7 +64,7 @@ from shikiru.plugins.agents.muse.options import (
     USAGE_KEY,
     XDG_DATA_HOME_ENV_VAR,
 )
-from shikiru.plugins.agents.muse.turn import MuseTurnSequence
+from shikiru.plugins.agents.muse.turn import ContextWindow, MuseTurnSequence
 from shikiru.private import PRIVATE_FILE_MODE, write_private_text
 from shikiru.process import SubprocessRunner
 from tests.support.clock import FakeClock
@@ -279,7 +279,7 @@ async def _run_turn(
         clock=clock,
         reset_time=ResetTimeParser(clock),
         user_home=tmp_path / "home",
-        context_window_tokens=_CONTEXT_WINDOW_TOKENS,
+        context_window=ContextWindow(tokens=_CONTEXT_WINDOW_TOKENS),
         compact_at_pct=compact_at_pct,
     )
     turn = await StreamingTurn.start(spec, SubprocessRunner(), sequence)

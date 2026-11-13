@@ -250,3 +250,12 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 ## Acceptance criteria
 - Determine whether untrusted workspace and `--no-session-log` make the Muse helper rung fail with a valid schema.
+
+### Phase 9: Muse context usage (T-160)
+
+- [x] 44. Report Muse context usage from the catalog window
+
+## Acceptance criteria
+- `start_turn` awaits the cached catalog and passes the window of the rung's model to the turn; `UsageReported.context_used_pct` is the latest prompt estimate over that window, capped at 100.
+- A catalog that is unavailable or lacks the model leaves `context_used_pct` unknown and emits an `EvidenceFault` naming the reason; no window is guessed, and a previous turn's share is cleared rather than carried over.
+- The fake Muse integration tests cover a listed window (25% for 50,000 of 200,000 tokens), an unlisted model and an unavailable catalog.

@@ -43,7 +43,12 @@ from shikiru.plugins.agents.muse.options import (
     TOOL_RESULT_TYPE,
 )
 from shikiru.plugins.agents.muse.session_log import NO_SESSION_LOG_MARK
-from shikiru.plugins.agents.muse.turn import MuseTurnParser, SessionWatch, context_pct
+from shikiru.plugins.agents.muse.turn import (
+    ContextWindow,
+    MuseTurnParser,
+    SessionWatch,
+    context_pct,
+)
 from tests.support.clock import LONG_AGO, FakeClock
 
 if TYPE_CHECKING:
@@ -136,7 +141,7 @@ def _no_log_watch() -> SessionWatch:
     return SessionWatch(
         home=_NO_LOG_HOME,
         session_id=None,
-        context_window_tokens=_CONTEXT_WINDOW,
+        context_window=ContextWindow(tokens=_CONTEXT_WINDOW),
         mark=NO_SESSION_LOG_MARK,
     )
 
@@ -497,18 +502,29 @@ def test_malformed_records_fail_the_turn_unless_interrupted(
 
 
 @pytest.mark.parametrize(
-    ("prompt_tokens", "previous", "expected"),
+    ("prompt_tokens", "window_tokens", "previous", "expected"),
     [
-        (None, 40.0, 40.0),
-        (250, None, 25.0),
-        (1500, 40.0, 100.0),
+        (None, _CONTEXT_WINDOW, 40.0, 40.0),
+        (250, _CONTEXT_WINDOW, None, 25.0),
+        (1500, _CONTEXT_WINDOW, 40.0, 100.0),
+        (250, None, 40.0, None),
+        (None, None, 40.0, None),
     ],
-    ids=("no-estimate-keeps-previous", "estimate-is-share-of-window", "over-window-is-capped"),
+    ids=(
+        "no-estimate-keeps-previous",
+        "estimate-is-share-of-window",
+        "over-window-is-capped",
+        "unknown-window-drops-previous",
+        "unknown-window-without-estimate-drops-previous",
+    ),
 )
 def test_context_usage_is_the_latest_estimate_over_the_window(
-    prompt_tokens: int | None, previous: float | None, expected: float
+    prompt_tokens: int | None,
+    window_tokens: int | None,
+    previous: float | None,
+    expected: float | None,
 ) -> None:
-    assert context_pct(prompt_tokens, _CONTEXT_WINDOW, previous) == expected
+    assert context_pct(prompt_tokens, window_tokens, previous) == expected
 
 
 def test_records_outside_the_mapping_produce_no_signal() -> None:

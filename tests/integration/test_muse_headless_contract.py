@@ -68,7 +68,12 @@ from shikiru.plugins.agents.muse.options import (
     XDG_DATA_HOME_ENV_VAR,
 )
 from shikiru.plugins.agents.muse.session_log import NO_SESSION_LOG_MARK
-from shikiru.plugins.agents.muse.turn import MuseTurnParser, SessionWatch, compaction_thresholds
+from shikiru.plugins.agents.muse.turn import (
+    ContextWindow,
+    MuseTurnParser,
+    SessionWatch,
+    compaction_thresholds,
+)
 from tests.support.clock import FakeClock
 
 if TYPE_CHECKING:
@@ -269,7 +274,7 @@ class TestMuseHeadlessContract(AgentContractSuite):
         watch = SessionWatch(
             home=home,
             session_id=sample.session_id,
-            context_window_tokens=None,
+            context_window=ContextWindow(tokens=None),
             mark=NO_SESSION_LOG_MARK,
         )
         return MuseTurnParser(clock, ResetTimeParser(clock), watch)
@@ -457,7 +462,7 @@ class TestMuseHeadlessContract(AgentContractSuite):
         ]
 
     def process_sequence(self, agent: Agent, spec: TurnSpec) -> TurnProcessSequence:
-        return cast("MuseAgent", agent).process_sequence(spec)
+        return cast("MuseAgent", agent).process_sequence(spec, ContextWindow(tokens=None))
 
     def compaction_scenarios(self, tmp_path: Path) -> Sequence[CompactionScenario]:
         options = {"compact_at_pct": _COMPACT_AT_PCT}

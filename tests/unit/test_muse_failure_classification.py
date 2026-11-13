@@ -26,7 +26,12 @@ from shikiru.plugins.agents.muse.options import (
     STREAM_KIND_SESSION,
 )
 from shikiru.plugins.agents.muse.session_log import NO_SESSION_LOG_MARK
-from shikiru.plugins.agents.muse.turn import MuseTurnParser, SessionWatch, classify_failure
+from shikiru.plugins.agents.muse.turn import (
+    ContextWindow,
+    MuseTurnParser,
+    SessionWatch,
+    classify_failure,
+)
 from tests.support.clock import FakeClock
 
 NOW = datetime(2026, 11, 12, 12, tzinfo=UTC)
@@ -193,7 +198,7 @@ def _parser() -> MuseTurnParser:
     watch = SessionWatch(
         home=Path("muse-home-without-sessions"),
         session_id=None,
-        context_window_tokens=1000,
+        context_window=ContextWindow(tokens=1000),
         mark=NO_SESSION_LOG_MARK,
     )
     return MuseTurnParser(clock, ResetTimeParser(clock), watch)

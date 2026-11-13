@@ -44,7 +44,7 @@ from shikiru.plugins.agents.muse.options import (
     MuseOptions,
 )
 from shikiru.plugins.agents.muse.quota import parse_usage
-from shikiru.plugins.agents.muse.turn import MuseTurnSequence, compaction_thresholds
+from shikiru.plugins.agents.muse.turn import ContextWindow, MuseTurnSequence, compaction_thresholds
 from shikiru.plugins.agents.shared_settings import options_error
 
 if TYPE_CHECKING:
@@ -76,6 +76,12 @@ _COMPACTION_CHECK = "compaction"
 _UNVERIFIED_CONTEXT_WINDOW_DETAIL = (
     "{model!r} context window is not in the catalog; its compaction threshold could not be "
     "fully verified"
+)
+_UNLISTED_WINDOW_DETAIL = (
+    "{model!r} is not in the Muse model catalog, so its context usage is unknown"
+)
+_UNAVAILABLE_CATALOG_WINDOW_DETAIL = (
+    "the Muse model catalog is unavailable ({error}), so the context usage of {model!r} is unknown"
 )
 _STARTUP_PROMPT_REACHED_DETAIL = (
     "hard threshold of {threshold} tokens for {model!r} is reached by the startup prompt "
@@ -122,9 +128,12 @@ class MuseAgent:
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one Muse process-per-turn exchange."""
-        return await StreamingTurn.start(spec, self._runner, self.process_sequence(spec))
+        context_window = await self._context_window(spec.rung.model)
+        return await StreamingTurn.start(
+            spec, self._runner, self.process_sequence(spec, context_window)
+        )
 
-    def process_sequence(self, spec: TurnSpec) -> MuseTurnSequence:
+    def process_sequence(self, spec: TurnSpec, context_window: ContextWindow) -> MuseTurnSequence:
         """Build the process sequence that runs one Muse turn for `spec`."""
         del spec
         return MuseTurnSequence(
@@ -133,7 +142,7 @@ class MuseAgent:
             clock=self._clock,
             reset_time=self._reset_time,
             user_home=self._user_home,
-            context_window_tokens=None,
+            context_window=context_window,
             compact_at_pct=self._options.compact_at_pct,
         )
 
@@ -195,6 +204,22 @@ class MuseAgent:
         if self._cached_model_catalog is None:
             self._cached_model_catalog = await self._read_model_catalog()
         return self._cached_model_catalog
+
+    async def _context_window(self, model: str) -> ContextWindow:
+        muse_catalog = await self._catalog()
+        if muse_catalog.catalog.error is not None:
+            return ContextWindow(
+                tokens=None,
+                unknown_reason=_UNAVAILABLE_CATALOG_WINDOW_DETAIL.format(
+                    error=muse_catalog.catalog.error, model=model
+                ),
+            )
+        window = muse_catalog.context_windows.get(model)
+        if window is None:
+            return ContextWindow(
+                tokens=None, unknown_reason=_UNLISTED_WINDOW_DETAIL.format(model=model)
+            )
+        return ContextWindow(tokens=window)
 
     async def _read_model_catalog(self) -> MuseCatalog:
         if _model_catalog_args_are_ambiguous(self._options.args):

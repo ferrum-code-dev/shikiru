@@ -152,6 +152,17 @@ class _FailedRun(NamedTuple):
 
 
 @dataclass(frozen=True)
+class ContextWindow:
+    """A model's context window in tokens, or the reason it is unknown.
+
+    `unknown_reason` is `None` when no window is tracked at all, which reports no fault.
+    """
+
+    tokens: int | None
+    unknown_reason: str | None = None
+
+
+@dataclass(frozen=True)
 class SessionWatch:
     """Where a turn process finds its session log, and what the log held before the process ran.
 
@@ -161,7 +172,7 @@ class SessionWatch:
 
     home: Path
     session_id: str | None
-    context_window_tokens: int | None
+    context_window: ContextWindow
     mark: SessionLogMark | None
 
 
@@ -307,7 +318,11 @@ class MuseTurnParser:
         if self._totals is None:
             return []
         usage = self._cumulative_usage(self._totals, progress.latest_prompt_tokens)
-        return [UsageReported(usage)]
+        return [*self._window_faults(), UsageReported(usage)]
+
+    def _window_faults(self) -> list[AgentSignal]:
+        reason = self._watch.context_window.unknown_reason
+        return [] if reason is None else [EvidenceFault(reason)]
 
     def _progress(self) -> SessionLogProgress:
         if self._session_id is None:
@@ -360,7 +375,7 @@ class MuseTurnParser:
             cost_usd=None,
             cost_basis=COST_BASIS_UNKNOWN,
             context_used_pct=context_pct(
-                latest_prompt_tokens, self._watch.context_window_tokens, base.context_used_pct
+                latest_prompt_tokens, self._watch.context_window.tokens, base.context_used_pct
             ),
         )
 
@@ -376,7 +391,7 @@ class MuseTurnSequence(TurnProcessSequence):
         clock: Clock,
         reset_time: ResetTimeParser,
         user_home: Path,
-        context_window_tokens: int | None,
+        context_window: ContextWindow,
         compact_at_pct: float,
     ) -> None:
         self._args = tuple(args)
@@ -384,7 +399,7 @@ class MuseTurnSequence(TurnProcessSequence):
         self._clock = clock
         self._reset_time = reset_time
         self._user_home = user_home
-        self._context_window_tokens = context_window_tokens
+        self._context_window = context_window
         self._compact_at_pct = compact_at_pct
         self._session_id: str | None = None
         self._usage: Usage | None = None
@@ -411,7 +426,7 @@ class MuseTurnSequence(TurnProcessSequence):
         watch = SessionWatch(
             home=home,
             session_id=self._session_id,
-            context_window_tokens=self._context_window_tokens,
+            context_window=self._context_window,
             mark=start_mark(home, self._session_id),
         )
         parser = MuseTurnParser(self._clock, self._reset_time, watch, self._usage)
@@ -455,11 +470,14 @@ class MuseTurnSequence(TurnProcessSequence):
 def context_pct(
     prompt_tokens: int | None, window_tokens: int | None, previous: float | None
 ) -> float | None:
-    """Return the share of the context window the latest prompt estimate fills, else `previous`.
+    """Return the share of the context window the latest prompt estimate fills.
 
-    `previous` also stands while the context window is unknown.
+    `previous` stands only when the window is known but this process has no estimate; an
+    unknown window reports no share, so a previous turn's share is never carried over.
     """
-    if prompt_tokens is None or window_tokens is None:
+    if window_tokens is None:
+        return None
+    if prompt_tokens is None:
         return previous
     return min(prompt_tokens / window_tokens * PERCENT, PERCENT)
 
