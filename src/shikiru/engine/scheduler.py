@@ -22,7 +22,7 @@ from shikiru.domain.scheduling import (
 )
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import Role, Status, StatusReason, Step, Task
-from shikiru.engine.events import emit_step_started
+from shikiru.engine.events import emit_rung_changed, emit_step_started
 from shikiru.errors import InvariantError
 from shikiru.workspace.base_refs import BaseFetchFailed
 
@@ -173,19 +173,13 @@ class Scheduler:
                 self._tasks.apply_transition(task.id, transition)
                 task = self._tasks.require(task.id)
                 new_rung = pick_rung(task, role, self._settings)
-                self._events.append(
-                    EventKind.RUNG_CHANGED,
-                    task_id=task.id,
-                    message=(
-                        f"{task.id} {role.value} moved from {old_rung.model} to {new_rung.model}"
-                    ),
-                    data={
-                        "role": role.value,
-                        "from": old_rung.model,
-                        "to": new_rung.model,
-                        "different_agent": True,
-                        "reason": WaitReason.QUOTA.value,
-                    },
+                emit_rung_changed(
+                    self._events,
+                    task,
+                    role,
+                    old_rung,
+                    new_rung,
+                    data={"different_agent": True, "reason": WaitReason.QUOTA.value},
                 )
                 changed = True
         return changed

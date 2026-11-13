@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from shikiru.domain.ladder import pick_rung
 from shikiru.domain.recovery import ProtocolError, TurnCounters
 from shikiru.domain.reports import FeedbackAnalysis, ImplementationReport, Verdict
 from shikiru.domain.steps import Transition, next_step
-from shikiru.domain.tasks import EscalationReason, Status, Step
-from shikiru.engine.events import emit_turn_failed
+from shikiru.domain.tasks import EscalationReason, Role, Status, Step
+from shikiru.engine.events import emit_rung_changed, emit_turn_failed
 from shikiru.engine.turn_loop import TurnOverrides, TurnsStopped
 from shikiru.errors import InvariantError, UsageError
 
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
     from shikiru.domain.feedback import FeedbackInput
     from shikiru.domain.reports import Report, ReportKind
     from shikiru.domain.steps import Outcome
-    from shikiru.domain.tasks import Role, Task
+    from shikiru.domain.tasks import Task
     from shikiru.engine.acceptance import AcceptanceGuard
     from shikiru.engine.escalation_filing import EscalationFiler
     from shikiru.engine.transitions import TransitionWriter
@@ -115,7 +116,20 @@ class StepRunner:
         if transition.status is Status.ESCALATED:
             escalated = await self._escalations.escalate(task, transition, outcome, role=role)
             return escalated, True
-        return await self._writer.apply(task, transition, outcome), False
+        updated = await self._writer.apply(task, transition, outcome)
+        if isinstance(outcome, Verdict):
+            self._emit_rung_moves(task, updated, outcome.decision)
+        return updated, False
+
+    def _emit_rung_moves(self, task: Task, updated: Task, reason: str) -> None:
+        """Record any rung a verdict transition moved, so the move is visible in history."""
+        for role in Role:
+            old_rung = pick_rung(task, role, self._settings)
+            new_rung = pick_rung(updated, role, self._settings)
+            if old_rung != new_rung:
+                emit_rung_changed(
+                    self._events, updated, role, old_rung, new_rung, data={"reason": reason}
+                )
 
     async def _escalate_scope_change_protocol(
         self,

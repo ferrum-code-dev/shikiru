@@ -384,6 +384,49 @@ async def test_changes_requested_persists_iteration_rung_and_counter_resets(
     assert starts == [implementer_runs[0].session_id, implementer_runs[0].session_id]
 
 
+async def test_verify_rejections_emit_rung_changed_only_on_the_move(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings(escalate_after=2)
+    second_rung = Rung(agent=FAKE_AGENT_NAME, model="fake-2", effort=None)
+    implementer = settings.roles.implementer.model_copy(update={"ladder": [FAKE_RUNG, second_rung]})
+    roles = settings.roles.model_copy(update={"implementer": implementer})
+    settings = settings.model_copy(update={"roles": roles})
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "accept"}, {"kind": "accept"}, {"kind": "accept"}],
+    )
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [{"kind": "changes_requested"}, {"kind": "changes_requested"}, {"kind": "accept"}],
+    )
+
+    flow_env = await _run_flow(engine_env, task.id, settings)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status is Status.INTEGRATING
+    assert final.step is Step.INTEGRATE
+    assert final.iteration == 3
+    assert final.rung_index[Role.IMPLEMENTER] == 1
+    assert final.counters.rejections_on_rung == 0
+    changes = flow_env.events.since(0, task_id=task.id, kinds=[EventKind.RUNG_CHANGED])
+    assert len(changes) == 1
+    [changed] = changes
+    assert changed.data["role"] == Role.IMPLEMENTER.value
+    assert changed.data["from"] == FAKE_RUNG.model
+    assert changed.data["to"] == second_rung.model
+    assert changed.data["reason"] == "changes_requested"
+    assert (
+        changed.message
+        == f"{task.id} implementer moved from {FAKE_RUNG.model} to {second_rung.model}"
+    )
+
+
 async def test_different_agent_rung_hands_off_prior_reports_in_a_fresh_session(
     engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:

@@ -226,6 +226,29 @@ def emit_verdict(
     )
 
 
+def emit_rung_changed(
+    events: EventLog,
+    task: Task,
+    role: Role,
+    old_rung: Rung,
+    new_rung: Rung,
+    *,
+    data: dict[str, object] | None = None,
+) -> None:
+    """Record an automatic rung move for `role`, with caller-specific cause data."""
+    events.append(
+        EventKind.RUNG_CHANGED,
+        task_id=task.id,
+        message=f"{task.id} {role.value} moved from {old_rung.model} to {new_rung.model}",
+        data={
+            "role": role.value,
+            "from": old_rung.model,
+            "to": new_rung.model,
+            **(data or {}),
+        },
+    )
+
+
 def _turn_data(turn: str | None) -> dict[str, str]:
     return {TURN_FIELD: turn} if turn is not None else {}
 

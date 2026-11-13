@@ -27,7 +27,7 @@ from shikiru.domain.recovery import (
 )
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason
-from shikiru.engine.events import emit_turn_failed
+from shikiru.engine.events import emit_rung_changed, emit_turn_failed
 from shikiru.engine.turn_context import ORDINARY_TURN, NextTurn
 
 if TYPE_CHECKING:
@@ -222,17 +222,13 @@ class TurnRecovery:
         )
         updated = await self._writer.apply(task, transition, None)
         new_rung = pick_rung(updated, role, self._settings)
-        self._events.append(
-            EventKind.RUNG_CHANGED,
-            task_id=task.id,
-            message=f"{task.id} {role.value} moved from {old_rung.model} to {new_rung.model}",
-            data={
-                "role": role.value,
-                "from": old_rung.model,
-                "to": new_rung.model,
-                "different_agent": different_agent,
-                "result": type(result).__name__,
-            },
+        emit_rung_changed(
+            self._events,
+            task,
+            role,
+            old_rung,
+            new_rung,
+            data={"different_agent": different_agent, "result": type(result).__name__},
         )
         return updated
 
