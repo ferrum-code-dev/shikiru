@@ -911,6 +911,17 @@ async def test_real_agents_e6_take_over_holds_only_that_task(
     await _run_with_reruns("e6", e2e_project_dir, tmux_server, record_e2e_attempt, _e6_body)
 
 
+@pytest.mark.timeout(outer_timeout_seconds("muse"))
+async def test_real_agents_muse_takeover_and_integrate(
+    e2e_project_dir: Path,
+    tmux_server: TmuxServer,
+    record_e2e_attempt: Callable[[AttemptRecord], None],
+) -> None:
+    if REAL_AGENT != "muse":
+        pytest.skip("set SHIKIRU_E2E_AGENT=muse to run the Muse scenario")
+    await _run_with_reruns("muse", e2e_project_dir, tmux_server, record_e2e_attempt, _muse_body)
+
+
 async def _e3_body(
     project: PreparedProject,
     environment: dict[str, str],
@@ -1113,6 +1124,26 @@ async def _e6_body(
     await _assert_git_and_tracker(project, "A1", "A2")
 
 
+async def _muse_body(
+    project: PreparedProject,
+    environment: dict[str, str],
+    tmux_server: TmuxServer,
+    state: AttemptState,
+) -> None:
+    await _submit(project, environment, E1_REQUEST)
+    _, session_id = await _wait_for_implement_turn(project)
+    await _take_over_implementer(project)
+    pane_id = await _wait_for_agent_tui(project, environment, tmux_server, session_id, second=False)
+    await tmux_server.run("send-keys", "-t", pane_id, *E6_TUI_EXIT_KEYS, check=True)
+    await wait_until(
+        lambda: bool(_task_events(project, EventKind.HANDED_BACK)), timeout=CLI_TIMEOUT_SECONDS
+    )
+    await _wait_done(project, environment, state)
+    _assert_same_implementer_session(project, session_id)
+    await _assert_git_and_tracker(project, "A1")
+    await _assert_a1_implementation(project)
+
+
 async def _take_over_implementer(project: PreparedProject) -> None:
     services = build_operator(project.root)
     try:
@@ -1127,14 +1158,20 @@ async def _wait_for_agent_tui(
     environment: dict[str, str],
     tmux_server: TmuxServer,
     session_id: str,
+    *,
+    second: bool = True,
 ) -> str:
     first = _task_record(await _status(project.root, environment))
-    second = _task_record(await _status(project.root, environment, E6_SECOND_TASK_ID))
     _require(
-        Hold.INTERVENTION.value in cast("list[str]", first.get("holds"))
-        and Hold.INTERVENTION.value not in cast("list[str]", second.get("holds")),
-        f"intervention holds: {first.get('holds')} and {second.get('holds')}",
+        Hold.INTERVENTION.value in cast("list[str]", first.get("holds")),
+        f"intervention hold missing: {first.get('holds')}",
     )
+    if second:
+        other = _task_record(await _status(project.root, environment, E6_SECOND_TASK_ID))
+        _require(
+            Hold.INTERVENTION.value not in cast("list[str]", other.get("holds")),
+            f"unexpected intervention hold: {other.get('holds')}",
+        )
     pane_id = cast("dict[str, str]", first.get("panes"))[Role.IMPLEMENTER.value]
     agent = _taken_over_agent(project)
 
@@ -1144,7 +1181,7 @@ async def _wait_for_agent_tui(
         _require(dead == PANE_ALIVE, "the taken-over pane exited before hand back")
         _require(session_id in start_command, f"pane does not resume {session_id}")
         screen = await tmux_server.run("capture-pane", "-p", "-t", pane_id)
-        return command == agent and bool(screen.stdout.strip())
+        return command.startswith(agent) and bool(screen.stdout.strip())
 
     await wait_until(tui_shown, timeout=CLI_TIMEOUT_SECONDS)
     return pane_id

@@ -16,6 +16,7 @@ ATTEMPT_BUDGETS = {
     "e4": timedelta(minutes=10),
     "e5": timedelta(minutes=10),
     "e6": timedelta(minutes=12),
+    "muse": timedelta(minutes=10),
 }
 INVOCATION_BUDGET = timedelta(minutes=60)
 AUTOMATIC_RERUNS = 1

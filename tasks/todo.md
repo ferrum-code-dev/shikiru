@@ -219,7 +219,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - Live contract checks with a real `muse` (`SHIKIRU_E2E=1`, as for Codex): first turn writes a valid report, usage, stop leaves the session resumable, headless `ask`, compaction.
 
-- [ ] 38. Verify Muse through the engine in tmux
+- [x] 38. Verify Muse through the engine in tmux
 
 ## Acceptance criteria
 - Opt-in e2e rung with a Muse ladder; verify an unattended run through the engine in tmux, including `interactive_command` take-over and a commit from a linked worktree.

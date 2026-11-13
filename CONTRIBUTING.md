@@ -95,6 +95,16 @@ additional usage. Its parallel-work scenarios disable CPU/free-RAM dispatch gate
 host and account usage. See [budgets.py](tests/e2e/budgets.py) for the current limits. These paid
 checks are excluded from normal CI and have not been run as part of this cleanup.
 
+To verify Muse through the engine, including interactive takeover and a worktree commit, run:
+
+```sh
+SHIKIRU_E2E=1 SHIKIRU_E2E_AGENT=muse uv run pytest -n 0 --no-cov \
+  tests/e2e/test_real_agents.py::test_real_agents_muse_takeover_and_integrate
+```
+
+This selects `muse-spark-1.2` with low effort for each role; review the model in
+`real_agent_config.py` before running it.
+
 ### Check your own project
 
 For a provider-backed check, clone a committed project into a fresh disposable directory, initialize
