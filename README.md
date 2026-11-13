@@ -6,8 +6,8 @@
 
 Shikiru coordinates coding agents through a development workflow: request in, reviewed change out.
 It asks you when a decision needs human judgment. It runs locally with Git worktrees, a persistent
-engine and a terminal dashboard in tmux. Claude Code and Codex CLI are built in; different agents
-and models can take different roles on the same task.
+engine and a terminal dashboard in tmux. Claude Code, Codex CLI and Muse Code are built in; different
+agents and models can take different roles on the same task.
 
 Routine escalations handled for you, the rest sent to your phone? See
 [shikiri-yaku](https://github.com/ferrum-code-dev/shikiri-yaku).
@@ -53,7 +53,7 @@ keep running.
 - Python 3.14+ and [uv](https://docs.astral.sh/uv/).
 - Git 2.45+ and tmux 3.5+.
 - One Git repository per project, with at least one commit at its root. No submodules or multi-repo projects.
-- Claude Code or Codex CLI, installed and signed in.
+- Claude Code, Codex CLI or Muse Code, installed and signed in. For Muse, sign in with `muse login`.
 - `gh` and a GitHub remote, only for pull-request integration.
 
 ## Install and update

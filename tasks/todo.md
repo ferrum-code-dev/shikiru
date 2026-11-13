@@ -207,7 +207,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `docs/design.md`: agent list, quota rule, compaction, trust boundary (sandbox disabled).
 
-- [ ] 36. Document Muse prerequisites and live tests
+- [x] 36. Document Muse prerequisites and live tests
 
 ## Acceptance criteria
 - `README.md`, `CONTRIBUTING.md`: built-in agents, prerequisites (`muse login`), live-test constants.

@@ -19,7 +19,7 @@ PYTEST_ADDOPTS='--dist=loadfile' uv run poe check
 ```
 
 The quality gate covers formatting, lint, boundaries, types, unused-code checks and behavior tests.
-Real Claude/Codex adapter code is tested offline using recorded protocol output and controlled
+Real Claude/Codex/Muse adapter code is tested offline using recorded protocol output and controlled
 subprocesses: invocation, parsing, resumption, compaction, usage and failures. Engine integration
 uses the fake-agent plugin with real Git, SQLite and private tmux. Live provider contracts and
 real-agent end-to-end scenarios are opt-in and excluded from normal CI.
@@ -47,18 +47,27 @@ For automated adapter verification, choose model IDs supported by your account f
   [their test module](tests/integration/test_codex_headless_contract.py). Review/update those test
   constants for your account; they are separate from project configuration and have no equivalent
   model environment overrides.
+- Muse contract tests use the runtime default model for the first turn and
+  `_LIVE_CHANGE_MODEL` (`muse-spark-1.2`) for model-change/resume checks, plus
+  `_LIVE_COMPACT_AT_PCT` (`5.0`) for compaction, in
+  [their test module](tests/integration/test_muse_headless_contract.py). Choose a supported
+  different model and adjust the compaction threshold if needed. Muse must be installed and signed
+  in with `muse login`.
 
-Enable live checks only for the invocation below. Include just the test file for each agent you
-have configured (both are shown):
+Enable live checks only for the invocation below. Include only the test files for agents you have
+configured:
 
 ```sh
 SHIKIRU_E2E=1 uv run pytest -n 0 --no-cov -k live \
   tests/integration/test_claude_headless_contract.py \
-  tests/integration/test_codex_headless_contract.py
+  tests/integration/test_codex_headless_contract.py \
+  tests/integration/test_muse_headless_contract.py
 ```
 
 These exercise report submission, measured usage, session/model resumption, stop/resume, structured
-Helper answers and context compaction. The compaction check deliberately grows context and can
+Helper answers and context compaction. Muse uses its default model for the first turn, changes to
+`_LIVE_CHANGE_MODEL` on resume, and uses `_LIVE_COMPACT_AT_PCT` for the compaction check. The
+compaction check deliberately grows context and can
 consume substantially more usage than a basic report check. Review skips as well as failures.
 
 For complete workflow verification, review `REAL_AGENT`, `REAL_MODEL`, `REAL_EFFORT` and
