@@ -51,14 +51,24 @@ def free_space_level(
     return UsageLevel.OK
 
 
-def effective_used_pct(window: QuotaWindow, now: datetime) -> float:
-    """Return the used percentage a human sees for `window` at `now`.
+def effective_used_pct(window: QuotaWindow, now: datetime) -> float | None:
+    """Return the used percentage a human sees for `window` at `now`, or None when it is unknown.
 
-    A window whose reset has passed shows as `0.0`; the stored reading is unchanged.
+    A window whose known reset has passed is unknown: its stored reading is only a lower bound,
+    since the account may have been used elsewhere. The stored reading itself is unchanged.
     """
     if window.resets_at is not None and window.resets_at <= now:
-        return 0.0
+        return None
     return window.used_pct
+
+
+def reset_is_known(window: QuotaWindow, now: datetime) -> bool:
+    """Return whether `window` shows a countdown to a reset still ahead of `now`.
+
+    Derived from `effective_used_pct`, so a window never shows a countdown while its percentage
+    is unknown, and never shows an unknown percentage beside a countdown.
+    """
+    return window.resets_at is not None and effective_used_pct(window, now) is not None
 
 
 def next_quota_reset(windows: Iterable[QuotaWindow], now: datetime) -> datetime | None:

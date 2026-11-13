@@ -14,7 +14,7 @@ from rich.text import Text
 
 from shikiru.domain.escalation import escalation_reason_label
 from shikiru.domain.events import EventKind
-from shikiru.domain.levels import effective_used_pct
+from shikiru.domain.levels import effective_used_pct, reset_is_known
 from shikiru.domain.reports import (
     SEVERITY_BLOCKER,
     ConsultAnswer,
@@ -55,7 +55,7 @@ from shikiru.operator.doctor import (
 )
 from shikiru.operator.queries import TaskNotFoundError
 from shikiru.ui.age import format_duration
-from shikiru.ui.compact import compact_count
+from shikiru.ui.compact import USAGE_RESET_UNKNOWN, USAGE_RESETS_WORD, compact_count
 from shikiru.ui.console import supports_osc8
 from shikiru.ui.gauge import Gauge
 from shikiru.ui.glyphs import (
@@ -1075,9 +1075,13 @@ def _quota_cell(
             cell.append_text(
                 Text("unknown", style=SECONDARY_TEXT_COLOR)
                 if window is None
-                else Gauge(
-                    "", effective_used_pct(window, now), quota_warn_pct, quota_alert_pct
-                ).render()
+                else _quota_gauge(
+                    "",
+                    window,
+                    now=now,
+                    quota_warn_pct=quota_warn_pct,
+                    quota_alert_pct=quota_alert_pct,
+                )
             )
         other_windows = [window for window in windows if window.name not in QUOTA_PERIODS]
     else:
@@ -1088,15 +1092,26 @@ def _quota_cell(
     for window in other_windows:
         if cell:
             cell.append(" · " if reported_periods else " / ", style=SECONDARY_TEXT_COLOR)
+        label = "" if window.name in QUOTA_PROVIDER_SLOTS else window.name
         cell.append_text(
-            Gauge(
-                "" if window.name in QUOTA_PROVIDER_SLOTS else window.name,
-                effective_used_pct(window, now),
-                quota_warn_pct,
-                quota_alert_pct,
-            ).render()
+            _quota_gauge(
+                label,
+                window,
+                now=now,
+                quota_warn_pct=quota_warn_pct,
+                quota_alert_pct=quota_alert_pct,
+            )
         )
     return cell
+
+
+def _quota_gauge(
+    label: str, window: QuotaWindow, *, now: datetime, quota_warn_pct: int, quota_alert_pct: int
+) -> Text:
+    gauge = Gauge(label, effective_used_pct(window, now), quota_warn_pct, quota_alert_pct).render()
+    if not reset_is_known(window, now):
+        gauge.append(f" {USAGE_RESETS_WORD} {USAGE_RESET_UNKNOWN}", style=SECONDARY_TEXT_COLOR)
+    return gauge
 
 
 def _task_blocker_rows(

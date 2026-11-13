@@ -610,7 +610,7 @@ async def test_tiny_popup_is_titled_and_keeps_every_section_label_in_a_scrolling
 
 
 _HALF_GAUGE = f"7d {GAUGE_GLYPHS[2]} 50%"
-_EMPTY_GAUGE = f"7d {GAUGE_GLYPHS[0]} 0%"
+_UNKNOWN_GAUGE = f"7d {GAUGE_GLYPHS[0]} --%"
 
 
 @pytest.mark.parametrize(
@@ -620,12 +620,12 @@ _EMPTY_GAUGE = f"7d {GAUGE_GLYPHS[0]} 0%"
         (timedelta(hours=24), f"{_HALF_GAUGE} resets 1d 0h 0m"),
         (timedelta(hours=23, minutes=59, seconds=59), f"{_HALF_GAUGE} resets 23h 59m"),
         (timedelta(minutes=5, seconds=7), f"{_HALF_GAUGE} resets 5m 7s"),
-        (timedelta(seconds=-30), f"{_EMPTY_GAUGE} resets 0s"),
-        (None, f"{_HALF_GAUGE} resets \N{EN DASH}"),
+        (timedelta(seconds=-30), f"{_UNKNOWN_GAUGE} resets unknown"),
+        (None, f"{_HALF_GAUGE} resets unknown"),
     ],
-    ids=["multi-day", "exactly-a-day", "just-under-a-day", "minutes", "expired", "unknown"],
+    ids=["multi-day", "exactly-a-day", "just-under-a-day", "minutes", "expired", "no-reset"],
 )
-async def test_reset_countdown_shows_days_from_a_day_and_never_goes_negative(
+async def test_reset_countdown_shows_days_from_a_day_and_an_unknown_share_once_past(
     connection: Connection,
     reader: StateReader,
     tmp_path: Path,
@@ -650,7 +650,7 @@ async def test_reset_countdown_shows_days_from_a_day_and_never_goes_negative(
         assert expected in text
 
 
-async def test_an_expired_full_window_is_drawn_as_unused(
+async def test_an_expired_full_window_is_drawn_as_unknown_and_keeps_its_stored_reading(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
     clock = FakeClock(_START)
@@ -660,6 +660,6 @@ async def test_an_expired_full_window_is_drawn_as_unused(
     async with WidgetHostApp(panel).run_test(size=_WIDE):
         await _settled_lines(panel)
         text = "\n".join(_plain_lines(panel))
-        assert f"5h {GAUGE_GLYPHS[0]} 0%" in text
+        assert f"5h {GAUGE_GLYPHS[0]} --% resets unknown" in text
         assert "100%" not in text
         assert reader.list_quotas(["claude"])["claude"][0].used_pct == 100.0

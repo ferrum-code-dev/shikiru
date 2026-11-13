@@ -78,7 +78,12 @@ from shikiru.domain.engine_uptime import project_engine_uptime
 from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import move_up, pick_rung
-from shikiru.domain.levels import effective_used_pct, free_space_level, usage_level
+from shikiru.domain.levels import (
+    effective_used_pct,
+    free_space_level,
+    reset_is_known,
+    usage_level,
+)
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.quota_waits import (
     QUOTA_NOT_REPORTED,
@@ -127,6 +132,7 @@ from shikiru.operator.queries import (
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import SECONDS_PER_DAY, format_age, format_duration
 from shikiru.ui.age import format_short_age as _age
+from shikiru.ui.compact import USAGE_RESET_UNKNOWN
 from shikiru.ui.glyphs import GLYPH_STALLED, SPINNER_FRAMES
 from shikiru.ui.section import GROUP_SEPARATOR
 from shikiru.ui.strip import PanelState, StampKind, StripStamp, TaskStripData
@@ -166,7 +172,6 @@ ALERT_TIME_FORMAT = "%H:%M:%S"
 PUSH_TIME_FORMAT = "%H:%M"
 SECONDS_PER_MINUTE = 60
 MINUTES_PER_HOUR = 60
-TIME_UNKNOWN = "\N{EN DASH}"
 TASK_TIMELINE_READ_ERROR_ID = "timeline-read-error"
 TASK_TIMELINE_READ_ERROR_SUMMARY = "Task evidence could not be read"
 ENGINE_LIFECYCLE_EVENT_LIMIT = 2
@@ -1734,10 +1739,8 @@ class StateDashboardViews:
                 QuotaGaugeView(
                     name=window.name,
                     used_pct=effective_used_pct(window, now),
-                    resets_in=(
-                        _quota_countdown(
-                            quota_frames[(agent, window.name)], window.resets_at is not None
-                        )
+                    resets_in=_quota_countdown(
+                        quota_frames[(agent, window.name)], reset_is_known(window, now)
                     ),
                     observed_ago=_age(now - window.observed_at),
                 )
@@ -2090,9 +2093,9 @@ def _duration(seconds: int) -> str:
     return f"{remainder}s"
 
 
-def _quota_countdown(seconds: int | None, has_reset: bool) -> str:
-    if not has_reset:
-        return TIME_UNKNOWN
+def _quota_countdown(seconds: int | None, reset_known: bool) -> str:
+    if not reset_known:
+        return USAGE_RESET_UNKNOWN
     if seconds is None:
         message = "a quota reset deadline did not produce a countdown"
         raise RuntimeError(message)

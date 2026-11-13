@@ -751,7 +751,7 @@ class QuotaGaugeView:
     """One provider-reported quota window with human-readable time context."""
 
     name: str
-    used_pct: float
+    used_pct: float | None
     resets_in: str
     observed_ago: str
 

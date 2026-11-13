@@ -367,7 +367,9 @@ before those that retry on their own, each group in order of first occurrence. C
 task and scope, so a refresh keeps each card's disclosure state, focus and scroll position.
 
 Usage preserves provenance and uncertainty: absent tokens/cost/context/billing are not invented,
-and quota readings can be stale. An active quota block shows as a banner in the home usage section
+and quota readings can be stale. A window whose known reset has passed shows as unknown (`○ --%`,
+`resets unknown`) until a newer reading replaces it; stored readings still drive blocks and JSON.
+An active quota block shows as a banner in the home usage section
 and in the expanded usage view, counting the tasks waiting on it; a queued task whose recorded wait
 reason is quota, or a running task in a mid-turn quota wait, carries an amber `quota` marker in the
 task list. The same facts mark the task's tmux window with an amber `⧗ quota` state, and only the

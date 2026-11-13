@@ -230,7 +230,7 @@ async def test_status_uptime_uses_live_engine_lock_and_recorded_start_event(
         services.close()
 
 
-async def test_status_shows_an_expired_full_window_as_unused_and_keeps_the_stored_reading(
+async def test_status_shows_an_expired_full_window_as_unknown_and_keeps_the_stored_reading(
     connection: Connection, reader: StateReader, tmp_path: Path
 ) -> None:
     clock = FakeClock(START)
@@ -255,7 +255,7 @@ async def test_status_shows_an_expired_full_window_as_unused_and_keeps_the_store
         )
     )
 
-    assert " 0%" in output
+    assert "--% resets unknown" in output
     assert "100%" not in output
     assert reader.list_quotas(["codex"])["codex"][0].used_pct == 100.0
 
@@ -303,7 +303,7 @@ async def test_status_watch_redraws_when_a_quota_reset_passes_without_a_state_ch
 
         await wait_until(lambda: "5h" in drain(), timeout=_TIMEOUT_1_0_SECONDS)
         output = "".join(redraws)
-        assert " 0%" in output
+        assert "--% resets unknown" in output
         assert "100%" not in output
     finally:
         watcher.cancel()

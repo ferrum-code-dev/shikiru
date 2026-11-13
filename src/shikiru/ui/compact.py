@@ -91,6 +91,7 @@ USAGE_CACHE_WRITE_LABEL = "w"
 USAGE_TOKENS_UNKNOWN = "tokens unknown"
 USAGE_COST_UNKNOWN = "cost unknown"
 USAGE_RESETS_WORD = "resets"
+USAGE_RESET_UNKNOWN = "unknown"
 RESOURCE_FAILED = "failed"
 RESOURCE_UNAVAILABLE = "unavailable"
 RESOURCE_STALE = "stale"
@@ -216,7 +217,7 @@ class _QuotaWindow(Protocol):
     def name(self) -> str: ...
 
     @property
-    def used_pct(self) -> float: ...
+    def used_pct(self) -> float | None: ...
 
     @property
     def resets_in(self) -> str: ...

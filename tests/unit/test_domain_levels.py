@@ -10,6 +10,7 @@ from shikiru.domain.levels import (
     effective_used_pct,
     free_space_level,
     next_quota_reset,
+    reset_is_known,
     usage_level,
 )
 
@@ -66,31 +67,40 @@ def test_free_space_is_warn_below_ten_percent_and_alert_below_five_percent(
 _QUOTA_NOW = datetime(2026, 1, 1, 12, tzinfo=UTC)
 
 
-@pytest.mark.parametrize(
-    ("resets_at", "expected"),
-    [
-        pytest.param(_QUOTA_NOW - timedelta(seconds=1), 0.0, id="expired"),
-        pytest.param(_QUOTA_NOW, 0.0, id="exactly-at-reset"),
-        pytest.param(_QUOTA_NOW + timedelta(seconds=1), 100.0, id="future-reset"),
-        pytest.param(None, 100.0, id="no-reset"),
-    ],
-)
-def test_effective_used_pct_is_zero_only_once_a_known_reset_has_passed(
-    resets_at: datetime | None, expected: float
-) -> None:
-    window = QuotaWindow(
-        name="5h",
-        used_pct=100.0,
-        resets_at=resets_at,
-        observed_at=_QUOTA_NOW - timedelta(hours=1),
-    )
-    assert effective_used_pct(window, _QUOTA_NOW) == expected
-
-
 def _window(resets_at: datetime | None) -> QuotaWindow:
     return QuotaWindow(
         name="5h", used_pct=100.0, resets_at=resets_at, observed_at=_QUOTA_NOW - timedelta(hours=1)
     )
+
+
+@pytest.mark.parametrize(
+    ("resets_at", "expected"),
+    [
+        pytest.param(_QUOTA_NOW - timedelta(seconds=1), None, id="expired"),
+        pytest.param(_QUOTA_NOW, None, id="exactly-at-reset"),
+        pytest.param(_QUOTA_NOW + timedelta(seconds=1), 100.0, id="future-reset"),
+        pytest.param(None, 100.0, id="no-reset"),
+    ],
+)
+def test_effective_used_pct_is_unknown_once_a_known_reset_has_passed(
+    resets_at: datetime | None, expected: float | None
+) -> None:
+    assert effective_used_pct(_window(resets_at), _QUOTA_NOW) == expected
+
+
+@pytest.mark.parametrize(
+    ("resets_at", "known"),
+    [
+        pytest.param(_QUOTA_NOW - timedelta(seconds=1), False, id="expired"),
+        pytest.param(_QUOTA_NOW, False, id="exactly-at-reset"),
+        pytest.param(_QUOTA_NOW + timedelta(seconds=1), True, id="future-reset"),
+        pytest.param(None, False, id="no-reset"),
+    ],
+)
+def test_reset_is_known_only_while_the_reset_is_still_ahead(
+    resets_at: datetime | None, known: bool
+) -> None:
+    assert reset_is_known(_window(resets_at), _QUOTA_NOW) is known
 
 
 @pytest.mark.parametrize(

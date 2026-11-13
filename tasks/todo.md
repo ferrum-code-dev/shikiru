@@ -259,3 +259,12 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - `start_turn` awaits the cached catalog and passes the window of the rung's model to the turn; `UsageReported.context_used_pct` is the latest prompt estimate over that window, capped at 100.
 - A catalog that is unavailable or lacks the model leaves `context_used_pct` unknown and emits an `EvidenceFault` naming the reason; no window is guessed, and a previous turn's share is cleared rather than carried over.
 - The fake Muse integration tests cover a listed window (25% for 50,000 of 200,000 tokens), an unlisted model and an unavailable catalog.
+
+### Phase 10: expired quota windows (T-162)
+
+- [x] 45. Show an expired quota window as unknown
+
+## Acceptance criteria
+- A window whose known reset has passed shows `○ --%` and `resets unknown` in the dashboard and `shikiru status`; a window without a reset keeps its percentage and shows `resets unknown`.
+- The stored reading, block logic, JSON output and blocker evidence keep the raw values; the rule lives once in `effective_used_pct` and `reset_is_known`.
+- Domain tables cover expired, exactly-at-reset, future and no-reset windows; a FakeClock integration test shows an expired 100% window as unknown with the stored value still 100.0.
