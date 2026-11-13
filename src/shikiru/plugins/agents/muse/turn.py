@@ -256,7 +256,11 @@ class MuseTurnParser:
         return [ToolStarted(name, name)]
 
     def _tool_result(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
-        facts = _mapping(payload.get(_CORRELATION_KEY))
+        facts_value = payload.get(_CORRELATION_KEY)
+        if facts_value is None:
+            _text(payload, _TEXT_KEY)
+            return []
+        facts = _mapping(facts_value)
         name = _text(facts, _TOOL_NAME_KEY)
         exit_code = _tool_exit_code(_text(payload, _TEXT_KEY))
         signals: list[AgentSignal] = []

@@ -18,6 +18,13 @@ files are genuine captures unless noted below.
   `model/list` exchange.
 - `session_compaction.jsonl`: genuine session-log excerpt containing a
   successful compaction.
+- `tool_result_unknown_tool.jsonl`: one genuine `tool.result` record copied
+  from task T-153 turn `03-implement-i1` (`implementer.stream.jsonl` line
+  1373), where Muse called a nonexistent tool `muse.update_todos`. The
+  record carries only `call_id`, `command_id`, `kind`, `run_stream` and
+  `text` (`tool unavailable: unknown tool ...`), with no
+  `correlation_facts` key. Identifiers are redacted as elsewhere; the
+  `text` session tool identifiers are replaced with `call_redacted_*`.
 - Quota-exhaustion reason text, not a stream: a live Muse turn failed on quota
   during the live contract run on 2026-11-13. The reason is quoted verbatim in
   `tests/unit/test_muse_failure_classification.py` as `_LIVE_QUOTA_REASON`:
@@ -57,7 +64,8 @@ scratch checkout at `/private/tmp/scratch-repo`; the compaction sample includes
 the spike checkout at `/private/tmp/t117-spike-ws`. In the turn JSONL files,
 opaque event, session, run, command, task and request identifiers use patterned
 UUID replacements that preserve references between records. The tool call
-identifier in `turn_tool.jsonl` is replaced with `call_redacted_01`. The
+identifier in `turn_tool.jsonl` is replaced with `call_redacted_01`, and
+identifiers in `tool_result_unknown_tool.jsonl` use the same replacement. The
 compaction excerpt replaces the home path in its saved-output paths, while its
 prompt summary and tool-output description retain spike content. Protocol
 structure, record types and the observed values needed to exercise the fixtures

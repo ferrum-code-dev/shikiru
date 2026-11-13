@@ -33,11 +33,13 @@ from shikiru.plugins.agents.muse.options import (
     RECORD_PAYLOAD_TYPE_KEY,
     RECORD_STREAM_KEY,
     RUN_OUTPUT_DELTA_TYPE,
+    RUN_TERMINAL_COMPLETED_TYPE,
     RUN_TERMINAL_FAILED_TYPE,
     RUN_USAGE_TYPE,
     STREAM_ID_KEY,
     STREAM_KIND_KEY,
     STREAM_KIND_SESSION,
+    TASK_PROPOSED_TYPE,
     TOOL_RESULT_TYPE,
 )
 from shikiru.plugins.agents.muse.session_log import NO_SESSION_LOG_MARK
@@ -102,6 +104,27 @@ def _tool_result_line(text: str, outcome: str) -> str:
         json.dumps(record),
         text=text,
         correlation_facts={"tool_name": _BASH, "outcome": outcome},
+    )
+
+
+def _unknown_tool_line() -> str:
+    return _fixture_lines("tool_result_unknown_tool")[0]
+
+
+def _terminal_completed_line() -> str:
+    return next(
+        line
+        for line in _fixture_lines("turn_first")
+        if json.loads(line).get(RECORD_PAYLOAD_TYPE_KEY) == RUN_TERMINAL_COMPLETED_TYPE
+    )
+
+
+def _bash_proposal_line() -> str:
+    return next(
+        line
+        for line in _fixture_lines("turn_tool")
+        if json.loads(line).get(RECORD_PAYLOAD_TYPE_KEY) == TASK_PROPOSED_TYPE
+        and json.loads(line)[RECORD_PAYLOAD_KEY]["event"].get("task_kind") == "tool.bash"
     )
 
 
@@ -217,6 +240,80 @@ def test_tool_result_outcome_prefers_a_nonzero_exit_code(
         ToolStarted(_BASH, _BASH),
         ToolFinished(_BASH, expected_outcome, expected_exit_code),
     ]
+
+
+def test_tool_result_without_correlation_facts_ends_turn_with_terminal() -> None:
+    signals = _signals([_unknown_tool_line(), _terminal_completed_line()])
+
+    assert _of_type(signals, TurnEnded) == [TurnEnded("OK")]
+    assert _failures(signals) == []
+    assert _of_type(signals, ToolStarted, ToolFinished) == []
+
+
+def test_tool_result_without_correlation_facts_leaves_pending_tool_to_finish() -> None:
+    signals = _signals(
+        [_bash_proposal_line(), _unknown_tool_line(), _terminal_completed_line()],
+    )
+
+    assert _of_type(signals, ToolStarted, ToolFinished) == [
+        ToolStarted(_BASH, _BASH),
+        ToolFinished(_BASH, None, None),
+    ]
+    assert _of_type(signals, TurnEnded) == [TurnEnded("OK")]
+    assert _failures(signals) == []
+
+
+def test_tool_result_with_null_correlation_facts_ends_turn_with_terminal() -> None:
+    signals = _signals(
+        [_with_fields(_unknown_tool_line(), correlation_facts=None), _terminal_completed_line()],
+    )
+
+    assert _of_type(signals, TurnEnded) == [TurnEnded("OK")]
+    assert _failures(signals) == []
+    assert _of_type(signals, ToolStarted, ToolFinished) == []
+
+
+@pytest.mark.parametrize(
+    "correlation_facts",
+    [
+        "bash",
+        [],
+        {},
+        {"outcome": "success"},
+        {"tool_name": 42, "outcome": "success"},
+    ],
+    ids=(
+        "non-mapping-string",
+        "non-mapping-list",
+        "empty-mapping",
+        "missing-tool-name",
+        "non-string-tool-name",
+    ),
+)
+def test_broken_correlation_facts_is_still_malformed(correlation_facts: object) -> None:
+    signals = _signals([_with_fields(_unknown_tool_line(), correlation_facts=correlation_facts)])
+
+    assert [failure.kind for failure in _failures(signals)] == [FailureKind.UNKNOWN]
+    assert _of_type(signals, TurnEnded) == []
+
+
+def test_tool_result_without_text_is_still_malformed() -> None:
+    record = json.loads(_unknown_tool_line())
+    del record[RECORD_PAYLOAD_KEY]["text"]
+
+    signals = _signals([json.dumps(record), _terminal_completed_line()])
+
+    assert [failure.kind for failure in _failures(signals)] == [FailureKind.UNKNOWN]
+    assert _of_type(signals, TurnEnded) == []
+
+
+def test_tool_result_without_correlation_or_text_is_still_malformed() -> None:
+    line = _with_fields(_unknown_tool_line(), text=123)
+
+    signals = _signals([line])
+
+    assert [failure.kind for failure in _failures(signals)] == [FailureKind.UNKNOWN]
+    assert _of_type(signals, TurnEnded) == []
 
 
 def test_running_tool_is_closed_without_outcome_when_the_turn_ends() -> None:
