@@ -75,6 +75,12 @@ SIGNAL_ROWS: list[tuple[str, str, dict[str, object], Phrase | None]] = [
         Phrase("ran pytest -q"),
     ),
     (
+        "tool-detail-is-bookkeeping",
+        "ToolDetailReported",
+        {"name": "bash", "detail": "pytest"},
+        None,
+    ),
+    (
         "failed-tool-fails",
         "ToolFinished",
         {"name": "Bash", "outcome": "failure", "exit_code": 2},

@@ -23,8 +23,24 @@ files are genuine captures unless noted below.
   1373), where Muse called a nonexistent tool `muse.update_todos`. The
   record carries only `call_id`, `command_id`, `kind`, `run_stream` and
   `text` (`tool unavailable: unknown tool ...`), with no
-  `correlation_facts` key. Identifiers are redacted as elsewhere; the
-  `text` session tool identifiers are replaced with `call_redacted_*`.
+  `correlation_facts` key. Its `call_id` is redacted to `call_redacted_03`
+  so it stays distinct from the bash and file-tool calls. The `text` session
+  tool identifiers are replaced with `call_redacted_*`.
+- `tool_bash_detail.jsonl` and `tool_file_detail.jsonl`: eight genuine records
+  each, copied from task T-153 turn `03-implement-i1`
+  (`implementer.stream.jsonl`). `tool_bash_detail` is the bash call at
+  sequences 395 to 402, from `task.lifecycle.proposed` (task kind `tool.bash`,
+  no arguments) through `tool.result`, whose `text` is JSON with `command`,
+  `description` and `exit_code`. `tool_file_detail` is a `read_file` call at
+  sequences 1143 to 1150 whose output and `tool.result` text begin with the
+  `Read text file` summary line; its scheduled record carries the call ID in
+  `idempotency_key` while the started record has no `background_target`. The
+  parser tests feed these records one at a time to verify the bash command
+  appears at sequence 400, the file summary appears at the first output record,
+  and uncorrelated results for both calls do not repeat their detail.
+  Identifiers use the patterned UUIDs and
+  `call_redacted_01` and `call_redacted_02`; the home path is
+  `/redacted-home`. Command output chunks are kept as recorded.
 - Quota-exhaustion reason text, not a stream: a live Muse turn failed on quota
   during the live contract run on 2026-11-13. The reason is quoted verbatim in
   `tests/unit/test_muse_failure_classification.py` as `_LIVE_QUOTA_REASON`:
@@ -64,10 +80,11 @@ scratch checkout at `/private/tmp/scratch-repo`; the compaction sample includes
 the spike checkout at `/private/tmp/t117-spike-ws`. In the turn JSONL files,
 opaque event, session, run, command, task and request identifiers use patterned
 UUID replacements that preserve references between records. The tool call
-identifier in `turn_tool.jsonl` is replaced with `call_redacted_01`, and
-identifiers in `tool_result_unknown_tool.jsonl` use the same replacement. The
-compaction excerpt replaces the home path in its saved-output paths, while its
-prompt summary and tool-output description retain spike content. Protocol
+identifier in `turn_tool.jsonl` and `tool_bash_detail.jsonl` is replaced with
+`call_redacted_01`; `tool_file_detail.jsonl` uses `call_redacted_02`, and the
+unrelated result in `tool_result_unknown_tool.jsonl` uses `call_redacted_03`.
+The compaction excerpt replaces the home path in its saved-output paths, while
+its prompt summary and tool-output description retain spike content. Protocol
 structure, record types and the observed values needed to exercise the fixtures
 are retained.
 

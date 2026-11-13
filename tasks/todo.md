@@ -80,7 +80,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [x] 12. Parse Muse turn streams
 
 ## Acceptance criteria
-- `turn.py`: `MuseTurnParser.feed/finish` mapping records to signals (session, message, tools, usage, quota, terminal), malformed-line handling, interrupted turns, resumed usage accumulation.
+- `turn.py`: `MuseTurnParser.feed/finish` maps records to signals (session, message, tools, usage, quota, terminal), malformed-line handling, interrupted turns and resumed usage accumulation. Tool detail is reported as soon as output arrives; uncorrelated results are deduplicated against pending calls using the started call ID or scheduled idempotency key.
 
 - [x] 13. Classify Muse failures and reset times
 
@@ -90,7 +90,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [x] 14. Test Muse stream parsing and failure rules
 
 ## Acceptance criteria
-- Unit tests over the Phase 0 fixtures: one table per rule, including unrecognised text -> `UNKNOWN`; test shared model-choice assessment with and without runtime-default support.
+- Unit tests over the Phase 0 fixtures: one table per rule, including unrecognised text -> `UNKNOWN`; test shared model-choice assessment with and without runtime-default support. Tool fixtures cover immediate detail, same-call uncorrelated-result deduplication for bash and file tools, and unnamed unrelated results.
 
 ### Phase 2: process sequence and compaction
 

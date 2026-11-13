@@ -13,6 +13,7 @@ from shikiru.agents.contracts import (
     PERCENT,
     QUOTA_WINDOW_FIVE_HOUR,
     QUOTA_WINDOW_SEVEN_DAY,
+    TOOL_DETAIL_MAX_CHARS,
     AgentSignal,
     Compacted,
     FailureKind,
@@ -182,7 +183,6 @@ _CONTEXT_ERROR_TEXTS = (
 _QUOTA_ERROR_TEXTS = ("usage limit", "rate limit", "too many requests")
 _UNAVAILABLE_ERROR_TEXTS = ("overloaded", "unrecognized_model", "unrecognized model")
 _AUTH_ERROR_TEXTS = ("authentication", "unauthorized", "invalid api key")
-_TOOL_DETAIL_MAX_CHARS = 160
 _UNKNOWN_ERROR_MESSAGE = "Claude stream ended without a result"
 _PROCESS_FAILURE_MESSAGE = "Claude process exited unsuccessfully after emitting a result"
 _INVALID_COMPACTION_MESSAGE = "Claude compaction ended without compact_boundary"
@@ -785,7 +785,7 @@ def _tool_detail(value: object) -> str:
         detail = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
     else:
         detail = ""
-    return detail[:_TOOL_DETAIL_MAX_CHARS]
+    return detail[:TOOL_DETAIL_MAX_CHARS]
 
 
 def _is_error_result(payload: Mapping[str, Any]) -> bool:

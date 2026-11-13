@@ -24,6 +24,14 @@ from shikiru.domain.timeline import (
             id="offset-timestamp-and-normalized-tool-signal",
         ),
         pytest.param(
+            b'{"ts":"2026-01-02T03:04:05+02:00","signal":"ToolDetailReported"}',
+            False,
+            TIMELINE_TOOL_CATEGORY,
+            datetime(2026, 1, 2, 1, 4, 5, tzinfo=UTC),
+            None,
+            id="tool-detail-is-tool-evidence",
+        ),
+        pytest.param(
             b'{"signal":"ToolStarted"}',
             False,
             TIMELINE_TOOL_CATEGORY,

@@ -16,6 +16,7 @@ from shikiru.agents.contracts import (
     QUOTA_WINDOW_FIVE_HOUR,
     QUOTA_WINDOW_SEVEN_DAY,
     RUNTIME_DEFAULT_MODEL,
+    TOOL_DETAIL_MAX_CHARS,
     AgentSignal,
     EvidenceFault,
     EvidenceRecovered,
@@ -24,6 +25,7 @@ from shikiru.agents.contracts import (
     QuotaReported,
     QuotaWindow,
     SessionStarted,
+    ToolDetailReported,
     ToolFinished,
     ToolOutcome,
     ToolStarted,
@@ -64,7 +66,11 @@ from shikiru.plugins.agents.muse.options import (
     STREAM_ID_KEY,
     STREAM_KIND_KEY,
     STREAM_KIND_SESSION,
+    TASK_OUTPUT_TYPE,
     TASK_PROPOSED_TYPE,
+    TASK_SCHEDULED_TYPE,
+    TASK_STARTED_TYPE,
+    TOOL_IDEMPOTENCY_KEY_PREFIX,
     TOOL_RESULT_TYPE,
     TOOL_TASK_KIND_PREFIX,
 )
@@ -98,6 +104,13 @@ _CORRELATION_KEY = "correlation_facts"
 _TOOL_NAME_KEY = "tool_name"
 _OUTCOME_KEY = "outcome"
 _EXIT_CODE_KEY = "exit_code"
+_TASK_ID_KEY = "task_id"
+_CHUNK_KEY = "chunk"
+_BACKGROUND_TARGET_KEY = "background_target"
+_TOOL_CALL_ID_KEY = "tool_call_id"
+_IDEMPOTENCY_KEY_KEY = "idempotency_key"
+_CALL_ID_KEY = "call_id"
+_DETAIL_KEYS = ("command", "description")
 _MODELS_KEY = "models"
 _INPUT_TOKENS_KEY = "input_tokens"
 _OUTPUT_TOKENS_KEY = "output_tokens"
@@ -151,6 +164,14 @@ class _FailedRun(NamedTuple):
     reason: str
 
 
+@dataclass
+class _PendingTool:
+    task_id: str
+    name: str
+    detail: str = ""
+    call_id: str | None = None
+
+
 @dataclass(frozen=True)
 class ContextWindow:
     """A model's context window in tokens, or the reason it is unknown.
@@ -192,13 +213,16 @@ class MuseTurnParser:
         self._initial_usage = initial_usage or Usage(0, 0, 0, 0, None, COST_BASIS_UNKNOWN, None)
         self._session_id: str | None = None
         self._totals: _TurnTotals | None = None
-        self._pending_tools: list[str] = []
+        self._pending_tools: list[_PendingTool] = []
         self._windows: tuple[QuotaWindow, ...] = ()
         self._terminal: TurnEnded | _FailedRun | None = None
         self._malformed = False
         self._handlers: dict[str, Callable[[Mapping[str, Any]], list[AgentSignal]]] = {
             RUN_OUTPUT_DELTA_TYPE: self._output_delta,
             TASK_PROPOSED_TYPE: self._task_proposed,
+            TASK_SCHEDULED_TYPE: self._task_scheduled,
+            TASK_STARTED_TYPE: self._task_started,
+            TASK_OUTPUT_TYPE: self._task_output,
             TOOL_RESULT_TYPE: self._tool_result,
             RUN_USAGE_TYPE: self._usage,
             RUN_TERMINAL_COMPLETED_TYPE: self._completed,
@@ -232,7 +256,7 @@ class MuseTurnParser:
         self, exit_code: int, stderr: str, *, interrupted: bool = False
     ) -> list[AgentSignal]:
         unfinished: list[AgentSignal] = [
-            ToolFinished(name, None, None) for name in self._pending_tools
+            ToolFinished(tool.name, None, None) for tool in self._pending_tools
         ]
         if self._malformed and not interrupted:
             return [*unfinished, _malformed_failure()]
@@ -263,26 +287,98 @@ class MuseTurnParser:
         if not task_kind.startswith(TOOL_TASK_KIND_PREFIX):
             return []
         name = task_kind.removeprefix(TOOL_TASK_KIND_PREFIX)
-        self._pending_tools.append(name)
-        return [ToolStarted(name, name)]
+        self._pending_tools.append(_PendingTool(_text(payload, _TASK_ID_KEY), name))
+        return [ToolStarted(name, "")]
+
+    def _task_started(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        pending = next(
+            (tool for tool in self._pending_tools if tool.task_id == payload.get(_TASK_ID_KEY)),
+            None,
+        )
+        if pending is None:
+            return []
+        event = _mapping(payload.get(_EVENT_KEY))
+        background_target = event.get(_BACKGROUND_TARGET_KEY)
+        if background_target is None:
+            return []
+        call_id = _optional_text(_mapping(background_target), _TOOL_CALL_ID_KEY)
+        if call_id and pending.call_id is None:
+            pending.call_id = call_id
+        return []
+
+    def _task_scheduled(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        pending = next(
+            (tool for tool in self._pending_tools if tool.task_id == payload.get(_TASK_ID_KEY)),
+            None,
+        )
+        if pending is None:
+            return []
+        event = _mapping(payload.get(_EVENT_KEY))
+        idempotency_key = _optional_text(event, _IDEMPOTENCY_KEY_KEY)
+        if idempotency_key is None or not idempotency_key.startswith(TOOL_IDEMPOTENCY_KEY_PREFIX):
+            return []
+        call_id = idempotency_key.removeprefix(TOOL_IDEMPOTENCY_KEY_PREFIX)
+        if call_id and pending.call_id is None:
+            pending.call_id = call_id
+        return []
+
+    def _task_output(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        pending = next(
+            (tool for tool in self._pending_tools if tool.task_id == payload.get(_TASK_ID_KEY)),
+            None,
+        )
+        if pending is None or pending.detail:
+            return []
+        chunk = _text(_mapping(payload.get(_EVENT_KEY)), _CHUNK_KEY)
+        pending.detail = _tool_detail(chunk)
+        return [ToolDetailReported(pending.name, pending.detail)] if pending.detail else []
 
     def _tool_result(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         facts_value = payload.get(_CORRELATION_KEY)
         if facts_value is None:
-            _text(payload, _TEXT_KEY)
-            return []
+            text = _text(payload, _TEXT_KEY)
+            call_id = _optional_text(payload, _CALL_ID_KEY)
+            pending = self._pending_tool_for_call_id(call_id)
+            if pending is not None:
+                if pending.detail:
+                    return []
+                pending.detail = _tool_detail(text)
+                return [ToolDetailReported(pending.name, pending.detail)] if pending.detail else []
+            detail = _tool_detail(text)
+            return [ToolDetailReported(None, detail)] if detail else []
         facts = _mapping(facts_value)
         name = _text(facts, _TOOL_NAME_KEY)
-        exit_code = _tool_exit_code(_text(payload, _TEXT_KEY))
+        text = _text(payload, _TEXT_KEY)
+        exit_code = _tool_exit_code(text)
+        pending = self._take_pending(name)
         signals: list[AgentSignal] = []
-        if name in self._pending_tools:
-            self._pending_tools.remove(name)
+        if pending is None:
+            signals.append(ToolStarted(name, ""))
+            detail = _tool_detail(text)
         else:
-            signals.append(ToolStarted(name, name))
+            detail = "" if pending.detail else _tool_detail(text)
         signals.append(
-            ToolFinished(name, _tool_outcome(facts.get(_OUTCOME_KEY), exit_code), exit_code)
+            ToolFinished(
+                name,
+                _tool_outcome(facts.get(_OUTCOME_KEY), exit_code),
+                exit_code,
+                detail,
+            )
         )
         return signals
+
+    def _take_pending(self, name: str) -> _PendingTool | None:
+        index = next(
+            (position for position, tool in enumerate(self._pending_tools) if tool.name == name),
+            None,
+        )
+        return None if index is None else self._pending_tools.pop(index)
+
+    def _pending_tool_for_call_id(self, call_id: str | None) -> _PendingTool | None:
+        if not call_id:
+            return None
+        matches = [tool for tool in self._pending_tools if tool.call_id == call_id]
+        return matches[0] if len(matches) == 1 else None
 
     def _usage(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         self._totals = _turn_totals(_models(payload.get(_MODELS_KEY)))
@@ -564,6 +660,15 @@ def _text(record: Mapping[str, Any], key: str) -> str:
     return value
 
 
+def _optional_text(record: Mapping[str, Any], key: str) -> str | None:
+    value = record.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise _MalformedRecordError
+    return value
+
+
 def _count(record: Mapping[str, Any], key: str) -> int:
     value = record.get(key)
     if type(value) is not int:
@@ -640,11 +745,31 @@ def _tool_outcome(outcome: object, exit_code: int | None) -> ToolOutcome | None:
 
 
 def _tool_exit_code(text: str) -> int | None:
+    details = _json_mapping(text)
+    if details is None:
+        return None
+    exit_code = details.get(_EXIT_CODE_KEY)
+    return exit_code if type(exit_code) is int else None
+
+
+def _tool_detail(text: str) -> str:
+    details = _json_mapping(text)
+    source = text if details is None else _first_text(details, _DETAIL_KEYS)
+    lines = source.strip().splitlines()
+    return lines[0][:TOOL_DETAIL_MAX_CHARS] if lines else ""
+
+
+def _json_mapping(text: str) -> Mapping[str, Any] | None:
     try:
-        details = json.loads(text)
+        value = json.loads(text)
     except json.JSONDecodeError:
         return None
-    if not isinstance(details, Mapping):
-        return None
-    exit_code = cast("Mapping[str, Any]", details).get(_EXIT_CODE_KEY)
-    return exit_code if type(exit_code) is int else None
+    return cast("Mapping[str, Any]", value) if isinstance(value, Mapping) else None
+
+
+def _first_text(record: Mapping[str, Any], keys: Sequence[str]) -> str:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, str):
+            return value
+    return ""

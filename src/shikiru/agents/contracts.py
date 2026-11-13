@@ -33,6 +33,7 @@ SLOT_ENV_VAR = "SHIKIRU_SLOT"
 SHIKIRU_MODULE = "shikiru"
 DOCTOR_TIMEOUT_SECONDS = 60.0
 PERCENT = 100
+TOOL_DETAIL_MAX_CHARS = 160
 MODEL_SUGGESTION_CUTOFF = 0.6
 RUNTIME_DEFAULT_MODEL = "default"
 COST_BASIS_UNKNOWN = "unknown"
@@ -240,6 +241,14 @@ class ToolStarted:
     detail: str
 
 
+@dataclass(frozen=True)
+class ToolDetailReported:
+    """A tool's readable detail arrived after it started, without changing its running state."""
+
+    name: str | None
+    detail: str
+
+
 class ToolOutcome(StrEnum):
     """A tool result the agent can reliably classify as successful or failed."""
 
@@ -249,11 +258,12 @@ class ToolOutcome(StrEnum):
 
 @dataclass(frozen=True)
 class ToolFinished:
-    """A named agent tool finished."""
+    """A named agent tool finished, with the detail its result revealed, if any."""
 
     name: str
     outcome: ToolOutcome | None = None
     exit_code: int | None = None
+    detail: str = ""
 
 
 @dataclass(frozen=True)
@@ -310,6 +320,7 @@ type AgentSignal = (
     SessionStarted
     | Message
     | ToolStarted
+    | ToolDetailReported
     | ToolFinished
     | UsageReported
     | QuotaReported

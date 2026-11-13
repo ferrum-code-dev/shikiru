@@ -15,6 +15,7 @@ from shikiru.agents.contracts import (
     Message,
     QuotaReported,
     SessionStarted,
+    ToolDetailReported,
     ToolFinished,
     ToolOutcome,
     ToolStarted,
@@ -46,6 +47,7 @@ _BOOKKEEPING = frozenset(
         Compacted.__name__,
         EvidenceFault.__name__,
         EvidenceRecovered.__name__,
+        ToolDetailReported.__name__,
     }
 )
 _WORD_SEPARATOR = " "

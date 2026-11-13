@@ -26,6 +26,7 @@ from shikiru.agents.contracts import (
     QuotaWindow,
     Rung,
     SessionStarted,
+    ToolDetailReported,
     ToolFinished,
     ToolOutcome,
     ToolStarted,
@@ -115,6 +116,7 @@ _TOOL_FIRST_DELTA = "01fa8a"
 _TOOL_SECOND_DELTA = "2"
 _TOOL_TEXT = "01fa8a2"
 _TOOL_NAME = "bash"
+_TOOL_COMMAND = "git rev-parse --short HEAD"
 _HEADLESS_TEXT = '{"answer":"OK"}'
 _AUTH_REASON = "your API key from META_API_KEY was rejected — update or unset it"
 _UNKNOWN_MODEL_REASON = (
@@ -325,7 +327,8 @@ class TestMuseHeadlessContract(AgentContractSuite):
                 session_id=_SESSION_TOOL,
                 expected=[
                     SessionStarted(_SESSION_TOOL),
-                    ToolStarted(_TOOL_NAME, _TOOL_NAME),
+                    ToolStarted(_TOOL_NAME, ""),
+                    ToolDetailReported(_TOOL_NAME, _TOOL_COMMAND),
                     ToolFinished(_TOOL_NAME, ToolOutcome.SUCCESS, _TOOL_EXIT_CODE),
                     Message(_TOOL_FIRST_DELTA),
                     Message(_TOOL_SECOND_DELTA),

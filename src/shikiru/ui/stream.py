@@ -13,6 +13,7 @@ from shikiru.agents.contracts import (
     Message,
     QuotaReported,
     SessionStarted,
+    ToolDetailReported,
     ToolFinished,
     ToolOutcome,
     ToolStarted,
@@ -36,6 +37,7 @@ _RUNG_SEPARATOR = ":"
 _EFFORT_SEPARATOR = "/"
 _DETAIL_SEPARATOR = " · "
 _OUTCOME_FIELD = "outcome"
+_DETAIL_FIELD = "detail"
 _EXIT_CODE_FIELD = "exit_code"
 _EXIT_LABEL = "exit"
 
@@ -55,6 +57,7 @@ class StreamLine:
             SessionStarted.__name__: _session_started,
             Message.__name__: _message,
             ToolStarted.__name__: _tool_started,
+            ToolDetailReported.__name__: _tool_detail_reported,
             ToolFinished.__name__: _tool_finished,
             UsageReported.__name__: _usage,
             QuotaReported.__name__: _silent,
@@ -113,15 +116,24 @@ def _tool_started(row: ViewRow) -> Text:
     return Text(f"{_TOOL_GLYPH} {row['name']}{detail}", style=IDLE_COLOR)
 
 
+def _tool_detail_reported(row: ViewRow) -> Text:
+    name = row.get("name")
+    label = f"{name}: " if name else ""
+    return Text(f"  {label}{row['detail']}", style=IDLE_COLOR)
+
+
 def _tool_finished(row: ViewRow) -> Text | None:
     outcome = row.get(_OUTCOME_FIELD)
     exit_code = row.get(_EXIT_CODE_FIELD)
+    detail = row.get(_DETAIL_FIELD) or ""
     if (
         outcome not in (ToolOutcome.SUCCESS.value, ToolOutcome.FAILURE.value)
         and type(exit_code) is not int
+        and not detail
     ):
         return None
-    details = [row["name"]]
+    head = " ".join(part for part in (row["name"], detail) if part)
+    details = [head]
     if outcome in (ToolOutcome.SUCCESS.value, ToolOutcome.FAILURE.value):
         details.append(outcome)
     if type(exit_code) is int:
