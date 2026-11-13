@@ -175,7 +175,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `MuseAgent.headless()` returns it; add the `PLR0917` ignore. The wizard offers an agent for the Helper scope only when this is non-`None`.
 
-- [ ] 30. Test Muse headless calls
+- [x] 30. Test Muse headless calls
 
 ## Acceptance criteria
 - Tests: success, invalid JSON, missing result, non-zero exit, via the fake executable.
