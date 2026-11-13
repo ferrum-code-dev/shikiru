@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from shikiru.agents.contracts import ModelChoice
+from shikiru.agents.contracts import RUNTIME_DEFAULT_MODEL, ModelChoice
 from shikiru.errors import ShikiruError
 from shikiru.plugins.agents.muse.catalog import parse_model_catalog
 
@@ -54,6 +54,13 @@ def test_captured_model_list_becomes_choices_with_their_variants_and_context_win
     assert parsed.context_windows == {
         choice.model: _CONTEXT_LIMIT for choice in parsed.catalog.models
     }
+
+
+def test_the_catalog_declares_runtime_default_support_without_a_default_choice() -> None:
+    parsed = parse_model_catalog(_FIXTURE.read_text(encoding="utf-8"))
+
+    assert parsed.catalog.supports_runtime_default
+    assert RUNTIME_DEFAULT_MODEL not in {choice.model for choice in parsed.catalog.models}
 
 
 def test_each_model_keeps_its_own_context_window() -> None:

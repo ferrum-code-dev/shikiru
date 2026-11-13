@@ -158,7 +158,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `MuseAgent.model_catalog()` with caching and an error catalog on failure; `complete=True`, each model `offered`; `supports_runtime_default=True`; ambiguous-`args` error like Codex; bounded by the measured timeout. The wizard lists an agent in ladders only when this succeeds, so this phase gates wizard support.
 
-- [ ] 27. Test Muse model catalog discovery
+- [x] 27. Test Muse model catalog discovery
 
 ## Acceptance criteria
 - Tests: parser unit tests; integration test against the fake executable speaking the same lines; assert the catalog advertises runtime-default support without adding a synthetic model choice.
