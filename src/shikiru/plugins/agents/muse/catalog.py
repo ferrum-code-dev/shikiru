@@ -100,7 +100,11 @@ def parse_model_catalog(output: str) -> MuseCatalog:
     if not entries:
         raise ShikiruError(_EMPTY_CATALOG_MESSAGE)
     return MuseCatalog(
-        catalog=ModelCatalog(models=tuple(choice for choice, _ in entries)),
+        catalog=ModelCatalog(
+            models=tuple(choice for choice, _ in entries),
+            complete=True,
+            supports_runtime_default=True,
+        ),
         context_windows={choice.model: limit for choice, limit in entries},
     )
 

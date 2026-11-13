@@ -17,13 +17,19 @@ from shikiru.agents.contracts import (
     UNKNOWN_BILLING_DECLARATION,
     BillingDeclaration,
     CheckResult,
+    ModelCatalog,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.clock import from_local
 from shikiru.errors import ShikiruError
+from shikiru.plugins.agents.muse.catalog import read_model_catalog
 from shikiru.plugins.agents.muse.options import (
     API_KEY_ENV_VAR,
+    CONFIG_LONG_FLAG,
+    CONFIG_SHORT_FLAG,
+    MODEL_CATALOG_ARGS_DETAIL,
+    MODEL_CATALOG_SELECTOR_FLAGS,
     MODEL_FLAG,
     MUSE_COMMAND,
     MUSE_SETTINGS,
@@ -53,6 +59,7 @@ _AUTHENTICATED_DETAIL = "authenticated"
 _CREDENTIALS_UNVERIFIED_DETAIL = f"{API_KEY_ENV_VAR} set; credentials not verified by doctor"
 _NO_DIAGNOSTIC_DETAIL = "no diagnostic output"
 _UNTESTED_VERSION_DETAIL = "{version} (warning: verified with {tested})"
+_FLAG_VALUE_SEPARATOR = "="
 
 
 class MuseAgent:
@@ -77,11 +84,18 @@ class MuseAgent:
             if options.billing_mode is not None
             else UNKNOWN_BILLING_DECLARATION
         )
+        self._cached_model_catalog: ModelCatalog | None = None
 
     @property
     def billing_declaration(self) -> BillingDeclaration:
         """Return the explicit plugin option or the unknown declaration."""
         return self._billing_declaration
+
+    async def model_catalog(self) -> ModelCatalog:
+        """Return Muse's model choices from `muse serve`, read once and then cached."""
+        if self._cached_model_catalog is None:
+            self._cached_model_catalog = await self._read_model_catalog()
+        return self._cached_model_catalog
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one Muse process-per-turn exchange."""
@@ -144,6 +158,12 @@ class MuseAgent:
     def _subprocess_environment(self) -> dict[str, str]:
         return dict(os.environ)
 
+    async def _read_model_catalog(self) -> ModelCatalog:
+        if _model_catalog_args_are_ambiguous(self._options.args):
+            return ModelCatalog(error=MODEL_CATALOG_ARGS_DETAIL)
+        catalog = await read_model_catalog(self._runner, self._subprocess_environment())
+        return catalog.catalog
+
     async def _check_binary(self) -> CheckResult:
         try:
             result = await self._runner.run(
@@ -195,6 +215,22 @@ class MuseAgent:
 def _is_tested_version(output: str) -> bool:
     match = _VERSION_PATTERN.search(output)
     return match is not None and match.group() == TESTED_MUSE_VERSION
+
+
+def _model_catalog_args_are_ambiguous(args: Sequence[str]) -> bool:
+    return any(_is_model_catalog_selector(argument) for argument in args)
+
+
+def _is_model_catalog_selector(argument: str) -> bool:
+    return _flag_name(argument) in MODEL_CATALOG_SELECTOR_FLAGS or _is_config_override(argument)
+
+
+def _is_config_override(argument: str) -> bool:
+    return argument.startswith(CONFIG_SHORT_FLAG) or _flag_name(argument) == CONFIG_LONG_FLAG
+
+
+def _flag_name(argument: str) -> str:
+    return argument.partition(_FLAG_VALUE_SEPARATOR)[0]
 
 
 def create(context: AgentContext) -> MuseAgent:

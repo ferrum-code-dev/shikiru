@@ -153,7 +153,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `catalog.py`: one-shot `muse serve --disable-shell --disable-write --no-session-log` client (`initialize`, `initialized`, `model/list`), timeouts, clean shutdown, parse into `ModelCatalog`.
 
-- [ ] 26. Expose the Muse model catalog
+- [x] 26. Expose the Muse model catalog
 
 ## Acceptance criteria
 - `MuseAgent.model_catalog()` with caching and an error catalog on failure; `complete=True`, each model `offered`; `supports_runtime_default=True`; ambiguous-`args` error like Codex; bounded by the measured timeout. The wizard lists an agent in ladders only when this succeeds, so this phase gates wizard support.

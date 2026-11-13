@@ -56,6 +56,22 @@ SERVE_ARGV = (
     NO_SESSION_LOG_FLAG,
 )
 MODEL_CATALOG_TIMEOUT_SECONDS = 10.0
+PROVIDER_FLAG = "--provider"
+PRESET_FLAG = "--preset"
+EFFORT_ALIAS_FLAG = "--effort"
+CONFIG_SHORT_FLAG = "-c"
+CONFIG_LONG_FLAG = "--config"
+MODEL_CATALOG_SELECTOR_FLAGS = (
+    MODEL_FLAG,
+    REASONING_EFFORT_FLAG,
+    EFFORT_ALIAS_FLAG,
+    PROVIDER_FLAG,
+    PRESET_FLAG,
+)
+MODEL_CATALOG_ARGS_DETAIL = (
+    f"{MUSE_COMMAND} agent args select a model, effort, provider or preset, or override "
+    "configuration; its effective model catalog cannot be determined safely"
+)
 
 RECORD_STREAM_KEY = "stream"
 RECORD_PAYLOAD_KEY = "payload"

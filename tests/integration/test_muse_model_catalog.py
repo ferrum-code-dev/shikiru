@@ -9,13 +9,17 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.agents.contracts import ModelChoice
+from shikiru.agents.contracts import AgentContext, ModelChoice
+from shikiru.plugins.agents.muse.agent import create
 from shikiru.plugins.agents.muse.catalog import read_model_catalog
 from shikiru.plugins.agents.muse.options import MUSE_COMMAND
 from shikiru.process import SubprocessRunner
+from tests.support.clock import LONG_AGO, FakeClock
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from shikiru.plugins.agents.muse.agent import MuseAgent
 
 _ORDERED = "ordered"
 _REJECTED = "rejected"
@@ -177,3 +181,84 @@ async def test_invalid_utf8_from_muse_returns_a_catalog_error(
 
     assert catalog.catalog.error is not None
     assert catalog.catalog.models == ()
+
+
+def _agent(args: list[str]) -> MuseAgent:
+    return create(
+        AgentContext(options={"args": args}, runner=SubprocessRunner(), clock=FakeClock(LONG_AGO))
+    )
+
+
+async def test_the_agent_catalog_is_complete_declares_runtime_default_and_is_read_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = _install_fake_muse(tmp_path, monkeypatch, mode=_ORDERED)
+    agent = _agent([])
+
+    first = await agent.model_catalog()
+    second = await agent.model_catalog()
+
+    assert second == first
+    assert first.error is None
+    assert first.complete
+    assert first.supports_runtime_default
+    assert [choice.model for choice in first.models] == ["muse-wonder-1.0", "muse-spark-1.2"]
+    assert all(choice.offered for choice in first.models)
+    assert _received_methods(log) == ["initialize", "initialized", "model/list"]
+
+
+async def test_a_failed_handshake_is_an_error_catalog_that_is_cached(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = _install_fake_muse(tmp_path, monkeypatch, mode=_REJECTED)
+    agent = _agent([])
+
+    first = await agent.model_catalog()
+    second = await agent.model_catalog()
+
+    assert first.error is not None
+    assert first.models == ()
+    assert not first.complete
+    assert second == first
+    assert _received_methods(log) == ["initialize"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        pytest.param(["--model", "muse-spark-1.2"], id="model"),
+        pytest.param(["--model=muse-spark-1.2"], id="model-with-value"),
+        pytest.param(["--reasoning-effort", "low"], id="reasoning-effort"),
+        pytest.param(["--effort=low"], id="effort-alias"),
+        pytest.param(["--provider", "echo"], id="provider"),
+        pytest.param(["--preset", "native-basic"], id="preset"),
+        pytest.param(["-c", 'model="muse-spark-1.2"'], id="config-separate"),
+        pytest.param(["--config", 'model="muse-spark-1.2"'], id="config-long"),
+        pytest.param(['--config=model="muse-spark-1.2"'], id="config-long-equals"),
+        pytest.param(['-cmodel="muse-spark-1.2"'], id="config-attached"),
+        pytest.param(['-c=model="muse-spark-1.2"'], id="config-attached-equals"),
+        pytest.param(["-c", 'reasoning_effort="low"'], id="config-reasoning-effort"),
+    ],
+)
+async def test_args_that_select_the_model_or_override_configuration_leave_the_catalog_unverified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: list[str]
+) -> None:
+    log = _install_fake_muse(tmp_path, monkeypatch, mode=_ORDERED)
+
+    catalog = await _agent(args).model_catalog()
+
+    assert catalog.error is not None
+    assert catalog.models == ()
+    assert not log.exists()
+
+
+async def test_args_that_neither_select_nor_override_leave_the_catalog_authoritative(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = _install_fake_muse(tmp_path, monkeypatch, mode=_ORDERED)
+
+    catalog = await _agent(["--disable-shell", "--trust-workspace"]).model_catalog()
+
+    assert catalog.error is None
+    assert catalog.complete
+    assert _received_methods(log) == ["initialize", "initialized", "model/list"]
