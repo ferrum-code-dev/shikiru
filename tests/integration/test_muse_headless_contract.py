@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +14,8 @@ from shikiru.agents.contracts import (
     COST_BASIS_UNKNOWN,
     QUOTA_WINDOW_FIVE_HOUR,
     QUOTA_WINDOW_SEVEN_DAY,
+    ROLE_ENV_VAR,
+    RUN_DIR_ENV_VAR,
     RUNTIME_DEFAULT_MODEL,
     AgentFactory,
     Compacted,
@@ -41,6 +44,7 @@ from shikiru.agents.testing import (
     RecordedStream,
     ReplayedProcess,
 )
+from shikiru.operator.probe import live_report_instructions
 from shikiru.plugins.agents.muse.agent import MuseAgent, create
 from shikiru.plugins.agents.muse.options import (
     DEFAULT_ARGS,
@@ -239,9 +243,9 @@ class TestMuseHeadlessContract(AgentContractSuite):
     ) -> TurnSpec:
         repo = tmp_path / "repo"
         run_dir = tmp_path / "run"
-        turn_dir = tmp_path / "turn"
-        for directory in (repo, run_dir, turn_dir):
+        for directory in (repo, run_dir, tmp_path):
             directory.mkdir(parents=True, exist_ok=True)
+        turn_dir = Path(tempfile.mkdtemp(dir=tmp_path, prefix="turn-"))
         return TurnSpec(
             rung=Rung(agent=MUSE_COMMAND, model=model or RUNTIME_DEFAULT_MODEL),
             role=_ROLE,
@@ -250,7 +254,11 @@ class TestMuseHeadlessContract(AgentContractSuite):
             run_dir=run_dir,
             turn_dir=turn_dir,
             add_dirs=(),
-            env={XDG_DATA_HOME_ENV_VAR: str(tmp_path / _DATA_DIRECTORY)},
+            env={
+                XDG_DATA_HOME_ENV_VAR: str(tmp_path / _DATA_DIRECTORY),
+                RUN_DIR_ENV_VAR: str(run_dir),
+                ROLE_ENV_VAR: _ROLE,
+            },
             session_id=resume_session_id,
             usage=usage,
         )
@@ -543,6 +551,15 @@ class TestMuseHeadlessContract(AgentContractSuite):
     def live_change_model(self, first_model: str) -> str:
         del first_model
         return _LIVE_CHANGE_MODEL
+
+    def live_report_command_is_signalled(self) -> bool:
+        """Muse names a tool only as `bash` when it starts, so the report is checked by file."""
+        return False
+
+    def live_report_turn_prompt(self, spec: TurnSpec, prompt_path: Path) -> str:
+        """Muse reads a prompt that only names a workspace file as untrusted, so inline it."""
+        del prompt_path
+        return live_report_instructions(spec.run_dir)
 
     def headless_ask_schema_model(self) -> type[BaseModel]:
         return _Answer

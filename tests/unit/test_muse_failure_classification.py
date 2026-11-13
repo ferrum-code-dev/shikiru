@@ -46,6 +46,11 @@ def _classify(reason: str, windows: tuple[QuotaWindow, ...] = ()) -> TurnFailed:
 
 _EXHAUSTED = (_window(100.0),)
 _NOT_EXHAUSTED = (_window(99.9),)
+_LIVE_QUOTA_REASON = (
+    "API error 429 [request_id=09f1a922-8ac1-4746-baac-8494c4e9a420]: Subscription quota "
+    "exhausted. Your usage window resets at 2026-11-13T11:39:02Z. (rate_limit_error)"
+)
+_LIVE_QUOTA_RESET = datetime(2026, 11, 13, 11, 39, 2, tzinfo=UTC)
 
 
 @pytest.mark.parametrize(
@@ -64,6 +69,7 @@ _NOT_EXHAUSTED = (_window(99.9),)
         ("muse usage: not logged in: run `muse login` first", (), FailureKind.AUTH),
         ("429 Too Many Requests: usage limit reached", (), FailureKind.QUOTA),
         ("HTTP 429: quota exceeded", (), FailureKind.QUOTA),
+        (_LIVE_QUOTA_REASON, (), FailureKind.QUOTA),
         ("usage limit reached", (), FailureKind.UNKNOWN),
         ("HTTP 429 with no detail", (), FailureKind.UNKNOWN),
         ("something went wrong", _EXHAUSTED, FailureKind.QUOTA),
@@ -111,6 +117,7 @@ _QUOTA_REASON = "429 usage limit reached"
         (_QUOTA_REASON, (_window(100.0, NOW + timedelta(days=8)),), None),
         (_QUOTA_REASON, (_window(100.0, None),), None),
         (_QUOTA_REASON, (), None),
+        (_LIVE_QUOTA_REASON, (), _LIVE_QUOTA_RESET),
         (
             "429 usage limit reached, resets at 2026-11-12T14:30:00Z",
             (),
@@ -140,6 +147,7 @@ _QUOTA_REASON = "429 usage limit reached"
         "absurd-window-reset-ignored",
         "window-without-reset",
         "no-evidence",
+        "live-429-text-reset",
         "iso-text-reset",
         "iso-text-beats-earlier-window-reset",
         "past-iso-text-ignored",
@@ -199,6 +207,15 @@ def test_failed_terminal_is_classified_with_the_turn_allowance() -> None:
     [failure] = [signal for signal in parser.finish(1, "") if isinstance(signal, TurnFailed)]
 
     assert failure == TurnFailed(FailureKind.QUOTA, "step cap", None)
+
+
+def test_failed_terminal_with_the_live_quota_text_carries_its_reset() -> None:
+    parser = _parser()
+    parser.feed(_record(RUN_TERMINAL_FAILED_TYPE, {"reason": _LIVE_QUOTA_REASON, "text": ""}))
+
+    [failure] = [signal for signal in parser.finish(1, "") if isinstance(signal, TurnFailed)]
+
+    assert failure == TurnFailed(FailureKind.QUOTA, _LIVE_QUOTA_REASON, _LIVE_QUOTA_RESET)
 
 
 @pytest.mark.parametrize(

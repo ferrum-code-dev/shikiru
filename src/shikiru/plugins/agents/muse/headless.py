@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from shikiru.agents.contracts import RUNTIME_DEFAULT_MODEL
+from shikiru.agents.sdk.schema import strict_schema
 from shikiru.errors import HeadlessOutputError
 from shikiru.plugins.agents.muse.options import (
     EXEC_SUBCOMMAND,
@@ -65,7 +66,7 @@ class MuseHeadless:
             schema_path = Path(directory) / _SCHEMA_FILENAME
             prompt_path.write_text(prompt, encoding=_TEXT_ENCODING)
             schema_path.write_text(
-                json.dumps(schema, separators=(",", ":")), encoding=_TEXT_ENCODING
+                json.dumps(strict_schema(schema), separators=(",", ":")), encoding=_TEXT_ENCODING
             )
             argv = [
                 MUSE_COMMAND,

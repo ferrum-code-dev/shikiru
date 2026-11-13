@@ -214,7 +214,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 ### Phase 7: live verification
 
-- [ ] 37. Run Muse live contract checks
+- [x] 37. Run Muse live contract checks
 
 ## Acceptance criteria
 - Live contract checks with a real `muse` (`SHIKIRU_E2E=1`, as for Codex): first turn writes a valid report, usage, stop leaves the session resumable, headless `ask`, compaction.

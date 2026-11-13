@@ -8,6 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from shikiru.agents.sdk.schema import strict_schema
 from shikiru.errors import HeadlessOutputError
 from shikiru.plugins.agents.codex.options import (
     CODEX_COMMAND,
@@ -34,10 +35,6 @@ _TYPE_FIELD = "type"
 _ITEM_FIELD = "item"
 _TEXT_FIELD = "text"
 _CONTENT_FIELD = "content"
-_SCHEMA_TYPE_FIELD = "type"
-_OBJECT_TYPE = "object"
-_ADDITIONAL_PROPERTIES_FIELD = "additionalProperties"
-_STRICT_SCHEMA_VALUE = False
 _INVALID_JSON_MESSAGE = "Codex headless output was not valid JSON"
 _INVALID_OBJECT_MESSAGE = "Codex headless output was not an object"
 _MISSING_AGENT_MESSAGE = "Codex headless output had no agent_message"
@@ -65,7 +62,7 @@ class CodexHeadless:
         with tempfile.TemporaryDirectory(prefix="shikiru-codex-") as directory:
             schema_path = Path(directory) / "output-schema.json"
             schema_path.write_text(
-                json.dumps(_strict_schema(schema), separators=(",", ":")), encoding="utf-8"
+                json.dumps(strict_schema(schema), separators=(",", ":")), encoding="utf-8"
             )
             argv = [
                 CODEX_COMMAND,
@@ -97,18 +94,6 @@ class CodexHeadless:
                 check=True,
             )
         return _parse_agent_message(result.stdout)
-
-
-def _strict_schema(value: object) -> object:
-    if isinstance(value, Mapping):
-        typed_value = cast("Mapping[str, object]", value)
-        schema = {key: _strict_schema(item) for key, item in typed_value.items()}
-        if schema.get(_SCHEMA_TYPE_FIELD) == _OBJECT_TYPE:
-            schema.setdefault(_ADDITIONAL_PROPERTIES_FIELD, _STRICT_SCHEMA_VALUE)
-        return schema
-    if isinstance(value, list):
-        return [_strict_schema(item) for item in cast("list[object]", value)]
-    return value
 
 
 def _parse_agent_message(stdout: str) -> Mapping[str, Any]:

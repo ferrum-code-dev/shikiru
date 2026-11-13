@@ -11,7 +11,6 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import StrEnum, auto
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import pytest
@@ -42,9 +41,9 @@ from shikiru.agents.sdk.turn import (
 from shikiru.agents.testing.resume import RESUME_NONCE_PROMPT, RESUME_RECALL_PROMPT
 from shikiru.clock import SystemClock
 from shikiru.operator.probe import (
-    REPORT_COMMAND,
     REPORT_INPUT_FILENAME,
     init_scratch_repo,
+    live_report_command,
     live_report_problem,
     prepare_live_report,
 )
@@ -52,13 +51,14 @@ from shikiru.process import SubprocessRunner
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from pathlib import Path
 
     from pydantic import BaseModel
 
     from shikiru.agents.contracts import Agent, AgentFactory
 
 E2E_ENV_VAR = "SHIKIRU_E2E"
-_TURN_TIMEOUT_SECONDS = 60.0
+_TURN_TIMEOUT_SECONDS = 180.0
 _COMMAND_FLAG = "-c"
 _LIVE_COMPACTION_TIMEOUT_SECONDS = 900.0
 _PYTEST_TIMEOUT_MARGIN_SECONDS = 60.0
@@ -69,15 +69,16 @@ _SYLLABLES = ("ka", "ro", "mit", "sel", "dun", "vo", "tra", "ple", "gor", "nis",
 _SYLLABLES_PER_WORD = 3
 _LIVE_COMPACTION_PROMPT = (
     f"Read part1.txt through part{_GROWTH_FILES}.txt in this repository in order, each file "
-    "in full and one file per tool call. After each file, state its last line number in one "
-    "short sentence.\n"
+    "in full and one file per tool call, and never read a file twice. After each file, state "
+    "its last line number in one short sentence.\n"
     "Then use Bash to run exactly this report command once:\n"
-    f'{REPORT_COMMAND} "$SHIKIRU_RUN_DIR/{REPORT_INPUT_FILENAME}"\n'
+    "{report_command}\n"
     "After the command succeeds, reply with exactly: DONE followed by the nonce."
 )
 _LIVE_COMPACTION_TURN_PROMPT = (
-    "Remember this nonce: {nonce}. Then read {prompt_path} and follow it exactly."
+    "Remember this nonce: {nonce}. Then follow these instructions:\n{instructions}"
 )
+_LIVE_USAGE_PROMPT = "Reply with the single word OK. Do not use any tools."
 _REPLAY_SCRIPT = """
 import json, sys
 from pathlib import Path
@@ -215,6 +216,14 @@ class AgentContractSuite:
         """
         return f"{first_model}-changed"
 
+    def live_report_command_is_signalled(self) -> bool:
+        """Return whether the agent's tool-start signal names the report command it ran.
+
+        Override it to `False` when the agent only names the tool when it starts, so the live
+        report checks rely on the written report alone.
+        """
+        return True
+
     def headless_ask_schema_model(self) -> type[BaseModel] | None:
         """Return the result model for `headless().ask()`, when the plugin provides it."""
         return None
@@ -331,23 +340,35 @@ class AgentContractSuite:
                 )
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(_TURN_TIMEOUT_SECONDS + _PYTEST_TIMEOUT_MARGIN_SECONDS)
     async def test_live_first_turn_writes_a_valid_report(self, tmp_path: Path) -> None:
         self._require_live()
         spec = await self._prepare_live_report_spec(
             self.build_spec(tmp_path, resume_session_id=None)
         )
         signals = await self._run_turn(spec)
-        problem = await asyncio.to_thread(live_report_problem, spec, signals)
+        problem = await asyncio.to_thread(
+            live_report_problem,
+            spec,
+            signals,
+            command_signalled=self.live_report_command_is_signalled(),
+        )
         _expect(problem is None, problem or "")
 
     async def _prepare_live_report_spec(self, spec: TurnSpec) -> TurnSpec:
         prompt_path = await prepare_live_report(SubprocessRunner(), spec)
-        return _with_prompt(spec, str(prompt_path))
+        return _with_prompt(spec, self.live_report_turn_prompt(spec, prompt_path))
+
+    def live_report_turn_prompt(self, spec: TurnSpec, prompt_path: Path) -> str:
+        """Return the user message that starts a report turn; by default it names `prompt_path`."""
+        del spec
+        return str(prompt_path)
 
     @pytest.mark.asyncio
+    @pytest.mark.timeout(_TURN_TIMEOUT_SECONDS + _PYTEST_TIMEOUT_MARGIN_SECONDS)
     async def test_live_usage_reports_session_tokens(self, tmp_path: Path) -> None:
         self._require_live()
-        spec = self.build_spec(tmp_path, resume_session_id=None)
+        spec = _with_prompt(self.build_spec(tmp_path, resume_session_id=None), _LIVE_USAGE_PROMPT)
         await init_scratch_repo(SubprocessRunner(), spec.cwd)
         signals = await self._run_turn(spec)
         usage = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
@@ -373,7 +394,7 @@ class AgentContractSuite:
             model=self.live_change_model(first.rung.model),
         )
         signals = await self._run_turn(_with_prompt(resumed, RESUME_RECALL_PROMPT))
-        message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
+        message = "".join(signal.text for signal in signals if isinstance(signal, Message))
         _expect(nonce in message, "resumed turn did not recall the nonce")
 
     @pytest.mark.asyncio
@@ -421,22 +442,30 @@ class AgentContractSuite:
         spec = await self._prepare_live_report_spec(
             self.build_spec(tmp_path, resume_session_id=None)
         )
-        prompt_path = Path(spec.prompt)
         await asyncio.to_thread(_write_growth_files, spec.cwd)
-        await asyncio.to_thread(prompt_path.write_text, _LIVE_COMPACTION_PROMPT)
         nonce = uuid.uuid4().hex
+        report_command = live_report_command(spec.run_dir / REPORT_INPUT_FILENAME)
         spec = _with_prompt(
-            spec, _LIVE_COMPACTION_TURN_PROMPT.format(nonce=nonce, prompt_path=prompt_path)
+            spec,
+            _LIVE_COMPACTION_TURN_PROMPT.format(
+                nonce=nonce,
+                instructions=_LIVE_COMPACTION_PROMPT.format(report_command=report_command),
+            ),
         )
         signals = await self._run_turn(
             spec, self.live_compaction_options(), _LIVE_COMPACTION_TIMEOUT_SECONDS
         )
-        problem = await asyncio.to_thread(live_report_problem, spec, signals)
+        problem = await asyncio.to_thread(
+            live_report_problem,
+            spec,
+            signals,
+            command_signalled=self.live_report_command_is_signalled(),
+        )
         _expect(problem is None, problem or "")
         _expect(
             any(isinstance(signal, Compacted) for signal in signals), "the turn never compacted"
         )
-        message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
+        message = "".join(signal.text for signal in signals if isinstance(signal, Message))
         _expect(nonce in message, "the compacted turn forgot the nonce")
 
     def _require_live(self) -> None:

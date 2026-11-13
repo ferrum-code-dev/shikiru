@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 import shutil
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
@@ -65,7 +66,7 @@ LIVE_REPORT_DATA: dict[str, object] = {
 }
 LIVE_REPORT_PROMPT = (
     "Use Bash to run exactly this report command once:\n"
-    f'{REPORT_COMMAND} "$SHIKIRU_RUN_DIR/{REPORT_INPUT_FILENAME}"\n'
+    "{report_command}\n"
     "Do not inspect or edit other files or run any other commands. "
     "After the command succeeds, reply exactly REPORT_OK."
 )
@@ -197,6 +198,18 @@ async def init_scratch_repo(runner: SubprocessRunner, path: Path) -> None:
     await runner.run(GIT_INIT_ARGV, timeout=GIT_INIT_TIMEOUT_SECONDS, cwd=path, check=True)
 
 
+def live_report_command(report_input: Path) -> str:
+    """Return the report command naming `report_input` by absolute path, shell-quoted."""
+    return f"{REPORT_COMMAND} {shlex.quote(str(report_input))}"
+
+
+def live_report_instructions(run_dir: Path) -> str:
+    """Return the report check's instructions for the report input under `run_dir`."""
+    return LIVE_REPORT_PROMPT.format(
+        report_command=live_report_command(run_dir / REPORT_INPUT_FILENAME)
+    )
+
+
 async def prepare_live_report(runner: SubprocessRunner, spec: TurnSpec) -> Path:
     """Lay out `spec`'s repository, run and turn dirs for the report check; return the prompt."""
     await init_scratch_repo(runner, spec.cwd)
@@ -205,7 +218,7 @@ async def prepare_live_report(runner: SubprocessRunner, spec: TurnSpec) -> Path:
         (spec.run_dir / REPORT_INPUT_FILENAME).write_text, json.dumps(LIVE_REPORT_DATA)
     )
     prompt_path = spec.cwd / REPORT_PROMPT_FILENAME
-    await asyncio.to_thread(prompt_path.write_text, LIVE_REPORT_PROMPT)
+    await asyncio.to_thread(prompt_path.write_text, live_report_instructions(spec.run_dir))
     return prompt_path
 
 
@@ -219,10 +232,18 @@ async def _prepare_smoke(runner: SubprocessRunner, spec: TurnSpec) -> str:
     return SMOKE_PROMPT
 
 
-def live_report_problem(spec: TurnSpec, signals: Sequence[AgentSignal]) -> str | None:
-    """Return why a finished report-check turn failed, or `None` when it passed."""
+def live_report_problem(
+    spec: TurnSpec, signals: Sequence[AgentSignal], *, command_signalled: bool = True
+) -> str | None:
+    """Return why a finished report-check turn failed, or `None` when it passed.
+
+    `command_signalled` is False when the agent's tool-start signal cannot name the command it ran,
+    so only the turn outcome and the written report are checked.
+    """
     return (
-        _turn_problem(signals) or _report_command_problem(signals) or _report_problem(spec.turn_dir)
+        _turn_problem(signals)
+        or (_report_command_problem(signals) if command_signalled else None)
+        or _report_problem(spec.turn_dir)
     )
 
 

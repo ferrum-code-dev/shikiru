@@ -37,7 +37,6 @@ from shikiru.agents.contracts import (
     TurnSpec,
     Usage,
     UsageReported,
-    shikiru_command,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.testing import (
@@ -59,6 +58,7 @@ from shikiru.domain.reports import (
     schema_for,
 )
 from shikiru.domain.tasks import EscalationReason
+from shikiru.operator.probe import live_report_command
 from shikiru.plugins.agents.claude.agent import ClaudeAgent, create
 from shikiru.plugins.agents.claude.options import DEFAULT_ARGS, MODEL_CATALOG_REQUEST_ID
 from shikiru.plugins.agents.claude.turn import CONTINUE_PROMPT, ClaudeTurnParser
@@ -260,8 +260,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         }
         assert prompt == (
             "Use Bash to run exactly this report command once:\n"
-            f"{shikiru_command('report', '--file')} "
-            '"$SHIKIRU_RUN_DIR/contract-report-input.json"\n'
+            f"{live_report_command(report_input)}\n"
             "Do not inspect or edit other files or run any other commands. "
             "After the command succeeds, reply exactly REPORT_OK."
         )
