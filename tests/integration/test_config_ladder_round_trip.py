@@ -20,7 +20,7 @@ _PROJECT = DetectedProject(
     worktree_clean=True,
     caches=(),
     trackers=(),
-    agents=("claude", "codex"),
+    agents=("claude", "codex", "muse"),
 )
 _LEADER_LADDER = [
     Rung(agent="codex", model="gpt-6.1-sol", effort="high"),

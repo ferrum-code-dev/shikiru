@@ -162,7 +162,11 @@ async def test_runtime_default_reaches_plugin_doctor_only_when_catalog_declares_
 
 @pytest.mark.parametrize(
     ("name", "expected_args"),
-    [("claude", ["--permission-mode", "bypassPermissions"]), ("codex", [])],
+    [
+        ("claude", ["--permission-mode", "bypassPermissions"]),
+        ("codex", []),
+        ("muse", ["--trust-workspace", "--disable-sandbox"]),
+    ],
 )
 def test_built_in_plugin_settings_defaults_are_accepted_by_their_own_options(
     name: str, expected_args: list[str]

@@ -192,7 +192,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `tests/integration/test_muse_headless_contract.py` on `AgentContractSuite`; adjust the suite for internal compaction if no real `installed` event could be captured (separate commit `test(agents): allow agents that compact internally`).
 
-- [ ] 33. Update built-in agent tests
+- [x] 33. Update built-in agent tests
 
 ## Acceptance criteria
 - Update `tests/integration/test_operator_plugin_checks.py` (settings defaults for `muse`) and any test enumerating the registered agents.
