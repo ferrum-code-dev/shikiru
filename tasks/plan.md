@@ -56,8 +56,12 @@ resets_at_ms}, as_of_ms, source}`. Percentages can exceed 100. Cost and context 
 | unknown model | ``model `x` does not exist or you lack access [request_id=…]`` |
 | step cap | `model did not reach a terminal state within N step(s)` |
 
-Not captured: a quota-exhausted failure, an overloaded/5xx failure after Muse's own 10 stream retries
-(status records read `opening meta model stream attempt N/10`), and a context-length failure.
+Quota exhaustion: only its reason text was captured (live run, 2026-11-13; no stream was kept, see the fixtures
+README). A reconstructed exec quota record (Operator-supplied, observed 2026-10-13; full line unpublished) is
+kept as a labelled fixture, not a capture. Not captured: an overloaded/5xx failure after Muse's own 10 stream
+retries (status records read `opening meta model stream attempt N/10`), and a context-length failure. Muse's
+SDK schema types a quota detail on the `turn/completed` notification, which this plugin does not consume;
+whether the exec stream carries it is unknown.
 
 ### Sandbox and permissions
 
@@ -318,8 +322,10 @@ own classes; no sleeping; coverage stays at or above 80%.
 - **Compaction record shape:** resolved for hard-threshold compactions. The successful
   `context_compaction_installed` event and its candidate are captured (see Compaction). Still open: whether a
   soft-threshold-only trigger produces a candidate, and the `context_compaction_fallback` shape.
-- **Quota and overload texts:** unobserved; classification is text based and conservative, with
-  `UNKNOWN` as the default, so an unrecognised failure escalates instead of being retried blindly.
+- **Quota and overload captures:** a quota reason text was observed, but its full stream and stderr
+  were not retained. Service overload remains unobserved. Classification is text based and
+  conservative, with `UNKNOWN` as the default, so an unrecognised failure escalates instead of
+  being retried blindly.
 - **Session log location:** verified (see Compaction). `<muse home>` is `$XDG_DATA_HOME/muse`, else
   `~/.local/share/muse`, and matches `museHome` from the server's `initialize` result; the log path is
   `sessions/YYYY/MM/DD/<session id>/session.jsonl`. The date directory's timezone and cross-day resume are

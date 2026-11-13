@@ -229,7 +229,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `PYTEST_ADDOPTS='--dist=loadfile' uv run poe check` green on the final tree.
 
-- [ ] 40. Replace synthetic failure captures when available
+- [x] 40. Replace synthetic failure captures when available
 
 ## Acceptance criteria
 - Replace synthetic quota/overload fixtures with real captures when the first occurrence is seen.

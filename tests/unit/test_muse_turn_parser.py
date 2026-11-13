@@ -311,6 +311,21 @@ def test_failed_terminal_is_classified_from_its_reason(
     assert failure.kind is kind
 
 
+_QUOTA_OBSERVED_AT = datetime(2026, 10, 13, 12, tzinfo=UTC)
+_RECONSTRUCTED_QUOTA_RESET = datetime(2026, 10, 13, 22, 31, 16, tzinfo=UTC)
+
+
+def test_reconstructed_exec_quota_failure_carries_the_reset_it_names() -> None:
+    lines = _fixture_lines("turn_quota_failure_reconstructed")
+    reason = _first_record(lines, RUN_TERMINAL_FAILED_TYPE)[RECORD_PAYLOAD_KEY]["reason"]
+    clock = FakeClock(_QUOTA_OBSERVED_AT)
+    parser = MuseTurnParser(clock, ResetTimeParser(clock), _no_log_watch())
+    signals = [signal for line in lines for signal in parser.feed(line)]
+    signals.extend(parser.finish(_EXIT_FAILED, ""))
+
+    assert _failures(signals) == [TurnFailed(FailureKind.QUOTA, reason, _RECONSTRUCTED_QUOTA_RESET)]
+
+
 _MISSING_CREDENTIALS_STDERR = _fixture_stderr("turn_missing_credentials")
 _SIGTERM_STDERR = _fixture_stderr("turn_stopped")
 
