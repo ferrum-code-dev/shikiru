@@ -202,7 +202,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - Wizard/init integration tests with a fake `muse` on `PATH`: offered when installed and logged in or `META_API_KEY` only; absent when missing or logged out; selectable for Leader, Implementer and Helper; `default` validates only for catalogs that declare runtime-default support through `PluginChecks`, Doctor and the ladder editor; slow `muse serve` shows the catalog error; generated `[agents.muse]` section.
 
-- [ ] 35. Document Muse design and trust boundaries
+- [x] 35. Document Muse design and trust boundaries
 
 ## Acceptance criteria
 - `docs/design.md`: agent list, quota rule, compaction, trust boundary (sandbox disabled).

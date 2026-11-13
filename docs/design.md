@@ -18,6 +18,9 @@ structured reports; engine code validates them and decides what can happen next.
 | Agent / rung / ladder | A provider CLI plugin; one agent/model/effort choice; an ordered sequence of those choices. Roles are responsibilities, so they may use the same agent or different agents. |
 | Turn / session / slot | One prompted agent execution; its resumable provider conversation; capacity for one running task. A session can span multiple turns. |
 
+Built-in agent plugins are Claude Code (`claude`), OpenAI Codex (`codex`) and Meta Muse Code
+(`muse`). They provide the shared agent capabilities through provider-specific command-line tools.
+
 The project is one committed Git repository. Each task receives its own branch and worktree under
 `.shikiru/worktrees/`, keeping concurrent task files separate. Tracker files are optional project
 plans/checklists included in agent context and updated as work proceeds. Optional ignored caches
@@ -109,11 +112,19 @@ finds nothing newer, keeps the block until its deadline; a probe that fails or t
 Codex plugin answers from the `limit_id: codex` bucket of its rollouts: a trailing event of another
 bucket with null windows does not replace the latest usable Codex reading.
 
+Muse reports quota from `run.usage.allowance`: its `window` and `weekly` windows map to the `5h` and
+`7d` quota windows, and `muse usage --json` supplies fresh readings. A failed turn is classified as
+quota exhaustion when its message identifies a `429` quota or usage limit, or its reported allowance
+has an exhausted window. The reset is the latest future instant supported by the exhausted allowance
+windows, structured reset data or an ISO reset time in the message; without evidence it stays unknown.
+
 Leader and Implementer resolve their own ordered ladders; Implementer can select a low/normal/high
 complexity override, otherwise its base ladder applies. A task-specific rung override selects its
 agent/model/effort from the next turn. Same-provider sessions can resume; a provider change starts
 a fresh session with handoff context from recorded work. Plugins own the actual resume and context
-compaction behavior.
+compaction behavior. Muse performs compaction internally using its context thresholds; its session
+log records installed compactions, which the plugin maps to the shared `Compacted` signal after a
+turn. The JSON stream itself has no compaction record.
 
 Recovery is explicit and bounded by failure type: unavailable providers receive backoff/retries,
 quota failures wait for reset within policy or move to an unblocked different-provider rung (a
@@ -397,10 +408,12 @@ Deleting `.shikiru/` destroys its local state; initialization cannot reconstruct
 
 Agents run with the Operator's privileges and environment. Claude Code defaults to
 `bypassPermissions`; Codex uses `workspace-write` with the run directory and task/shared Git metadata
-writable. Worktree separation is a convention, not enforced host isolation. Owner-only state files
-protect against other local users, not an agent running as the Operator. Project instructions,
-provider tools and notification commands can execute with those privileges; reports/exports may
-contain sensitive project data. Agent review is assistance, not a correctness or security proof.
+writable. Muse defaults to `--trust-workspace --disable-sandbox`, so it can write outside the task
+worktree with the Operator's privileges. Worktree separation is a convention, not enforced host
+isolation. Owner-only state files protect against other local users, not an agent running as the
+Operator. Project instructions, provider tools and notification commands can execute with those
+privileges; reports/exports may contain sensitive project data. Agent review is assistance, not a
+correctness or security proof.
 
 Implementation boundaries keep decisions auditable: pure domain rules; SQL in `store`; subprocesses
 through `process.SubprocessRunner`; time through `clock.Clock`; constructor-injected dependencies;
