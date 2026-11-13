@@ -224,7 +224,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - Opt-in e2e rung with a Muse ladder; verify an unattended run through the engine in tmux, including `interactive_command` take-over and a commit from a linked worktree.
 
-- [ ] 39. Run the final project check
+- [x] 39. Run the final project check
 
 ## Acceptance criteria
 - `PYTEST_ADDOPTS='--dist=loadfile' uv run poe check` green on the final tree.
