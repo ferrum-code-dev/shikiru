@@ -197,7 +197,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - Update `tests/integration/test_operator_plugin_checks.py` (settings defaults for `muse`) and any test enumerating the registered agents.
 
-- [ ] 34. Test Muse setup and wizard integration
+- [x] 34. Test Muse setup and wizard integration
 
 ## Acceptance criteria
 - Wizard/init integration tests with a fake `muse` on `PATH`: offered when installed and logged in or `META_API_KEY` only; absent when missing or logged out; selectable for Leader, Implementer and Helper; `default` validates only for catalogs that declare runtime-default support through `PluginChecks`, Doctor and the ladder editor; slow `muse serve` shows the catalog error; generated `[agents.muse]` section.
