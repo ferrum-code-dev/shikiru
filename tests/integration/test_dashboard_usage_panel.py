@@ -609,15 +609,19 @@ async def test_tiny_popup_is_titled_and_keeps_every_section_label_in_a_scrolling
         assert app.screen.query_one("#context-widget-content", VerticalScroll).max_scroll_y > 0
 
 
+_HALF_GAUGE = f"7d {GAUGE_GLYPHS[2]} 50%"
+_EMPTY_GAUGE = f"7d {GAUGE_GLYPHS[0]} 0%"
+
+
 @pytest.mark.parametrize(
     ("resets_in", "expected"),
     [
-        (timedelta(hours=135, minutes=46), "resets 5d 15h 46m"),
-        (timedelta(hours=24), "resets 1d 0h 0m"),
-        (timedelta(hours=23, minutes=59, seconds=59), "resets 23h 59m"),
-        (timedelta(minutes=5, seconds=7), "resets 5m 7s"),
-        (timedelta(seconds=-30), "resets 0s"),
-        (None, "resets \N{EN DASH}"),
+        (timedelta(hours=135, minutes=46), f"{_HALF_GAUGE} resets 5d 15h 46m"),
+        (timedelta(hours=24), f"{_HALF_GAUGE} resets 1d 0h 0m"),
+        (timedelta(hours=23, minutes=59, seconds=59), f"{_HALF_GAUGE} resets 23h 59m"),
+        (timedelta(minutes=5, seconds=7), f"{_HALF_GAUGE} resets 5m 7s"),
+        (timedelta(seconds=-30), f"{_EMPTY_GAUGE} resets 0s"),
+        (None, f"{_HALF_GAUGE} resets \N{EN DASH}"),
     ],
     ids=["multi-day", "exactly-a-day", "just-under-a-day", "minutes", "expired", "unknown"],
 )
@@ -643,4 +647,19 @@ async def test_reset_countdown_shows_days_from_a_day_and_never_goes_negative(
     async with WidgetHostApp(panel).run_test(size=_WIDE):
         await _settled_lines(panel)
         text = "\n".join(_plain_lines(panel))
-        assert f"7d {GAUGE_GLYPHS[2]} 50% {expected}" in text
+        assert expected in text
+
+
+async def test_an_expired_full_window_is_drawn_as_unused(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    clock = FakeClock(_START)
+    _record_run(connection, clock, "claude", _SUBSCRIPTION, _tokens(None, COST_BASIS_UNKNOWN))
+    _quota(connection, "claude", "5h", 100.0, -timedelta(minutes=5))
+    panel = UsagePanel(widget_context(reader, write_minimal_project(tmp_path), clock))
+    async with WidgetHostApp(panel).run_test(size=_WIDE):
+        await _settled_lines(panel)
+        text = "\n".join(_plain_lines(panel))
+        assert f"5h {GAUGE_GLYPHS[0]} 0%" in text
+        assert "100%" not in text
+        assert reader.list_quotas(["claude"])["claude"][0].used_pct == 100.0

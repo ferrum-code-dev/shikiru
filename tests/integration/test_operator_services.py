@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+import contextlib
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -9,6 +10,8 @@ import pytest
 
 from shikiru.agents.contracts import QuotaWindow, Usage
 from shikiru.bootstrap import build_operator
+from shikiru.cli.app import status_loop
+from shikiru.cli.context import CliState
 from shikiru.cli.render import status_renderable
 from shikiru.config.loader import load_settings
 from shikiru.domain.commands import (
@@ -223,6 +226,89 @@ async def test_status_uptime_uses_live_engine_lock_and_recorded_start_event(
         assert not services.queries.status().engine_up
         assert services.queries.current_engine_uptime_seconds() is None
     finally:
+        connection.close()
+        services.close()
+
+
+async def test_status_shows_an_expired_full_window_as_unused_and_keeps_the_stored_reading(
+    connection: Connection, reader: StateReader, tmp_path: Path
+) -> None:
+    clock = FakeClock(START)
+    QuotaStore(connection).record(
+        "codex",
+        QuotaWindow(
+            name="5h",
+            used_pct=100.0,
+            resets_at=START + timedelta(hours=1),
+            observed_at=START,
+        ),
+    )
+    clock.advance(timedelta(hours=2).total_seconds())
+
+    output = plain_text(
+        status_renderable(
+            _queries(tmp_path, reader, clock).human_status(),
+            width=80,
+            uptime_seconds=None,
+            quota_warn_pct=50,
+            quota_alert_pct=90,
+        )
+    )
+
+    assert " 0%" in output
+    assert "100%" not in output
+    assert reader.list_quotas(["codex"])["codex"][0].used_pct == 100.0
+
+
+async def test_status_watch_redraws_when_a_quota_reset_passes_without_a_state_change(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    write_minimal_project(tmp_path)
+    clock = FakeClock(START)
+    services = build_operator(tmp_path, load_settings(tmp_path), clock=clock)
+    connection = Database(state_db_path(tmp_path)).connect()
+    QuotaStore(connection).record(
+        "codex",
+        QuotaWindow(
+            name="5h",
+            used_pct=100.0,
+            resets_at=START + timedelta(hours=1),
+            observed_at=START,
+        ),
+    )
+    watcher = asyncio.create_task(
+        status_loop(
+            services,
+            CliState(project=tmp_path, json_output=False, overrides=()),
+            None,
+            True,
+            project_root_path=tmp_path,
+            quota_warn_pct=50,
+            quota_alert_pct=90,
+            clock=clock,
+        )
+    )
+    redraws: list[str] = []
+
+    def drain() -> str:
+        redraws.append(capsys.readouterr().out)
+        return "".join(redraws)
+
+    try:
+        await wait_until(lambda: "100%" in drain(), timeout=_TIMEOUT_1_0_SECONDS)
+        redraws.clear()
+        await wait_until(clock.has_pending_sleep, timeout=_TIMEOUT_1_0_SECONDS)
+
+        clock.advance(timedelta(hours=2).total_seconds())
+
+        await wait_until(lambda: "5h" in drain(), timeout=_TIMEOUT_1_0_SECONDS)
+        output = "".join(redraws)
+        assert " 0%" in output
+        assert "100%" not in output
+    finally:
+        watcher.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watcher
         connection.close()
         services.close()
 

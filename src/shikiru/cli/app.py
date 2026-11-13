@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 from importlib.metadata import version
+from itertools import chain
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, NoReturn
 
@@ -17,6 +18,7 @@ from typer.core import TyperCommand
 
 from shikiru.agents.contracts import parse_rung
 from shikiru.bootstrap import (
+    build_clock,
     build_doctor,
     build_engine_process,
     build_lifecycle,
@@ -46,6 +48,7 @@ from shikiru.cli.report import report_command
 from shikiru.cli.view import view_command
 from shikiru.config.loader import load_settings
 from shikiru.config.settings import ComplexityName
+from shikiru.domain.levels import next_quota_reset
 from shikiru.domain.tasks import Mode
 from shikiru.errors import (
     EXIT_COMMAND_REJECTED,
@@ -65,6 +68,7 @@ from shikiru.operator.lifecycle import (
 from shikiru.operator.queries import TaskNotFoundError
 from shikiru.operator.sessions import REMOTE_ORIGIN_HOST_ENV_VAR
 from shikiru.paths import project_config_path
+from shikiru.store.reader import DASHBOARD_CHANGE_POLL_SECONDS
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR
 from shikiru.ui.console import human_console
 from shikiru.ui.tokens import (
@@ -79,11 +83,13 @@ from shikiru.ui.tokens import (
 from shikiru.view_log import CLI_VIEW_COMMAND
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable
+    from collections.abc import Awaitable, Callable
+    from datetime import datetime
 
     from rich.console import RenderableType
     from typer._click.core import Context as ClickContext
 
+    from shikiru.clock import Clock
     from shikiru.operator.services import OperatorServices
     from shikiru.operator.sessions import (
         SessionAttacher,
@@ -587,10 +593,11 @@ def status(
         state = state_from(context)
         root = project_root(state)
         settings = load_settings(root, state.overrides)
-        services = build_operator(root, settings)
+        clock = build_clock()
+        services = build_operator(root, settings, clock=clock)
         try:
             _run(
-                _status_loop(
+                status_loop(
                     services,
                     state,
                     task_id,
@@ -598,6 +605,7 @@ def status(
                     project_root_path=root,
                     quota_warn_pct=settings.dashboard.gauges.quota_warn_pct,
                     quota_alert_pct=settings.dashboard.gauges.quota_alert_pct,
+                    clock=clock,
                 )
             )
         finally:
@@ -696,7 +704,7 @@ def mcp(context: typer.Context) -> None:
         _fail(error)
 
 
-async def _status_loop(
+async def status_loop(
     services: OperatorServices,
     state: CliState,
     task_id: str | None,
@@ -705,38 +713,52 @@ async def _status_loop(
     project_root_path: Path,
     quota_warn_pct: int,
     quota_alert_pct: int,
+    clock: Clock,
 ) -> None:
-    def render() -> None:
+    def render() -> datetime | None:
         if state.json_output:
             view = services.queries.status(task_id)
             if task_id is not None and view.task is None:
                 raise TaskNotFoundError(task_id, project_root_path)
             typer.echo(view.model_dump_json())
-        else:
-            view = services.queries.human_status(task_id)
-            console = human_console()
-            uptime_seconds = (
-                services.queries.current_engine_uptime_seconds()
-                if view.status.task is None
-                else None
+            return None
+        view = services.queries.human_status(task_id)
+        console = human_console()
+        uptime_seconds = (
+            services.queries.current_engine_uptime_seconds() if view.status.task is None else None
+        )
+        console.print(
+            status_renderable(
+                view,
+                width=console.width,
+                uptime_seconds=uptime_seconds,
+                quota_warn_pct=quota_warn_pct,
+                quota_alert_pct=quota_alert_pct,
             )
-            console.print(
-                status_renderable(
-                    view,
-                    width=console.width,
-                    uptime_seconds=uptime_seconds,
-                    quota_warn_pct=quota_warn_pct,
-                    quota_alert_pct=quota_alert_pct,
-                )
-            )
+        )
+        return next_quota_reset(chain.from_iterable(view.status.quotas.values()), view.now)
 
-    render()
+    next_reset = render()
     if watch:
+        await _watch_status(services, render, next_reset, clock=clock)
 
-        async def on_change() -> None:
-            render()
 
-        await services.reader.watch(on_change)
+async def _watch_status(
+    services: OperatorServices,
+    render: Callable[[], datetime | None],
+    next_reset: datetime | None,
+    *,
+    clock: Clock,
+) -> None:
+    last_version = services.reader.data_version()
+    while True:
+        await clock.sleep(DASHBOARD_CHANGE_POLL_SECONDS)
+        version = services.reader.data_version()
+        reset_passed = next_reset is not None and clock.now() >= next_reset
+        if version == last_version and not reset_passed:
+            continue
+        last_version = version
+        next_reset = render()
 
 
 def emit_ack(

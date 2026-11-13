@@ -14,6 +14,7 @@ from rich.text import Text
 
 from shikiru.domain.escalation import escalation_reason_label
 from shikiru.domain.events import EventKind
+from shikiru.domain.levels import effective_used_pct
 from shikiru.domain.reports import (
     SEVERITY_BLOCKER,
     ConsultAnswer,
@@ -91,6 +92,8 @@ from shikiru.ui.tokens import (
 )
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from rich.console import RenderableType
 
     from shikiru.agents.contracts import QuotaWindow
@@ -382,6 +385,7 @@ def status_renderable(
         view.task_rows,
         width=width,
         uptime_seconds=uptime_seconds,
+        now=view.now,
         quota_warn_pct=quota_warn_pct,
         quota_alert_pct=quota_alert_pct,
     )
@@ -393,6 +397,7 @@ def _project_status_renderable(
     *,
     width: int,
     uptime_seconds: float | None,
+    now: datetime,
     quota_warn_pct: int,
     quota_alert_pct: int,
 ) -> RenderableType:
@@ -417,6 +422,7 @@ def _project_status_renderable(
         view,
         task_rows,
         width=width,
+        now=now,
         quota_warn_pct=quota_warn_pct,
         quota_alert_pct=quota_alert_pct,
     )
@@ -431,6 +437,7 @@ def _project_status_sections(
     task_rows: tuple[TaskSummary, ...],
     *,
     width: int,
+    now: datetime,
     quota_warn_pct: int,
     quota_alert_pct: int,
 ) -> list[RenderableType]:
@@ -455,6 +462,7 @@ def _project_status_sections(
                 view.usage,
                 view.quotas,
                 width=width,
+                now=now,
                 quota_warn_pct=quota_warn_pct,
                 quota_alert_pct=quota_alert_pct,
             )
@@ -949,6 +957,7 @@ def _usage_section(
     quotas: dict[str, list[QuotaWindow]],
     *,
     width: int,
+    now: datetime,
     quota_warn_pct: int,
     quota_alert_pct: int,
 ) -> Section:
@@ -961,6 +970,7 @@ def _usage_section(
                 _usage_groups(
                     usage_by_agent.get(agent),
                     quotas.get(agent, []),
+                    now=now,
                     quota_warn_pct=quota_warn_pct,
                     quota_alert_pct=quota_alert_pct,
                 ),
@@ -988,6 +998,7 @@ def _usage_section(
             _cost_total(usage),
             _quota_cell(
                 quotas.get(agent, []),
+                now=now,
                 quota_warn_pct=quota_warn_pct,
                 quota_alert_pct=quota_alert_pct,
             ),
@@ -999,6 +1010,7 @@ def _usage_groups(
     usage: UsageView | None,
     windows: list[QuotaWindow],
     *,
+    now: datetime,
     quota_warn_pct: int,
     quota_alert_pct: int,
 ) -> tuple[Text, ...]:
@@ -1011,6 +1023,7 @@ def _usage_groups(
             "Quota used 5h/7d",
             _quota_cell(
                 windows,
+                now=now,
                 quota_warn_pct=quota_warn_pct,
                 quota_alert_pct=quota_alert_pct,
             ),
@@ -1046,7 +1059,9 @@ def _cost_total(usage: UsageView | None) -> Text:
     return Text(f"${usage.billed_cost_usd:{STATUS_COST_FORMAT}}", style=SAGE)
 
 
-def _quota_cell(windows: list[QuotaWindow], *, quota_warn_pct: int, quota_alert_pct: int) -> Text:
+def _quota_cell(
+    windows: list[QuotaWindow], *, now: datetime, quota_warn_pct: int, quota_alert_pct: int
+) -> Text:
     if not windows:
         return Text("unknown", style=SECONDARY_TEXT_COLOR)
     by_name = {window.name: window for window in windows}
@@ -1060,7 +1075,9 @@ def _quota_cell(windows: list[QuotaWindow], *, quota_warn_pct: int, quota_alert_
             cell.append_text(
                 Text("unknown", style=SECONDARY_TEXT_COLOR)
                 if window is None
-                else Gauge("", window.used_pct, quota_warn_pct, quota_alert_pct).render()
+                else Gauge(
+                    "", effective_used_pct(window, now), quota_warn_pct, quota_alert_pct
+                ).render()
             )
         other_windows = [window for window in windows if window.name not in QUOTA_PERIODS]
     else:
@@ -1074,7 +1091,7 @@ def _quota_cell(windows: list[QuotaWindow], *, quota_warn_pct: int, quota_alert_
         cell.append_text(
             Gauge(
                 "" if window.name in QUOTA_PROVIDER_SLOTS else window.name,
-                window.used_pct,
+                effective_used_pct(window, now),
                 quota_warn_pct,
                 quota_alert_pct,
             ).render()

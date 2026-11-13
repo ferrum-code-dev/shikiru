@@ -161,6 +161,7 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
             HumanStatusView(
                 status=view.model_copy(update={"task": None}),
                 task_rows=(active, queued),
+                now=OBSERVED_AT,
             ),
             width=RENDER_WIDTH,
             uptime_seconds=None,
@@ -170,7 +171,7 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
     )
     task_output = plain_text(
         status_renderable(
-            HumanStatusView(status=view, task_rows=()),
+            HumanStatusView(status=view, task_rows=(), now=OBSERVED_AT),
             width=RENDER_WIDTH,
             uptime_seconds=None,
             quota_warn_pct=50,
@@ -233,7 +234,7 @@ def test_task_rows_word_each_wait_reason_for_the_operator(
 
     output = plain_text(
         status_renderable(
-            HumanStatusView(status=view, task_rows=(task,)),
+            HumanStatusView(status=view, task_rows=(task,), now=OBSERVED_AT),
             width=RENDER_WIDTH,
             uptime_seconds=None,
             quota_warn_pct=50,

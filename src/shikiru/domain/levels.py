@@ -3,6 +3,13 @@
 from __future__ import annotations
 
 from enum import StrEnum, auto
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from datetime import datetime
+
+    from shikiru.agents.contracts import QuotaWindow
 
 WHOLE_PERCENT = 100
 
@@ -42,3 +49,27 @@ def free_space_level(
     if free_bytes * WHOLE_PERCENT < warn_pct * total_bytes:
         return UsageLevel.WARN
     return UsageLevel.OK
+
+
+def effective_used_pct(window: QuotaWindow, now: datetime) -> float:
+    """Return the used percentage a human sees for `window` at `now`.
+
+    A window whose reset has passed shows as `0.0`; the stored reading is unchanged.
+    """
+    if window.resets_at is not None and window.resets_at <= now:
+        return 0.0
+    return window.used_pct
+
+
+def next_quota_reset(windows: Iterable[QuotaWindow], now: datetime) -> datetime | None:
+    """Return the earliest reset still ahead of `now` among `windows`, or None when none is.
+
+    Until that instant a displayed window keeps its stored reading; from it the window shows as
+    unused, so a surface that shows quotas must be redrawn then.
+    """
+    upcoming = [
+        window.resets_at
+        for window in windows
+        if window.resets_at is not None and window.resets_at > now
+    ]
+    return min(upcoming, default=None)

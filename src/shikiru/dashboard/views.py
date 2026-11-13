@@ -78,7 +78,7 @@ from shikiru.domain.engine_uptime import project_engine_uptime
 from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import move_up, pick_rung
-from shikiru.domain.levels import free_space_level, usage_level
+from shikiru.domain.levels import effective_used_pct, free_space_level, usage_level
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.quota_waits import (
     QUOTA_NOT_REPORTED,
@@ -1733,7 +1733,7 @@ class StateDashboardViews:
             windows = tuple(
                 QuotaGaugeView(
                     name=window.name,
-                    used_pct=window.used_pct,
+                    used_pct=effective_used_pct(window, now),
                     resets_in=(
                         _quota_countdown(
                             quota_frames[(agent, window.name)], window.resets_at is not None

@@ -421,6 +421,7 @@ class HumanStatusView:
 
     status: StatusView
     task_rows: tuple[TaskSummary, ...]
+    now: datetime
 
 
 StatusView.model_rebuild(_types_namespace={"datetime": datetime})
@@ -484,7 +485,7 @@ class OperatorQueries:
             if status.task is None
             else ()
         )
-        return HumanStatusView(status=status, task_rows=task_rows)
+        return HumanStatusView(status=status, task_rows=task_rows, now=self._clock.now())
 
     def _build_status_view(
         self, tasks: list[Task], task_id: str | None, *, human_task_detail: bool = False
