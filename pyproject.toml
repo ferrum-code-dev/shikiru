@@ -6,7 +6,7 @@ readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Ferrum Code" }]
-keywords = ["coding-agents", "claude", "codex", "tmux", "orchestration", "git-worktrees"]
+keywords = ["coding-agents", "claude", "codex", "muse", "tmux", "orchestration", "git-worktrees"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Programming Language :: Python :: 3.14",
@@ -33,6 +33,7 @@ shikiru = "shikiru.cli.app:app"
 [project.entry-points."shikiru.agents"]
 claude = "shikiru.plugins.agents.claude.agent:create"
 codex = "shikiru.plugins.agents.codex.agent:create"
+muse = "shikiru.plugins.agents.muse.agent:create"
 
 [project.entry-points."shikiru.widgets"]
 header = "shikiru.plugins.widgets.header:HeaderWidget"

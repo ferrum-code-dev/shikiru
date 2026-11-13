@@ -182,7 +182,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 ### Phase 6: wiring, contract suite, docs
 
-- [ ] 31. Register the Muse agent
+- [x] 31. Register the Muse agent
 
 ## Acceptance criteria
 - `pyproject.toml`: entry point, keyword, ruff ignore; confirm `uv run lint-imports` passes.
