@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -21,7 +22,7 @@ from shikiru.errors import (
 from shikiru.helper.models import Unrecoverable
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Sequence
     from datetime import timedelta
     from pathlib import Path
 
@@ -31,14 +32,16 @@ if TYPE_CHECKING:
 
 _REBUILD_PROMPT = (
     "The agent's turn ended without a valid report. Reconstruct the report for this {kind} "
-    "turn from its last message and the facts below. If you cannot determine the report with "
-    'confidence, respond instead with \'{{"unrecoverable": "<reason>"}}.\n\n'
+    "turn from its last message and the facts below. Set unrecoverable to null when returning "
+    "the report. If you cannot determine the report with confidence, set every report field "
+    "to null and return unrecoverable as the reason.\n\n"
     "## Last message\n\n{last_message}\n\n## Facts\n\n{facts}\n"
 )
 _CLASSIFY_PROMPT = (
     "Classify this unrecognised agent failure into QUOTA, UNAVAILABLE, AUTH or OTHER. "
     "Give confidence from 0 to 1 and a reset time only when known. If the text is ambiguous, "
-    "return UNKNOWN with low confidence.\n\n## Failure\n\n{failure}\n"
+    "return UNKNOWN with low confidence. Set unrecoverable to null when returning a "
+    "classification.\n\n## Failure\n\n{failure}\n"
 )
 _EXPECTED_CALL_ERRORS = (
     CommandFailed,
@@ -47,6 +50,16 @@ _EXPECTED_CALL_ERRORS = (
     OSError,
     TimeoutError,
 )
+_OBJECT_TYPE = "object"
+_TYPE_FIELD = "type"
+_PROPERTIES_FIELD = "properties"
+_REQUIRED_FIELD = "required"
+_ADDITIONAL_PROPERTIES_FIELD = "additionalProperties"
+_ADDITIONAL_PROPERTIES_ALLOWED = False
+_DEFS_FIELD = "$defs"
+_ANY_OF_FIELD = "anyOf"
+_NULL_TYPE = "null"
+_UNRECOVERABLE_FIELD = "unrecoverable"
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -94,7 +107,7 @@ class Helper:
         timeout: timedelta,
     ) -> Report | Unrecoverable:
         """Reconstruct a missing report from the turn's final message and facts."""
-        schema = {"oneOf": [schema_for(kind), Unrecoverable.model_json_schema()]}
+        schema = _composed_schema(schema_for(kind), Unrecoverable.model_json_schema())
         prompt = _REBUILD_PROMPT.format(
             kind=kind.value,
             last_message=fence(last_message, "text"),
@@ -110,12 +123,9 @@ class Helper:
         timeout: timedelta,
     ) -> FailureClassification | Unrecoverable:
         """Classify only the plugin's unrecognised failure text."""
-        schema = {
-            "oneOf": [
-                FailureClassification.model_json_schema(),
-                Unrecoverable.model_json_schema(),
-            ]
-        }
+        schema = _composed_schema(
+            FailureClassification.model_json_schema(), Unrecoverable.model_json_schema()
+        )
         prompt = _CLASSIFY_PROMPT.format(failure=fence(failure, "text"))
         return await self._ask(prompt, schema, FailureClassification, cwd, timeout)
 
@@ -168,11 +178,18 @@ class Helper:
     def _validate[ResultT: BaseModel](
         raw: Mapping[str, object], model: type[ResultT]
     ) -> ResultT | Unrecoverable:
+        answer = {
+            key: value
+            for key, value in raw.items()
+            if key != _UNRECOVERABLE_FIELD and value is not None
+        }
         try:
-            return model.model_validate(raw)
+            return model.model_validate(answer)
         except ValidationError as model_error:
             try:
-                return Unrecoverable.model_validate(raw)
+                return Unrecoverable.model_validate(
+                    {_UNRECOVERABLE_FIELD: raw.get(_UNRECOVERABLE_FIELD)}
+                )
             except ValidationError as unrecoverable_error:
                 reason = (
                     f"invalid helper output for {model.__name__}: {raw!r}; "
@@ -180,3 +197,41 @@ class Helper:
                     f"unrecoverable errors: {unrecoverable_error}"
                 )
                 return Unrecoverable(unrecoverable=reason)
+
+
+def _composed_schema(*schemas: Mapping[str, object]) -> dict[str, object]:
+    definitions: dict[str, object] = {}
+    properties: dict[str, object] = {}
+    for schema in schemas:
+        definitions.update(_mapping(schema.get(_DEFS_FIELD)))
+        for name, definition in _mapping(schema.get(_PROPERTIES_FIELD)).items():
+            properties[name] = {_ANY_OF_FIELD: [definition, {_TYPE_FIELD: _NULL_TYPE}]}
+    composed: dict[str, object] = {
+        _TYPE_FIELD: _OBJECT_TYPE,
+        _PROPERTIES_FIELD: properties,
+        _ADDITIONAL_PROPERTIES_FIELD: _ADDITIONAL_PROPERTIES_ALLOWED,
+    }
+    if definitions:
+        composed[_DEFS_FIELD] = definitions
+    return cast("dict[str, object]", _strict_object(composed))
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    if isinstance(value, Mapping):
+        return cast("Mapping[str, object]", value)
+    return {}
+
+
+def _strict_object(value: object) -> object:
+    if isinstance(value, Mapping):
+        schema = {
+            key: _strict_object(item) for key, item in cast("Mapping[str, object]", value).items()
+        }
+        properties = schema.get(_PROPERTIES_FIELD)
+        if schema.get(_TYPE_FIELD) == _OBJECT_TYPE and isinstance(properties, Mapping):
+            schema[_REQUIRED_FIELD] = list(cast("Mapping[str, object]", properties))
+            schema[_ADDITIONAL_PROPERTIES_FIELD] = _ADDITIONAL_PROPERTIES_ALLOWED
+        return schema
+    if isinstance(value, list):
+        return [_strict_object(item) for item in cast("list[object]", value)]
+    return value

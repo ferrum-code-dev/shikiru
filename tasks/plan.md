@@ -80,6 +80,10 @@ whether the exec stream carries it is unknown.
 `muse exec --json --prompt-file P --output-schema S` returns the schema-valid JSON object as the final
 `run.terminal.completed.text` (also as the single `run.output.delta`).
 
+The schema must be a root `type: object` with no top-level `oneOf`/`anyOf`/`allOf`. Codex's strict
+mode (and Claude's tool input schema) also requires every property to be listed in `required`, so
+the helper composes its schemas as one object with nullable properties (T-157).
+
 ### Authentication and quota
 
 - Authentication is `muse login` (stored in `~/.config/muse/auth.json`, honours `XDG_CONFIG_HOME`) or

@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import asyncio
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, override
+from typing import TYPE_CHECKING, Any, cast, override
 
+import jsonschema
 import pytest
 from fake_agent.agent import create
+from referencing import Registry, Resource
+from referencing.jsonschema import DRAFT202012
 
 from shikiru.agents.contracts import AgentContext, FailureKind, HeadlessAgent, Rung
 from shikiru.config.loader import load_settings
-from shikiru.domain.reports import ReportKind, TriageReport
+from shikiru.domain.reports import ImplementationReport, ReportKind, TriageReport
 from shikiru.errors import ConfigError
 from shikiru.helper.helper import FailureClassification, Helper, HelperEntry
 from shikiru.helper.models import Unrecoverable
@@ -19,8 +22,10 @@ from tests.support.config import MINIMAL_PROJECT_CONFIG
 from tests.support.factories import HELPER_RUNG, TASK_CREATED_AT
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
     from pathlib import Path
+
+    from jsonschema.protocols import Validator
 
     from shikiru.agents.contracts import Agent, CheckResult, Turn, TurnSpec
     from shikiru.clock import Clock
@@ -36,6 +41,14 @@ _VALID_TRIAGE: dict[str, Any] = {
     "complexity": "normal",
     "acceptance_criteria": ["retries on failure"],
     "references": [],
+}
+_REF_KEY = "$ref"
+_UNRECOVERABLE_KEY = "unrecoverable"
+_CLASSIFICATION_SAMPLE: dict[str, Any] = {
+    "kind": "quota",
+    "confidence": 0.91,
+    "resets_at": None,
+    "unrecoverable": None,
 }
 
 
@@ -258,6 +271,113 @@ def test_helper_requires_headless_support() -> None:
             ],
             FakeClock(TASK_CREATED_AT),
         )
+
+
+def _assert_strict_schema(schema: Mapping[str, Any]) -> None:
+    jsonschema.Draft202012Validator.check_schema(schema)
+    resource: Resource[Any] = DRAFT202012.create_resource(schema)
+    resolver = Registry[Any]().with_resource("", resource).resolver()
+    for reference in _references(schema):
+        resolver.lookup(reference)
+
+
+def _assert_accepts(schema: Mapping[str, Any], payload: Mapping[str, Any]) -> None:
+    validator: Validator = jsonschema.Draft202012Validator(schema)
+    errors: list[object] = list(validator.iter_errors(payload))  # pyright: ignore[reportUnknownMemberType]
+    assert not errors, errors
+
+
+def _references(node: object) -> Iterator[str]:
+    if isinstance(node, dict):
+        typed = cast("dict[str, object]", node)
+        for key, value in typed.items():
+            if key == _REF_KEY and isinstance(value, str):
+                yield value
+            yield from _references(value)
+    elif isinstance(node, list):
+        for item in cast("list[object]", node):
+            yield from _references(item)
+
+
+def _unrecoverable_payload(schema: Mapping[str, Any]) -> dict[str, Any]:
+    return {**dict.fromkeys(schema["properties"]), _UNRECOVERABLE_KEY: "no evidence"}
+
+
+async def test_classify_schema_is_strict_and_accepts_both_payloads(tmp_path: Path) -> None:
+    headless = _CapturingHeadless(_CLASSIFICATION_SAMPLE)
+    clock = FakeClock(TASK_CREATED_AT)
+    helper = Helper([HelperEntry(HELPER_RUNG, _AgentWithHeadless(headless))], clock)
+
+    result = await helper.classify_failure("rate limit", cwd=tmp_path, timeout=_TIMEOUT)
+
+    assert result == FailureClassification(kind=FailureKind.QUOTA, confidence=0.91)
+    assert headless.schema is not None
+    _assert_strict_schema(headless.schema)
+    _assert_accepts(headless.schema, _CLASSIFICATION_SAMPLE)
+    _assert_accepts(headless.schema, _unrecoverable_payload(headless.schema))
+
+
+@pytest.mark.parametrize("kind", list(ReportKind))
+async def test_rebuild_schema_is_strict_for_every_report_kind(
+    tmp_path: Path, kind: ReportKind
+) -> None:
+    headless = _CapturingHeadless({_UNRECOVERABLE_KEY: "no evidence"})
+    clock = FakeClock(TASK_CREATED_AT)
+    helper = Helper([HelperEntry(HELPER_RUNG, _AgentWithHeadless(headless))], clock)
+
+    result = await helper.rebuild_report(
+        kind, "last message", "facts", cwd=tmp_path, timeout=_TIMEOUT
+    )
+
+    assert isinstance(result, Unrecoverable)
+    assert headless.schema is not None
+    _assert_strict_schema(headless.schema)
+    _assert_accepts(headless.schema, _unrecoverable_payload(headless.schema))
+
+
+async def test_rebuild_report_treats_null_optional_fields_as_absent(tmp_path: Path) -> None:
+    headless = _CapturingHeadless(
+        {
+            "status": "completed",
+            "summary": "done",
+            "commits": [],
+            "tests": [],
+            "trackers_updated": True,
+            "risks": None,
+            "question": None,
+            _UNRECOVERABLE_KEY: None,
+        }
+    )
+    clock = FakeClock(TASK_CREATED_AT)
+    helper = Helper([HelperEntry(HELPER_RUNG, _AgentWithHeadless(headless))], clock)
+
+    result = await helper.rebuild_report(
+        ReportKind.IMPLEMENTATION, "last message", "facts", cwd=tmp_path, timeout=_TIMEOUT
+    )
+
+    assert result == ImplementationReport(
+        status="completed", summary="done", commits=[], tests=[], trackers_updated=True
+    )
+
+
+class _CapturingHeadless(HeadlessAgent):
+    def __init__(self, answer: dict[str, Any]) -> None:
+        self._answer = answer
+        self.schema: Mapping[str, Any] | None = None
+
+    @override
+    async def ask(
+        self,
+        prompt: str,
+        schema: Mapping[str, Any],
+        model: str,
+        effort: str | None,
+        cwd: Path,
+        timeout: timedelta,
+    ) -> Mapping[str, Any]:
+        del prompt, model, effort, cwd, timeout
+        self.schema = schema
+        return self._answer
 
 
 def _settings_with_helper_ladder(tmp_path: Path) -> Settings:

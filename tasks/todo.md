@@ -233,3 +233,20 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 ## Acceptance criteria
 - Replace synthetic quota/overload fixtures with real captures when the first occurrence is seen.
+
+### Phase 8: helper schema fix (T-157)
+
+- [x] 41. Compose self-contained helper schemas
+
+## Acceptance criteria
+- `classify_failure` and `rebuild_report` send one root object schema with every `$ref` resolved and no top-level `oneOf`; the schema is valid for Claude, Codex and Muse; `unrecoverable` is a field of that object.
+
+- [x] 42. Test composed helper schemas with a JSON Schema validator
+
+## Acceptance criteria
+- Every report kind and the classification schema pass `check_schema`, resolve all references and accept an Unrecoverable payload; the classification sample is accepted; a completed report with null optional fields is returned.
+
+- [x] 43. Check Muse helper trust and session-log flags
+
+## Acceptance criteria
+- Determine whether untrusted workspace and `--no-session-log` make the Muse helper rung fail with a valid schema.
