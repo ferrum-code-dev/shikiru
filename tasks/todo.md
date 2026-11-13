@@ -148,7 +148,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 ### Phase 4: model catalog
 
-- [ ] 25. Implement Muse model catalog transport
+- [x] 25. Implement Muse model catalog transport
 
 ## Acceptance criteria
 - `catalog.py`: one-shot `muse serve --disable-shell --disable-write --no-session-log` client (`initialize`, `initialized`, `model/list`), timeouts, clean shutdown, parse into `ModelCatalog`.

@@ -24,7 +24,7 @@ from shikiru.errors import (
 from shikiru.private import PRIVATE_FILE_MODE
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+    from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
     from pathlib import Path
 
 TURN_STOP_GRACE = 10.0
@@ -42,6 +42,7 @@ _PATH_VARIABLE = "PATH"
 _GATE_SCRIPT = 'IFS= read -r _ || exit 1; exec "$@" </dev/null'
 _GATE_ARG0 = "shikiru-gate"
 _GATE_RELEASE = b"\n"
+_LINE_END = b"\n"
 _ABORT_GRACE = 0.0
 
 
@@ -292,6 +293,43 @@ class SpawnedTerminalProcess:
                 raise
 
 
+class LineChannel:
+    """Newline-delimited stdin and stdout of a process run by `SubprocessRunner.exchange`."""
+
+    def __init__(self, process: asyncio.subprocess.Process) -> None:
+        self._process = process
+        self._pending = bytearray()
+        self._received = bytearray()
+
+    @property
+    def received(self) -> bytes:
+        """Return every stdout byte read so far."""
+        return bytes(self._received)
+
+    async def send(self, line: str) -> None:
+        """Write `line` and a newline to the process's stdin, waiting until it is accepted."""
+        if self._process.stdin is None:
+            message = "exchanged process has no stdin pipe"
+            raise RuntimeError(message)
+        self._process.stdin.write(line.encode() + _LINE_END)
+        await self._process.stdin.drain()
+
+    async def receive(self) -> str | None:
+        """Return the next stdout line without its newline, or `None` once stdout has ended."""
+        if self._process.stdout is None:
+            message = "exchanged process has no stdout pipe"
+            raise RuntimeError(message)
+        while (newline := self._pending.find(_LINE_END)) < 0:
+            chunk = await self._process.stdout.read(_STDOUT_READ_SIZE)
+            if not chunk:
+                return None
+            self._received.extend(chunk)
+            self._pending.extend(chunk)
+        line = bytes(self._pending[:newline])
+        del self._pending[: newline + len(_LINE_END)]
+        return line.decode()
+
+
 class SubprocessRunner:
     """Runs argv lists as subprocesses, never through a shell."""
 
@@ -343,6 +381,42 @@ class SubprocessRunner:
         if check and result.returncode != 0:
             raise CommandFailed(argv_tuple, result.returncode, result.stderr)
         return result
+
+    async def exchange(
+        self,
+        argv: Sequence[str],
+        *,
+        timeout: float,
+        talk: Callable[[LineChannel], Awaitable[None]],
+        cwd: Path | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> ProcessResult:
+        """Run `argv` while `talk` exchanges lines with it, honouring `timeout`.
+
+        `talk` returns once it has nothing more to send. Stdin is then closed and the rest of the
+        output read to the end, so `talk` must wait for each reply it depends on. On expiry,
+        failure or cancellation the process group is SIGKILLed.
+        """
+        argv_tuple = tuple(argv)
+        process = await self._start(argv_tuple, cwd=cwd, env=env, stdin=asyncio.subprocess.PIPE)
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                self._converse(process, talk), timeout=timeout
+            )
+        except TimeoutError:
+            await self._end_and_wait(process, grace=None)
+            raise CommandTimeoutError(argv_tuple, timeout) from None
+        except BaseException:
+            await self._end_and_wait(process, grace=None)
+            raise
+        finally:
+            self._close_transport(process)
+        return ProcessResult(
+            argv=argv_tuple,
+            returncode=cast("int", process.returncode),
+            stdout=stdout_bytes.decode(),
+            stderr=stderr_bytes.decode(),
+        )
 
     async def spawn(
         self,
@@ -517,6 +591,28 @@ class SubprocessRunner:
             await cls._end_and_wait(process, grace=None)
             cls._close_transport(process)
             raise
+
+    @staticmethod
+    async def _converse(
+        process: asyncio.subprocess.Process, talk: Callable[[LineChannel], Awaitable[None]]
+    ) -> tuple[bytes, bytes]:
+        channel = LineChannel(process)
+        if process.stdout is None or process.stderr is None:
+            message = "exchanged process has no output pipes"
+            raise RuntimeError(message)
+        stderr_task = asyncio.create_task(process.stderr.read())
+        try:
+            await talk(channel)
+            if process.stdin is not None:
+                process.stdin.close()
+            stdout_rest, stderr, _ = await asyncio.gather(
+                process.stdout.read(), stderr_task, process.wait()
+            )
+        except BaseException:
+            stderr_task.cancel()
+            await asyncio.gather(stderr_task, return_exceptions=True)
+            raise
+        return channel.received + stdout_rest, stderr
 
     @staticmethod
     async def _end_and_wait(process: asyncio.subprocess.Process, *, grace: float | None) -> None:

@@ -20,6 +20,7 @@ MUSE_COMMAND = "muse"
 EXEC_SUBCOMMAND = "exec"
 RESUME_SUBCOMMAND = "resume"
 USAGE_SUBCOMMAND = "usage"
+SERVE_SUBCOMMAND = "serve"
 VERSION_FLAG = "--version"
 JSON_FLAG = "--json"
 VERSION_ARGV = (MUSE_COMMAND, VERSION_FLAG)
@@ -36,6 +37,7 @@ HARD_THRESHOLD_FLAG = "--context-compaction-hard-threshold"
 TRUST_WORKSPACE_FLAG = "--trust-workspace"
 DISABLE_SANDBOX_FLAG = "--disable-sandbox"
 DISABLE_SHELL_FLAG = "--disable-shell"
+DISABLE_WRITE_FLAG = "--disable-write"
 DISABLE_WEB_TOOLS_FLAG = "--disable-web-tools"
 DISABLE_REMINDERS_FLAG = "--disable-reminders"
 NO_SESSION_LOG_FLAG = "--no-session-log"
@@ -46,6 +48,14 @@ MAX_COMPACT_AT_PCT = 99.0
 PROMPT_FILENAME = "prompt.md"
 NO_AUTO_UPDATE_ENV_VAR = "MUSE_NO_AUTO_UPDATE"
 NO_AUTO_UPDATE_VALUE = "1"
+SERVE_ARGV = (
+    MUSE_COMMAND,
+    SERVE_SUBCOMMAND,
+    DISABLE_SHELL_FLAG,
+    DISABLE_WRITE_FLAG,
+    NO_SESSION_LOG_FLAG,
+)
+MODEL_CATALOG_TIMEOUT_SECONDS = 10.0
 
 RECORD_STREAM_KEY = "stream"
 RECORD_PAYLOAD_KEY = "payload"

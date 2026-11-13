@@ -15,7 +15,7 @@ from shikiru.process import STDERR_KEPT_BYTES, STDOUT_DRAIN_TIMEOUT, SubprocessR
 from tests.support.waiting import SHORT_WAIT_SECONDS, UI_WAIT_SECONDS, wait_until
 
 if TYPE_CHECKING:
-    from shikiru.process import ProcessIdentity
+    from shikiru.process import LineChannel, ProcessIdentity
     from tests.support.process_tree import ProcessTree
 
 pytestmark = pytest.mark.asyncio
@@ -135,6 +135,63 @@ async def test_timeout_raises_and_kills_the_process(tmp_path: Path) -> None:
     pid = int(pid_file.read_text().strip())
     with pytest.raises(CommandTimeoutError):
         await task
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
+
+
+async def test_exchange_reads_each_reply_while_stdin_is_still_open() -> None:
+    echo_program = "import sys\nfor line in sys.stdin: print('echo', line, end='', flush=True)"
+
+    async def talk(channel: LineChannel) -> None:
+        for request in ("one", "two"):
+            await channel.send(request)
+            assert await channel.receive() == f"echo {request}"
+
+    result = await SubprocessRunner().exchange(
+        [sys.executable, "-c", echo_program], timeout=_KILL_TIMEOUT_SECONDS, talk=talk
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "echo one\necho two\n"
+
+
+async def test_exchange_drains_stderr_while_waiting_for_a_reply() -> None:
+    diagnostic_size = 200_000
+    program = (
+        "import sys\n"
+        "for line in sys.stdin:\n"
+        f"    sys.stderr.write('x' * {diagnostic_size})\n"
+        "    sys.stderr.flush()\n"
+        "    print(line.strip(), flush=True)\n"
+    )
+
+    async def talk(channel: LineChannel) -> None:
+        await channel.send("request")
+        assert await channel.receive() == "request"
+
+    result = await SubprocessRunner().exchange(
+        [sys.executable, "-c", program], timeout=_KILL_TIMEOUT_SECONDS, talk=talk
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == "request\n"
+    assert result.stderr == "x" * diagnostic_size
+
+
+async def test_exchange_timeout_raises_and_kills_the_process(tmp_path: Path) -> None:
+    runner = SubprocessRunner()
+    pid_file = tmp_path / "pid"
+
+    async def talk(channel: LineChannel) -> None:
+        await channel.receive()
+
+    with pytest.raises(CommandTimeoutError):
+        await runner.exchange(
+            ["sh", "-c", f"echo $$ > {pid_file}; sleep 30"],
+            timeout=_KILL_TIMEOUT_SECONDS,
+            talk=talk,
+        )
+    pid = int(pid_file.read_text().strip())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
 

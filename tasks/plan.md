@@ -94,7 +94,9 @@ notification, then `model/list` returns
 reasoningEffortVariants, contextLimit, outputLimit}]}`. Right now: `muse-wonder-1.0` (default),
 `muse-ember-1.0`, `muse-spark-1.3`, `muse-spark-1.2`, all with a 1,007,997-token window. Before
 `initialized`, requests fail with `notInitialized`. `muse serve --disable-shell --disable-write
---no-session-log` is enough for read-only catalog calls.
+--no-session-log` is enough for read-only catalog calls. The client sends `initialized` and
+`model/list` only after the `initialize` reply succeeds, and returns each model's `contextLimit`
+alongside the catalog.
 
 ### Compaction
 
