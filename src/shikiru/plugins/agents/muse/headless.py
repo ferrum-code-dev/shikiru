@@ -26,7 +26,6 @@ from shikiru.plugins.agents.muse.options import (
     RECORD_PAYLOAD_TYPE_KEY,
     RUN_TERMINAL_COMPLETED_TYPE,
 )
-from shikiru.private import write_private_text
 
 if TYPE_CHECKING:
     from datetime import timedelta
@@ -40,6 +39,7 @@ _MALFORMED_RECORD_MESSAGE = "Muse headless output was not a JSON record per line
 _MISSING_RESULT_MESSAGE = "Muse headless output had no completed result"
 _INVALID_JSON_MESSAGE = "Muse headless output was not valid JSON"
 _INVALID_OBJECT_MESSAGE = "Muse headless output was not an object"
+_TEXT_ENCODING = "utf-8"
 
 
 class MuseHeadless:
@@ -63,8 +63,10 @@ class MuseHeadless:
         with tempfile.TemporaryDirectory(prefix=_TEMP_DIRECTORY_PREFIX) as directory:
             prompt_path = Path(directory) / PROMPT_FILENAME
             schema_path = Path(directory) / _SCHEMA_FILENAME
-            write_private_text(prompt_path, prompt)
-            write_private_text(schema_path, json.dumps(schema, separators=(",", ":")))
+            prompt_path.write_text(prompt, encoding=_TEXT_ENCODING)
+            schema_path.write_text(
+                json.dumps(schema, separators=(",", ":")), encoding=_TEXT_ENCODING
+            )
             argv = [
                 MUSE_COMMAND,
                 EXEC_SUBCOMMAND,

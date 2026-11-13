@@ -25,6 +25,7 @@ from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.clock import from_local
 from shikiru.errors import ShikiruError
 from shikiru.plugins.agents.muse.catalog import MuseCatalog, read_model_catalog
+from shikiru.plugins.agents.muse.headless import MuseHeadless
 from shikiru.plugins.agents.muse.options import (
     API_KEY_ENV_VAR,
     CONFIG_LONG_FLAG,
@@ -52,6 +53,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import (
         AgentContext,
+        HeadlessAgent,
         ModelChoiceAssessment,
         QuotaReading,
         Rung,
@@ -177,6 +179,10 @@ class MuseAgent:
     def settings(self) -> tuple[AgentSetting, ...]:
         """Return the options worth writing to the project config."""
         return MUSE_SETTINGS
+
+    def headless(self) -> HeadlessAgent | None:
+        """Return Muse's schema-constrained headless client."""
+        return MuseHeadless(self._runner, self._subprocess_environment())
 
     def _subprocess_environment(self) -> dict[str, str]:
         return dict(os.environ)

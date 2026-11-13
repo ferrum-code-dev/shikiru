@@ -170,7 +170,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `headless.py`: `MuseHeadless.ask` (prompt and schema in a temp directory, flags per the plan, timeout, parse the final JSON object, `HeadlessOutputError` on missing or invalid output); omit `--model` when the rung is `default`.
 
-- [ ] 29. Expose Muse headless support
+- [x] 29. Expose Muse headless support
 
 ## Acceptance criteria
 - `MuseAgent.headless()` returns it; add the `PLR0917` ignore. The wizard offers an agent for the Helper scope only when this is non-`None`.

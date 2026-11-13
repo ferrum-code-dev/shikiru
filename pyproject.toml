@@ -172,6 +172,7 @@ runtime-evaluated-decorators = [
 "src/shikiru/plugins/agents/claude/headless.py" = ["PLR0917"] # HeadlessAgent.ask's exact signature
 "src/shikiru/plugins/agents/codex/headless.py" = ["PLR0917"] # HeadlessAgent.ask's exact signature
 "src/shikiru/plugins/agents/muse/headless.py" = ["PLR0917"] # HeadlessAgent.ask's exact signature
+"src/shikiru/plugins/agents/muse/agent.py" = ["PLR0917"] # HeadlessAgent.ask is the agent contract's exact signature
 "src/shikiru/store/**" = ["S608"]
 "src/shikiru/workspace/**" = ["ASYNC240"] # local worktree filesystem ops, as blocking as sqlite3
 "tests/support/git_repo.py" = ["ASYNC240"]
