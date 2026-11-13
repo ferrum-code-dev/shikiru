@@ -18,12 +18,13 @@ from shikiru.agents.contracts import (
     BillingDeclaration,
     CheckResult,
     ModelCatalog,
+    assess_model_choice,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.clock import from_local
 from shikiru.errors import ShikiruError
-from shikiru.plugins.agents.muse.catalog import read_model_catalog
+from shikiru.plugins.agents.muse.catalog import MuseCatalog, read_model_catalog
 from shikiru.plugins.agents.muse.options import (
     API_KEY_ENV_VAR,
     CONFIG_LONG_FLAG,
@@ -35,20 +36,28 @@ from shikiru.plugins.agents.muse.options import (
     MUSE_SETTINGS,
     REASONING_EFFORT_FLAG,
     RESUME_SUBCOMMAND,
+    STARTUP_PROMPT_ESTIMATE_TOKENS,
     TESTED_MUSE_VERSION,
     USAGE_ARGV,
     VERSION_ARGV,
     MuseOptions,
 )
 from shikiru.plugins.agents.muse.quota import parse_usage
-from shikiru.plugins.agents.muse.turn import MuseTurnSequence
+from shikiru.plugins.agents.muse.turn import MuseTurnSequence, compaction_thresholds
 from shikiru.plugins.agents.shared_settings import options_error
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from datetime import datetime
 
-    from shikiru.agents.contracts import AgentContext, QuotaReading, Rung, Turn, TurnSpec
+    from shikiru.agents.contracts import (
+        AgentContext,
+        ModelChoiceAssessment,
+        QuotaReading,
+        Rung,
+        Turn,
+        TurnSpec,
+    )
     from shikiru.agents.settings import AgentSetting
     from shikiru.clock import Clock
     from shikiru.process import SubprocessRunner
@@ -60,6 +69,20 @@ _CREDENTIALS_UNVERIFIED_DETAIL = f"{API_KEY_ENV_VAR} set; credentials not verifi
 _NO_DIAGNOSTIC_DETAIL = "no diagnostic output"
 _UNTESTED_VERSION_DETAIL = "{version} (warning: verified with {tested})"
 _FLAG_VALUE_SEPARATOR = "="
+_MODEL_CHECK = "model"
+_COMPACTION_CHECK = "compaction"
+_UNVERIFIED_CONTEXT_WINDOW_DETAIL = (
+    "{model!r} context window is not in the catalog; its compaction threshold could not be "
+    "fully verified"
+)
+_STARTUP_PROMPT_REACHED_DETAIL = (
+    "hard threshold of {threshold} tokens for {model!r} is reached by the startup prompt "
+    "estimate of {startup} tokens; the run would refuse to start"
+)
+_STARTUP_PROMPT_CLEARED_DETAIL = (
+    "hard threshold of {threshold} tokens for {model!r} is above the startup prompt estimate "
+    "of {startup} tokens"
+)
 
 
 class MuseAgent:
@@ -84,7 +107,7 @@ class MuseAgent:
             if options.billing_mode is not None
             else UNKNOWN_BILLING_DECLARATION
         )
-        self._cached_model_catalog: ModelCatalog | None = None
+        self._cached_model_catalog: MuseCatalog | None = None
 
     @property
     def billing_declaration(self) -> BillingDeclaration:
@@ -93,9 +116,7 @@ class MuseAgent:
 
     async def model_catalog(self) -> ModelCatalog:
         """Return Muse's model choices from `muse serve`, read once and then cached."""
-        if self._cached_model_catalog is None:
-            self._cached_model_catalog = await self._read_model_catalog()
-        return self._cached_model_catalog
+        return (await self._catalog()).catalog
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one Muse process-per-turn exchange."""
@@ -122,8 +143,7 @@ class MuseAgent:
         return tuple(argv)
 
     async def doctor(self, models: Sequence[str]) -> list[CheckResult]:
-        """Check Muse's binary, version and login."""
-        del models
+        """Check Muse's binary, version and login, then each model in `models`."""
         binary = await self._check_binary()
         if not binary.ok:
             return [
@@ -131,7 +151,10 @@ class MuseAgent:
                 CheckResult("version", False, _UNAVAILABLE_DETAIL),
                 CheckResult("login", False, _UNAVAILABLE_DETAIL),
             ]
-        return [binary, await self._check_version(), await self._check_login()]
+        checks = [binary, await self._check_version(), await self._check_login()]
+        if models:
+            checks.extend(await self._check_models(models))
+        return checks
 
     def read_quota(self, since: datetime) -> QuotaReading | None:
         """Return Muse's allowance reading observed after `since`, from `muse usage --json`.
@@ -158,11 +181,30 @@ class MuseAgent:
     def _subprocess_environment(self) -> dict[str, str]:
         return dict(os.environ)
 
-    async def _read_model_catalog(self) -> ModelCatalog:
+    async def _catalog(self) -> MuseCatalog:
+        if self._cached_model_catalog is None:
+            self._cached_model_catalog = await self._read_model_catalog()
+        return self._cached_model_catalog
+
+    async def _read_model_catalog(self) -> MuseCatalog:
         if _model_catalog_args_are_ambiguous(self._options.args):
-            return ModelCatalog(error=MODEL_CATALOG_ARGS_DETAIL)
-        catalog = await read_model_catalog(self._runner, self._subprocess_environment())
-        return catalog.catalog
+            return MuseCatalog(
+                catalog=ModelCatalog(error=MODEL_CATALOG_ARGS_DETAIL), context_windows={}
+            )
+        return await read_model_catalog(self._runner, self._subprocess_environment())
+
+    async def _check_models(self, models: Sequence[str]) -> list[CheckResult]:
+        muse_catalog = await self._catalog()
+        assessments = tuple(
+            assess_model_choice(model, None, muse_catalog.catalog) for model in models
+        )
+        checks = [_model_check(assessments)]
+        concrete_models = tuple(model for model in models if model != RUNTIME_DEFAULT_MODEL)
+        if concrete_models:
+            checks.append(
+                _compaction_check(self._options.compact_at_pct, concrete_models, muse_catalog)
+            )
+        return checks
 
     async def _check_binary(self) -> CheckResult:
         try:
@@ -210,6 +252,36 @@ class MuseAgent:
             return CheckResult("login", True, _AUTHENTICATED_DETAIL)
         detail = result.stderr.strip() or result.stdout.strip() or _NO_DIAGNOSTIC_DETAIL
         return CheckResult("login", False, detail)
+
+
+def _model_check(assessments: Sequence[ModelChoiceAssessment]) -> CheckResult:
+    ok = all(assessment.supported is not False for assessment in assessments)
+    return CheckResult(_MODEL_CHECK, ok, "; ".join(assessment.detail for assessment in assessments))
+
+
+def _compaction_check(
+    compact_at_pct: float, models: Sequence[str], muse_catalog: MuseCatalog
+) -> CheckResult:
+    _, hard_threshold = compaction_thresholds(compact_at_pct)
+    ok = True
+    details: list[str] = []
+    for model in models:
+        window = muse_catalog.context_windows.get(model)
+        if window is None:
+            details.append(_UNVERIFIED_CONTEXT_WINDOW_DETAIL.format(model=model))
+            continue
+        threshold = hard_threshold * window
+        reached = threshold <= STARTUP_PROMPT_ESTIMATE_TOKENS
+        ok = ok and not reached
+        template = _STARTUP_PROMPT_REACHED_DETAIL if reached else _STARTUP_PROMPT_CLEARED_DETAIL
+        details.append(
+            template.format(
+                threshold=round(threshold),
+                model=model,
+                startup=STARTUP_PROMPT_ESTIMATE_TOKENS,
+            )
+        )
+    return CheckResult(_COMPACTION_CHECK, ok, "; ".join(details))
 
 
 def _is_tested_version(output: str) -> bool:

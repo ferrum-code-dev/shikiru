@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from shikiru.agents.contracts import AgentContext, CheckResult
+from shikiru.agents.contracts import RUNTIME_DEFAULT_MODEL, AgentContext, CheckResult
 from shikiru.plugins.agents.muse.agent import MuseAgent, create
 from shikiru.plugins.agents.muse.options import API_KEY_ENV_VAR, MUSE_COMMAND
 from shikiru.process import SubprocessRunner
@@ -20,7 +22,17 @@ _SYNTHETIC_API_KEY = "synthetic-test-key"
 _VERSION_ENV = "FAKE_MUSE_VERSION"
 _USAGE_EXIT_ENV = "FAKE_MUSE_USAGE_EXIT"
 _USAGE_STDERR_ENV = "FAKE_MUSE_USAGE_STDERR"
+_MODEL_LIST_ENV = "FAKE_MUSE_MODEL_LIST"
+_CONTEXT_LIMIT = 1007997
+_SMALL_CONTEXT_LIMIT = 200000
+_WONDER = "muse-wonder-1.0"
+_SPARK = "muse-spark-1.2"
+_MODEL_LIST = [
+    {"modelId": _WONDER, "variants": ["low", "high"], "contextLimit": _CONTEXT_LIMIT},
+    {"modelId": _SPARK, "variants": ["low"], "contextLimit": _SMALL_CONTEXT_LIMIT},
+]
 _FAKE_MUSE = """#!{python}
+import json
 import os
 import sys
 
@@ -30,12 +42,25 @@ if sys.argv[1:] == ["--version"]:
 if sys.argv[1:] == ["usage", "--json"]:
     sys.stderr.write(os.environ["FAKE_MUSE_USAGE_STDERR"])
     sys.exit(int(os.environ["FAKE_MUSE_USAGE_EXIT"]))
+if sys.argv[1:2] == ["serve"]:
+    models = json.loads(os.environ["FAKE_MUSE_MODEL_LIST"])
+    for line in sys.stdin:
+        request = json.loads(line)
+        if "id" not in request:
+            continue
+        result = {{}} if request["method"] == "initialize" else {{"models": models}}
+        reply = {{"jsonrpc": "2.0", "id": request["id"], "result": result}}
+        sys.stdout.write(json.dumps(reply) + "\\n")
+        sys.stdout.flush()
+    sys.exit(0)
 sys.exit(2)
 """
 
 
-def _agent() -> MuseAgent:
-    return create(AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(LONG_AGO)))
+def _agent(options: dict[str, Any] | None = None) -> MuseAgent:
+    return create(
+        AgentContext(options=options or {}, runner=SubprocessRunner(), clock=FakeClock(LONG_AGO))
+    )
 
 
 def _install_fake_muse(
@@ -55,6 +80,7 @@ def _install_fake_muse(
     monkeypatch.setenv(_VERSION_ENV, version)
     monkeypatch.setenv(_USAGE_EXIT_ENV, str(usage_exit))
     monkeypatch.setenv(_USAGE_STDERR_ENV, usage_stderr)
+    monkeypatch.setenv(_MODEL_LIST_ENV, json.dumps(_MODEL_LIST))
     monkeypatch.delenv(API_KEY_ENV_VAR, raising=False)
 
 
@@ -155,3 +181,69 @@ async def test_doctor_passes_every_check_for_a_working_logged_in_install(
 
     assert all(check.ok for check in checks)
     assert [check.name for check in checks] == ["binary", "version", "login"]
+
+
+@pytest.mark.asyncio
+async def test_listed_models_and_the_runtime_default_pass_the_model_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_muse(tmp_path, monkeypatch, version=_LOGGED_IN_VERSION, usage_exit=0)
+
+    checks = await _agent().doctor((_WONDER, RUNTIME_DEFAULT_MODEL))
+
+    assert _check(checks, "model").ok
+    assert _check(checks, "compaction").ok
+
+
+@pytest.mark.asyncio
+async def test_a_model_missing_from_the_catalog_fails_the_model_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_muse(tmp_path, monkeypatch, version=_LOGGED_IN_VERSION, usage_exit=0)
+
+    checks = await _agent().doctor(("muse-unlisted-1.0",))
+
+    assert not _check(checks, "model").ok
+
+
+@pytest.mark.asyncio
+async def test_the_runtime_default_gets_no_compaction_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_muse(tmp_path, monkeypatch, version=_LOGGED_IN_VERSION, usage_exit=0)
+
+    checks = await _agent().doctor((RUNTIME_DEFAULT_MODEL,))
+
+    assert _check(checks, "model").ok
+    assert all(check.name != "compaction" for check in checks)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("compact_at_pct", "passes"),
+    [
+        (80.0, True),
+        (2.0, True),
+        (1.0, False),
+    ],
+)
+async def test_compaction_check_fails_when_the_hard_threshold_is_under_the_startup_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, compact_at_pct: float, passes: bool
+) -> None:
+    _install_fake_muse(tmp_path, monkeypatch, version=_LOGGED_IN_VERSION, usage_exit=0)
+
+    checks = await _agent({"compact_at_pct": compact_at_pct}).doctor((_WONDER,))
+
+    assert _check(checks, "compaction").ok is passes
+
+
+@pytest.mark.asyncio
+async def test_models_the_catalog_cannot_verify_are_not_reported_as_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_fake_muse(tmp_path, monkeypatch, version=_LOGGED_IN_VERSION, usage_exit=0)
+
+    checks = await _agent({"args": ["--model", _SPARK]}).doctor((_WONDER,))
+
+    assert _check(checks, "model").ok
+    assert _check(checks, "compaction").ok

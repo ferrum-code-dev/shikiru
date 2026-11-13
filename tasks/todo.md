@@ -126,7 +126,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `doctor([])` (the init/wizard detection gate): binary, version (warn off the tested `1.4.15`), login = `muse usage --json` exit 0 **or** non-empty `META_API_KEY` ("not verified by doctor"). Quick, bounded, deterministic; failing any check hides Muse from init and the wizard.
 
-- [ ] 21. Check Muse models and compaction in doctor
+- [x] 21. Check Muse models and compaction in doctor
 
 ## Acceptance criteria
 - `doctor(models)`: add model checks against the catalog and the compaction threshold versus the startup prompt; no turn is run. Preserve the declared `default` sentinel through shared checks and skip model-specific context lookup for it.
