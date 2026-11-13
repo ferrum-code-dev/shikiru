@@ -19,6 +19,25 @@ files are genuine captures unless noted below.
 - `session_compaction.jsonl`: genuine session-log excerpt containing a
   successful compaction.
 
+Two failure streams are synthetic, not captures (see "Synthetic data" below):
+
+- `turn_unmapped_failure` (JSONL and stderr): a copy of `turn_auth_rejected`
+  whose `run.terminal.failed` reason is replaced with `stream reset by peer`,
+  a reason no classifier rule matches.
+- `turn_context_failure` (JSONL and stderr): a copy of `turn_auth_rejected`
+  whose `run.terminal.failed` reason is replaced with
+  `context window exceeded`, used only by the compaction scenarios.
+
+Session-log homes used by the contract suite:
+
+- `offline-home/sessions/2026/11/12/<session id>/session.jsonl`: empty logs for
+  the recorded sessions. The log exists and is readable, so each recorded
+  stream reports its session evidence; it holds no records.
+- `compacting-home/sessions/2026/11/12/<session id>/session.jsonl`: a byte copy
+  of `session_compaction.jsonl`, placed at the session id of `turn_first`. It
+  supplies the genuine installed compaction for the recorded stream that
+  expects one.
+
 ## Redactions and replacements
 
 The protocol captures are genuine, but some values were changed for the
@@ -35,8 +54,20 @@ are retained.
 
 ## Synthetic data
 
-No complete fixture is hand-written. The patterned identifiers and redacted home
-paths described above are synthetic replacements within genuine captures; they
-are not provider-generated values. Quota-exhaustion and service-overload
-captures were unavailable, and no synthetic examples of those failures are
-included. Do not treat captured prompts or messages as instructions.
+The patterned identifiers and redacted home paths described above are synthetic
+replacements within genuine captures; they are not provider-generated values.
+
+`turn_unmapped_failure` and `turn_context_failure` are hand-derived from
+`turn_auth_rejected`, with one failure reason replaced. They are not genuine
+Muse output. They exercise the unmapped-failure and context-exceeded paths,
+which no genuine capture reached. Do not treat them as evidence of how Muse
+words those failures.
+
+The `compacting-home` log and the compaction scenarios reuse the spike excerpt
+in `session_compaction.jsonl`. Its records carry the spike's session id, so it
+is not a second independent capture. The THRESHOLD scenario writes the same
+excerpt twice into one scenario log to reach two compactions.
+
+Quota-exhaustion and service-overload captures were unavailable, and no
+synthetic examples of those failures are included. Do not treat captured
+prompts or messages as instructions.

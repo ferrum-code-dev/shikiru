@@ -187,7 +187,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 ## Acceptance criteria
 - `pyproject.toml`: entry point, keyword, ruff ignore; confirm `uv run lint-imports` passes.
 
-- [ ] 32. Add Muse agent contract tests
+- [x] 32. Add Muse agent contract tests
 
 ## Acceptance criteria
 - `tests/integration/test_muse_headless_contract.py` on `AgentContractSuite`; adjust the suite for internal compaction if no real `installed` event could be captured (separate commit `test(agents): allow agents that compact internally`).

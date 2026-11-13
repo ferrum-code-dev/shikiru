@@ -207,6 +207,14 @@ class AgentContractSuite:
         """Return options whose low `compact_at_pct` live check 6 grows past in one turn."""
         raise NotImplementedError
 
+    def live_change_model(self, first_model: str) -> str:
+        """Return the model the live model-change check resumes the session on.
+
+        Override it when the plugin's model names are not `<model>-changed`; the result must
+        be a real, selectable model that differs from `first_model`.
+        """
+        return f"{first_model}-changed"
+
     def headless_ask_schema_model(self) -> type[BaseModel] | None:
         """Return the result model for `headless().ask()`, when the plugin provides it."""
         return None
@@ -362,7 +370,7 @@ class AgentContractSuite:
             tmp_path,
             resume_session_id=session_id,
             usage=usage,
-            model=f"{first.rung.model}-changed",
+            model=self.live_change_model(first.rung.model),
         )
         signals = await self._run_turn(_with_prompt(resumed, RESUME_RECALL_PROMPT))
         message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))

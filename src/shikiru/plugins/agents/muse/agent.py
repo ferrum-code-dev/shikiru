@@ -122,7 +122,12 @@ class MuseAgent:
 
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one Muse process-per-turn exchange."""
-        sequence = MuseTurnSequence(
+        return await StreamingTurn.start(spec, self._runner, self.process_sequence(spec))
+
+    def process_sequence(self, spec: TurnSpec) -> MuseTurnSequence:
+        """Build the process sequence that runs one Muse turn for `spec`."""
+        del spec
+        return MuseTurnSequence(
             args=self._options.args,
             base_environment=dict(os.environ),
             clock=self._clock,
@@ -131,7 +136,6 @@ class MuseAgent:
             context_window_tokens=None,
             compact_at_pct=self._options.compact_at_pct,
         )
-        return await StreamingTurn.start(spec, self._runner, sequence)
 
     def interactive_command(self, session_id: str, run_dir: Path, rung: Rung) -> Sequence[str]:
         """Return Muse's interactive resume command for a headless session and rung."""
