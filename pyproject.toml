@@ -171,6 +171,7 @@ runtime-evaluated-decorators = [
 "tests/fake_agent/src/fake_agent/headless.py" = ["ARG002", "PLR0917"] # HeadlessAgent.ask's exact signature; the fake ignores every argument but serves canned answers
 "src/shikiru/plugins/agents/claude/headless.py" = ["PLR0917"] # HeadlessAgent.ask's exact signature
 "src/shikiru/plugins/agents/codex/headless.py" = ["PLR0917"] # HeadlessAgent.ask's exact signature
+"src/shikiru/plugins/agents/muse/headless.py" = ["PLR0917"] # HeadlessAgent.ask's exact signature
 "src/shikiru/store/**" = ["S608"]
 "src/shikiru/workspace/**" = ["ASYNC240"] # local worktree filesystem ops, as blocking as sqlite3
 "tests/support/git_repo.py" = ["ASYNC240"]

@@ -165,7 +165,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 ### Phase 5: helper headless
 
-- [ ] 28. Implement Muse headless calls
+- [x] 28. Implement Muse headless calls
 
 ## Acceptance criteria
 - `headless.py`: `MuseHeadless.ask` (prompt and schema in a temp directory, flags per the plan, timeout, parse the final JSON object, `HeadlessOutputError` on missing or invalid output); omit `--model` when the rung is `default`.
