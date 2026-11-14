@@ -42,7 +42,8 @@ ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 MODEL_MIN_WIDTH = 8
 SIGNIFICANT_DIGITS = 3
 PAIR_SEPARATOR = " / "
-PAIR_LABEL = "r/w"
+INPUT_OUTPUT_LABEL = "i/o"
+CACHE_LABEL = "r/w"
 _NOUN_SESSION = "session"
 _NOUN_GAP = "model-history gap"
 _VERB_NO_USAGE = "reported no usage"
@@ -54,7 +55,8 @@ class Column(StrEnum):
 
     ROLE = "Role"
     MODEL = "Model"
-    TOKENS = "Tokens r/w"
+    TOKENS = "Tokens i/o"
+    CACHE = "Cache r/w"
     COST = "Cost"
     CONTEXT = "Ctx"
 
@@ -112,6 +114,7 @@ def _row(session: TaskSessionView) -> UsageRow:
             Column.ROLE: ROLE_LABELS.get(session.role, session.role.title()),
             Column.MODEL: session.model,
             Column.TOKENS: _tokens(session),
+            Column.CACHE: _cache_tokens(session),
             Column.COST: _cost(session),
             Column.CONTEXT: _context(session),
         },
@@ -138,6 +141,14 @@ def _tokens(session: TaskSessionView) -> str:
         return NO_VALUE
     return PAIR_SEPARATOR.join(
         (_abbreviated(session.input_tokens), _abbreviated(session.output_tokens))
+    )
+
+
+def _cache_tokens(session: TaskSessionView) -> str:
+    if not _tokens_known(session):
+        return NO_VALUE
+    return PAIR_SEPARATOR.join(
+        (_abbreviated(session.cache_read_tokens), _abbreviated(session.cache_write_tokens))
     )
 
 
@@ -217,8 +228,9 @@ def _table_lines(table: UsageTable) -> list[Text]:
 
 def _stacked_row(row: UsageRow) -> list[Text]:
     role = _old_tagged(Text(LEAD + row.cells[Column.ROLE]), row)
-    pair = Text.assemble(LEAD, GAP, grey(PAIR_LABEL), GAP, row.cells[Column.TOKENS])
-    return [role, pair]
+    input_output = Text.assemble(LEAD, GAP, grey(INPUT_OUTPUT_LABEL), GAP, row.cells[Column.TOKENS])
+    cache = Text.assemble(LEAD, GAP, grey(CACHE_LABEL), GAP, row.cells[Column.CACHE])
+    return [role, input_output, cache]
 
 
 def _heading(sessions: Sequence[TaskSessionView]) -> Text | None:

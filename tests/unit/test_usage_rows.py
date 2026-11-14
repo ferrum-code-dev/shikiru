@@ -69,9 +69,9 @@ SESSIONS = (
 )
 
 WIDTH_COLUMNS = (
-    (100, (Column.ROLE, Column.MODEL, Column.TOKENS, Column.COST, Column.CONTEXT)),
-    (44, (Column.ROLE, Column.TOKENS, Column.COST, Column.CONTEXT)),
-    (34, (Column.ROLE, Column.TOKENS)),
+    (100, (Column.ROLE, Column.MODEL, Column.TOKENS, Column.CACHE, Column.COST, Column.CONTEXT)),
+    (44, (Column.ROLE, Column.TOKENS, Column.CACHE)),
+    (34, (Column.ROLE, Column.TOKENS, Column.CACHE)),
 )
 
 
@@ -90,6 +90,12 @@ def test_usage_table_orders_current_first_humanises_values_and_drops_columns_by_
         DASH,
         "5 / 0",
         "250k / 50k",
+    ]
+    assert [row.cells[Column.CACHE] for row in table.rows] == [
+        "0 / 0",
+        DASH,
+        "0 / 0",
+        "0 / 0",
     ]
     assert [row.cells[Column.COST] for row in table.rows] == ["$0.40", DASH, DASH, "$0.00"]
     assert [row.cells[Column.CONTEXT] for row in table.rows] == ["42%", DASH, DASH, DASH]

@@ -786,7 +786,16 @@ async def _assert_billing_details_are_visible(
             for line in rendered_lines(sessions_widget.content, width=90)
             if "Implementer" in line
         )
-        assert row.split()[-5:] == ["12", "/", "7", "\N{EM DASH}", "20%"]
+        assert row.split()[-8:] == [
+            "12",
+            "/",
+            "7",
+            "3",
+            "/",
+            "1",
+            "\N{EM DASH}",
+            "20%",
+        ]
 
 
 async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
@@ -836,7 +845,16 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             lines = rendered_lines(sessions.content, width=90)
 
             legacy = next(line for line in lines if "Implementer" in line)
-            assert legacy.split()[-5:] == ["500", "/", "50", "$1.25", "10%"]
+            assert legacy.split()[-8:] == [
+                "500",
+                "/",
+                "50",
+                "0",
+                "/",
+                "0",
+                "$1.25",
+                "10%",
+            ]
             silent = [line for line in lines if "Leader" in line]
             assert len(silent) == 2
             assert all(line.split()[-1] == "\N{EM DASH}" for line in silent)
@@ -900,7 +918,9 @@ async def test_token_pair_rounds_reported_counts_at_three_significant_digits(
             lines = rendered_lines(sessions.content, width=120)
             for index, (_, pair) in enumerate(_ROUNDED_PAIRS):
                 row = _line_with(lines, f"case-{index}")
-                assert row.split()[-5:] == [*pair.split(), "\N{EM DASH}", "\N{EM DASH}"]
+                assert row.split()[-8:-5] == pair.split()
+                assert row.split()[-5:-2] == ["9M", "/", "400"]
+                assert row.split()[-2:] == ["\N{EM DASH}", "\N{EM DASH}"]
     finally:
         reader.close()
 
@@ -946,30 +966,60 @@ async def test_token_pair_keeps_reported_input_and_output_apart_at_wide_and_narr
             )
             await pilot.pause()
             wide = _painted_lines(sessions)
+            assert any("Tokens i/o" in line and "Cache r/w" in line for line in wide)
             leader = _line_with(wide, "Leader")
-            assert leader.split()[-5:] == ["1.34M", "/", "83.5k", "\N{EM DASH}", "20%"]
+            assert leader.split()[-8:] == [
+                "1.34M",
+                "/",
+                "83.5k",
+                "9M",
+                "/",
+                "400",
+                "\N{EM DASH}",
+                "20%",
+            ]
             implementer = _line_with(wide, "Implementer")
-            assert implementer.split()[-6:] == [
+            assert implementer.split()[-9:] == [
                 "1.34M",
                 "/",
                 "1.34M",
+                "0",
+                "/",
+                "0",
                 "\N{EM DASH}",
                 "\N{EM DASH}",
                 "old",
             ]
             zero = _line_with(wide, "0 / 0")
-            assert zero.split()[-5:] == ["0", "/", "0", "\N{EM DASH}", "\N{EM DASH}"]
+            assert zero.split()[-8:] == [
+                "0",
+                "/",
+                "0",
+                "0",
+                "/",
+                "0",
+                "\N{EM DASH}",
+                "\N{EM DASH}",
+            ]
             unknown = next(line for line in wide if "Helper" in line and "0 / 0" not in line)
-            assert unknown.split()[-3:] == ["\N{EM DASH}", "\N{EM DASH}", "\N{EM DASH}"]
+            assert unknown.split()[-4:] == [
+                "\N{EM DASH}",
+                "\N{EM DASH}",
+                "\N{EM DASH}",
+                "\N{EM DASH}",
+            ]
 
             for width in (36, 32):
                 await pilot.resize_terminal(width, 20)
                 await pilot.wait_for_scheduled_animations()
                 stacked = [line.split() for line in _painted_lines(sessions)]
-                assert ["r/w", "1.34M", "/", "83.5k"] in stacked
-                assert ["r/w", "1.34M", "/", "1.34M"] in stacked
-                assert ["Implementer", "old"] in stacked
+                assert ["i/o", "1.34M", "/", "83.5k"] in stacked
+                assert ["r/w", "9M", "/", "400"] in stacked
+                assert ["i/o", "1.34M", "/", "1.34M"] in stacked
                 assert ["r/w", "0", "/", "0"] in stacked
+                assert ["Implementer", "old"] in stacked
+                assert ["i/o", "0", "/", "0"] in stacked
+                assert ["i/o", "\N{EM DASH}"] in stacked
                 assert ["r/w", "\N{EM DASH}"] in stacked
     finally:
         reader.close()
@@ -1099,7 +1149,16 @@ async def _assert_task_history_rendering(
     }
     assert rows["gpt-5"].endswith("old")
     assert not rows["opus"].endswith("old")
-    assert rows["opus"].split()[-5:] == ["11", "/", "2", "\N{EM DASH}", "\N{EM DASH}"]
+    assert rows["opus"].split()[-8:] == [
+        "11",
+        "/",
+        "2",
+        "0",
+        "/",
+        "0",
+        "\N{EM DASH}",
+        "\N{EM DASH}",
+    ]
     assert not rows["gpt-6-sol"].endswith("old")
     assert not any("sonnet" in line for line in lines)
 
