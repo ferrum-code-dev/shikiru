@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from shikiru.domain.recovery import Completed
+from shikiru.domain.runs import starting_usage
 from shikiru.domain.steps import ACTING_ROLE, Transition
 from shikiru.engine.events import emit_nudge, emit_turn_started, emit_turn_stopped
 from shikiru.engine.turn_context import ORDINARY_TURN, NextTurn
@@ -160,7 +161,7 @@ class TurnLoop:
             conflict_context=overrides.conflict_context,
             feedback=overrides.feedback,
         )
-        usage_before = selection.run.usage
+        usage_before = starting_usage(selection.run)
         resumed = task.id in self._resumed
         self._resumed.discard(task.id)
         completed = self._turns.completed_turn(task.id, role, turn_request) if resumed else None

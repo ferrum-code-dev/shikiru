@@ -21,6 +21,7 @@ from shikiru.agents.contracts import (
     TurnFailed,
     UsageReported,
 )
+from shikiru.domain.token_usage import processed_sum
 from shikiru.ui.glyphs import GLYPH_DONE, GLYPH_ESCALATED, GLYPH_PENDING, ROLE_GLYPHS
 from shikiru.ui.tokens import ALERT_COLOR, IDLE_COLOR, ROLE_COLORS, STYLE_BOLD, STYLE_DIM
 from shikiru.view_log import VIEW_RUNG_KEY, VIEW_SIGNAL_KEY, VIEW_TURN_KEY
@@ -150,10 +151,19 @@ def _tool_outcome_style(outcome: object) -> str:
     return STYLE_DIM
 
 
+_USAGE_CATEGORY_KEYS = (
+    "uncached_input_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "output_tokens",
+)
+
+
 def _usage(row: ViewRow) -> Text:
     usage = row["usage"]
-    tokens = usage["input_tokens"] + usage["output_tokens"]
-    return Text(f"{GLYPH_PENDING} {tokens} tokens", style=STYLE_DIM)
+    processed = processed_sum([usage.get(key) for key in _USAGE_CATEGORY_KEYS])
+    text = "unknown tokens" if processed is None else f"{processed} processed tokens"
+    return Text(f"{GLYPH_PENDING} {text}", style=STYLE_DIM)
 
 
 def _compacted(_row: ViewRow) -> Text:

@@ -276,7 +276,8 @@ async def _assert_compact_readouts(context: WidgetContext) -> None:
     ):
         usage_lines = _rendered_widget_lines(usage_widget)
         usage_text = "\n".join(usage_lines)
-        assert "210 tokens" in usage_text
+        assert "150 processed tokens (partial)" in usage_text
+        assert "uncached input 150 (partial)" in usage_text
         assert "5 reported · 1 legacy · 3 without tokens" in usage_text
         assert "$2.50 billed" in usage_text
         assert "est. $1.50" in usage_text
@@ -747,7 +748,7 @@ async def test_usage_projection_keeps_project_and_task_scope_and_cost_evidence_s
     assert codex_usage.cost_basis == "unknown"
     assert codex_usage.run_count == 5
     assert codex_usage.usage_reported_runs == 4
-    assert codex_usage.input_tokens == 1040
+    assert codex_usage.tokens.uncached_input.total == 1040
     assert codex_usage.billed_cost_usd == 0.0
     assert codex_usage.billed_cost_runs == 1
     assert codex_usage.api_equivalent_cost_usd == 0.42
@@ -756,7 +757,7 @@ async def test_usage_projection_keeps_project_and_task_scope_and_cost_evidence_s
     task_usage = context.views.usage(task_id)
     task_codex_usage = next(item for item in task_usage if item.agent == "codex")
     assert task_codex_usage.run_count == 4
-    assert task_codex_usage.input_tokens == 140
+    assert task_codex_usage.tokens.uncached_input.total == 140
     quota_only_usage = next(item for item in usage if item.agent == "quota-only")
     assert quota_only_usage.run_count == 0
     assert quota_only_usage.usage_reported_runs == 0
@@ -785,7 +786,7 @@ async def test_project_usage_widget_keeps_detailed_monetary_and_token_evidence(
         assert "weekly" in limits
         assert "resets" in limits
         assert "observed 2h ago" in limits
-        assert "zero-agent    1 run · 0 tokens" in by_agent
+        assert "zero-agent    1 run · 0 processed tokens" in by_agent
         unknown_agent = next(line for line in by_agent.splitlines() if "unknown-agent" in line)
         assert "tokens unknown" in unknown_agent
         assert "0 tokens" not in unknown_agent
@@ -939,7 +940,7 @@ async def test_project_usage_projects_persisted_coverage_without_inventing_api_s
     projection = context.views.project_usage()
 
     assert projection.session_count == 9
-    assert projection.input_tokens == 210
+    assert projection.tokens.uncached_input.total == 150
     assert projection.reported_sessions == 5
     assert projection.legacy_token_sessions == 1
     assert projection.unknown_token_sessions == 3

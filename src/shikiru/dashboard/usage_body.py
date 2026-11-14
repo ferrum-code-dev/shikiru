@@ -1,4 +1,4 @@
-"""Body of the Usage fold: a totals line, one aligned line per session, one note."""
+"""Body of the Usage fold: a summary of processed tokens, one aligned line per session, one note."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from rich.text import Text
 from shikiru.agents.contracts import BILLING_MODE_SUBSCRIPTION, BILLING_MODE_UNKNOWN
 from shikiru.dashboard.briefing_view import counted, total_cost_text
 from shikiru.domain.levels import UsageLevel, displayed_pct
+from shikiru.domain.token_usage import CategoryTotal, TotalStatus, processed_sum
 from shikiru.ui.compact import (
     COUNT_SHORT_MILLION,
     COUNT_SHORT_SCALE,
@@ -24,25 +25,29 @@ from shikiru.ui.section import BOLD_STEEL, GROUP_SEPARATOR, grey
 from shikiru.ui.tokens import AMBER, SECONDARY_TEXT_COLOR, USAGE_LEVEL_COLORS
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 
     from shikiru.dashboard.contract import TaskDetailView, TaskSessionView
 
 NO_VALUE = "\N{EM DASH}"
+LEGACY_VALUE = "legacy"
 NO_USAGE = "No usage is recorded yet."
 COVERAGE_UNAVAILABLE = "Task usage coverage unavailable"
 OLD_TAG = "old"
-TOKENS_WORD = " tokens"
+PROCESSED_WORD = " processed tokens"
+PARTIAL_SUFFIX = " (partial)"
+PROCESSED_DEFINITION = (
+    "Processed = uncached input + cache read + cache write + output. Not context, cost or quota."
+)
+CATEGORY_LABELS = ("uncached input", "cache read", "cache write", "output")
 NOTE_LEAD = "! "
 LEAD = "  "
 GAP = "  "
 ELLIPSIS = "\N{HORIZONTAL ELLIPSIS}"
 MODEL_MIN_WIDTH = 8
 SIGNIFICANT_DIGITS = 3
-PAIR_SEPARATOR = " / "
-PAIR_LABEL = "r/w"
 _NOUN_SESSION = "session"
 _NOUN_GAP = "model-history gap"
 _VERB_NO_USAGE = "reported no usage"
@@ -54,7 +59,7 @@ class Column(StrEnum):
 
     ROLE = "Role"
     MODEL = "Model"
-    TOKENS = "Tokens r/w"
+    PROCESSED = "Processed"
     COST = "Cost"
     CONTEXT = "Ctx"
 
@@ -111,7 +116,7 @@ def _row(session: TaskSessionView) -> UsageRow:
         {
             Column.ROLE: ROLE_LABELS.get(session.role, session.role.title()),
             Column.MODEL: session.model,
-            Column.TOKENS: _tokens(session),
+            Column.PROCESSED: _processed(session),
             Column.COST: _cost(session),
             Column.CONTEXT: _context(session),
         },
@@ -120,20 +125,41 @@ def _row(session: TaskSessionView) -> UsageRow:
     )
 
 
-def _tokens_known(session: TaskSessionView) -> bool:
-    return session.usage_reported is True or session.legacy_token_totals
-
-
-def _session_tokens(session: TaskSessionView) -> int:
-    return session.input_tokens + session.output_tokens
-
-
-def _tokens(session: TaskSessionView) -> str:
-    if not _tokens_known(session):
-        return NO_VALUE
-    return PAIR_SEPARATOR.join(
-        (_abbreviated(session.input_tokens), _abbreviated(session.output_tokens))
+def _category_values(session: TaskSessionView) -> tuple[int | None, ...]:
+    return (
+        session.uncached_input_tokens,
+        session.cache_read_tokens,
+        session.cache_write_tokens,
+        session.output_tokens,
     )
+
+
+def _session_processed(session: TaskSessionView) -> int | None:
+    return processed_sum(_category_values(session))
+
+
+def _processed(session: TaskSessionView) -> str:
+    if session.legacy_token_totals:
+        return LEGACY_VALUE
+    processed = _session_processed(session)
+    return NO_VALUE if processed is None else _abbreviated(processed)
+
+
+def _fold(values: Iterable[int | None]) -> CategoryTotal:
+    total = CategoryTotal()
+    for value in values:
+        total = total.with_value(value)
+    return total
+
+
+def _partial_suffix(total: CategoryTotal) -> str:
+    return PARTIAL_SUFFIX if total.status is TotalStatus.PARTIAL else ""
+
+
+def _total_value(total: CategoryTotal) -> str:
+    if total.total is None:
+        return NO_VALUE
+    return _abbreviated(total.total) + _partial_suffix(total)
 
 
 def _abbreviated(count: int) -> str:
@@ -212,8 +238,10 @@ def _table_lines(table: UsageTable) -> list[Text]:
 
 def _stacked_row(row: UsageRow) -> list[Text]:
     role = _old_tagged(Text(LEAD + row.cells[Column.ROLE]), row)
-    pair = Text.assemble(LEAD, GAP, grey(PAIR_LABEL), GAP, row.cells[Column.TOKENS])
-    return [role, pair]
+    processed = Text.assemble(
+        LEAD, GAP, grey(Column.PROCESSED.value), GAP, row.cells[Column.PROCESSED]
+    )
+    return [role, processed]
 
 
 def _heading(sessions: Sequence[TaskSessionView]) -> Text | None:
@@ -221,10 +249,40 @@ def _heading(sessions: Sequence[TaskSessionView]) -> Text | None:
     cost = total_cost_text(sessions)
     if cost is not None:
         parts.append(Text(cost))
-    known = [_session_tokens(session) for session in sessions if _tokens_known(session)]
-    if known:
-        parts.append(Text.assemble((compact_count(sum(known)), BOLD_STEEL), grey(TOKENS_WORD)))
+    processed = _fold(_session_processed(session) for session in sessions)
+    if processed.total is not None:
+        parts.append(
+            Text.assemble(
+                (compact_count(processed.total), BOLD_STEEL),
+                grey(PROCESSED_WORD + _partial_suffix(processed)),
+            )
+        )
     return Text(GROUP_SEPARATOR).join(parts) if parts else None
+
+
+def _breakdown(sessions: Sequence[TaskSessionView]) -> Text | None:
+    categories = [
+        _fold(values) for values in zip(*(_category_values(s) for s in sessions), strict=True)
+    ]
+    if all(total.total is None for total in categories):
+        return None
+    return grey(
+        GROUP_SEPARATOR.join(
+            f"{label} {_total_value(total)}"
+            for label, total in zip(CATEGORY_LABELS, categories, strict=True)
+        )
+    )
+
+
+def _summary(sessions: Sequence[TaskSessionView]) -> list[RenderableType]:
+    lines: list[RenderableType] = []
+    heading = _heading(sessions)
+    if heading is not None:
+        lines.append(heading)
+    breakdown = _breakdown(sessions)
+    if breakdown is not None:
+        lines.extend([breakdown, grey(PROCESSED_DEFINITION)])
+    return lines
 
 
 def _note(sessions: Sequence[TaskSessionView]) -> Text | None:
@@ -248,7 +306,7 @@ class UsageBody:
     view: TaskDetailView
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
-        """Yield the heading, the session table and the note."""
+        """Yield the summary, the session table and the note."""
         del console
         view = self.view
         if view.usage is None:
@@ -258,11 +316,7 @@ class UsageBody:
                 yield grey(NO_USAGE)
             return
         table = usage_rows(view.sessions, options.max_width)
-        heading = _heading(view.sessions)
-        blocks: list[RenderableType] = [
-            *([heading] if heading is not None else []),
-            *_table_lines(table),
-        ]
+        blocks: list[RenderableType] = [*_summary(view.sessions), *_table_lines(table)]
         note = _note(view.sessions)
         if note is not None:
             blocks.extend([Text(), note])

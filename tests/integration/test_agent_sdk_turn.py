@@ -481,7 +481,7 @@ async def test_claude_activity_after_task_notification_reaches_the_turn_consumer
     assert len([signal for signal in signals if isinstance(signal, TurnFailed)]) == 0
     assert len([signal for signal in signals if isinstance(signal, SessionStarted)]) == 1
     [usage] = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
-    assert (usage.input_tokens, usage.output_tokens) == (122, 49109)
+    assert (usage.uncached_input_tokens, usage.output_tokens) == (122, 49109)
     assert (usage.cache_read_tokens, usage.cache_write_tokens) == (4828854, 121323)
     assert (spec.turn_dir / "implementer.stream.jsonl").read_bytes() == stream
 
@@ -862,7 +862,7 @@ async def test_claude_compaction_sequence_continues_after_intermediate_results(
         TurnEnded("Requested continuation completed.")
     ]
     usages = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
-    assert [(usage.input_tokens, usage.output_tokens) for usage in usages] == [
+    assert [(usage.uncached_input_tokens, usage.output_tokens) for usage in usages] == [
         (12619, 319121),
         (14730, 331080),
         (14739, 331091),

@@ -105,7 +105,7 @@ async def test_reportless_fake_turn_is_nudged_and_resumed_on_its_session(
         event for event in completed if event.data["role"] == "implementer"
     )
     assert implementer_completion.data["turn"] == turn_name
-    assert implementer_completion.data["usage_delta"]["input_tokens"] == 240
+    assert implementer_completion.data["usage_delta"]["uncached_input_tokens"] == 240
     filtered_nudges = fetch_timeline_events(
         engine_env.connection,
         task.id,

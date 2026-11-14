@@ -1,4 +1,4 @@
 {"event":"session_started","session_id":"resumed-session-id"}
 {"event":"message","text":"retry completed"}
-{"event":"usage_reported","usage":{"input_tokens":120,"output_tokens":60,"cache_read_tokens":20,"cache_write_tokens":10,"cost_usd":null,"cost_basis":"unknown","context_used_pct":30.0}}
+{"event":"usage_reported","usage":{"uncached_input_tokens":120,"output_tokens":60,"cache_read_tokens":20,"cache_write_tokens":10,"cost_usd":null,"cost_basis":"unknown","context_used_pct":30.0}}
 {"event":"turn_ended","last_message":"retry completed"}

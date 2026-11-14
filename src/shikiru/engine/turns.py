@@ -36,6 +36,7 @@ from shikiru.domain.reports import (
     REPORT_SCHEMA_FILENAME,
     schema_for,
 )
+from shikiru.domain.runs import starting_usage
 from shikiru.errors import InvariantError, ShikiruError
 from shikiru.helper.helper import FailureClassification
 from shikiru.helper.models import Unrecoverable
@@ -219,7 +220,7 @@ class TurnRunner:
                 add_dirs=(),
                 env=turn_environment(task, role, task_run_dir, self._settings.project.name),
                 session_id=selection.session_id,
-                usage=selection.run.usage,
+                usage=starting_usage(selection.run),
                 on_process=self._monitor.process_recorder(task_run_dir, role),
             )
             turn = await agent.start_turn(turn_spec)

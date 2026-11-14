@@ -9,8 +9,9 @@ from shikiru.agents.contracts import (
     BillingDeclaration,
     Usage,
 )
-from shikiru.domain.runs import Run, RunStatus
+from shikiru.domain.runs import LegacyUsage, LegacyUsageSource, Run, RunStatus
 from shikiru.domain.tasks import Role
+from shikiru.domain.token_usage import UsageAccounting
 from shikiru.store.database import (
     format_timestamp,
     parse_required_timestamp,
@@ -25,11 +26,21 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
 
 _RUN_COLUMNS = (
-    "id, task_id, role, agent, model, effort, session_id, resume_command, "
-    "last_message, status, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, "
-    "cost_usd, cost_basis, context_used_pct, usage_reported, billing_mode, billing_source, "
-    "started_at, ended_at"
+    "runs.id, runs.task_id, runs.role, runs.agent, runs.model, runs.effort, "
+    "runs.session_id, runs.resume_command, runs.last_message, runs.status, "
+    "runs.uncached_input_tokens, runs.output_tokens, runs.cache_read_tokens, "
+    "runs.cache_write_tokens, runs.cost_usd, runs.cost_basis, runs.context_used_pct, "
+    "runs.usage_reported, runs.usage_accounting, runs.billing_mode, runs.billing_source, "
+    "runs.started_at, runs.ended_at, "
+    "legacy_run_usage.source AS legacy_usage_source, "
+    "legacy_run_usage.usage_reported AS legacy_usage_reported, "
+    "legacy_run_usage.input_tokens AS legacy_input_tokens, "
+    "legacy_run_usage.uncached_input_tokens AS legacy_uncached_input_tokens, "
+    "legacy_run_usage.output_tokens AS legacy_output_tokens, "
+    "legacy_run_usage.cache_read_tokens AS legacy_cache_read_tokens, "
+    "legacy_run_usage.cache_write_tokens AS legacy_cache_write_tokens"
 )
+_RUN_FROM = "FROM runs LEFT JOIN legacy_run_usage ON legacy_run_usage.run_id = runs.id"
 MAX_TAKEN_OVER_ROLE_COUNT = len(Role)
 
 
@@ -46,7 +57,7 @@ def _row_to_run(row: sqlite3.Row) -> Run:
         last_message=row["last_message"],
         status=RunStatus(row["status"]),
         usage=Usage(
-            input_tokens=row["input_tokens"],
+            uncached_input_tokens=row["uncached_input_tokens"],
             output_tokens=row["output_tokens"],
             cache_read_tokens=row["cache_read_tokens"],
             cache_write_tokens=row["cache_write_tokens"],
@@ -54,7 +65,25 @@ def _row_to_run(row: sqlite3.Row) -> Run:
             cost_basis=row["cost_basis"],
             context_used_pct=row["context_used_pct"],
         ),
+        legacy_usage=(
+            LegacyUsage(
+                source=LegacyUsageSource(row["legacy_usage_source"]),
+                usage_reported=(
+                    bool(row["legacy_usage_reported"])
+                    if row["legacy_usage_reported"] is not None
+                    else None
+                ),
+                input_tokens=row["legacy_input_tokens"],
+                uncached_input_tokens=row["legacy_uncached_input_tokens"],
+                output_tokens=row["legacy_output_tokens"],
+                cache_read_tokens=row["legacy_cache_read_tokens"],
+                cache_write_tokens=row["legacy_cache_write_tokens"],
+            )
+            if row["legacy_usage_source"] is not None
+            else None
+        ),
         usage_reported=(bool(row["usage_reported"]) if row["usage_reported"] is not None else None),
+        usage_accounting=UsageAccounting(row["usage_accounting"]),
         billing_mode=row["billing_mode"],
         billing_source=row["billing_source"],
         started_at=parse_required_timestamp(row["started_at"]),
@@ -64,14 +93,17 @@ def _row_to_run(row: sqlite3.Row) -> Run:
 
 def fetch_run(connection: sqlite3.Connection, run_id: int) -> Run | None:
     """Read one run by id, or `None` if it doesn't exist."""
-    row = connection.execute(f"SELECT {_RUN_COLUMNS} FROM runs WHERE id = ?", (run_id,)).fetchone()
+    row = connection.execute(
+        f"SELECT {_RUN_COLUMNS} {_RUN_FROM} WHERE runs.id = ?", (run_id,)
+    ).fetchone()
     return _row_to_run(row) if row is not None else None
 
 
 def fetch_runs_for_task(connection: sqlite3.Connection, task_id: str) -> list[Run]:
     """Read every run recorded for `task_id`, most recently started first."""
     rows = connection.execute(
-        f"SELECT {_RUN_COLUMNS} FROM runs WHERE task_id = ? ORDER BY id DESC", (task_id,)
+        f"SELECT {_RUN_COLUMNS} {_RUN_FROM} WHERE runs.task_id = ? ORDER BY runs.id DESC",
+        (task_id,),
     ).fetchall()
     return [_row_to_run(row) for row in rows]
 
@@ -89,7 +121,7 @@ def fetch_taken_over_roles_for_task(
 
 def fetch_all_runs(connection: sqlite3.Connection) -> list[Run]:
     """Read every run, most recently started first."""
-    rows = connection.execute(f"SELECT {_RUN_COLUMNS} FROM runs ORDER BY id DESC").fetchall()
+    rows = connection.execute(f"SELECT {_RUN_COLUMNS} {_RUN_FROM} ORDER BY runs.id DESC").fetchall()
     return [_row_to_run(row) for row in rows]
 
 
@@ -161,7 +193,8 @@ class RunStore:
 
     def _get_with_status(self, task_id: str, role: Role, status: RunStatus) -> Run | None:
         row = self._connection.execute(
-            f"SELECT {_RUN_COLUMNS} FROM runs WHERE task_id = ? AND role = ? AND status = ?",
+            f"SELECT {_RUN_COLUMNS} {_RUN_FROM} "
+            "WHERE runs.task_id = ? AND runs.role = ? AND runs.status = ?",
             (task_id, role.value, status.value),
         ).fetchone()
         return _row_to_run(row) if row is not None else None
@@ -196,16 +229,16 @@ class RunStore:
         self._connection.execute("UPDATE runs SET last_message = ? WHERE id = ?", (message, run_id))
 
     def record_usage(self, run_id: int, usage: Usage) -> None:
-        """Overwrite `run_id`'s usage with `usage`'s latest cumulative snapshot."""
+        """Overwrite `run_id`'s normalized usage with its latest cumulative snapshot."""
         self._connection.execute(
             """
-            UPDATE runs SET input_tokens = ?, output_tokens = ?, cache_read_tokens = ?,
+            UPDATE runs SET uncached_input_tokens = ?, output_tokens = ?, cache_read_tokens = ?,
               cache_write_tokens = ?, cost_usd = ?, cost_basis = ?, context_used_pct = ?,
-              usage_reported = 1
+              usage_reported = 1, usage_accounting = 'categories'
             WHERE id = ?
             """,
             (
-                usage.input_tokens,
+                usage.uncached_input_tokens,
                 usage.output_tokens,
                 usage.cache_read_tokens,
                 usage.cache_write_tokens,

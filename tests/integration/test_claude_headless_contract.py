@@ -19,6 +19,7 @@ import pytest
 from pydantic import BaseModel
 
 from shikiru.agents.contracts import (
+    COST_BASIS_UNKNOWN,
     Agent,
     AgentContext,
     AgentFactory,
@@ -107,6 +108,7 @@ _COST = 0.00001
 _LIVE_ASK_PROMPT = "Return the JSON object with ok set to true."
 _BASIC_LIVE_PROMPT = "Reply with exactly OK and do nothing else."
 _LIVE_REPO_INIT_TIMEOUT_SECONDS = 30.0
+_UNREPORTED_USAGE = Usage(None, None, None, None, None, COST_BASIS_UNKNOWN, None)
 
 
 class _AskResult(BaseModel):
@@ -472,6 +474,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                             QuotaWindow("7d", 22, _RESET_SEVEN_DAY, _SAMPLE_NOW),
                         )
                     ),
+                    UsageReported(_UNREPORTED_USAGE),
                     TurnFailed(
                         FailureKind.QUOTA,
                         "You've hit your usage limit",
@@ -487,6 +490,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 exit_code=1,
                 expected_signals=[
                     SessionStarted("session-credit-exhausted"),
+                    UsageReported(_UNREPORTED_USAGE),
                     TurnFailed(FailureKind.AUTH, "API credits are exhausted", None),
                 ],
                 session_id="session-credit-exhausted",
@@ -498,6 +502,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 exit_code=1,
                 expected_signals=[
                     SessionStarted("session-unrecognized-model"),
+                    UsageReported(_UNREPORTED_USAGE),
                     TurnFailed(
                         FailureKind.UNAVAILABLE,
                         "Unknown model: not-a-model; unrecognized_model",
@@ -513,6 +518,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 exit_code=1,
                 expected_signals=[
                     SessionStarted(_SESSION_RESUMED),
+                    UsageReported(_UNREPORTED_USAGE),
                     TurnFailed(
                         FailureKind.OTHER,
                         "Prompt is too long for the context window",
@@ -528,6 +534,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                 exit_code=1,
                 expected_signals=[
                     SessionStarted("session-unknown"),
+                    UsageReported(_UNREPORTED_USAGE),
                     TurnFailed(
                         FailureKind.UNKNOWN,
                         "Claude reported an unclassified failure",

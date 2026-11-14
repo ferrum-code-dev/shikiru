@@ -25,6 +25,7 @@ OperationalDatabaseError = sqlite3.OperationalError
 _MIGRATIONS_PACKAGE = "shikiru.store.migrations"
 _MIGRATION_SUFFIX = ".sql"
 _MIGRATION_NUMBER_SEPARATOR = "_"
+_SQL_COMMENT = "--"
 _BACKUP_PREFIX = "state-schema"
 _BACKUP_SUFFIX = ".db"
 _BEGIN = "BEGIN"
@@ -190,7 +191,10 @@ def _migration_files() -> list[tuple[int, str]]:
 
 
 def _statements(sql: str) -> list[str]:
-    return [statement.strip() for statement in sql.split(";") if statement.strip()]
+    code = "\n".join(
+        line for line in sql.splitlines() if not line.lstrip().startswith(_SQL_COMMENT)
+    )
+    return [statement.strip() for statement in code.split(";") if statement.strip()]
 
 
 def _schema_version(connection: sqlite3.Connection) -> int:

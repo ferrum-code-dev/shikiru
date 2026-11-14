@@ -4,13 +4,14 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from shikiru.agents.contracts import QuotaWindow
+from shikiru.agents.contracts import QuotaWindow, Usage
 from shikiru.cli.render import ack_renderable, error_renderable, status_renderable
 from shikiru.domain.escalation import Escalation, EscalationStatus
 from shikiru.domain.reports import ReportKind, Verdict
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step
 from shikiru.domain.tasks import EscalationReason, Mode, Status
+from shikiru.domain.token_usage import TokenTotals
 from shikiru.errors import NotInitialisedError
 from shikiru.operator.commands import Ack, AckStatus
 from shikiru.operator.queries import (
@@ -128,13 +129,14 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
         usage=[
             UsageView(
                 agent="codex",
-                input_tokens=100,
-                output_tokens=50,
-                cache_read_tokens=0,
-                cache_write_tokens=0,
+                tokens=(
+                    TokenTotals()
+                    .with_usage(Usage(100, 50, 20, 10, 0.42, "api_equivalent", None))
+                    .with_usage(Usage(None, None, None, None, None, "unknown", None))
+                ),
                 cost_usd=0.42,
                 cost_basis="api_equivalent",
-                run_count=1,
+                run_count=2,
                 usage_reported_runs=1,
                 api_equivalent_cost_usd=0.42,
                 api_equivalent_cost_runs=1,
@@ -178,6 +180,20 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
             quota_alert_pct=90,
         )
     )
+    narrow_output = plain_text(
+        status_renderable(
+            HumanStatusView(
+                status=view.model_copy(update={"task": None}),
+                task_rows=(active, queued),
+                now=OBSERVED_AT,
+            ),
+            width=120,
+            uptime_seconds=None,
+            quota_warn_pct=50,
+            quota_alert_pct=90,
+        ),
+        width=120,
+    )
 
     assert "T-active" in project_output
     assert "T-queued" in project_output
@@ -193,7 +209,18 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
     assert custom_headline in project_output
     assert "5h" in project_output
     assert "5.0 MiB" in project_output
-    assert all(fact in project_output for fact in ("100", "50", "unknown"))
+    for output in (project_output, narrow_output):
+        assert "Uncached input" in output
+        assert "Cache read" in output
+        assert "Cache write" in output
+        assert "Output" in output
+        assert "180 (partial)" in output
+        assert "100 (partial)" in output
+        assert "20 (partial)" in output
+        assert "10 (partial)" in output
+        assert "50 (partial)" in output
+        assert "Processed tokens sum uncached input, cache reads, cache writes and output" in output
+        assert "not context occupancy, cost, or subscription quota" in output
     assert "T-detail · Add retry to parser" in task_output
     assert "accept" in task_output
     assert "Reviewed" in task_output

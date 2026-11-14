@@ -666,7 +666,7 @@ async def test_detail_projects_latest_validated_reports_and_keeps_task_state_whe
     assert detail.latest_verdict.summary == "Latest engine verdict"
     _assert_briefing_data(detail, load_settings(project_root))
     assert detail.sessions[0].session_id == "session-current"
-    assert detail.sessions[0].input_tokens == 12
+    assert detail.sessions[0].uncached_input_tokens == 12
     assert detail.sessions[0].billing_mode == BILLING_MODE_SUBSCRIPTION
     assert detail.sessions[0].billing_source == BILLING_SOURCE_OPERATOR_CONFIG
     assert detail.ownership == (Role.IMPLEMENTER.value,)
@@ -749,7 +749,7 @@ def _record_subscribed_session(connection: Connection, clock: Clock, task_id: st
     runs.record_usage(
         run.id,
         Usage(
-            input_tokens=12,
+            uncached_input_tokens=12,
             output_tokens=7,
             cache_read_tokens=3,
             cache_write_tokens=1,
@@ -786,10 +786,10 @@ async def _assert_billing_details_are_visible(
             for line in rendered_lines(sessions_widget.content, width=90)
             if "Implementer" in line
         )
-        assert row.split()[-5:] == ["12", "/", "7", "\N{EM DASH}", "20%"]
+        assert row.split()[-3:] == ["23", "\N{EM DASH}", "20%"]
 
 
-async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
+async def test_legacy_usage_is_excluded_from_normalized_session_totals(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -809,12 +809,12 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
         priced_zero.id,
         Usage(0, 0, 0, 0, 0.0, "api_equivalent", None),
     )
-    connection.execute("ALTER TABLE runs DROP COLUMN usage_reported")
-    connection.execute("ALTER TABLE runs DROP COLUMN billing_mode")
-    connection.execute("ALTER TABLE runs DROP COLUMN billing_source")
-    connection.execute("PRAGMA user_version = 7")
-    migrated_connection = database.connect()
-    migrated_connection.close()
+    connection.execute("UPDATE runs SET usage_reported = NULL, usage_accounting = 'legacy'")
+    connection.execute(
+        "UPDATE runs SET uncached_input_tokens = NULL, output_tokens = NULL, "
+        "cache_read_tokens = NULL, cache_write_tokens = NULL WHERE id = ?",
+        (priced_zero.id,),
+    )
 
     reader = StateReader(database, clock)
     try:
@@ -836,10 +836,10 @@ async def test_legacy_usage_keeps_known_values_and_marks_default_zeros_unknown(
             lines = rendered_lines(sessions.content, width=90)
 
             legacy = next(line for line in lines if "Implementer" in line)
-            assert legacy.split()[-5:] == ["500", "/", "50", "$1.25", "10%"]
+            assert legacy.split()[-3:] == ["legacy", "$1.25", "10%"]
             silent = [line for line in lines if "Leader" in line]
             assert len(silent) == 2
-            assert all(line.split()[-1] == "\N{EM DASH}" for line in silent)
+            assert all(line.split()[-3] == "legacy" for line in silent)
             assert any(line.startswith("!") and "billing unknown" in line for line in lines)
     finally:
         reader.close()
@@ -853,20 +853,20 @@ def _line_with(lines: list[str], needle: str) -> str:
     return next(line for line in lines if needle in line)
 
 
-_ROUNDED_PAIRS = (
-    ((0, 0), "0 / 0"),
-    ((5, 0), "5 / 0"),
-    ((999, 1), "999 / 1"),
-    ((1_000, 1_500), "1k / 1.5k"),
-    ((1_050, 12_355), "1.05k / 12.4k"),
-    ((83_500, 999_499), "83.5k / 999k"),
-    ((999_500, 1_340_000), "1M / 1.34M"),
-    ((999_950, 100_000), "1M / 100k"),
-    ((1_000_000, 0), "1M / 0"),
+_ROUNDED_PROCESSED = (
+    ((0, 0), "0"),
+    ((5, 0), "5"),
+    ((999, 1), "1k"),
+    ((1_000, 1_500), "2.5k"),
+    ((1_050, 12_355), "13.4k"),
+    ((83_500, 999_499), "1.08M"),
+    ((999_500, 1_340_000), "2.34M"),
+    ((999_950, 100_000), "1.1M"),
+    ((1_000_000, 0), "1M"),
 )
 
 
-async def test_token_pair_rounds_reported_counts_at_three_significant_digits(
+async def test_processed_tokens_round_at_three_significant_digits(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -875,11 +875,11 @@ async def test_token_pair_rounds_reported_counts_at_three_significant_digits(
     clock = FakeClock(START)
     task = seed_task(connection, clock, title="Token pairs round predictably")
     runs = RunStore(connection, clock)
-    for index, ((input_tokens, output_tokens), _) in enumerate(_ROUNDED_PAIRS):
+    for index, ((input_tokens, output_tokens), _) in enumerate(_ROUNDED_PROCESSED):
         run = runs.start(task.id, Role.HELPER, Rung("claude", f"case-{index}", "high"))
         runs.record_usage(
             run.id,
-            Usage(input_tokens, output_tokens, 9_000_000, 400, None, _COST_BASIS_BILLED, None),
+            Usage(input_tokens, output_tokens, 0, 0, None, _COST_BASIS_BILLED, None),
         )
     reader = StateReader(database, clock)
     try:
@@ -898,14 +898,14 @@ async def test_token_pair_rounds_reported_counts_at_three_significant_digits(
                 timeout=UI_WAIT_SECONDS,
             )
             lines = rendered_lines(sessions.content, width=120)
-            for index, (_, pair) in enumerate(_ROUNDED_PAIRS):
+            for index, (_, processed) in enumerate(_ROUNDED_PROCESSED):
                 row = _line_with(lines, f"case-{index}")
-                assert row.split()[-5:] == [*pair.split(), "\N{EM DASH}", "\N{EM DASH}"]
+                assert row.split()[-3:] == [processed, "\N{EM DASH}", "\N{EM DASH}"]
     finally:
         reader.close()
 
 
-async def test_token_pair_keeps_reported_input_and_output_apart_at_wide_and_narrow_widths(
+async def test_processed_totals_and_categories_stay_readable_at_wide_and_narrow_widths(
     connection: Connection,
     database: Database,
     tmp_path: Path,
@@ -947,30 +947,21 @@ async def test_token_pair_keeps_reported_input_and_output_apart_at_wide_and_narr
             await pilot.pause()
             wide = _painted_lines(sessions)
             leader = _line_with(wide, "Leader")
-            assert leader.split()[-5:] == ["1.34M", "/", "83.5k", "\N{EM DASH}", "20%"]
+            assert leader.split()[-3:] == ["10.4M", "\N{EM DASH}", "20%"]
             implementer = _line_with(wide, "Implementer")
-            assert implementer.split()[-6:] == [
-                "1.34M",
-                "/",
-                "1.34M",
-                "\N{EM DASH}",
-                "\N{EM DASH}",
-                "old",
-            ]
-            zero = _line_with(wide, "0 / 0")
-            assert zero.split()[-5:] == ["0", "/", "0", "\N{EM DASH}", "\N{EM DASH}"]
-            unknown = next(line for line in wide if "Helper" in line and "0 / 0" not in line)
-            assert unknown.split()[-3:] == ["\N{EM DASH}", "\N{EM DASH}", "\N{EM DASH}"]
+            assert implementer.split()[-4:] == ["2.68M", "\N{EM DASH}", "\N{EM DASH}", "old"]
+            helper_tails = [line.split()[-3:] for line in wide if "Helper" in line]
+            assert ["0", "\N{EM DASH}", "\N{EM DASH}"] in helper_tails
+            assert ["\N{EM DASH}", "\N{EM DASH}", "\N{EM DASH}"] in helper_tails
 
             for width in (36, 32):
                 await pilot.resize_terminal(width, 20)
                 await pilot.wait_for_scheduled_animations()
-                stacked = [line.split() for line in _painted_lines(sessions)]
-                assert ["r/w", "1.34M", "/", "83.5k"] in stacked
-                assert ["r/w", "1.34M", "/", "1.34M"] in stacked
-                assert ["Implementer", "old"] in stacked
-                assert ["r/w", "0", "/", "0"] in stacked
-                assert ["r/w", "\N{EM DASH}"] in stacked
+                narrow = " ".join(" ".join(line.split()) for line in _painted_lines(sessions))
+                assert "13.1M processed tokens" in narrow
+                assert "uncached input 2.68M" in narrow
+                assert "cache read 9M" in narrow
+                assert "output 1.42M" in narrow
     finally:
         reader.close()
 
@@ -995,7 +986,7 @@ async def test_task_history_keeps_closed_lineages_and_observed_model_deltas(
         model="gpt-5",
         effort="low",
         turn="01-implement-i1",
-        input_tokens=3,
+        uncached_input_tokens=3,
     )
     runs.record_usage(previous.id, Usage(3, 1, 0, 0, 0.0, "billed", None))
     runs.close(previous.id)
@@ -1020,7 +1011,7 @@ async def test_task_history_keeps_closed_lineages_and_observed_model_deltas(
         model="sonnet",
         effort="low",
         turn="02-implement-i1",
-        input_tokens=4,
+        uncached_input_tokens=4,
     )
     clock.advance(1)
     runs.set_rung(current.id, Rung("claude", "opus", "high"))
@@ -1033,7 +1024,7 @@ async def test_task_history_keeps_closed_lineages_and_observed_model_deltas(
         model="opus",
         effort="high",
         turn="03-verify-i1",
-        input_tokens=7,
+        uncached_input_tokens=7,
     )
     runs.record_usage(current.id, Usage(11, 2, 0, 0, 0.25, "billed", None))
     turns_path = run_dir(project_root, task.id)
@@ -1045,15 +1036,15 @@ async def test_task_history_keeps_closed_lineages_and_observed_model_deltas(
 
     assert detail is not None
     assert detail.usage is not None
-    assert detail.usage.input_tokens == 14
-    assert sum(session.input_tokens for session in detail.sessions) == 14
+    assert detail.usage.tokens.uncached_input.total == 14
+    assert {session.uncached_input_tokens for session in detail.sessions} == {None, 3, 11}
     prior_view = next(session for session in detail.sessions if session.run_id == previous.id)
     current_view = next(session for session in detail.sessions if session.run_id == current.id)
     assert prior_view.current_lineage is False
     assert prior_view.status == "closed"
     assert prior_view.model == "gpt-5"
     assert prior_view.model_history[0].usage_delta is not None
-    assert prior_view.model_history[0].usage_delta.input_tokens == 3
+    assert prior_view.model_history[0].usage_delta.uncached_input_tokens == 3
     assert current_view.current_lineage is True
     assert current_view.status == "live"
     assert current_view.billing_mode == BILLING_MODE_SUBSCRIPTION
@@ -1062,7 +1053,7 @@ async def test_task_history_keeps_closed_lineages_and_observed_model_deltas(
     assert [item.effort for item in current_view.model_history] == ["low", "high"]
     deltas = [item.usage_delta for item in current_view.model_history]
     assert all(delta is not None for delta in deltas)
-    assert [delta.input_tokens for delta in deltas if delta is not None] == [4, 7]
+    assert [delta.uncached_input_tokens for delta in deltas if delta is not None] == [4, 7]
     taken_over_view = next(
         session for session in detail.sessions if session.run_id == taken_over.id
     )
@@ -1099,7 +1090,7 @@ async def _assert_task_history_rendering(
     }
     assert rows["gpt-5"].endswith("old")
     assert not rows["opus"].endswith("old")
-    assert rows["opus"].split()[-5:] == ["11", "/", "2", "\N{EM DASH}", "\N{EM DASH}"]
+    assert rows["opus"].split()[-3:] == ["13", "\N{EM DASH}", "\N{EM DASH}"]
     assert not rows["gpt-6-sol"].endswith("old")
     assert not any("sonnet" in line for line in lines)
 
@@ -1168,7 +1159,7 @@ async def test_legacy_turn_never_inherits_run_level_provenance(
         data={
             **turn_data,
             "usage_delta": {
-                "input_tokens": 5,
+                "uncached_input_tokens": 5,
                 "output_tokens": 2,
                 "cache_read_tokens": 0,
                 "cache_write_tokens": 0,
@@ -1344,7 +1335,7 @@ async def test_turn_cost_basis_requires_comparable_recorded_cumulative_amounts(
     [session] = detail.sessions
     [history] = session.model_history
     assert history.usage_delta is not None
-    assert history.usage_delta.input_tokens == 3
+    assert history.usage_delta.uncached_input_tokens == 3
     assert history.usage_delta.output_tokens == 2
     if case.expected_cost is None:
         assert history.usage_delta.cost_usd is None
@@ -1498,7 +1489,7 @@ def _record_history_turn(
     model: str,
     effort: str,
     turn: str,
-    input_tokens: int,
+    uncached_input_tokens: int,
 ) -> None:
     data = {
         "role": role.value,
@@ -1521,7 +1512,7 @@ def _record_history_turn(
         data={
             **data,
             "usage_delta": {
-                "input_tokens": input_tokens,
+                "uncached_input_tokens": uncached_input_tokens,
                 "output_tokens": 1,
                 "cache_read_tokens": 0,
                 "cache_write_tokens": 0,

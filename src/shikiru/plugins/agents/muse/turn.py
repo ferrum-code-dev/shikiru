@@ -113,8 +113,9 @@ _CALL_ID_KEY = "call_id"
 _DETAIL_KEYS = ("command", "description")
 _MODELS_KEY = "models"
 _INPUT_TOKENS_KEY = "input_tokens"
-_OUTPUT_TOKENS_KEY = "output_tokens"
 _CACHED_TOKENS_KEY = "cached_tokens"
+_OUTPUT_TOKENS_KEY = "output_tokens"
+_REASONING_TOKENS_KEY = "reasoning_tokens"
 _ALLOWANCE_KEY = "allowance"
 _AS_OF_KEY = "as_of_ms"
 _WINDOW_KEY = "window"
@@ -152,12 +153,6 @@ _LONGEST_QUOTA_WINDOW = timedelta(days=7)
 
 class _MalformedRecordError(Exception):
     pass
-
-
-class _TurnTotals(NamedTuple):
-    input_tokens: int
-    output_tokens: int
-    cached_tokens: int
 
 
 class _FailedRun(NamedTuple):
@@ -210,9 +205,10 @@ class MuseTurnParser:
         self._clock = clock
         self._reset_time = reset_time
         self._watch = watch
-        self._initial_usage = initial_usage or Usage(0, 0, 0, 0, None, COST_BASIS_UNKNOWN, None)
+        self._initial_usage = initial_usage or Usage(
+            None, None, None, None, None, COST_BASIS_UNKNOWN, None
+        )
         self._session_id: str | None = None
-        self._totals: _TurnTotals | None = None
         self._pending_tools: list[_PendingTool] = []
         self._windows: tuple[QuotaWindow, ...] = ()
         self._terminal: TurnEnded | _FailedRun | None = None
@@ -259,7 +255,7 @@ class MuseTurnParser:
             ToolFinished(tool.name, None, None) for tool in self._pending_tools
         ]
         if self._malformed and not interrupted:
-            return [*unfinished, _malformed_failure()]
+            return [*unfinished, *self._usage_reports(_NO_PROGRESS), _malformed_failure()]
         return [
             *unfinished,
             *self._reports(),
@@ -381,7 +377,15 @@ class MuseTurnParser:
         return matches[0] if len(matches) == 1 else None
 
     def _usage(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
-        self._totals = _turn_totals(_models(payload.get(_MODELS_KEY)))
+        for model in _models(payload.get(_MODELS_KEY)):
+            entry = _mapping(model)
+            for key in (
+                _INPUT_TOKENS_KEY,
+                _CACHED_TOKENS_KEY,
+                _OUTPUT_TOKENS_KEY,
+                _REASONING_TOKENS_KEY,
+            ):
+                _optional_count(entry, key)
         windows = _allowance_windows(payload.get(_ALLOWANCE_KEY))
         if not windows:
             return []
@@ -411,9 +415,7 @@ class MuseTurnParser:
         return [*recovered, *progress.compactions, *self._usage_reports(progress)]
 
     def _usage_reports(self, progress: SessionLogProgress) -> list[AgentSignal]:
-        if self._totals is None:
-            return []
-        usage = self._cumulative_usage(self._totals, progress.latest_prompt_tokens)
+        usage = self._cumulative_usage(progress.latest_prompt_tokens)
         return [*self._window_faults(), UsageReported(usage)]
 
     def _window_faults(self) -> list[AgentSignal]:
@@ -461,13 +463,13 @@ class MuseTurnParser:
     def _classify(self, reason: str) -> TurnFailed:
         return classify_failure(reason, self._windows, self._clock.now(), self._reset_time)
 
-    def _cumulative_usage(self, totals: _TurnTotals, latest_prompt_tokens: int | None) -> Usage:
+    def _cumulative_usage(self, latest_prompt_tokens: int | None) -> Usage:
         base = self._initial_usage
         return Usage(
-            input_tokens=base.input_tokens + totals.input_tokens,
-            output_tokens=base.output_tokens + totals.output_tokens,
-            cache_read_tokens=base.cache_read_tokens + totals.cached_tokens,
-            cache_write_tokens=base.cache_write_tokens,
+            uncached_input_tokens=None,
+            output_tokens=None,
+            cache_read_tokens=None,
+            cache_write_tokens=None,
             cost_usd=None,
             cost_basis=COST_BASIS_UNKNOWN,
             context_used_pct=context_pct(
@@ -698,18 +700,6 @@ def _from_milliseconds(value: int) -> datetime:
         return datetime.fromtimestamp(value / _MILLISECONDS_PER_SECOND, tz=UTC)
     except (OverflowError, OSError, ValueError) as error:
         raise _MalformedRecordError from error
-
-
-def _turn_totals(models: Sequence[object]) -> _TurnTotals:
-    totals = _TurnTotals(0, 0, 0)
-    for model in models:
-        entry = _mapping(model)
-        totals = _TurnTotals(
-            totals.input_tokens + _count(entry, _INPUT_TOKENS_KEY),
-            totals.output_tokens + _count(entry, _OUTPUT_TOKENS_KEY),
-            totals.cached_tokens + _count(entry, _CACHED_TOKENS_KEY),
-        )
-    return totals
 
 
 def _allowance_windows(allowance: object) -> tuple[QuotaWindow, ...]:

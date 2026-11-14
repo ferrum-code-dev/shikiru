@@ -366,6 +366,44 @@ and scope update one card, unrelated faults stay separate, and cards needing the
 before those that retry on their own, each group in order of first occurrence. Cards are keyed by
 task and scope, so a refresh keeps each card's disclosure state, focus and scroll position.
 
+Token accounting keeps four mutually exclusive categories per run: uncached input, cache read, cache
+write and output. A category is a count or unknown, shown as `—`; unknown is never zero. Processed
+tokens are the sum of the four, known only when every category is reported. Every run counts toward
+every total: a run that reports nothing, or lacks a category, makes the affected totals partial, and
+a partial total is labelled `(partial)`. A total over runs that all reported nothing is unreported.
+Processed tokens are not context, cost or subscription quota, and each surface says so.
+
+Claude's input already excludes cache reads and writes, so its values are kept as reported. A
+successful Claude turn with no token fields, or a failed or interrupted turn after the session starts,
+records an unknown token snapshot. Later reported turns keep those session totals unknown. Codex's
+input includes cached reads: uncached input is cached input minus cache reads only when the turn or
+rollout reports cache writes as zero, and stays unknown otherwise. A Codex rollout snapshot is used
+only when a new token-count observation appears during the current invocation. Otherwise the parser
+adds the streamed turn usage to the session total, or records unknown categories if neither source
+covers the turn. Muse's `run.usage` categories remain unknown. The [Muse Code headless
+documentation](https://dev.meta.ai/docs/muse-code/extending#headless-and-ci) describes its JSONL
+surface but not token accounting, and the [SDK token usage
+reference](https://meta-models.github.io/muse-code-sdk/1.4/generated/msp/types/tokenusage/) says
+cache counters may be inside or beside input depending on provider convention. Recorded Muse streams
+also report output and reasoning separately without establishing their overlap. The parser therefore
+keeps all four token categories unknown for new, resumed and failed turns, including an empty
+`models` list; quota and context usage remain separate.
+
+The CLI Usage section shows processed tokens and all four category totals at wide and narrow widths.
+Its note states that processed tokens sum over model calls and do not represent context, cost or
+subscription quota.
+
+Runs recorded before migration 018 are marked `usage_accounting = legacy`. Their original counters
+and reported marker are retained in `legacy_run_usage` as ambiguous evidence, while normalized token
+categories stay unknown and are excluded from comparable totals. This preserves partial Claude and
+Codex session snapshots, old zero defaults, and Muse values whose semantics are unresolved without
+presenting them as complete. Migration 020 archives the remaining legacy fields for databases that
+already ran the earlier migrations before clearing normalized categories; fields already erased by
+an earlier migration remain unknown, with the prior reported marker retained. Resuming a legacy
+session starts from unknown token categories; its new provider-normalized snapshot can become the
+run's current accounting while the historical evidence remains archived. Cost and context continue
+to use their existing provenance rules. Reopening does not archive or convert a run again.
+
 Usage preserves provenance and uncertainty: absent tokens/cost/context/billing are not invented,
 and quota readings can be stale. A window whose known reset has passed shows as unknown (`○ --%`,
 `resets unknown`) until a newer reading replaces it; stored readings still drive blocks and JSON.

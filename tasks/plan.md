@@ -223,11 +223,17 @@ change: `plugins` already depends only on `agents.contracts`, `agents.sdk` and `
 | `ToolStarted(name, "")` | `task.lifecycle.proposed` with `task_kind` `tool.<name>`, emitted when proposed so a running tool is visible; Muse sends no arguments there, so the detail is empty. A `tool.result` with no earlier proposal emits it too |
 | `ToolDetailReported(name, detail)` | First readable `task.lifecycle.output` chunk for the pending call's `task_id` (bash: `command`, else `description`; file tools: the first line of the result text), truncated to `TOOL_DETAIL_MAX_CHARS`. An uncorrelated `tool.result` also reports its detail immediately; its `call_id` is matched against the `tool_call_id` from `task.lifecycle.started` or the call ID suffix in a `task.lifecycle.scheduled` `idempotency_key` (`tool:<call_id>`). A match names the detail and suppresses repeats. Unmatched or ambiguous results remain unnamed |
 | `ToolFinished(name, outcome, exit_code, detail)` | Correlated `tool.result`: `exit_code` from the JSON in `text`; outcome is `FAILURE` for a non-zero exit, else `SUCCESS` when `correlation_facts.outcome` is `success`, else unknown. Result detail is included only if it was not already reported. A proposed tool still pending at finish closes with an unknown outcome and no detail |
-| `UsageReported` | `run.usage` summed over `models[]`, added to `spec.usage` when resuming; `cost_usd=None`, `cost_basis="unknown"`, `context_used_pct` from the session log's `estimated_prompt_tokens` over the rung model's window in the catalog, read in `start_turn`, capped at 100; when the catalog is unavailable or lacks the model, `context_used_pct` is `None` and an `EvidenceFault` names the reason, never a guessed window (T-160) |
+| `UsageReported` | Muse token categories remain unknown because `run.usage` semantics and the overlap of output with reasoning are not established; older token observations remain archived as ambiguous evidence and are not resumed into normalized totals. `cost_usd=None`, `cost_basis="unknown"`, `context_used_pct` from the session log's `estimated_prompt_tokens` over the rung model's window in the catalog, read in `start_turn`, capped at 100; when the catalog is unavailable or lacks the model, `context_used_pct` is `None` and an `EvidenceFault` names the reason, never a guessed window (T-160) |
 | `QuotaReported` | `run.usage.allowance` windows |
 | `Compacted(pre, post)` | session log `context_compaction_installed` events newer than the count at turn start |
 | `TurnEnded` | `run.terminal.completed.text` |
 | `TurnFailed` | `run.terminal.failed.reason`, classified as above; interrupted turns end without a failure |
+
+Cross-agent token accounting (T-163): Claude records unknown token totals when a successful turn omits
+usage or a failed/interrupted turn may have consumed tokens, so later snapshots cannot restore false
+completeness. Codex uses rollout token counts only when a new observation appears after parser start;
+otherwise it adds the current streamed turn delta or records unknown categories. The CLI Usage section
+shows processed tokens and all four category values at wide and narrow widths, with their definition.
 
 ## Init, the wizard and doctor
 

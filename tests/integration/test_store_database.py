@@ -11,11 +11,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.agents.contracts import BILLING_MODE_UNKNOWN, BILLING_SOURCE_UNKNOWN
+from shikiru.agents.contracts import BILLING_MODE_UNKNOWN, BILLING_SOURCE_UNKNOWN, Usage
+from shikiru.domain.runs import starting_usage
 from shikiru.errors import DatabaseError
 from shikiru.store.database import SCHEMA_BACKUPS_KEPT, Database, format_timestamp
+from shikiru.store.runs import RunStore, fetch_run
 from shikiru.store.tasks import TaskStore
 from tests.support.clock import FakeClock
+from tests.support.schema import database_at_schema, migration_number, migration_scripts
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -214,30 +217,18 @@ def test_database_opens_exactly_the_requested_file(tmp_path: Path, directory: st
     }
 
 
-def _migration_scripts() -> list[tuple[str, str]]:
-    return sorted(
-        (entry.name, entry.read_text(encoding="utf-8"))
-        for entry in resources.files("shikiru.store.migrations").iterdir()
-        if entry.name.endswith(".sql")
-    )
-
-
-def _migration_number(name: str) -> int:
-    return int(name.split("_", 1)[0])
-
-
 def _database_one_migration_behind(path: Path) -> int:
-    *earlier, (latest_name, _latest_sql) = _migration_scripts()
+    *earlier, (latest_name, _latest_sql) = migration_scripts()
     legacy = sqlite3.connect(path)
     try:
         legacy.execute("PRAGMA journal_mode = WAL")
         for _name, sql in earlier:
             legacy.executescript(sql)
-        legacy.execute(f"PRAGMA user_version = {_migration_number(earlier[-1][0])}")
+        legacy.execute(f"PRAGMA user_version = {migration_number(earlier[-1][0])}")
         legacy.commit()
     finally:
         legacy.close()
-    return _migration_number(latest_name)
+    return migration_number(latest_name)
 
 
 def test_concurrent_opens_of_an_outdated_database_migrate_it_exactly_once(
@@ -296,7 +287,7 @@ def test_upgrade_drops_task_quota_evidence_and_matches_a_fresh_schema(tmp_path: 
     legacy_path = tmp_path / "legacy.db"
     legacy = sqlite3.connect(legacy_path)
     try:
-        for name, sql in _migration_scripts():
+        for name, sql in migration_scripts():
             if name < _TASK_QUOTA_DROP_MIGRATION:
                 legacy.executescript(sql)
         legacy.executescript(_LEGACY_TASK_QUOTA_EVIDENCE)
@@ -325,7 +316,7 @@ def test_upgrade_drops_task_quota_evidence_and_matches_a_fresh_schema(tmp_path: 
         fresh.close()
 
 
-KNOWN_SCHEMA_VERSION = _migration_number(_migration_scripts()[-1][0])
+KNOWN_SCHEMA_VERSION = migration_number(migration_scripts()[-1][0])
 
 
 def _user_version(path: Path) -> int:
@@ -371,19 +362,6 @@ def test_a_schema_newer_than_the_code_is_refused_without_writing(
     assert _user_version(path) == stored
 
 
-def _database_at_schema(path: Path, schema: int) -> None:
-    legacy = sqlite3.connect(path)
-    try:
-        legacy.execute("PRAGMA journal_mode = WAL")
-        for name, sql in _migration_scripts():
-            if _migration_number(name) <= schema:
-                legacy.executescript(sql)
-        legacy.execute(f"PRAGMA user_version = {schema}")
-        legacy.commit()
-    finally:
-        legacy.close()
-
-
 def _set_user_version(path: Path, version: int) -> None:
     legacy = sqlite3.connect(path)
     try:
@@ -401,7 +379,7 @@ def test_migrating_an_outdated_database_backs_up_its_old_contents_first(tmp_path
     project = tmp_path / "project"
     project.mkdir()
     path = project / "state.db"
-    _database_at_schema(path, 1)
+    database_at_schema(path, 1)
     legacy = sqlite3.connect(path)
     try:
         legacy.execute(
@@ -431,7 +409,7 @@ def test_the_fourth_backup_removes_the_oldest(tmp_path: Path) -> None:
     project.mkdir()
     for schema in range(1, SCHEMA_BACKUPS_KEPT + 2):
         path = project / f"state-{schema}.db"
-        _database_at_schema(path, schema)
+        database_at_schema(path, schema)
         Database(path).connect().close()
 
     kept = {entry.name for entry in (project / "backups").iterdir()}
@@ -452,7 +430,7 @@ def test_a_failed_backup_leaves_the_database_unmigrated(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
     path = project / "state.db"
-    _database_at_schema(path, 1)
+    database_at_schema(path, 1)
     backups = project / "backups"
     backups.mkdir()
     backups.chmod(_READ_ONLY_DIR_MODE)
@@ -468,7 +446,7 @@ def test_the_too_new_error_names_the_newest_backup(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()
     path = project / "state.db"
-    _database_at_schema(path, 1)
+    database_at_schema(path, 1)
     Database(path).connect().close()
     backup = project / "backups" / "state-schema1.db"
     _set_user_version(path, KNOWN_SCHEMA_VERSION + 1)
@@ -480,3 +458,299 @@ def test_the_too_new_error_names_the_newest_backup(tmp_path: Path) -> None:
     assert str(backup) in message
     assert "copy it back" in message
     assert _user_version(path) == KNOWN_SCHEMA_VERSION + 1
+
+
+def _insert_legacy_run(
+    path: Path, agent: str, reported: int | None, tokens: tuple[int, int, int, int]
+) -> None:
+    input_tokens, output_tokens, cache_read_tokens, cache_write_tokens = tokens
+    legacy = sqlite3.connect(path)
+    try:
+        legacy.execute(
+            "INSERT INTO tasks (id, seq, origin, title, request, status, step, repo, created_at) "
+            "VALUES ('T-1', 1, 'operator', 'old', 'old', 'running', 'implement', ?, ?)",
+            (
+                '{"base": "main", "base_sha": "abc123", "branch": "shikiru/T-1-old"}',
+                format_timestamp(START),
+            ),
+        )
+        legacy.execute(
+            "INSERT INTO runs (task_id, role, agent, model, status, input_tokens, output_tokens, "
+            "cache_read_tokens, cache_write_tokens, cost_usd, cost_basis, started_at, "
+            "usage_reported) "
+            "VALUES ('T-1', 'implementer', ?, 'sol', 'closed', ?, ?, ?, ?, 0.5, 'billed', ?, ?)",
+            (
+                agent,
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_write_tokens,
+                format_timestamp(START),
+                reported,
+            ),
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+
+def _token_categories(path: Path) -> tuple[object, ...]:
+    connection = Database(path).connect()
+    try:
+        return tuple(
+            connection.execute(
+                "SELECT uncached_input_tokens, output_tokens, cache_read_tokens, "
+                "cache_write_tokens, usage_accounting FROM runs"
+            ).fetchone()
+        )
+    finally:
+        connection.close()
+
+
+def _legacy_usage(path: Path, run_id: int = 1) -> tuple[object, ...]:
+    connection = Database(path).connect()
+    try:
+        return tuple(
+            connection.execute(
+                "SELECT source, usage_reported, input_tokens, uncached_input_tokens, "
+                "output_tokens, cache_read_tokens, cache_write_tokens FROM legacy_run_usage "
+                "WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        )
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    ("agent", "reported", "tokens", "expected"),
+    [
+        pytest.param(
+            "claude",
+            1,
+            (100, 5, 40, 10),
+            (None, None, None, None),
+            id="claude-legacy-subtotal-stays-unknown",
+        ),
+        pytest.param(
+            "claude",
+            1,
+            (100, 0, 0, 0),
+            (None, None, None, None),
+            id="claude-stored-zero-categories-stay-unknown",
+        ),
+        pytest.param(
+            "codex",
+            1,
+            (100, 5, 40, 0),
+            (None, None, None, None),
+            id="codex-uncached-input-and-zero-writes-stay-unknown",
+        ),
+        pytest.param(
+            "codex",
+            1,
+            (100, 5, 40, 10),
+            (None, None, None, None),
+            id="codex-cache-writes-leave-uncached-input-unknown",
+        ),
+        pytest.param(
+            "muse",
+            1,
+            (100, 5, 40, 0),
+            (None, None, None, None),
+            id="muse-legacy-counters-stay-unknown",
+        ),
+        pytest.param(
+            "codex",
+            0,
+            (100, 5, 40, 0),
+            (None, None, None, None),
+            id="never-reported-usage-stays-unknown",
+        ),
+        pytest.param(
+            "codex",
+            None,
+            (0, 0, 0, 0),
+            (None, None, None, None),
+            id="unrecorded-zero-tokens-stay-unknown",
+        ),
+    ],
+)
+def test_migrating_legacy_runs_converts_each_provider_once(
+    tmp_path: Path,
+    agent: str,
+    reported: int | None,
+    tokens: tuple[int, int, int, int],
+    expected: tuple[int | None, int | None, int | None, int | None],
+) -> None:
+    path = tmp_path / "state.db"
+    database_at_schema(path, migration_number("008_reported_usage.sql"))
+    _insert_legacy_run(path, agent, reported, tokens)
+
+    assert _token_categories(path) == (*expected, "legacy")
+    assert _legacy_usage(path)[1:] == (reported, tokens[0], None, *tokens[1:])
+
+
+def test_reopening_a_migrated_database_does_not_convert_its_usage_again(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    database_at_schema(path, migration_number("008_reported_usage.sql"))
+    _insert_legacy_run(path, "codex", 1, (100, 5, 40, 0))
+
+    first = _token_categories(path)
+    second = _token_categories(path)
+
+    assert first == second == (None, None, None, None, "legacy")
+    first_legacy = _legacy_usage(path)
+    second_legacy = _legacy_usage(path)
+    assert (
+        first_legacy
+        == second_legacy
+        == (
+            "pre_category_columns",
+            1,
+            100,
+            None,
+            5,
+            40,
+            0,
+        )
+    )
+
+
+def test_migration_preserves_ambiguous_counters_and_clears_normalized_totals(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "state.db"
+    database_at_schema(path, migration_number("018_token_categories.sql"))
+    connection = sqlite3.connect(path)
+    try:
+        connection.execute(
+            "INSERT INTO tasks (id, seq, origin, title, request, status, created_at) "
+            "VALUES ('T-1', 1, 'operator', 'old', 'old', 'running', ?)",
+            (format_timestamp(START),),
+        )
+        for run_id, agent, accounting in (
+            (1, "claude", "legacy"),
+            (2, "muse", "categories"),
+        ):
+            connection.execute(
+                "INSERT INTO runs (id, task_id, role, agent, model, status, "
+                "uncached_input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, "
+                "cost_usd, cost_basis, context_used_pct, started_at, usage_reported, "
+                "usage_accounting) "
+                "VALUES (?, 'T-1', 'implementer', ?, 'model', 'closed', 100, 5, 40, 10, "
+                "0.5, 'billed', 30, ?, 1, ?)",
+                (run_id, agent, format_timestamp(START), accounting),
+            )
+        connection.commit()
+    finally:
+        connection.close()
+
+    connection = Database(path).connect()
+    try:
+        rows = connection.execute(
+            "SELECT agent, uncached_input_tokens, output_tokens, cache_read_tokens, "
+            "cache_write_tokens, usage_accounting, cost_usd, cost_basis, context_used_pct, "
+            "usage_reported FROM runs ORDER BY id"
+        ).fetchall()
+        legacy_rows = connection.execute(
+            "SELECT source, usage_reported, input_tokens, uncached_input_tokens, output_tokens, "
+            "cache_read_tokens, cache_write_tokens FROM legacy_run_usage ORDER BY run_id"
+        ).fetchall()
+    finally:
+        connection.close()
+
+    assert [tuple(row) for row in rows] == [
+        ("claude", None, None, None, None, "legacy", 0.5, "billed", 30.0, 1),
+        ("muse", None, None, None, None, "legacy", 0.5, "billed", 30.0, 1),
+    ]
+    assert [tuple(row) for row in legacy_rows] == [
+        ("previous_category_fields", 1, None, 100, 5, 40, 10),
+        ("previous_category_fields", 1, None, 100, 5, 40, 10),
+    ]
+
+
+def test_migration_from_previous_schema_archives_codex_partial_values_once(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    database_at_schema(path, migration_number("018_token_categories.sql"))
+    legacy = sqlite3.connect(path)
+    try:
+        legacy.execute(
+            "INSERT INTO tasks (id, seq, origin, title, request, status, created_at) "
+            "VALUES ('T-1', 1, 'operator', 'old', 'old', 'running', ?)",
+            (format_timestamp(START),),
+        )
+        legacy.execute(
+            "INSERT INTO runs (id, task_id, role, agent, model, status, output_tokens, "
+            "cache_read_tokens, cache_write_tokens, started_at, usage_reported, usage_accounting) "
+            "VALUES (1, 'T-1', 'implementer', 'codex', 'model', 'closed', 70, "
+            "40, 10, ?, 1, 'legacy')",
+            (format_timestamp(START),),
+        )
+        legacy.execute(
+            "INSERT INTO runs (id, task_id, role, agent, model, status, started_at, "
+            "usage_reported, usage_accounting) VALUES (2, 'T-1', 'leader', 'claude', 'model', "
+            "'closed', ?, 1, 'legacy')",
+            (format_timestamp(START),),
+        )
+        legacy.execute("DROP TABLE legacy_run_usage")
+        legacy.execute(
+            f"PRAGMA user_version = {migration_number('019_unverified_legacy_usage.sql')}"
+        )
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    assert _token_categories(path) == (None, None, None, None, "legacy")
+    first = _legacy_usage(path)
+    assert first == (
+        "previous_category_fields",
+        1,
+        None,
+        None,
+        70,
+        40,
+        10,
+    )
+    assert _legacy_usage(path) == first
+    assert _legacy_usage(path, 2) == (
+        "previously_cleared_fields",
+        1,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+def test_resuming_a_legacy_run_keeps_its_archive_and_starts_unknown(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "state.db"
+    database_at_schema(path, migration_number("008_reported_usage.sql"))
+    _insert_legacy_run(path, "codex", 1, (100, 5, 40, 10))
+    legacy = sqlite3.connect(path)
+    try:
+        legacy.execute("UPDATE runs SET session_id = 'codex-session' WHERE id = 1")
+        legacy.commit()
+    finally:
+        legacy.close()
+
+    connection = Database(path).connect()
+    try:
+        run = fetch_run(connection, 1)
+        assert run is not None
+        assert starting_usage(run) == Usage(None, None, None, None, 0.5, "billed", None)
+
+        updated = Usage(300, 20, 50, 0, None, "unknown", 30)
+        RunStore(connection, FakeClock(START)).record_usage(run.id, updated)
+        resumed = fetch_run(connection, run.id)
+        assert resumed is not None
+        assert resumed.usage == updated
+        assert resumed.usage_accounting.value == "categories"
+        assert resumed.legacy_usage is not None
+        assert resumed.legacy_usage.input_tokens == 100
+        assert resumed.legacy_usage.output_tokens == 5
+    finally:
+        connection.close()

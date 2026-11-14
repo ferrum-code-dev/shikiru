@@ -29,6 +29,9 @@ from shikiru.domain.recovery import (
     WaitForQuota,
     decide,
 )
+from shikiru.domain.runs import LegacyUsage, LegacyUsageSource, Run, RunStatus, starting_usage
+from shikiru.domain.tasks import Role
+from shikiru.domain.token_usage import UsageAccounting
 from shikiru.plugins.agents.codex.turn import CodexTurnParser
 from tests.support.clock import FakeClock
 
@@ -175,10 +178,10 @@ def test_finish_reads_rollout_created_after_session_started(tmp_path: Path) -> N
         ),
         UsageReported(
             Usage(
-                _INPUT_TOKENS,
+                None,
                 _OUTPUT_TOKENS,
                 _CACHED_INPUT_TOKENS,
-                0,
+                None,
                 None,
                 "unknown",
                 25.0,
@@ -425,6 +428,211 @@ def test_older_rollout_quota_does_not_replace_a_newer_streamed_sample(tmp_path: 
     assert failure.kind is FailureKind.QUOTA
     assert failure.resets_at == _ROLLOUT_RESET_AT
     assert _quota_recovery(failure, clock.now()) == WaitForQuota(_ROLLOUT_RESET_AT + QUOTA_MARGIN)
+
+
+_TURN_WITH_WRITES = {
+    "input_tokens": 500,
+    "cached_input_tokens": 200,
+    "cache_write_input_tokens": 0,
+    "output_tokens": 20,
+}
+_TURN_WITHOUT_WRITES = {"input_tokens": 500, "cached_input_tokens": 200, "output_tokens": 20}
+
+
+@pytest.mark.parametrize(
+    ("prior", "turn", "expected"),
+    [
+        (
+            Usage(1_000, 50, 300, 0, None, "unknown", 10.0),
+            _TURN_WITH_WRITES,
+            Usage(1_300, 70, 500, 0, None, "unknown", 10.0),
+        ),
+        (
+            Usage(None, 50, 300, 0, None, "unknown", 10.0),
+            _TURN_WITH_WRITES,
+            Usage(None, 70, 500, 0, None, "unknown", 10.0),
+        ),
+        (
+            Usage(1_000, 50, 300, 0, None, "unknown", 10.0),
+            _TURN_WITHOUT_WRITES,
+            Usage(None, 70, 500, None, None, "unknown", 10.0),
+        ),
+    ],
+    ids=("known-prior", "unknown-prior-category", "turn-without-write-count"),
+)
+def test_turn_without_rollout_usage_is_added_to_the_session_so_far(
+    tmp_path: Path, prior: Usage, turn: dict[str, int], expected: Usage
+) -> None:
+    clock = FakeClock(_SAMPLE_NOW)
+    parser = CodexTurnParser(
+        session_id=_SESSION_ID,
+        initial_usage=prior,
+        home=tmp_path / "codex-home",
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+
+    parser.feed(json.dumps({"type": "turn.completed", "text": "Turn complete", "usage": turn}))
+    signals = parser.finish(0, "")
+
+    assert UsageReported(expected) in signals
+
+
+def test_resumed_legacy_codex_turn_without_rollout_keeps_session_totals_unknown(
+    tmp_path: Path,
+) -> None:
+    run = Run(
+        id=1,
+        task_id="T-1",
+        role=Role.IMPLEMENTER,
+        agent="codex",
+        model="codex-test",
+        session_id=_SESSION_ID,
+        status=RunStatus.LIVE,
+        started_at=_SAMPLE_NOW,
+        usage=Usage(1_000, 50, 300, 10, None, "unknown", 10.0),
+        legacy_usage=LegacyUsage(
+            source=LegacyUsageSource.PRE_CATEGORY_COLUMNS,
+            usage_reported=True,
+            input_tokens=1_700,
+            output_tokens=50,
+            cache_read_tokens=300,
+            cache_write_tokens=10,
+        ),
+        usage_reported=True,
+        usage_accounting=UsageAccounting.LEGACY,
+    )
+    clock = FakeClock(_SAMPLE_NOW)
+    parser = CodexTurnParser(
+        session_id=_SESSION_ID,
+        initial_usage=starting_usage(run),
+        home=tmp_path / "codex-home",
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+    parser.feed(
+        json.dumps(
+            {
+                "type": "turn.completed",
+                "text": "Turn complete",
+                "usage": {"input_tokens": 500, "cached_input_tokens": 200, "output_tokens": 20},
+            }
+        )
+    )
+
+    signals = parser.finish(0, "")
+
+    assert UsageReported(Usage(None, None, None, None, None, "unknown", 10.0)) in signals
+
+
+@pytest.mark.parametrize(
+    ("prior", "expected"),
+    [
+        pytest.param(
+            Usage(1_000, 200, 300, 0, None, "unknown", 15.0),
+            Usage(1_110, 230, 340, 0, None, "unknown", 15.0),
+            id="known-session-adds-streamed-delta",
+        ),
+        pytest.param(
+            Usage(None, None, None, None, None, "unknown", 15.0),
+            Usage(None, None, None, None, None, "unknown", 15.0),
+            id="legacy-unknown-session-stays-unknown",
+        ),
+    ],
+)
+def test_resumed_turn_uses_streamed_usage_when_rollout_snapshot_is_unchanged(
+    tmp_path: Path, prior: Usage, expected: Usage
+) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 2_000,
+                            "cached_input_tokens": 500,
+                            "cache_write_input_tokens": 0,
+                            "output_tokens": 900,
+                        },
+                        "last_token_usage": {"input_tokens": 100},
+                        "model_context_window": 100_000,
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    clock = FakeClock(_SAMPLE_NOW)
+    parser = CodexTurnParser(
+        session_id=_SESSION_ID,
+        initial_usage=prior,
+        home=tmp_path / "codex-home",
+        rollout_path=rollout,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+    parser.feed(
+        json.dumps(
+            {
+                "type": "turn.completed",
+                "text": "Turn complete",
+                "usage": {
+                    "input_tokens": 150,
+                    "cached_input_tokens": 40,
+                    "cache_write_input_tokens": 0,
+                    "output_tokens": 30,
+                },
+            }
+        )
+    )
+
+    signals = parser.finish(0, "")
+
+    assert UsageReported(expected) in signals
+
+
+def test_unchanged_rollout_without_turn_usage_keeps_token_totals_unknown(tmp_path: Path) -> None:
+    rollout = tmp_path / "rollout.jsonl"
+    rollout.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 2_000,
+                            "cached_input_tokens": 500,
+                            "cache_write_input_tokens": 0,
+                            "output_tokens": 900,
+                        },
+                        "last_token_usage": {"input_tokens": 100},
+                        "model_context_window": 100_000,
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    clock = FakeClock(_SAMPLE_NOW)
+    parser = CodexTurnParser(
+        session_id=_SESSION_ID,
+        initial_usage=Usage(1_000, 200, 300, 0, None, "unknown", 15.0),
+        home=tmp_path / "codex-home",
+        rollout_path=rollout,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+    parser.feed(json.dumps({"type": "turn.completed", "text": "Turn complete"}))
+
+    signals = parser.finish(0, "")
+
+    assert UsageReported(Usage(None, None, None, None, None, "unknown", 15.0)) in signals
 
 
 def _quota_recovery(failure: TurnFailed, now: datetime) -> Action:

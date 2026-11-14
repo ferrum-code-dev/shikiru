@@ -1,6 +1,6 @@
 {"event":"session_started","session_id":"session-compacted"}
-{"event":"usage_reported","usage":{"input_tokens":200,"output_tokens":100,"cache_read_tokens":30,"cache_write_tokens":15,"cost_usd":null,"cost_basis":"unknown","context_used_pct":90.0}}
+{"event":"usage_reported","usage":{"uncached_input_tokens":200,"output_tokens":100,"cache_read_tokens":30,"cache_write_tokens":15,"cost_usd":null,"cost_basis":"unknown","context_used_pct":90.0}}
 {"event":"compacted","pre_tokens":2000,"post_tokens":400}
 {"event":"message","text":"the earlier nonce is still remembered"}
-{"event":"usage_reported","usage":{"input_tokens":240,"output_tokens":120,"cache_read_tokens":40,"cache_write_tokens":20,"cost_usd":null,"cost_basis":"unknown","context_used_pct":30.0}}
+{"event":"usage_reported","usage":{"uncached_input_tokens":240,"output_tokens":120,"cache_read_tokens":40,"cache_write_tokens":20,"cost_usd":null,"cost_basis":"unknown","context_used_pct":30.0}}
 {"event":"turn_ended","last_message":"the earlier nonce is still remembered"}

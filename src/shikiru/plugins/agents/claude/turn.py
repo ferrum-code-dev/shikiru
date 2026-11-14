@@ -29,6 +29,7 @@ from shikiru.agents.contracts import (
     TurnSpec,
     Usage,
     UsageReported,
+    add_optional,
     module_command,
 )
 from shikiru.agents.sdk.turn import (
@@ -217,6 +218,7 @@ class ClaudeTurnParser:
         self._tool_names: dict[str, str] = {}
         self._tool_ids: list[str] = []
         self._latest_assistant_usage: Mapping[str, Any] | None = None
+        self._saw_assistant_event = False
         self._latest_model_usage: Mapping[str, Any] | None = None
         self._latest_cost_basis: str | None = None
         self._latest_cost: float | None = None
@@ -225,10 +227,10 @@ class ClaudeTurnParser:
         self._latest_message_order = -1
         self._latest_result_order = -1
         self._saw_result_usage = False
-        self._result_input_tokens = 0
-        self._result_output_tokens = 0
-        self._result_cache_read_tokens = 0
-        self._result_cache_write_tokens = 0
+        self._result_input_tokens: int | None = 0
+        self._result_output_tokens: int | None = 0
+        self._result_cache_read_tokens: int | None = 0
+        self._result_cache_write_tokens: int | None = 0
         self._session_started = False
         self._started_session_id: str | None = None
         self._pending_activity: list[AgentSignal] = []
@@ -278,11 +280,12 @@ class ClaudeTurnParser:
         if self._malformed_line is not None:
             self._terminal = True
             return [
+                *self._usage_signals(),
                 TurnFailed(
                     FailureKind.UNKNOWN,
                     _stderr_message(exit_code, stderr, _MALFORMED_STREAM_MESSAGE),
                     None,
-                )
+                ),
             ]
         if self._failure_payload is not None:
             self._terminal = True
@@ -297,7 +300,10 @@ class ClaudeTurnParser:
         compaction_problem = self._compaction_problem()
         if compaction_problem is not None:
             self._terminal = True
-            return [TurnFailed(FailureKind.OTHER, compaction_problem, None)]
+            return [
+                *self._usage_signals(assume_consumption=True),
+                TurnFailed(FailureKind.OTHER, compaction_problem, None),
+            ]
         usage = self._reported_usage()
         result_text = payload.get(_RESULT_FIELD)
         if self._latest_message_order > self._latest_result_order:
@@ -307,9 +313,7 @@ class ClaudeTurnParser:
         else:
             last_message = self._latest_message
         self._terminal = True
-        signals: list[AgentSignal] = []
-        if usage is not None:
-            signals.append(UsageReported(usage))
+        signals: list[AgentSignal] = [UsageReported(usage or self._usage_gap())]
         signals.append(TurnEnded(last_message))
         return signals
 
@@ -320,15 +324,22 @@ class ClaudeTurnParser:
         if failure is not None:
             kind, message, resets_at = failure
             self._terminal = True
-            return [TurnFailed(kind, _stderr_message(exit_code, stderr, message), resets_at)]
+            return [
+                *self._usage_signals(),
+                TurnFailed(kind, _stderr_message(exit_code, stderr, message), resets_at),
+            ]
         compaction_problem = self._compaction_problem()
         if interrupted and compaction_problem is None:
             self._terminal = True
-            return []
+            signals: list[AgentSignal] = [*self._usage_signals()]
+            return signals
         message = compaction_problem or _UNKNOWN_ERROR_MESSAGE
         kind = FailureKind.OTHER if compaction_problem is not None else FailureKind.UNKNOWN
         self._terminal = True
-        return [TurnFailed(kind, _stderr_message(exit_code, stderr, message), None)]
+        return [
+            *self._usage_signals(assume_consumption=compaction_problem is not None),
+            TurnFailed(kind, _stderr_message(exit_code, stderr, message), None),
+        ]
 
     def _finish_failed_process(self, exit_code: int, stderr: str) -> list[AgentSignal]:
         failure = self._classify_failure(None, stderr)
@@ -338,7 +349,10 @@ class ClaudeTurnParser:
             None,
         )
         self._terminal = True
-        return [TurnFailed(kind, _stderr_message(exit_code, stderr, message), resets_at)]
+        return [
+            *self._usage_signals(assume_consumption=True),
+            TurnFailed(kind, _stderr_message(exit_code, stderr, message), resets_at),
+        ]
 
     def _system(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         subtype = payload.get(_SUBTYPE_FIELD)
@@ -411,6 +425,7 @@ class ClaudeTurnParser:
         return []
 
     def _assistant(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
+        self._saw_assistant_event = True
         blocks = self._assistant_content(payload)
         if not isinstance(blocks, list):
             return []
@@ -546,10 +561,20 @@ class ClaudeTurnParser:
         if source is None:
             return
         self._saw_result_usage = True
-        self._result_input_tokens += _integer(source, _INPUT_TOKENS_FIELD)
-        self._result_output_tokens += _integer(source, _OUTPUT_TOKENS_FIELD)
-        self._result_cache_read_tokens += _integer(source, _CACHE_READ_TOKENS_FIELD)
-        self._result_cache_write_tokens += _integer(source, _CACHE_WRITE_TOKENS_FIELD)
+        self._result_input_tokens = add_optional(
+            self._result_input_tokens, _optional_nonnegative_integer(source, _INPUT_TOKENS_FIELD)
+        )
+        self._result_output_tokens = add_optional(
+            self._result_output_tokens, _optional_nonnegative_integer(source, _OUTPUT_TOKENS_FIELD)
+        )
+        self._result_cache_read_tokens = add_optional(
+            self._result_cache_read_tokens,
+            _optional_nonnegative_integer(source, _CACHE_READ_TOKENS_FIELD),
+        )
+        self._result_cache_write_tokens = add_optional(
+            self._result_cache_write_tokens,
+            _optional_nonnegative_integer(source, _CACHE_WRITE_TOKENS_FIELD),
+        )
 
     def _reported_usage(self) -> Usage | None:
         source = self._latest_assistant_usage
@@ -566,27 +591,27 @@ class ClaudeTurnParser:
         input_delta = (
             self._result_input_tokens
             if self._saw_result_usage
-            else _integer(source, _INPUT_TOKENS_FIELD)
+            else _optional_nonnegative_integer(source, _INPUT_TOKENS_FIELD)
         )
         output_delta = (
             self._result_output_tokens
             if self._saw_result_usage
-            else _integer(source, _OUTPUT_TOKENS_FIELD)
+            else _optional_nonnegative_integer(source, _OUTPUT_TOKENS_FIELD)
         )
         cache_read_delta = (
             self._result_cache_read_tokens
             if self._saw_result_usage
-            else _integer(source, _CACHE_READ_TOKENS_FIELD)
+            else _optional_nonnegative_integer(source, _CACHE_READ_TOKENS_FIELD)
         )
         cache_write_delta = (
             self._result_cache_write_tokens
             if self._saw_result_usage
-            else _integer(source, _CACHE_WRITE_TOKENS_FIELD)
+            else _optional_nonnegative_integer(source, _CACHE_WRITE_TOKENS_FIELD)
         )
-        input_tokens = self._initial_usage.input_tokens + input_delta
-        output_tokens = self._initial_usage.output_tokens + output_delta
-        cache_read_tokens = self._initial_usage.cache_read_tokens + cache_read_delta
-        cache_write_tokens = self._initial_usage.cache_write_tokens + cache_write_delta
+        uncached_input_tokens = add_optional(self._initial_usage.uncached_input_tokens, input_delta)
+        output_tokens = add_optional(self._initial_usage.output_tokens, output_delta)
+        cache_read_tokens = add_optional(self._initial_usage.cache_read_tokens, cache_read_delta)
+        cache_write_tokens = add_optional(self._initial_usage.cache_write_tokens, cache_write_delta)
         priced = self._latest_cost_basis == _LIST_COST_BASIS and self._latest_cost is not None
         context_window = (
             self._latest_model_usage.get(_CONTEXT_WINDOW_FIELD)
@@ -603,13 +628,32 @@ class ClaudeTurnParser:
             else None
         )
         return Usage(
-            input_tokens=input_tokens,
+            uncached_input_tokens=uncached_input_tokens,
             output_tokens=output_tokens,
             cache_read_tokens=cache_read_tokens,
             cache_write_tokens=cache_write_tokens,
             cost_usd=self._latest_cost if priced else None,
             cost_basis="api_equivalent" if priced else "unknown",
             context_used_pct=context_pct,
+        )
+
+    def _usage_signals(self, *, assume_consumption: bool = False) -> list[UsageReported]:
+        usage = self._reported_usage()
+        if usage is not None:
+            return [UsageReported(usage)]
+        if assume_consumption or self._session_started or self._saw_assistant_event:
+            return [UsageReported(self._usage_gap())]
+        return []
+
+    def _usage_gap(self) -> Usage:
+        return Usage(
+            uncached_input_tokens=None,
+            output_tokens=None,
+            cache_read_tokens=None,
+            cache_write_tokens=None,
+            cost_usd=self._initial_usage.cost_usd,
+            cost_basis=self._initial_usage.cost_basis,
+            context_used_pct=self._initial_usage.context_used_pct,
         )
 
     def _fail(self, payload: Mapping[str, Any], stderr: str) -> list[AgentSignal]:
@@ -621,7 +665,7 @@ class ClaudeTurnParser:
             resets_at = _latest_reset(self._latest_quota)
         if kind is FailureKind.QUOTA and resets_at is None:
             resets_at = self._reset_time.parse(message)
-        return [TurnFailed(kind, message, resets_at)]
+        return [*self._usage_signals(), TurnFailed(kind, message, resets_at)]
 
     def _classify_failure(
         self, payload: Mapping[str, Any] | None, stderr: str
@@ -959,11 +1003,6 @@ def _classify_text(
 def _stderr_message(exit_code: int, stderr: str, message: str) -> str:
     detail = message.strip() or stderr.strip() or EMPTY_OUTPUT
     return _STDERR_MESSAGE.format(exit_code=exit_code, message=detail)
-
-
-def _integer(payload: Mapping[str, Any] | None, key: str) -> int:
-    value = payload.get(key, 0) if payload is not None else 0
-    return int(value) if isinstance(value, int | float) and not isinstance(value, bool) else 0
 
 
 def _context_tokens(usage: Mapping[str, Any] | None) -> int | None:

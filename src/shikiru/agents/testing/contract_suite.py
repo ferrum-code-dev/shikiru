@@ -373,7 +373,20 @@ class AgentContractSuite:
         signals = await self._run_turn(spec)
         usage = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
         _expect(bool(usage), "live turn reported no usage")
-        _expect(usage[-1].input_tokens + usage[-1].output_tokens > 0, "live token usage was zero")
+        last = usage[-1]
+        _expect(
+            any(
+                count
+                for count in (
+                    last.uncached_input_tokens,
+                    last.cache_read_tokens,
+                    last.cache_write_tokens,
+                    last.output_tokens,
+                )
+                if count is not None
+            ),
+            "live token usage was zero",
+        )
 
     @pytest.mark.asyncio
     async def test_live_model_change_resumes_and_recalls_session_memory(
@@ -548,6 +561,10 @@ def _validate_tool_sequences(signals: Sequence[AgentSignal]) -> None:
     _expect(not running_tools, "turn ended while a tool was still running")
 
 
+def _not_decreased(current: int | None, previous: int | None) -> bool:
+    return current is None or previous is None or current >= previous
+
+
 def _validate_usage_sequences(signals: Sequence[AgentSignal]) -> None:
     last_usage: Usage | None = None
     compacted_since_usage = False
@@ -557,18 +574,21 @@ def _validate_usage_sequences(signals: Sequence[AgentSignal]) -> None:
         elif isinstance(signal, UsageReported):
             if last_usage is not None:
                 _expect(
-                    signal.usage.input_tokens >= last_usage.input_tokens, "input tokens decreased"
+                    _not_decreased(
+                        signal.usage.uncached_input_tokens, last_usage.uncached_input_tokens
+                    ),
+                    "uncached input tokens decreased",
                 )
                 _expect(
-                    signal.usage.output_tokens >= last_usage.output_tokens,
+                    _not_decreased(signal.usage.output_tokens, last_usage.output_tokens),
                     "output tokens decreased",
                 )
                 _expect(
-                    signal.usage.cache_read_tokens >= last_usage.cache_read_tokens,
+                    _not_decreased(signal.usage.cache_read_tokens, last_usage.cache_read_tokens),
                     "cache-read tokens decreased",
                 )
                 _expect(
-                    signal.usage.cache_write_tokens >= last_usage.cache_write_tokens,
+                    _not_decreased(signal.usage.cache_write_tokens, last_usage.cache_write_tokens),
                     "cache-write tokens decreased",
                 )
                 if (

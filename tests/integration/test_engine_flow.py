@@ -155,7 +155,7 @@ async def test_flow_events_mark_step_turn_and_verdict_boundaries(
     assert EventKind.NUDGE in kinds
     completed = next(event for event in events if event.kind is EventKind.TURN_COMPLETED)
     usage_delta = completed.data["usage_delta"]
-    assert usage_delta["input_tokens"] == 240
+    assert usage_delta["uncached_input_tokens"] == 240
     assert usage_delta["output_tokens"] == 120
     assert usage_delta["cache_read_tokens"] == 40
     assert usage_delta["cache_write_tokens"] == 20

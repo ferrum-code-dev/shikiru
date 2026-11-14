@@ -24,7 +24,7 @@ def test_agent_obligations_accept_a_valid_compacted_session_stream() -> None:
             {
                 "event": "usage_reported",
                 "usage": {
-                    "input_tokens": 100,
+                    "uncached_input_tokens": 100,
                     "output_tokens": 50,
                     "cache_read_tokens": 10,
                     "cache_write_tokens": 5,
@@ -37,7 +37,7 @@ def test_agent_obligations_accept_a_valid_compacted_session_stream() -> None:
             {
                 "event": "usage_reported",
                 "usage": {
-                    "input_tokens": 120,
+                    "uncached_input_tokens": 120,
                     "output_tokens": 60,
                     "cache_read_tokens": 12,
                     "cache_write_tokens": 6,
@@ -95,7 +95,7 @@ def test_agent_obligations_reject_usage_decreases_after_compaction() -> None:
             {
                 "event": "usage_reported",
                 "usage": {
-                    "input_tokens": 100,
+                    "uncached_input_tokens": 100,
                     "output_tokens": 50,
                     "cache_read_tokens": 10,
                     "cache_write_tokens": 5,
@@ -108,7 +108,7 @@ def test_agent_obligations_reject_usage_decreases_after_compaction() -> None:
             {
                 "event": "usage_reported",
                 "usage": {
-                    "input_tokens": 120,
+                    "uncached_input_tokens": 120,
                     "output_tokens": 60,
                     "cache_read_tokens": 12,
                     "cache_write_tokens": 6,

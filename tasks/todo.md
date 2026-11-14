@@ -80,7 +80,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [x] 12. Parse Muse turn streams
 
 ## Acceptance criteria
-- `turn.py`: `MuseTurnParser.feed/finish` maps records to signals (session, message, tools, usage, quota, terminal), malformed-line handling, interrupted turns and resumed usage accumulation. Tool detail is reported as soon as output arrives; uncorrelated results are deduplicated against pending calls using the started call ID or scheduled idempotency key.
+- `turn.py`: `MuseTurnParser.feed/finish` maps records to signals (session, message, tools, usage, quota, terminal), malformed-line handling, interrupted turns and resumed-session uncertainty. Muse token categories stay unknown because the `run.usage` semantics are unverified. Tool detail is reported as soon as output arrives; uncorrelated results are deduplicated against pending calls using the started call ID or scheduled idempotency key.
 
 - [x] 13. Classify Muse failures and reset times
 
@@ -268,3 +268,17 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - A window whose known reset has passed shows `○ --%` and `resets unknown` in the dashboard and `shikiru status`; a window without a reset keeps its percentage and shows `resets unknown`.
 - The stored reading, block logic, JSON output and blocker evidence keep the raw values; the rule lives once in `effective_used_pct` and `reset_is_known`.
 - Domain tables cover expired, exactly-at-reset, future and no-reset windows; a FakeClock integration test shows an expired 100% window as unknown with the stored value still 100.0.
+
+### Phase 11: token categories (T-163)
+
+- [x] 46. Report uncached input, cache reads, cache writes and output separately
+
+## Acceptance criteria
+- Each run records four mutually exclusive token categories; an unreported category is unknown, never zero, and processed tokens are a sum only when every category is known.
+- Every run counts toward every total: a run that reports nothing, or lacks a category, makes the affected totals partial, and a total over wholly unreported runs is unreported.
+- Claude's disjoint input is kept as reported for new turns. Codex uncached input is normalized by subtracting cache reads only when cache writes are reported as zero. Muse keeps all token categories unknown because official docs and recorded streams do not establish the `run.usage` category semantics or output/reasoning overlap; empty `models` and resumed turns stay unknown too.
+- Claude records an unknown token snapshot when a successful turn has no usage fields, and when a failed or interrupted turn may have consumed tokens after session start; a reported/unreported/reported sequence stays unknown across the gap.
+- Codex uses rollout totals only when a new usable token-count observation appears during the invocation. An unchanged rollout cannot replace the current turn: the parser adds a streamed turn delta to prior usage when available, or records unknown token categories when neither source covers the turn. Muse's prior observations remain archived as ambiguous, and its resumed token categories stay unknown.
+- Migrations 018 and 020 retain old counters plus their reported marker in `legacy_run_usage`, labelled by source and excluded from normalized totals. Old zero defaults, partial Claude/Codex snapshots, and Muse counters with unresolved semantics stay ambiguous. Migration 020 archives legacy Codex categories on databases that ran the earlier migrations before clearing normalized values; fields previously erased remain unknown. Resumed legacy sessions start with unknown token categories, then replace the current accounting with normalized snapshots while the archive remains.
+- Dashboard, CLI, task/session/project/agent summaries and evidence exports label the categories, state that processed tokens are not context, cost or quota, and mark partial totals. CLI status shows processed tokens plus all four categories at wide and narrow widths.
+- Domain tables cover the category sums, totals and partial aggregates; parser tests cover provider arithmetic, Claude's missing-turn gap across later reports, Codex's unchanged-rollout fallback, and resumed-session accumulation. Integration tests cover legacy evidence migration/reopening, resumed sessions, exclusion from normalized totals, partial totals at the operator panel, the dashboard bar, CLI categories at both widths, and explicit legacy evidence in version 3 exports.

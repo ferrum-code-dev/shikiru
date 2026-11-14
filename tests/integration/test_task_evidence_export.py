@@ -37,6 +37,7 @@ from shikiru.domain.reports import (
 )
 from shikiru.domain.steps import Step, Transition
 from shikiru.domain.tasks import Mode, Role, Status, Task
+from shikiru.domain.token_usage import PROCESSED_TOKENS_NOTE
 from shikiru.operator.commands import OperatorCommands
 from shikiru.operator.evidence_export import (
     EXPORT_FORMAT_JSON,
@@ -185,14 +186,14 @@ def _seed_export_task(
     )
     legacy_unknown = runs.start(task.id, Role.IMPLEMENTER, IMPLEMENTER_RUNGS[0])
     connection.execute(
-        "UPDATE runs SET usage_reported = NULL, input_tokens = 0, output_tokens = 0, "
-        "cache_read_tokens = 0, cache_write_tokens = 0, cost_usd = NULL, "
-        "cost_basis = ? WHERE id = ?",
+        "UPDATE runs SET usage_reported = NULL, uncached_input_tokens = NULL, "
+        "output_tokens = NULL, cache_read_tokens = NULL, cache_write_tokens = NULL, "
+        "cost_usd = NULL, cost_basis = ? WHERE id = ?",
         (COST_BASIS_UNKNOWN, legacy_unknown.id),
     )
     legacy_billed = runs.start(task.id, Role.LEADER, LEADER_RUNG_2)
     connection.execute(
-        "UPDATE runs SET usage_reported = NULL, input_tokens = 11, output_tokens = 2, "
+        "UPDATE runs SET usage_reported = NULL, uncached_input_tokens = 11, output_tokens = 2, "
         "cache_read_tokens = 3, cache_write_tokens = 4, cost_usd = 0, "
         "cost_basis = 'billed' WHERE id = ?",
         (legacy_billed.id,),
@@ -310,7 +311,7 @@ def _assert_complete_exported_document(
     content: str,
 ) -> None:
     assert document["format"] == "shikiru.task-evidence"
-    assert document["version"] == 1
+    assert document["version"] == 3
     assert document["task_id"] == task.id
     assert datetime.fromisoformat(document["exported_at"]).utcoffset() is not None
     assert document["request"] == f"Keep this request verbatim:\n{HOSTILE_CONTENT}"
@@ -347,7 +348,7 @@ def _assert_complete_exported_document(
 
 def _assert_usage_provenance(document: dict[str, Any]) -> None:
     sessions = {item["session_id"]: item for item in document["sessions"]}
-    assert sessions["leader-session"]["tokens"]["input"] == 0
+    assert sessions["leader-session"]["tokens"]["uncached_input"] == 0
     assert sessions["leader-session"]["usage_provenance"]["tokens"] == "reported"
     assert sessions["leader-session"]["billing"] == {
         "mode": BILLING_MODE_SUBSCRIPTION,
@@ -361,7 +362,7 @@ def _assert_usage_provenance(document: dict[str, Any]) -> None:
         if item["usage_provenance"]["reported_marker"] is None
         and item["cost"]["basis"] == COST_BASIS_UNKNOWN
     )
-    assert legacy_unknown["tokens"]["input"] is None
+    assert legacy_unknown["tokens"]["uncached_input"] is None
     assert legacy_unknown["cost"]["usd"] is None
     legacy_billed = next(item for item in document["sessions"] if item["cost"]["basis"] == "billed")
     assert legacy_billed["cost"]["usd"] == 0
@@ -612,6 +613,72 @@ async def test_export_is_complete_read_only_and_preserves_usage_provenance(
     assert not (project_root / ".shikiru" / "worktrees" / task.id).exists()
 
 
+async def test_export_keeps_legacy_counters_separate_from_normalized_usage(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_root = write_minimal_project(tmp_path)
+    clock = FakeClock(EXPORT_START)
+    task, _ = _seed_export_task(connection, project_root, clock)
+    legacy_run_id = connection.execute(
+        "SELECT id FROM runs WHERE cost_usd = 0 AND cost_basis = 'billed'"
+    ).fetchone()[0]
+    connection.execute("UPDATE runs SET usage_accounting = 'legacy' WHERE id = ?", (legacy_run_id,))
+    connection.execute(
+        "INSERT INTO legacy_run_usage (run_id, source, usage_reported, input_tokens, "
+        "output_tokens, cache_read_tokens, cache_write_tokens) "
+        "VALUES (?, 'pre_category_columns', NULL, 11, 2, 3, 4)",
+        (legacy_run_id,),
+    )
+    exporter = TaskEvidenceExporter(
+        _queries(reader, project_root, clock), LocalEvidenceWriter(project_root), clock
+    )
+
+    result = await exporter.export(
+        task.id,
+        "legacy.json",
+        export_format=EXPORT_FORMAT_JSON,
+        overwrite=False,
+        include_signals=False,
+    )
+
+    document = json.loads(result.destination.read_text())
+    legacy = next(item for item in document["sessions"] if item["legacy_usage"] is not None)
+    assert legacy["usage_provenance"]["accounting"] == "legacy"
+    assert legacy["usage_provenance"]["tokens"] == "legacy_recorded"
+    assert legacy["tokens"] == {
+        "uncached_input": None,
+        "cache_read": None,
+        "cache_write": None,
+        "output": None,
+        "processed": None,
+    }
+    assert legacy["legacy_usage"] == {
+        "source": "pre_category_columns",
+        "reported_marker": None,
+        "recorded_counters": {
+            "input_tokens": 11,
+            "uncached_input_tokens": None,
+            "cache_read_tokens": 3,
+            "cache_write_tokens": 4,
+            "output_tokens": 2,
+        },
+        "interpretation": (
+            "Historical counters may be partial or use prior accounting; they are retained as "
+            "evidence and excluded from normalized token totals."
+        ),
+    }
+    codex_usage = next(item for item in document["usage"] if item["agent"] == "codex")
+    assert codex_usage["legacy_token_runs"] == 1
+    assert codex_usage["tokens"]["output"] == {
+        "total": 5,
+        "status": "partial",
+        "reported_runs": 1,
+        "unreported_runs": 2,
+    }
+
+
 async def test_partial_turn_files_are_identified_as_unavailable(
     connection: Connection,
     reader: StateReader,
@@ -673,6 +740,7 @@ async def test_markdown_fences_untrusted_content_and_opt_in_exposes_partial_sign
 
     content = result.destination.read_text()
     blocks, outside_blocks, fence_lengths = _markdown_json_blocks(content)
+    assert PROCESSED_TOKENS_NOTE in outside_blocks
     assert max(fence_lengths) > 5
     assert "## forged heading" not in outside_blocks
     assert "[link](https://example.invalid)" not in outside_blocks
@@ -700,7 +768,7 @@ async def test_markdown_fences_untrusted_content_and_opt_in_exposes_partial_sign
     usage = {str(item["agent"]): item for item in usage_block}
     assert usage["codex"]["billed_cost_usd"] == 0
     assert usage["codex"]["api_equivalent_cost_usd"] == 0.25
-    assert usage["claude"]["tokens"]["input"] == 0
+    assert usage["claude"]["tokens"]["uncached_input"]["total"] == 0
     assert SIGNAL_CONTENT in content
     assert PARTIAL_SIGNAL_CONTENT in content
     assert "jsonl row has not ended with a newline" in content.casefold()

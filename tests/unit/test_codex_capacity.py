@@ -9,7 +9,7 @@ from typing import NamedTuple
 
 import pytest
 
-from shikiru.agents.contracts import FailureKind, TurnEnded, TurnFailed
+from shikiru.agents.contracts import FailureKind, TurnEnded, TurnFailed, Usage, UsageReported
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.domain.recovery import (
     Backoff,
@@ -232,4 +232,7 @@ def test_synthetic_successful_response_with_capacity_text_does_not_trigger_recov
     parser = _parser(tmp_path)
     parser.feed(json.dumps({"type": "turn.completed", "text": _USER_CAPACITY_MESSAGE}))
 
-    assert parser.finish(0, "") == [TurnEnded(_USER_CAPACITY_MESSAGE)]
+    assert parser.finish(0, "") == [
+        UsageReported(Usage(None, None, None, None, None, "unknown", None)),
+        TurnEnded(_USER_CAPACITY_MESSAGE),
+    ]

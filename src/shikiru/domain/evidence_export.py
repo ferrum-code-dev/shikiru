@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from shikiru.domain.token_usage import PROCESSED_TOKENS_NOTE
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
 EVIDENCE_EXPORT_FORMAT = "shikiru.task-evidence"
-EVIDENCE_EXPORT_VERSION = 1
+EVIDENCE_EXPORT_VERSION = 3
 JSON_INDENT = 2
 MINIMUM_MARKDOWN_FENCE = 3
 MARKDOWN_NEWLINE = "\n"
@@ -55,6 +57,7 @@ def render_evidence_markdown(document: Mapping[str, object]) -> str:
         "",
         "## Task usage summary",
         _code_block(document.get("usage")),
+        PROCESSED_TOKENS_NOTE,
         "",
         "## Unavailable sections",
         _code_block(document.get("unavailable_sections")),

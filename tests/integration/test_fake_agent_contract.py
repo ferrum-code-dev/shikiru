@@ -64,7 +64,7 @@ _RESUMED_SESSION_ID = "resumed-session-id"
 _COMPACTION_THRESHOLD = 80.0
 _LOW_COMPACTION_THRESHOLD = 50.0
 _TOKEN_USAGE = Usage(
-    input_tokens=120,
+    uncached_input_tokens=120,
     output_tokens=60,
     cache_read_tokens=20,
     cache_write_tokens=10,
@@ -73,7 +73,7 @@ _TOKEN_USAGE = Usage(
     context_used_pct=90.0,
 )
 _COMPACTED_USAGE = Usage(
-    input_tokens=240,
+    uncached_input_tokens=240,
     output_tokens=120,
     cache_read_tokens=40,
     cache_write_tokens=20,
@@ -82,7 +82,7 @@ _COMPACTED_USAGE = Usage(
     context_used_pct=30.0,
 )
 _RETRY_USAGE = Usage(
-    input_tokens=120,
+    uncached_input_tokens=120,
     output_tokens=60,
     cache_read_tokens=20,
     cache_write_tokens=10,
@@ -236,7 +236,7 @@ class TestFakeAgentContract(AgentContractSuite):
                     SessionStarted(compacted_session),
                     UsageReported(
                         Usage(
-                            input_tokens=200,
+                            uncached_input_tokens=200,
                             output_tokens=100,
                             cache_read_tokens=30,
                             cache_write_tokens=15,

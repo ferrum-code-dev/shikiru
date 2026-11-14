@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from shikiru.domain.levels import UsageLevel
     from shikiru.domain.results import TaskResults
     from shikiru.domain.tasks import EscalationReason, Role
+    from shikiru.domain.token_usage import TokenTotals
     from shikiru.ui.strip import TaskStripData
 
 from shikiru.domain.timeline import (
@@ -305,10 +306,7 @@ class RecordedUsageView:
     """Recorded project or task usage with token, billing and reporting coverage."""
 
     session_count: int
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_write_tokens: int
+    tokens: TokenTotals
     reported_sessions: int
     legacy_token_sessions: int
     unknown_token_sessions: int
@@ -450,10 +448,10 @@ class TaskSessionView:
     effort: str | None
     session_id: str | None
     status: str
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_write_tokens: int
+    uncached_input_tokens: int | None
+    output_tokens: int | None
+    cache_read_tokens: int | None
+    cache_write_tokens: int | None
     cost_usd: float | None
     cost_basis: CostBasis
     context_used_pct: float | None
@@ -471,14 +469,15 @@ class TaskSessionView:
 
 @dataclass(frozen=True)
 class TaskTurnUsageDeltaView:
-    """Usage delta recorded for one completed agent turn."""
+    """Usage delta recorded for one completed agent turn; categories are unknown when legacy."""
 
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_write_tokens: int
+    uncached_input_tokens: int | None
+    output_tokens: int | None
+    cache_read_tokens: int | None
+    cache_write_tokens: int | None
     cost_usd: float | None
     cost_basis: CostBasis = COST_BASIS_UNKNOWN
+    legacy_usage: bool = False
 
 
 @dataclass(frozen=True)
@@ -761,10 +760,7 @@ class AgentUsageView:
     """Token and priced-cost totals plus every quota window for one agent."""
 
     agent: str
-    input_tokens: int
-    output_tokens: int
-    cache_read_tokens: int
-    cache_write_tokens: int
+    tokens: TokenTotals
     cost_usd: float | None
     cost_basis: CostBasis | Literal["mixed"]
     quotas: tuple[QuotaGaugeView, ...]

@@ -76,7 +76,7 @@ if TYPE_CHECKING:
     from textual.timer import Timer
     from textual.worker import Worker
 
-    from shikiru.agents.contracts import Rung
+    from shikiru.agents.contracts import Rung, Usage
     from shikiru.dashboard.contract import OnChangeRegistration
     from shikiru.domain.commands import Command
     from shikiru.operator.commands import Ack, OperatorCommands
@@ -1402,7 +1402,7 @@ class PaletteScreen(ModalScreen[str | None]):
                 (
                     f"{role} · {pane.agent}",
                     f"last message: {pane.last_message or '-'}",
-                    f"tokens: {pane.usage.input_tokens} in / {pane.usage.output_tokens} out",
+                    _token_line(pane.usage),
                     *pane.view,
                 )
             )
@@ -1604,3 +1604,15 @@ class PaletteScreen(ModalScreen[str | None]):
             text_area = TextArea(placeholder=placeholder, id=field_id, classes=POPUP_EDIT_CLASS)
             text_area.styles.min_width = _PALETTE_TEXT_AREA_MINIMUM_WIDTH
             yield text_area
+
+
+def _token_line(usage: Usage) -> str:
+    categories = (
+        ("uncached input", usage.uncached_input_tokens),
+        ("cache read", usage.cache_read_tokens),
+        ("cache write", usage.cache_write_tokens),
+        ("output", usage.output_tokens),
+    )
+    return "tokens: " + " · ".join(
+        f"{label} {'unknown' if count is None else count}" for label, count in categories
+    )

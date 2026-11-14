@@ -229,7 +229,7 @@ async def test_quota_failure_blocks_then_continues_on_the_same_session(
     assert EventKind.QUOTA_CLEARED in kinds
     assert QuotaStore(engine_env.connection).block_for(FAKE_RUNG.agent) is None
     [run] = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
-    assert run.usage.input_tokens == 120
+    assert run.usage.uncached_input_tokens == 120
     assert run.session_id is not None
     turn_dirs = run_dir(engine_env.project_root, task_id) / "turns"
     continue_dirs = [
@@ -695,7 +695,7 @@ async def test_unavailable_failure_uses_backoff_then_resumes_the_session(
     assert final.step is Step.INTEGRATE
     assert final.status is Status.INTEGRATING
     [run] = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
-    assert run.usage.input_tokens == 120
+    assert run.usage.uncached_input_tokens == 120
     rows = [
         json.loads(line)
         for line in (
@@ -821,7 +821,7 @@ async def test_other_failure_retries_once_on_the_same_session(
     await _drive(flow_task, clock, engine_env)
 
     [run] = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
-    assert run.usage.input_tokens == 120
+    assert run.usage.uncached_input_tokens == 120
     assert (
         len(
             [
@@ -883,7 +883,7 @@ async def test_unknown_failure_with_high_confidence_retries(
     )
     assert events[0].data["accepted"] is True
     [run] = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
-    assert run.usage.input_tokens == 120
+    assert run.usage.uncached_input_tokens == 120
     assert run.session_id is not None
 
 
@@ -920,7 +920,7 @@ async def test_unknown_failure_below_confidence_escalates_without_retry(
     )
     assert helper_events[0].data["accepted"] is False
     [run] = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
-    assert run.usage.input_tokens == 0
+    assert run.usage.uncached_input_tokens is None
 
 
 async def test_unrecoverable_report_escalates_as_agent_protocol(

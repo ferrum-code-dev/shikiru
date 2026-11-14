@@ -555,23 +555,74 @@ def test_running_tool_is_closed_without_outcome_when_the_turn_ends() -> None:
 @pytest.mark.parametrize(
     ("fixture", "initial", "expected"),
     [
-        ("turn_first", None, Usage(32_358, 18, 0, 0, None, COST_BASIS_UNKNOWN, None)),
-        ("turn_resume", None, Usage(32_415, 12, 16_244, 0, None, COST_BASIS_UNKNOWN, None)),
+        (
+            "turn_first",
+            None,
+            Usage(None, None, None, None, None, COST_BASIS_UNKNOWN, None),
+        ),
+        (
+            "turn_resume",
+            None,
+            Usage(None, None, None, None, None, COST_BASIS_UNKNOWN, None),
+        ),
         (
             "turn_resume",
             _PRIOR_USAGE,
-            Usage(33_415, 17, 16_251, 3, None, COST_BASIS_UNKNOWN, 40.0),
+            Usage(None, None, None, None, None, COST_BASIS_UNKNOWN, 40.0),
         ),
-        ("turn_auth_rejected", None, Usage(0, 0, 0, 0, None, COST_BASIS_UNKNOWN, None)),
+        (
+            "turn_auth_rejected",
+            None,
+            Usage(None, None, None, None, None, COST_BASIS_UNKNOWN, None),
+        ),
     ],
-    ids=("first-turn", "resumed-turn", "resumed-turn-adds-prior-usage", "no-models"),
+    ids=("first-turn", "resumed-turn", "resumed-turn-clears-prior-usage", "failed-no-models"),
 )
-def test_turn_usage_is_summed_over_models_and_added_to_prior_usage(
+def test_turn_usage_preserves_unverified_token_categories_and_context(
     fixture: str, initial: Usage | None, expected: Usage
 ) -> None:
     usage = _of_type(_signals(_fixture_lines(fixture), initial_usage=initial), UsageReported)
 
     assert usage == [UsageReported(expected)]
+
+
+def test_turn_without_a_usage_record_reports_unknown_tokens() -> None:
+    lines = [
+        line
+        for line in _fixture_lines("turn_first")
+        if json.loads(line).get(RECORD_PAYLOAD_TYPE_KEY) != RUN_USAGE_TYPE
+    ]
+
+    [usage] = [signal.usage for signal in _signals(lines) if isinstance(signal, UsageReported)]
+
+    assert usage == Usage(None, None, None, None, None, COST_BASIS_UNKNOWN, None)
+
+
+def test_non_integer_muse_usage_fields_still_fail_as_malformed() -> None:
+    lines = _fixture_lines("turn_first")
+    index = next(
+        index
+        for index, line in enumerate(lines)
+        if json.loads(line).get(RECORD_PAYLOAD_TYPE_KEY) == RUN_USAGE_TYPE
+    )
+    record = json.loads(lines[index])
+    record[RECORD_PAYLOAD_KEY]["models"][0]["reasoning_tokens"] = "8"
+    lines[index] = json.dumps(record)
+
+    assert [failure.kind for failure in _failures(_signals(lines))] == [FailureKind.UNKNOWN]
+
+
+def test_failed_call_with_no_model_usage_clears_resumed_token_counts() -> None:
+    signals = _signals(
+        _fixture_lines("turn_context_failure"),
+        _EXIT_FAILED,
+        initial_usage=_PRIOR_USAGE,
+    )
+
+    [usage] = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
+
+    assert usage == Usage(None, None, None, None, None, COST_BASIS_UNKNOWN, 40.0)
+    assert _failures(signals)
 
 
 _FIXTURE_ALLOWANCE = _first_record(_fixture_lines("turn_first"), RUN_USAGE_TYPE)[
