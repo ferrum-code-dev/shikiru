@@ -464,7 +464,7 @@ class MuseTurnParser:
     def _cumulative_usage(self, totals: _TurnTotals, latest_prompt_tokens: int | None) -> Usage:
         base = self._initial_usage
         return Usage(
-            input_tokens=base.input_tokens + totals.input_tokens,
+            input_tokens=base.input_tokens + totals.input_tokens - totals.cached_tokens,
             output_tokens=base.output_tokens + totals.output_tokens,
             cache_read_tokens=base.cache_read_tokens + totals.cached_tokens,
             cache_write_tokens=base.cache_write_tokens,

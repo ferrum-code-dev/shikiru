@@ -44,7 +44,7 @@ def rollout_usage(
     cache_write_tokens = _integer(total, _CACHE_WRITE_TOKENS_FIELD)
     context_used_pct = _context_used_pct(last, context_window)
     return Usage(
-        input_tokens=input_tokens,
+        input_tokens=input_tokens - cache_read_tokens - cache_write_tokens,
         output_tokens=output_tokens,
         cache_read_tokens=cache_read_tokens,
         cache_write_tokens=cache_write_tokens,

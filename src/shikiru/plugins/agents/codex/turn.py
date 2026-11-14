@@ -80,6 +80,7 @@ _USAGE_FIELD = "usage"
 _INFO_FIELD = "info"
 _INPUT_TOKENS_FIELD = "input_tokens"
 _CACHED_INPUT_TOKENS_FIELD = "cached_input_tokens"
+_CACHE_WRITE_TOKENS_FIELD = "cache_write_input_tokens"
 _OUTPUT_TOKENS_FIELD = "output_tokens"
 _LAST_USAGE_FIELD = "last_token_usage"
 _STATUS_FIELD = "status"
@@ -639,6 +640,7 @@ def _reported_usage(
         _INPUT_TOKENS_FIELD,
         _OUTPUT_TOKENS_FIELD,
         _CACHED_INPUT_TOKENS_FIELD,
+        _CACHE_WRITE_TOKENS_FIELD,
     )
     if turn_usage is not None and any(field in turn_usage for field in token_fields):
         return _usage_from_turn(turn_usage, previous)
@@ -650,11 +652,19 @@ def _usage_from_turn(payload: Mapping[str, Any], previous: Usage) -> Usage:
         value = payload.get(key)
         return int(value) if isinstance(value, int | float) else fallback
 
+    cache_read = token_value(_CACHED_INPUT_TOKENS_FIELD, previous.cache_read_tokens)
+    cache_write = token_value(_CACHE_WRITE_TOKENS_FIELD, previous.cache_write_tokens)
+    raw_input = payload.get(_INPUT_TOKENS_FIELD)
+    input_tokens = (
+        int(raw_input) - cache_read - cache_write
+        if isinstance(raw_input, int | float)
+        else previous.input_tokens
+    )
     return Usage(
-        input_tokens=token_value(_INPUT_TOKENS_FIELD, previous.input_tokens),
+        input_tokens=input_tokens,
         output_tokens=token_value(_OUTPUT_TOKENS_FIELD, previous.output_tokens),
-        cache_read_tokens=token_value(_CACHED_INPUT_TOKENS_FIELD, previous.cache_read_tokens),
-        cache_write_tokens=previous.cache_write_tokens,
+        cache_read_tokens=cache_read,
+        cache_write_tokens=cache_write,
         cost_usd=None,
         cost_basis="unknown",
         context_used_pct=previous.context_used_pct,

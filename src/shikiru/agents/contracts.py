@@ -110,7 +110,7 @@ class Rung:
 
 @dataclass(frozen=True)
 class Usage:
-    """A session's cumulative token and priced cost usage, as reported by its agent."""
+    """Cumulative usage with input, cache reads, cache writes and output counted separately."""
 
     input_tokens: int
     output_tokens: int

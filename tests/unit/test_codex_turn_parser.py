@@ -175,7 +175,7 @@ def test_finish_reads_rollout_created_after_session_started(tmp_path: Path) -> N
         ),
         UsageReported(
             Usage(
-                _INPUT_TOKENS,
+                _INPUT_TOKENS - _CACHED_INPUT_TOKENS,
                 _OUTPUT_TOKENS,
                 _CACHED_INPUT_TOKENS,
                 0,

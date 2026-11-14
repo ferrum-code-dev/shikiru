@@ -251,7 +251,7 @@ _FULL_LAYOUT = [
     _row(
         "Totals",
         _count(5, "sessions"),
-        _tokens_total("1.5M"),
+        _tokens_total("10.8M"),
         _api_total("$4.28"),
     ),
     _row(
@@ -274,7 +274,7 @@ _FULL_LAYOUT = [
     _agent_row(
         "claude",
         _count(3, "runs"),
-        _tokens_total("1.5M"),
+        _tokens_total("10.8M"),
         _billed("$4.28"),
         group(("1 cost unknown", GREY)),
     ),
@@ -499,7 +499,7 @@ async def test_observation_age_is_printed_once_when_shared_and_per_window_otherw
 
 
 _COMPACT_LAYOUT = [
-    "Totals   5 sessions · 1.5M tokens · $4.28 API",
+    "Totals   5 sessions · 10.8M tokens · $4.28 API",
     "Tokens   in 1.0M · out 501.5k · cache r 9.0M",
     "         w 300.0k",
     "Coverage 4 reported · 1 without tokens",
@@ -508,7 +508,7 @@ _COMPACT_LAYOUT = [
     "         est. $6.50 API-equivalent (1 session)",
     _RULE_CHARACTER * _COMPACT[0],
     "By agent",
-    "claude 3 runs · 1.5M tokens · $4.28 billed",
+    "claude 3 runs · 10.8M tokens · $4.28 billed",
     "       1 cost unknown",
     "codex  2 runs · 1.5k tokens · 1 without tokens",
     "       est. $6.50 · 1 cost unknown",
@@ -524,7 +524,7 @@ _COMPACT_LAYOUT = [
 _TINY_LAYOUT = [
     "Totals",
     "5 sessions",
-    "1.5M tokens",
+    "10.8M tokens",
     "$4.28 API",
     "Tokens",
     "in 1.0M",
@@ -545,7 +545,7 @@ _TINY_LAYOUT = [
     "By agent",
     "claude",
     "3 runs",
-    "1.5M tokens",
+    "10.8M tokens",
     "$4.28 billed",
     "1 cost unknown",
     "codex",

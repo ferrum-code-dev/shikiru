@@ -556,11 +556,11 @@ def test_running_tool_is_closed_without_outcome_when_the_turn_ends() -> None:
     ("fixture", "initial", "expected"),
     [
         ("turn_first", None, Usage(32_358, 18, 0, 0, None, COST_BASIS_UNKNOWN, None)),
-        ("turn_resume", None, Usage(32_415, 12, 16_244, 0, None, COST_BASIS_UNKNOWN, None)),
+        ("turn_resume", None, Usage(16_171, 12, 16_244, 0, None, COST_BASIS_UNKNOWN, None)),
         (
             "turn_resume",
             _PRIOR_USAGE,
-            Usage(33_415, 17, 16_251, 3, None, COST_BASIS_UNKNOWN, 40.0),
+            Usage(17_171, 17, 16_251, 3, None, COST_BASIS_UNKNOWN, 40.0),
         ),
         ("turn_auth_rejected", None, Usage(0, 0, 0, 0, None, COST_BASIS_UNKNOWN, None)),
     ],

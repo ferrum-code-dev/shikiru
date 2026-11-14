@@ -160,7 +160,15 @@ def _quota(five_hour_used: float, weekly_used: float, as_of_ms: int) -> QuotaRep
 
 def _usage(input_tokens: int, output_tokens: int, cache_read_tokens: int) -> UsageReported:
     return UsageReported(
-        Usage(input_tokens, output_tokens, cache_read_tokens, 0, None, COST_BASIS_UNKNOWN, None)
+        Usage(
+            input_tokens - cache_read_tokens,
+            output_tokens,
+            cache_read_tokens,
+            0,
+            None,
+            COST_BASIS_UNKNOWN,
+            None,
+        )
     )
 
 

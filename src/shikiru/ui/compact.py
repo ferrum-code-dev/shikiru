@@ -446,7 +446,12 @@ def _cost_text(amount: float) -> str:
 def _home_token_text(usage: _RecordedUsage) -> Text:
     if not _known_token_sessions(usage):
         return Text("tokens unknown", style=SECONDARY_TEXT_COLOR)
-    total = compact_count(usage.input_tokens + usage.output_tokens)
+    total = compact_count(
+        usage.input_tokens
+        + usage.output_tokens
+        + usage.cache_read_tokens
+        + usage.cache_write_tokens
+    )
     return Text.assemble((total, _BOLD_STEEL), (" tokens", SECONDARY_TEXT_COLOR))
 
 
@@ -979,7 +984,12 @@ class AgentUsageRow:
 def _session_token_summary(session: _TaskSession) -> str:
     if session.usage_reported is False:
         return "session tokens unknown"
-    total = compact_count(session.input_tokens + session.output_tokens)
+    total = compact_count(
+        session.input_tokens
+        + session.output_tokens
+        + session.cache_read_tokens
+        + session.cache_write_tokens
+    )
     if session.usage_reported is True:
         return f"session-wide {total} tok"
     if session.legacy_token_totals:
@@ -1062,7 +1072,15 @@ def _agent_token_groups(usage: _AgentUsageSummary) -> list[Text]:
         return [grey(USAGE_TOKENS_UNKNOWN)]
     groups = [
         Text.assemble(
-            (compact_count(usage.input_tokens + usage.output_tokens), _BOLD_STEEL),
+            (
+                compact_count(
+                    usage.input_tokens
+                    + usage.output_tokens
+                    + usage.cache_read_tokens
+                    + usage.cache_write_tokens
+                ),
+                _BOLD_STEEL,
+            ),
             (f" {USAGE_TOKENS_WORD}", SECONDARY_TEXT_COLOR),
         )
     ]

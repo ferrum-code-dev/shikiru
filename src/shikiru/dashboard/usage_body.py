@@ -125,7 +125,12 @@ def _tokens_known(session: TaskSessionView) -> bool:
 
 
 def _session_tokens(session: TaskSessionView) -> int:
-    return session.input_tokens + session.output_tokens
+    return (
+        session.input_tokens
+        + session.output_tokens
+        + session.cache_read_tokens
+        + session.cache_write_tokens
+    )
 
 
 def _tokens(session: TaskSessionView) -> str:

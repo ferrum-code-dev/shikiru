@@ -152,7 +152,12 @@ def _tool_outcome_style(outcome: object) -> str:
 
 def _usage(row: ViewRow) -> Text:
     usage = row["usage"]
-    tokens = usage["input_tokens"] + usage["output_tokens"]
+    tokens = (
+        usage["input_tokens"]
+        + usage["output_tokens"]
+        + usage["cache_read_tokens"]
+        + usage["cache_write_tokens"]
+    )
     return Text(f"{GLYPH_PENDING} {tokens} tokens", style=STYLE_DIM)
 
 
