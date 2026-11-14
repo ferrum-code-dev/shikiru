@@ -27,7 +27,6 @@ _FIXTURES = Path(__file__).parents[1] / "fixtures" / "agents" / "claude"
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _MODEL = "claude-haiku-4-5-20251001"
 _COMPACT_LIMIT = 160_000
-_UNKNOWN_USAGE = Usage(None, None, None, None, None, "unknown", None)
 
 
 def _parser(*, compact: bool = False) -> ClaudeTurnParser:
@@ -108,7 +107,7 @@ def test_later_assistant_message_becomes_the_final_text_after_an_intermediate_re
     terminal = parser.finish(0, "")
 
     assert activity == [Message("Later work outcome")]
-    assert terminal == [UsageReported(_UNKNOWN_USAGE), TurnEnded("Later work outcome")]
+    assert terminal == [TurnEnded("Later work outcome")]
 
 
 def test_task_notification_without_compact_boundary_remains_a_compaction_failure() -> None:
@@ -121,9 +120,8 @@ def test_task_notification_without_compact_boundary_remains_a_compaction_failure
     parser.feed(lines[0])
     parser.feed(lines[1])
 
-    [usage, failure] = parser.finish(0, "")
+    [failure] = parser.finish(0, "")
 
-    assert usage == UsageReported(_UNKNOWN_USAGE)
     assert isinstance(failure, TurnFailed)
     assert failure.kind is FailureKind.OTHER
 
@@ -165,10 +163,9 @@ def test_malformed_compaction_token_counts_fail(
         )
     )
 
-    [usage, failure] = parser.finish(0, "")
+    [failure] = parser.finish(0, "")
 
     assert activity == []
-    assert usage == UsageReported(_UNKNOWN_USAGE)
     assert isinstance(failure, TurnFailed)
     assert failure.kind is FailureKind.OTHER
     assert "malformed token counts" in failure.message

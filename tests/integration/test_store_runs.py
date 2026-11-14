@@ -11,13 +11,14 @@ from shikiru.agents.contracts import (
     Rung,
     Usage,
 )
-from shikiru.domain.runs import RunStatus, starting_usage
+from shikiru.domain.runs import RunStatus
 from shikiru.domain.tasks import Role
-from shikiru.store.runs import RunStore
+from shikiru.store.runs import RunStore, fetch_runs_for_task
 from tests.support.clock import FakeClock
 from tests.support.store import seed_task
 
 if TYPE_CHECKING:
+    from shikiru.store.database import Database
     from tests.support.store import Connection
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -86,7 +87,7 @@ def test_session_message_and_usage_round_trip(connection: Connection) -> None:
     store.record_usage(
         run.id,
         Usage(
-            uncached_input_tokens=100,
+            input_tokens=100,
             output_tokens=50,
             cache_read_tokens=0,
             cache_write_tokens=0,
@@ -101,23 +102,30 @@ def test_session_message_and_usage_round_trip(connection: Connection) -> None:
     assert reloaded.session_id == "session-1"
     assert reloaded.resume_command == "codex resume session-1"
     assert reloaded.last_message == "Working on it"
-    assert reloaded.usage.uncached_input_tokens == 100
+    assert reloaded.usage.input_tokens == 100
     assert reloaded.usage.output_tokens == 50
     assert reloaded.usage.cost_usd == 0.42
     assert reloaded.usage_reported is True
 
 
-def test_unknown_turn_usage_is_persisted_for_session_resume(connection: Connection) -> None:
-    store, task_id = _make_store(connection)
-    run = store.start(task_id, Role.IMPLEMENTER, RUNG)
-    store.set_session(run.id, "session-1", "claude --resume session-1")
-    store.record_usage(run.id, Usage(100, 20, 30, 0, 0.5, "billed", 30))
+def test_migrating_legacy_runs_preserves_unknown_usage_provenance(database: Database) -> None:
+    connection = database.connect()
+    clock = FakeClock(START)
+    task = seed_task(connection, clock)
+    store = RunStore(connection, clock)
+    run = store.start(task.id, Role.IMPLEMENTER, RUNG)
+    store.record_usage(run.id, Usage(0, 0, 0, 0, 0.0, "billed", None))
+    connection.execute("ALTER TABLE runs DROP COLUMN usage_reported")
+    connection.execute("ALTER TABLE runs DROP COLUMN billing_mode")
+    connection.execute("ALTER TABLE runs DROP COLUMN billing_source")
+    connection.execute("PRAGMA user_version = 7")
+    connection.close()
 
-    gap = Usage(None, None, None, None, 0.5, "billed", 30)
-    store.record_usage(run.id, gap)
-
-    resumed = store.get_live(task_id, Role.IMPLEMENTER)
-
-    assert resumed is not None
-    assert resumed.usage == gap
-    assert starting_usage(resumed) == gap
+    migrated = database.connect()
+    try:
+        [legacy_run] = fetch_runs_for_task(migrated, task.id)
+        assert legacy_run.usage_reported is None
+        assert legacy_run.usage.input_tokens == 0
+        assert legacy_run.usage.cost_usd == 0.0
+    finally:
+        migrated.close()

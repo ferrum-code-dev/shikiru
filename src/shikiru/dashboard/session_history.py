@@ -17,13 +17,7 @@ from shikiru.dashboard.contract import (
     TaskTurnUsageDeltaView,
 )
 from shikiru.domain.events import Event, EventKind
-from shikiru.domain.runs import (
-    Run,
-    RunStatus,
-    has_token_evidence,
-    is_legacy_usage,
-    normalized_usage,
-)
+from shikiru.domain.runs import Run, RunStatus, has_positive_token_evidence
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -34,8 +28,6 @@ MODEL_HISTORY_STATUS_COMPLETED = "completed"
 MODEL_HISTORY_STATUS_FAILED = "failed"
 MODEL_HISTORY_STATUS_INTERRUPTED = "interrupted"
 MODEL_HISTORY_STATUS_IDENTITY_UNCERTAIN = "identity uncertain"
-_UNCACHED_INPUT_KEY = "uncached_input_tokens"
-_LEGACY_INPUT_KEY = "input_tokens"
 TURN_COST_BASES = (
     COST_BASIS_BILLED,
     COST_BASIS_API_EQUIVALENT,
@@ -271,7 +263,6 @@ class _TaskSessionHistory:
                 gaps.append(TaskHistoryGap.MISSING_HISTORY)
 
     def _session_view(self, run: Run, current_lineage: bool) -> TaskSessionView:
-        usage = normalized_usage(run)
         return TaskSessionView(
             role=run.role.value,
             agent=run.agent,
@@ -279,17 +270,17 @@ class _TaskSessionHistory:
             effort=run.effort,
             session_id=run.session_id,
             status=run.status.value,
-            uncached_input_tokens=usage.uncached_input_tokens,
-            output_tokens=usage.output_tokens,
-            cache_read_tokens=usage.cache_read_tokens,
-            cache_write_tokens=usage.cache_write_tokens,
+            input_tokens=run.usage.input_tokens,
+            output_tokens=run.usage.output_tokens,
+            cache_read_tokens=run.usage.cache_read_tokens,
+            cache_write_tokens=run.usage.cache_write_tokens,
             cost_usd=run.usage.cost_usd,
             cost_basis=run.usage.cost_basis,
             context_used_pct=run.usage.context_used_pct,
             billing_mode=run.billing_mode,
             billing_source=run.billing_source,
             usage_reported=run.usage_reported,
-            legacy_token_totals=is_legacy_usage(run),
+            legacy_token_totals=(run.usage_reported is None and has_positive_token_evidence(run)),
             legacy_cost_recorded=(run.usage_reported is None and run.usage.cost_usd is not None),
             run_id=run.id,
             current_lineage=current_lineage,
@@ -362,16 +353,16 @@ def _turn_usage_delta(event: Event) -> TaskTurnUsageDeltaView | None:
     if not isinstance(raw, dict):
         return None
     usage_data = cast("dict[str, object]", raw)
-    if _UNCACHED_INPUT_KEY in usage_data:
-        uncached_input_tokens = _optional_token_count(usage_data.get(_UNCACHED_INPUT_KEY))
-        output_tokens = _optional_token_count(usage_data.get("output_tokens"))
-        cache_read_tokens = _optional_token_count(usage_data.get("cache_read_tokens"))
-        cache_write_tokens = _optional_token_count(usage_data.get("cache_write_tokens"))
-        legacy_usage = False
-    elif _LEGACY_INPUT_KEY in usage_data:
-        uncached_input_tokens = output_tokens = cache_read_tokens = cache_write_tokens = None
-        legacy_usage = True
-    else:
+    input_tokens = usage_data.get("input_tokens")
+    output_tokens = usage_data.get("output_tokens")
+    cache_read_tokens = usage_data.get("cache_read_tokens")
+    cache_write_tokens = usage_data.get("cache_write_tokens")
+    if not (
+        _is_token_count(input_tokens)
+        and _is_token_count(output_tokens)
+        and _is_token_count(cache_read_tokens)
+        and _is_token_count(cache_write_tokens)
+    ):
         return None
     cost = usage_data.get("cost_usd")
     if cost is not None and (isinstance(cost, bool) or not isinstance(cost, int | float)):
@@ -380,18 +371,13 @@ def _turn_usage_delta(event: Event) -> TaskTurnUsageDeltaView | None:
     if not isinstance(cost_basis, str) or cost_basis not in TURN_COST_BASES:
         cost_basis = COST_BASIS_UNKNOWN
     return TaskTurnUsageDeltaView(
-        uncached_input_tokens=uncached_input_tokens,
+        input_tokens=input_tokens,
         output_tokens=output_tokens,
         cache_read_tokens=cache_read_tokens,
         cache_write_tokens=cache_write_tokens,
         cost_usd=float(cost) if cost is not None else None,
         cost_basis=cost_basis,
-        legacy_usage=legacy_usage,
     )
-
-
-def _optional_token_count(value: object) -> int | None:
-    return value if _is_token_count(value) else None
 
 
 def _is_token_count(value: object) -> TypeGuard[int]:
@@ -411,4 +397,6 @@ def _history_view(history: _TurnHistory) -> TaskModelHistoryView:
 
 
 def _run_has_turn_evidence(run: Run) -> bool:
-    return run.session_id is not None or run.usage_reported is True or has_token_evidence(run)
+    return (
+        run.session_id is not None or run.usage_reported is True or has_positive_token_evidence(run)
+    )

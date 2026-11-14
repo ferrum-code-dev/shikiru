@@ -158,17 +158,9 @@ def _quota(five_hour_used: float, weekly_used: float, as_of_ms: int) -> QuotaRep
     )
 
 
-def _usage() -> UsageReported:
+def _usage(input_tokens: int, output_tokens: int, cache_read_tokens: int) -> UsageReported:
     return UsageReported(
-        Usage(
-            None,
-            None,
-            None,
-            None,
-            None,
-            COST_BASIS_UNKNOWN,
-            None,
-        )
+        Usage(input_tokens, output_tokens, cache_read_tokens, 0, None, COST_BASIS_UNKNOWN, None)
     )
 
 
@@ -299,7 +291,7 @@ class TestMuseHeadlessContract(AgentContractSuite):
                     Message(_OK),
                     _quota(8, 2, _FIRST_AS_OF_MS),
                     EvidenceRecovered(),
-                    _usage(),
+                    _usage(32_358, 18, 0),
                     TurnEnded(_OK),
                 ],
             ),
@@ -314,7 +306,7 @@ class TestMuseHeadlessContract(AgentContractSuite):
                     _quota(8, 2, _FIRST_AS_OF_MS),
                     EvidenceRecovered(),
                     Compacted(_COMPACTION_PRE_TOKENS, _COMPACTION_POST_TOKENS),
-                    _usage(),
+                    _usage(32_358, 18, 0),
                     TurnEnded(_OK),
                 ],
             ),
@@ -326,7 +318,7 @@ class TestMuseHeadlessContract(AgentContractSuite):
                     Message(_OK),
                     _quota(9, 3, _RESUME_AS_OF_MS),
                     EvidenceRecovered(),
-                    _usage(),
+                    _usage(32_415, 12, 16_244),
                     TurnEnded(_OK),
                 ],
             ),
@@ -342,7 +334,7 @@ class TestMuseHeadlessContract(AgentContractSuite):
                     Message(_TOOL_SECOND_DELTA),
                     _quota(9, 3, _TOOL_AS_OF_MS),
                     EvidenceRecovered(),
-                    _usage(),
+                    _usage(64_953, 151, 16_244),
                     TurnEnded(_TOOL_TEXT),
                 ],
             ),
@@ -354,7 +346,7 @@ class TestMuseHeadlessContract(AgentContractSuite):
                     Message(_HEADLESS_TEXT),
                     _quota(9, 3, _HEADLESS_AS_OF_MS),
                     EvidenceRecovered(),
-                    _usage(),
+                    _usage(27_472, 48, 0),
                     TurnEnded(_HEADLESS_TEXT),
                 ],
             ),
@@ -369,7 +361,7 @@ class TestMuseHeadlessContract(AgentContractSuite):
                 expected=[
                     SessionStarted(_SESSION_FIRST),
                     EvidenceRecovered(),
-                    _usage(),
+                    _usage(0, 0, 0),
                     TurnFailed(FailureKind.AUTH, _AUTH_REASON, None),
                 ],
             ),
@@ -381,7 +373,7 @@ class TestMuseHeadlessContract(AgentContractSuite):
                     SessionStarted(_SESSION_FIRST),
                     _quota(10, 3, _UNKNOWN_MODEL_AS_OF_MS),
                     EvidenceRecovered(),
-                    _usage(),
+                    _usage(0, 0, 0),
                     TurnFailed(FailureKind.OTHER, _UNKNOWN_MODEL_REASON, None),
                 ],
             ),
@@ -392,7 +384,7 @@ class TestMuseHeadlessContract(AgentContractSuite):
                 expected=[
                     SessionStarted(_SESSION_FIRST),
                     EvidenceRecovered(),
-                    _usage(),
+                    _usage(0, 0, 0),
                     TurnFailed(FailureKind.UNKNOWN, _UNMAPPED_REASON, None),
                 ],
             ),

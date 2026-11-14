@@ -16,14 +16,8 @@ from shikiru.domain.evidence_export import (
     render_evidence_json,
     render_evidence_markdown,
 )
-from shikiru.domain.runs import has_token_evidence, is_legacy_usage, normalized_usage
+from shikiru.domain.runs import has_positive_token_evidence
 from shikiru.domain.timeline import TIMELINE_ALL_CATEGORY, TIMELINE_ENGINE_CATEGORY
-from shikiru.domain.token_usage import (
-    LEGACY_USAGE_NOTE,
-    CategoryTotal,
-    TokenTotals,
-    processed_tokens,
-)
 from shikiru.errors import ShikiruError
 from shikiru.operator.queries import aggregate_usage
 
@@ -343,7 +337,6 @@ def _task_reference(task: Task) -> dict[str, object]:
 
 
 def _run_document(run: Run) -> dict[str, object]:
-    usage = normalized_usage(run)
     token_provenance = _token_source(run)
     cost_source = _cost_source(run)
     context_source = _context_source(run)
@@ -360,19 +353,20 @@ def _run_document(run: Run) -> dict[str, object]:
         "ended_at": run.ended_at.isoformat() if run.ended_at is not None else None,
         "usage_provenance": {
             "reported_marker": run.usage_reported,
-            "accounting": run.usage_accounting.value,
             "tokens": token_provenance,
             "cost": cost_source,
             "context": context_source,
         },
         "tokens": {
-            "uncached_input": usage.uncached_input_tokens,
-            "cache_read": usage.cache_read_tokens,
-            "cache_write": usage.cache_write_tokens,
-            "output": usage.output_tokens,
-            "processed": processed_tokens(usage),
+            "input": run.usage.input_tokens if token_provenance != COST_BASIS_UNKNOWN else None,
+            "output": run.usage.output_tokens if token_provenance != COST_BASIS_UNKNOWN else None,
+            "cache_read": run.usage.cache_read_tokens
+            if token_provenance != COST_BASIS_UNKNOWN
+            else None,
+            "cache_write": run.usage.cache_write_tokens
+            if token_provenance != COST_BASIS_UNKNOWN
+            else None,
         },
-        "legacy_usage": _legacy_usage_document(run),
         "cost": {
             "usd": run.usage.cost_usd if cost_source != COST_BASIS_UNKNOWN else None,
             "basis": run.usage.cost_basis,
@@ -384,31 +378,11 @@ def _run_document(run: Run) -> dict[str, object]:
 
 
 def _token_source(run: Run) -> str:
-    if is_legacy_usage(run):
-        return USAGE_PROVENANCE_LEGACY
     if run.usage_reported is True:
         return "reported"
-    if run.usage_reported is None and has_token_evidence(run):
+    if run.usage_reported is None and has_positive_token_evidence(run):
         return USAGE_PROVENANCE_LEGACY
     return COST_BASIS_UNKNOWN
-
-
-def _legacy_usage_document(run: Run) -> dict[str, object] | None:
-    legacy = run.legacy_usage
-    if legacy is None:
-        return None
-    return {
-        "source": legacy.source.value,
-        "reported_marker": legacy.usage_reported,
-        "recorded_counters": {
-            "input_tokens": legacy.input_tokens,
-            "uncached_input_tokens": legacy.uncached_input_tokens,
-            "cache_read_tokens": legacy.cache_read_tokens,
-            "cache_write_tokens": legacy.cache_write_tokens,
-            "output_tokens": legacy.output_tokens,
-        },
-        "interpretation": LEGACY_USAGE_NOTE,
-    }
 
 
 def _cost_source(run: Run) -> str:
@@ -431,6 +405,12 @@ def _usage_summary(runs: Sequence[Run]) -> list[dict[str, object]]:
     summaries: list[dict[str, object]] = []
     for usage in aggregate_usage(runs):
         token_run_count = usage.usage_reported_runs + usage.legacy_token_runs
+        tokens: dict[str, int | None] = {
+            "input": usage.input_tokens if token_run_count else None,
+            "output": usage.output_tokens if token_run_count else None,
+            "cache_read": usage.cache_read_tokens if token_run_count else None,
+            "cache_write": usage.cache_write_tokens if token_run_count else None,
+        }
         summaries.append(
             {
                 "agent": usage.agent,
@@ -438,7 +418,7 @@ def _usage_summary(runs: Sequence[Run]) -> list[dict[str, object]]:
                 "reported_token_runs": usage.usage_reported_runs,
                 "legacy_token_runs": usage.legacy_token_runs,
                 "unknown_token_runs": usage.run_count - token_run_count,
-                "tokens": _token_totals_document(usage.tokens),
+                "tokens": tokens,
                 "billed_cost_usd": usage.billed_cost_usd,
                 "billed_cost_runs": usage.billed_cost_runs,
                 "legacy_billed_cost_runs": usage.legacy_billed_cost_runs,
@@ -449,25 +429,6 @@ def _usage_summary(runs: Sequence[Run]) -> list[dict[str, object]]:
             }
         )
     return summaries
-
-
-def _token_totals_document(tokens: TokenTotals) -> dict[str, object]:
-    return {
-        "uncached_input": _category_document(tokens.uncached_input),
-        "cache_read": _category_document(tokens.cache_read),
-        "cache_write": _category_document(tokens.cache_write),
-        "output": _category_document(tokens.output),
-        "processed": _category_document(tokens.processed),
-    }
-
-
-def _category_document(total: CategoryTotal) -> dict[str, object]:
-    return {
-        "total": total.total,
-        "status": total.status.value,
-        "reported_runs": total.reported_runs,
-        "unreported_runs": total.unreported_runs,
-    }
 
 
 def _unavailable_sections(

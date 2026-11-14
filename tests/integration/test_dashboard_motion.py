@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import sqlite3  # noqa: TID251
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
@@ -42,7 +41,6 @@ from shikiru.plugins.widgets.escalations import EscalationsPanel
 from shikiru.plugins.widgets.queue import QueuePanel
 from shikiru.plugins.widgets.usage import UsagePanel
 from shikiru.process import ProcessIdentity
-from shikiru.store.database import Database, format_timestamp
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
 from shikiru.store.quotas import QuotaStore
@@ -85,7 +83,6 @@ from tests.support.escalations import (
     wait_for_resolution,
 )
 from tests.support.render import plain_text
-from tests.support.schema import database_at_schema
 from tests.support.store import seed_task
 from tests.support.waiting import UI_WAIT_SECONDS, wait_until, yield_control
 
@@ -101,6 +98,7 @@ if TYPE_CHECKING:
     from shikiru.dashboard.views import StateDashboardViews
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
+    from shikiru.store.database import Database
     from tests.support.store import Connection
 
 _START = datetime(2026, 1, 1, tzinfo=UTC)
@@ -2019,39 +2017,25 @@ def _uptime_text(header: Static) -> str:
     return match.group(0) if match else ""
 
 
-_PRE_CANONICAL_QUOTA_SCHEMA = 9
-
-
 async def test_legacy_quota_rows_give_way_to_canonical_observations_in_project_view(
+    database: Database,
+    connection: Connection,
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "state.db"
-    database_at_schema(path, _PRE_CANONICAL_QUOTA_SCHEMA)
-    legacy = sqlite3.connect(path)
+    clock = FakeClock(_START)
+    settings = _motion_settings(write_minimal_project(tmp_path))
+    task, _ = _seed_dashboard_state(connection, clock)
+    quotas = QuotaStore(connection)
+    block_until = _START + timedelta(hours=3)
+    quotas.block("codex", block_until, "quota", LONG_AGO)
     for agent, legacy_window, used_pct in (
         ("codex", "primary", 77.0),
         ("codex", "secondary", 66.0),
         ("claude", "five_hour", 36.0),
     ):
-        legacy.execute(
-            "INSERT INTO quotas (agent, window, used_pct, resets_at, observed_at) "
-            "VALUES (?, ?, ?, NULL, ?)",
-            (agent, legacy_window, used_pct, format_timestamp(_START)),
-        )
-    legacy.commit()
-    legacy.close()
-
-    clock = FakeClock(_START)
-    settings = _motion_settings(write_minimal_project(tmp_path))
-    database = Database(path)
-    block_until = _START + timedelta(hours=3)
-    seeding = database.connect()
-    try:
-        task, _ = _seed_dashboard_state(seeding, clock)
-        QuotaStore(seeding).block("codex", block_until, "quota", LONG_AGO)
-        seeding.commit()
-    finally:
-        seeding.close()
+        quotas.record(agent, QuotaWindow(legacy_window, used_pct, None, _START))
+    connection.execute("PRAGMA user_version = 9")
+    connection.commit()
 
     migrated = database.connect()
     try:

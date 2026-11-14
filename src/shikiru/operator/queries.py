@@ -47,7 +47,7 @@ from shikiru.domain.reports import (
     Report,
     ReportKind,
 )
-from shikiru.domain.runs import Run, RunStatus, is_legacy_usage, normalized_usage
+from shikiru.domain.runs import Run, RunStatus, has_positive_token_evidence
 from shikiru.domain.scheduling import dispatch_sort_key, occupied_slot_ids
 from shikiru.domain.status_tasks import select_human_status_tasks
 from shikiru.domain.steps import TURN_LIFECYCLE_KINDS, acting_role
@@ -67,7 +67,6 @@ from shikiru.domain.timeline import (
     event_category,
 )
 from shikiru.domain.timeline_phrases import event_phrase
-from shikiru.domain.token_usage import TokenTotals, sum_usages
 from shikiru.errors import ShikiruError
 from shikiru.operator.timeline import (
     TIMELINE_READ_ERROR_PREFIX,
@@ -373,7 +372,10 @@ class UsageView(OperatorView):
     """Aggregated usage for one agent across recorded runs."""
 
     agent: str
-    tokens: TokenTotals
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
     cost_usd: float | None
     cost_basis: CostBasis | Literal["mixed"]
     run_count: int = 0
@@ -1507,11 +1509,13 @@ def aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
     views: list[UsageView] = []
     for agent in sorted(by_agent):
         agent_runs = by_agent[agent]
-        reported_runs = [
-            run for run in agent_runs if run.usage_reported is True and not is_legacy_usage(run)
+        reported_runs = [run for run in agent_runs if run.usage_reported is True]
+        legacy_token_runs = [
+            run
+            for run in agent_runs
+            if run.usage_reported is None and has_positive_token_evidence(run)
         ]
-        legacy_token_runs = [run for run in agent_runs if is_legacy_usage(run)]
-        tokens = sum_usages(normalized_usage(run) for run in agent_runs)
+        token_runs = [*reported_runs, *legacy_token_runs]
         cost_bases: set[CostBasis] = {
             run.usage.cost_basis for run in agent_runs if _has_priced_cost_evidence(run)
         }
@@ -1540,7 +1544,10 @@ def aggregate_usage(runs: Sequence[Run]) -> list[UsageView]:
         views.append(
             UsageView(
                 agent=agent,
-                tokens=tokens,
+                input_tokens=sum(run.usage.input_tokens for run in token_runs),
+                output_tokens=sum(run.usage.output_tokens for run in token_runs),
+                cache_read_tokens=sum(run.usage.cache_read_tokens for run in token_runs),
+                cache_write_tokens=sum(run.usage.cache_write_tokens for run in token_runs),
                 cost_usd=cost_usd,
                 cost_basis=cost_basis,
                 run_count=len(agent_runs),

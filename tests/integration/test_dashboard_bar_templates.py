@@ -156,7 +156,7 @@ _TOKEN_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
         [
             line(
                 group(("1", WHITE_BOLD), (" session", GREY)),
-                group(("1.5k", CYAN_BOLD), (" processed tokens", GREY)),
+                group(("1.5k", CYAN_BOLD), (" tokens", GREY)),
                 group(("$4.28", GREEN_BOLD), (" API", GREY)),
             )
         ],
@@ -166,7 +166,7 @@ _TOKEN_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
         [
             line(
                 group(("1", WHITE_BOLD), (" session", GREY)),
-                group(("1.5k", CYAN_BOLD), (" processed tokens", GREY)),
+                group(("1.5k", CYAN_BOLD), (" tokens", GREY)),
                 group(("$0.00", GREEN_BOLD), (" API", GREY)),
             )
         ],
@@ -176,7 +176,7 @@ _TOKEN_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
         [
             line(
                 group(("1", WHITE_BOLD), (" session", GREY)),
-                group(("1.5k", CYAN_BOLD), (" processed tokens", GREY)),
+                group(("1.5k", CYAN_BOLD), (" tokens", GREY)),
                 group(("1 cost unreported", GREY)),
             )
         ],
@@ -186,7 +186,7 @@ _TOKEN_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
         [
             line(
                 group(("1", WHITE_BOLD), (" session", GREY)),
-                group(("1.5k", CYAN_BOLD), (" processed tokens", GREY)),
+                group(("1.5k", CYAN_BOLD), (" tokens", GREY)),
             )
         ],
     ),
@@ -214,12 +214,12 @@ _TOKEN_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
         [
             line(
                 group(("3", WHITE_BOLD), (" sessions", GREY)),
-                group(("3.0k", CYAN_BOLD), (" processed tokens (partial)", GREY)),
+                group(("3.0k", CYAN_BOLD), (" tokens", GREY)),
                 group(("$4.28", GREEN_BOLD), (" API", GREY)),
                 group(("1 session without tokens", GREY)),
                 group(("1 cost unreported", GREY)),
-            ),
-            line(group(("1 billing mode unknown", GREY))),
+                group(("1 billing mode unknown", GREY)),
+            )
         ],
     ),
     (
@@ -227,7 +227,7 @@ _TOKEN_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
         [
             line(
                 group(("1", WHITE_BOLD), (" session", GREY)),
-                group(("processed unknown", GREY)),
+                group(("1.5k", CYAN_BOLD), (" tokens", GREY)),
                 group(("1 legacy session", GREY)),
             )
         ],
@@ -262,16 +262,14 @@ async def test_home_token_bar_wraps_whole_groups_at_narrow_width(
     expected = [
         line(
             group(("3", WHITE_BOLD), (" sessions", GREY)),
-            group(("3.0k", CYAN_BOLD), (" processed tokens (partial)", GREY)),
-        ),
-        line(
+            group(("3.0k", CYAN_BOLD), (" tokens", GREY)),
             group(("$4.28", GREEN_BOLD), (" API", GREY)),
-            group(("1 session without tokens", GREY)),
         ),
         line(
+            group(("1 session without tokens", GREY)),
             group(("1 cost unreported", GREY)),
-            group(("1 billing mode unknown", GREY)),
         ),
+        line(group(("1 billing mode unknown", GREY))),
     ]
     widget = UsageWidget().create(_usage_context(reader, project_dir, clock))
     async with WidgetHostApp(widget).run_test(size=_NARROW):

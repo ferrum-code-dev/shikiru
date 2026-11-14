@@ -287,19 +287,13 @@ def _turn_outcome(outcome: Outcome) -> str:
 def _usage_delta(before: Usage, after: Usage) -> dict[str, int | float | str | None]:
     cost_delta, cost_basis = _comparable_cost_delta(before, after)
     return {
-        "uncached_input_tokens": _token_delta(
-            after.uncached_input_tokens, before.uncached_input_tokens
-        ),
-        "output_tokens": _token_delta(after.output_tokens, before.output_tokens),
-        "cache_read_tokens": _token_delta(after.cache_read_tokens, before.cache_read_tokens),
-        "cache_write_tokens": _token_delta(after.cache_write_tokens, before.cache_write_tokens),
+        "input_tokens": after.input_tokens - before.input_tokens,
+        "output_tokens": after.output_tokens - before.output_tokens,
+        "cache_read_tokens": after.cache_read_tokens - before.cache_read_tokens,
+        "cache_write_tokens": after.cache_write_tokens - before.cache_write_tokens,
         "cost_usd": cost_delta,
         "cost_basis": cost_basis,
     }
-
-
-def _token_delta(after: int | None, before: int | None) -> int | None:
-    return None if after is None or before is None else after - before
 
 
 def _comparable_cost_delta(before: Usage, after: Usage) -> tuple[float | None, str]:

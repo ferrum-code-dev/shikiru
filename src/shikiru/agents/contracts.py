@@ -110,48 +110,15 @@ class Rung:
 
 @dataclass(frozen=True)
 class Usage:
-    """A session's cumulative token and priced cost usage, as reported by its agent.
+    """A session's cumulative token and priced cost usage, as reported by its agent."""
 
-    The four token categories are mutually exclusive: uncached input, cache reads, cache writes
-    and output (output includes reasoning where the provider includes it). `None` means the
-    provider did not report that category; it is never a zero.
-    """
-
-    uncached_input_tokens: int | None
-    output_tokens: int | None
-    cache_read_tokens: int | None
-    cache_write_tokens: int | None
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
     cost_usd: float | None
     cost_basis: CostBasis
     context_used_pct: float | None
-
-
-def add_optional(left: int | None, right: int | None) -> int | None:
-    """Return the sum of two token counts, or `None` when either one is unknown."""
-    return None if left is None or right is None else left + right
-
-
-def add_usage(base: Usage, turn: Usage) -> Usage:
-    """Return the session usage after one more turn, with the turn's context and no priced cost.
-
-    A category stays unknown when either the session so far or the turn did not report it.
-    """
-    return Usage(
-        uncached_input_tokens=add_optional(base.uncached_input_tokens, turn.uncached_input_tokens),
-        output_tokens=add_optional(base.output_tokens, turn.output_tokens),
-        cache_read_tokens=add_optional(base.cache_read_tokens, turn.cache_read_tokens),
-        cache_write_tokens=add_optional(base.cache_write_tokens, turn.cache_write_tokens),
-        cost_usd=None,
-        cost_basis=COST_BASIS_UNKNOWN,
-        context_used_pct=turn.context_used_pct,
-    )
-
-
-def subtract_optional(total: int | None, part: int | None) -> int | None:
-    """Return `total` without `part`, or `None` when either is unknown or `part` exceeds `total`."""
-    if total is None or part is None or part > total:
-        return None
-    return total - part
 
 
 @dataclass(frozen=True)

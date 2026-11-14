@@ -23,7 +23,6 @@ from shikiru.agents.contracts import (
     TurnSpec,
     Usage,
     UsageReported,
-    add_usage,
     exhausted_reset,
 )
 from shikiru.agents.sdk.turn import (
@@ -47,12 +46,7 @@ from shikiru.plugins.agents.codex.options import (
 )
 from shikiru.plugins.agents.codex.quota import CodexQuotaProbe, QuotaObservation
 from shikiru.plugins.agents.codex.sandbox import sandbox_config_args
-from shikiru.plugins.agents.codex.usage import (
-    codex_usage,
-    latest_token_count,
-    rollout_usage,
-    token_count_observation_count,
-)
+from shikiru.plugins.agents.codex.usage import latest_token_count, rollout_usage
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -86,7 +80,6 @@ _USAGE_FIELD = "usage"
 _INFO_FIELD = "info"
 _INPUT_TOKENS_FIELD = "input_tokens"
 _CACHED_INPUT_TOKENS_FIELD = "cached_input_tokens"
-_CACHE_WRITE_TOKENS_FIELD = "cache_write_input_tokens"
 _OUTPUT_TOKENS_FIELD = "output_tokens"
 _LAST_USAGE_FIELD = "last_token_usage"
 _STATUS_FIELD = "status"
@@ -150,10 +143,10 @@ class CodexTurnParser:
     ) -> None:
         self._session_id = session_id
         self._initial_usage = initial_usage or Usage(
-            None,
-            None,
-            None,
-            None,
+            _ZERO_TOKENS,
+            _ZERO_TOKENS,
+            _ZERO_TOKENS,
+            _ZERO_TOKENS,
             None,
             _UNKNOWN_COST,
             None,
@@ -174,9 +167,9 @@ class CodexTurnParser:
         self._did_complete = False
         self._context_exceeded = False
         self._rollout = rollout_path or _rollout_path(home, session_id)
-        initial_entries = _read_rollout(self._rollout) if session_id is not None else []
-        self._initial_compaction_count = _compaction_count(initial_entries)
-        self._initial_token_count_observations = token_count_observation_count(initial_entries)
+        self._initial_compaction_count = (
+            _compaction_count(_read_rollout(self._rollout)) if session_id is not None else 0
+        )
         self._handlers = {
             _THREAD_STARTED: self._thread_started,
             _ITEM_STARTED: self._item_started,
@@ -251,16 +244,8 @@ class CodexTurnParser:
             if _quota_reading(rollout_reading) != _quota_reading(quota):
                 signals.append(QuotaReported(rollout_reading))
             quota = rollout_reading
-        rollout_covers_turn = (
-            token_count_observation_count(entries) > self._initial_token_count_observations
-        )
-        usage = _reported_usage(
-            entries,
-            self._turn_usage,
-            self._initial_usage,
-            rollout_covers_turn=rollout_covers_turn,
-        )
-        if self._did_start_thread or self._did_complete or self._session_id is not None:
+        usage = _reported_usage(entries, self._turn_usage, self._initial_usage)
+        if usage is not None:
             signals.append(UsageReported(usage))
         if self._failure is not None:
             signals.append(self._failed_signal(self._failure, stderr, quota))
@@ -646,40 +631,34 @@ def _reported_usage(
     entries: Sequence[Mapping[str, Any]],
     turn_usage: Mapping[str, Any] | None,
     previous: Usage,
-    *,
-    rollout_covers_turn: bool,
-) -> Usage:
+) -> Usage | None:
     latest = latest_token_count(entries)
-    if latest is not None and rollout_covers_turn:
+    if latest is not None:
         return rollout_usage(entries)
     token_fields = (
         _INPUT_TOKENS_FIELD,
         _OUTPUT_TOKENS_FIELD,
         _CACHED_INPUT_TOKENS_FIELD,
-        _CACHE_WRITE_TOKENS_FIELD,
     )
     if turn_usage is not None and any(field in turn_usage for field in token_fields):
         return _usage_from_turn(turn_usage, previous)
-    return Usage(
-        uncached_input_tokens=None,
-        output_tokens=None,
-        cache_read_tokens=None,
-        cache_write_tokens=None,
-        cost_usd=previous.cost_usd,
-        cost_basis=previous.cost_basis,
-        context_used_pct=previous.context_used_pct,
-    )
+    return None
 
 
 def _usage_from_turn(payload: Mapping[str, Any], previous: Usage) -> Usage:
-    turn = codex_usage(
-        input_tokens=_optional_integer(payload, _INPUT_TOKENS_FIELD),
-        output_tokens=_optional_integer(payload, _OUTPUT_TOKENS_FIELD),
-        cached_input_tokens=_optional_integer(payload, _CACHED_INPUT_TOKENS_FIELD),
-        cache_write_tokens=_optional_integer(payload, _CACHE_WRITE_TOKENS_FIELD),
+    def token_value(key: str, fallback: int) -> int:
+        value = payload.get(key)
+        return int(value) if isinstance(value, int | float) else fallback
+
+    return Usage(
+        input_tokens=token_value(_INPUT_TOKENS_FIELD, previous.input_tokens),
+        output_tokens=token_value(_OUTPUT_TOKENS_FIELD, previous.output_tokens),
+        cache_read_tokens=token_value(_CACHED_INPUT_TOKENS_FIELD, previous.cache_read_tokens),
+        cache_write_tokens=previous.cache_write_tokens,
+        cost_usd=None,
+        cost_basis="unknown",
         context_used_pct=previous.context_used_pct,
     )
-    return add_usage(previous, turn)
 
 
 def _error_details(

@@ -233,7 +233,7 @@ def test_failed_terminal_with_the_live_quota_text_carries_its_reset() -> None:
     ids=("credentials-stderr", "unrecognised-stderr", "empty-stderr"),
 )
 def test_exit_without_terminal_record_is_unknown_with_stderr_tail(stderr: str) -> None:
-    [failure] = [signal for signal in _parser().finish(1, stderr) if isinstance(signal, TurnFailed)]
+    [failure] = _parser().finish(1, stderr)
 
     assert isinstance(failure, TurnFailed)
     assert failure.kind is FailureKind.UNKNOWN

@@ -212,11 +212,8 @@ def _count(count: int, word: str) -> tuple[Piece, ...]:
     return group((str(count), WHITE_BOLD), (f" {word}", GREY))
 
 
-_PARTIAL = " (partial)"
-
-
-def _tokens_total(total: str, suffix: str = "") -> tuple[Piece, ...]:
-    return group((total, CYAN_BOLD), (f" processed tokens{suffix}", GREY))
+def _tokens_total(total: str) -> tuple[Piece, ...]:
+    return group((total, CYAN_BOLD), (" tokens", GREY))
 
 
 _NO_TOKENS = group(("tokens unknown", GREY))
@@ -238,20 +235,6 @@ def _detail(label: str, amount: str) -> tuple[Piece, ...]:
     return group((f"{label} ", GREY), (amount, CYAN_BOLD))
 
 
-_TOKENS_1K = (
-    _detail("uncached input", "1.0k"),
-    _detail("cache read", "0"),
-    _detail("cache write", "0"),
-    _detail("output", "500"),
-)
-_PARTIAL_TOKENS_2K = (
-    _detail("uncached input", f"2.0k{_PARTIAL}"),
-    _detail("cache read", f"0{_PARTIAL}"),
-    _detail("cache write", f"0{_PARTIAL}"),
-    _detail("output", f"1.0k{_PARTIAL}"),
-)
-
-
 def _gauge(window: str, glyph_and_pct: str, style: Style, resets: str) -> tuple[Piece, ...]:
     return group((window, _DIM), (f" {glyph_and_pct}", style), (f" resets {resets}", GREY))
 
@@ -268,16 +251,16 @@ _FULL_LAYOUT = [
     _row(
         "Totals",
         _count(5, "sessions"),
-        _tokens_total("10.8M", _PARTIAL),
+        _tokens_total("1.5M"),
         _api_total("$4.28"),
     ),
     _row(
         "Tokens",
-        _detail("uncached input", f"1.0M{_PARTIAL}"),
-        _detail("cache read", f"9.0M{_PARTIAL}"),
-        _detail("cache write", f"300.0k{_PARTIAL}"),
+        _detail("in", "1.0M"),
+        _detail("out", "501.5k"),
+        _detail("cache r", "9.0M"),
+        _detail("w", "300.0k"),
     ),
-    _row("", _detail("output", f"501.5k{_PARTIAL}")),
     _row("Coverage", _count(4, "reported"), _count(1, "without tokens")),
     _row(
         "Billing",
@@ -291,14 +274,14 @@ _FULL_LAYOUT = [
     _agent_row(
         "claude",
         _count(3, "runs"),
-        _tokens_total("10.8M"),
+        _tokens_total("1.5M"),
         _billed("$4.28"),
         group(("1 cost unknown", GREY)),
     ),
     _agent_row(
         "codex",
         _count(2, "runs"),
-        _tokens_total("1.5k", _PARTIAL),
+        _tokens_total("1.5k"),
         group(("1 without tokens", GREY)),
         _estimate("$6.50"),
         group(("1 cost unknown", GREY)),
@@ -357,7 +340,7 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
             "claude",
             [
                 _row("Totals", _count(1, "session"), _tokens_total("1.5k")),
-                _row("Tokens", *_TOKENS_1K),
+                _row("Tokens", _detail("in", "1.0k"), _detail("out", "500")),
                 _row("Billing", _count(1, "subscription")),
             ],
             (_count(1, "run"), _tokens_total("1.5k"), group(("cost unknown", GREY))),
@@ -369,7 +352,7 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
             "codex",
             [
                 _row("Totals", _count(1, "session"), _tokens_total("1.5k"), _api_total("$4.28")),
-                _row("Tokens", *_TOKENS_1K),
+                _row("Tokens", _detail("in", "1.0k"), _detail("out", "500")),
                 _row("Billing", _count(1, "API billed")),
             ],
             (_count(1, "run"), _tokens_total("1.5k"), _billed("$4.28")),
@@ -381,7 +364,7 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
             "codex",
             [
                 _row("Totals", _count(1, "session"), _tokens_total("1.5k")),
-                _row("Tokens", *_TOKENS_1K),
+                _row("Tokens", _detail("in", "1.0k"), _detail("out", "500")),
                 _row("Billing", _count(1, "API unreported")),
                 _row("", _estimate("$0.11", " API-equivalent (1 session)")),
             ],
@@ -405,7 +388,7 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
             "codex",
             [
                 _row("Totals", _count(1, "session"), _tokens_total("1.5k")),
-                _row("Tokens", *_TOKENS_1K),
+                _row("Tokens", _detail("in", "1.0k"), _detail("out", "500")),
                 _row("Billing", _count(1, "unknown")),
             ],
             (_count(1, "run"), _tokens_total("1.5k"), _billed("$0.00")),
@@ -417,7 +400,7 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
             "claude",
             [
                 _row("Totals", _count(1, "session"), _tokens_total("1.5k"), _billed("$2.50")),
-                _row("Tokens", *_TOKENS_1K),
+                _row("Tokens", _detail("in", "1.0k"), _detail("out", "500")),
                 _row("Billing", _count(1, "subscription")),
             ],
             (_count(1, "run"), _tokens_total("1.5k"), _billed("$2.50")),
@@ -428,14 +411,8 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
         _single_agent_state(
             "codex",
             [
-                _row(
-                    "Totals",
-                    _count(3, "sessions"),
-                    _tokens_total("3.0k", _PARTIAL),
-                    _api_total("$4.28"),
-                ),
-                _row("Tokens", *_PARTIAL_TOKENS_2K[:3]),
-                _row("", _PARTIAL_TOKENS_2K[3]),
+                _row("Totals", _count(3, "sessions"), _tokens_total("3.0k"), _api_total("$4.28")),
+                _row("Tokens", _detail("in", "2.0k"), _detail("out", "1.0k")),
                 _row("Coverage", _count(2, "reported"), _count(1, "without tokens")),
                 _row(
                     "Billing",
@@ -446,7 +423,7 @@ _STATE_CASES: tuple[tuple[Callable[[Connection, FakeClock], None], list[list[Cel
             ],
             (
                 _count(3, "runs"),
-                _tokens_total("3.0k", _PARTIAL),
+                _tokens_total("3.0k"),
                 group(("1 without tokens", GREY)),
                 _billed("$4.28"),
                 group(("2 cost unknown", GREY)),
@@ -522,24 +499,19 @@ async def test_observation_age_is_printed_once_when_shared_and_per_window_otherw
 
 
 _COMPACT_LAYOUT = [
-    "Totals   5 sessions",
-    "         10.8M processed tokens (partial)",
-    "         $4.28 API",
-    "Tokens   uncached input 1.0M (partial)",
-    "         cache read 9.0M (partial)",
-    "         cache write 300.0k (partial)",
-    "         output 501.5k (partial)",
+    "Totals   5 sessions · 1.5M tokens · $4.28 API",
+    "Tokens   in 1.0M · out 501.5k · cache r 9.0M",
+    "         w 300.0k",
     "Coverage 4 reported · 1 without tokens",
     "Billing  2 subscription · 2 API billed",
     "         1 unknown",
     "         est. $6.50 API-equivalent (1 session)",
     _RULE_CHARACTER * _COMPACT[0],
     "By agent",
-    "claude 3 runs · 10.8M processed tokens",
-    "       $4.28 billed · 1 cost unknown",
-    "codex  2 runs · 1.5k processed tokens (partial)",
-    "       1 without tokens · est. $6.50",
+    "claude 3 runs · 1.5M tokens · $4.28 billed",
     "       1 cost unknown",
+    "codex  2 runs · 1.5k tokens · 1 without tokens",
+    "       est. $6.50 · 1 cost unknown",
     _RULE_CHARACTER * _COMPACT[0],
     "Limits",
     f"claude 5h {GAUGE_GLYPHS[2]} 38% resets 1h 40m",
@@ -552,18 +524,13 @@ _COMPACT_LAYOUT = [
 _TINY_LAYOUT = [
     "Totals",
     "5 sessions",
-    "10.8M processed",
-    "tokens (partial)",
+    "1.5M tokens",
     "$4.28 API",
     "Tokens",
-    "uncached input",
-    "1.0M (partial)",
-    "cache read 9.0M",
-    "(partial)",
-    "cache write 300.0k",
-    "(partial)",
-    "output 501.5k",
-    "(partial)",
+    "in 1.0M",
+    "out 501.5k",
+    "cache r 9.0M",
+    "w 300.0k",
     "Coverage",
     "4 reported",
     "1 without tokens",
@@ -578,14 +545,12 @@ _TINY_LAYOUT = [
     "By agent",
     "claude",
     "3 runs",
-    "10.8M processed",
-    "tokens",
+    "1.5M tokens",
     "$4.28 billed",
     "1 cost unknown",
     "codex",
     "2 runs",
-    "1.5k processed",
-    "tokens (partial)",
+    "1.5k tokens",
     "1 without tokens",
     "est. $6.50",
     "1 cost unknown",

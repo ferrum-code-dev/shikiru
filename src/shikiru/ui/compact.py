@@ -20,7 +20,6 @@ from shikiru.agents.contracts import (
 from shikiru.domain.escalation import escalation_reason_label
 from shikiru.domain.levels import UsageLevel
 from shikiru.domain.tasks import EscalationReason, Role
-from shikiru.domain.token_usage import TotalStatus, processed_sum
 from shikiru.ui.gauge import Gauge
 from shikiru.ui.glyphs import GLYPH_CURRENT_STAGE, GLYPH_ESCALATED, GLYPH_STOPPED
 from shikiru.ui.keys import append_key_hint
@@ -41,8 +40,6 @@ if TYPE_CHECKING:
     from datetime import datetime, timedelta
 
     from rich.console import Console, ConsoleOptions, RenderResult
-
-    from shikiru.domain.token_usage import CategoryTotal, TokenTotals
 
 
 _BOLD_PRIMARY = f"{STYLE_BOLD} {PRIMARY_TEXT_COLOR}"
@@ -86,14 +83,11 @@ USAGE_UNKNOWN_WORD = "unknown"
 USAGE_REPORTED_WORD = "reported"
 USAGE_LEGACY_WORD = "legacy"
 USAGE_WITHOUT_TOKENS_WORD = "without tokens"
-USAGE_UNCACHED_INPUT_LABEL = "uncached input"
-USAGE_CACHE_READ_LABEL = "cache read"
-USAGE_CACHE_WRITE_LABEL = "cache write"
-USAGE_OUTPUT_LABEL = "output"
-USAGE_PROCESSED_WORD = "processed tokens"
-USAGE_PROCESSED_UNKNOWN = "processed unknown"
-USAGE_PARTIAL_SUFFIX = " (partial)"
-USAGE_UNKNOWN_VALUE = "\N{EM DASH}"
+USAGE_TOKENS_WORD = "tokens"
+USAGE_TOKENS_IN_LABEL = "in"
+USAGE_TOKENS_OUT_LABEL = "out"
+USAGE_CACHE_READ_LABEL = "cache r"
+USAGE_CACHE_WRITE_LABEL = "w"
 USAGE_TOKENS_UNKNOWN = "tokens unknown"
 USAGE_COST_UNKNOWN = "cost unknown"
 USAGE_RESETS_WORD = "resets"
@@ -126,7 +120,16 @@ class _RecordedUsage(Protocol):
     def session_count(self) -> int: ...
 
     @property
-    def tokens(self) -> TokenTotals: ...
+    def input_tokens(self) -> int: ...
+
+    @property
+    def output_tokens(self) -> int: ...
+
+    @property
+    def cache_read_tokens(self) -> int: ...
+
+    @property
+    def cache_write_tokens(self) -> int: ...
 
     @property
     def reported_sessions(self) -> int: ...
@@ -173,7 +176,16 @@ class _AgentUsageSummary(Protocol):
     def agent(self) -> str: ...
 
     @property
-    def tokens(self) -> TokenTotals: ...
+    def input_tokens(self) -> int: ...
+
+    @property
+    def output_tokens(self) -> int: ...
+
+    @property
+    def cache_read_tokens(self) -> int: ...
+
+    @property
+    def cache_write_tokens(self) -> int: ...
 
     @property
     def run_count(self) -> int: ...
@@ -347,16 +359,16 @@ class _TaskSession(Protocol):
     def current_lineage(self) -> bool: ...
 
     @property
-    def uncached_input_tokens(self) -> int | None: ...
+    def input_tokens(self) -> int: ...
 
     @property
-    def output_tokens(self) -> int | None: ...
+    def output_tokens(self) -> int: ...
 
     @property
-    def cache_read_tokens(self) -> int | None: ...
+    def cache_read_tokens(self) -> int: ...
 
     @property
-    def cache_write_tokens(self) -> int | None: ...
+    def cache_write_tokens(self) -> int: ...
 
     @property
     def usage_reported(self) -> bool | None: ...
@@ -434,7 +446,8 @@ def _cost_text(amount: float) -> str:
 def _home_token_text(usage: _RecordedUsage) -> Text:
     if not _known_token_sessions(usage):
         return Text("tokens unknown", style=SECONDARY_TEXT_COLOR)
-    return _processed_text(usage.tokens.processed)
+    total = compact_count(usage.input_tokens + usage.output_tokens)
+    return Text.assemble((total, _BOLD_STEEL), (" tokens", SECONDARY_TEXT_COLOR))
 
 
 def _home_coverage_texts(usage: _RecordedUsage) -> list[Text]:
@@ -492,40 +505,18 @@ def _all_mode_billed_groups(usage: _RecordedUsage) -> list[Text]:
 def _token_detail_groups(usage: _RecordedUsage) -> list[Text]:
     if not _known_token_sessions(usage):
         return []
-    tokens = usage.tokens
-    return [
-        _category_amount(USAGE_UNCACHED_INPUT_LABEL, tokens.uncached_input),
-        _category_amount(USAGE_CACHE_READ_LABEL, tokens.cache_read),
-        _category_amount(USAGE_CACHE_WRITE_LABEL, tokens.cache_write),
-        _category_amount(USAGE_OUTPUT_LABEL, tokens.output),
+    groups = [
+        _token_amount(USAGE_TOKENS_IN_LABEL, usage.input_tokens),
+        _token_amount(USAGE_TOKENS_OUT_LABEL, usage.output_tokens),
     ]
+    if usage.cache_read_tokens or usage.cache_write_tokens:
+        groups.append(_token_amount(USAGE_CACHE_READ_LABEL, usage.cache_read_tokens))
+        groups.append(_token_amount(USAGE_CACHE_WRITE_LABEL, usage.cache_write_tokens))
+    return groups
 
 
-def _category_amount(label: str, total: CategoryTotal) -> Text:
-    if total.total is None:
-        return Text.assemble(
-            (f"{label} ", SECONDARY_TEXT_COLOR), (USAGE_UNKNOWN_VALUE, SECONDARY_TEXT_COLOR)
-        )
-    amount = compact_count(total.total) + _partial_suffix(total)
-    return Text.assemble((f"{label} ", SECONDARY_TEXT_COLOR), (amount, _BOLD_STEEL))
-
-
-def _processed_text(total: CategoryTotal) -> Text:
-    if total.total is None:
-        return Text(USAGE_PROCESSED_UNKNOWN, style=SECONDARY_TEXT_COLOR)
-    suffix = _partial_suffix(total)
-    return Text.assemble(
-        (compact_count(total.total), _BOLD_STEEL),
-        (f" {USAGE_PROCESSED_WORD}{suffix}", SECONDARY_TEXT_COLOR),
-    )
-
-
-def _partial_suffix(total: CategoryTotal) -> str:
-    return USAGE_PARTIAL_SUFFIX if total.status is TotalStatus.PARTIAL else ""
-
-
-def _optional_count_text(count: int | None) -> str:
-    return USAGE_UNKNOWN_VALUE if count is None else f"{count:,}"
+def _token_amount(label: str, count: int) -> Text:
+    return Text.assemble((f"{label} ", SECONDARY_TEXT_COLOR), (compact_count(count), _BOLD_STEEL))
 
 
 def _coverage_groups(usage: _RecordedUsage) -> list[Text]:
@@ -985,26 +976,14 @@ class AgentUsageRow:
         )
 
 
-def _session_categories(session: _TaskSession) -> tuple[int | None, ...]:
-    return (
-        session.uncached_input_tokens,
-        session.cache_read_tokens,
-        session.cache_write_tokens,
-        session.output_tokens,
-    )
-
-
 def _session_token_summary(session: _TaskSession) -> str:
     if session.usage_reported is False:
         return "session tokens unknown"
-    processed = processed_sum(_session_categories(session))
-    if processed is None:
-        return "session processed tokens unknown"
-    total = compact_count(processed)
+    total = compact_count(session.input_tokens + session.output_tokens)
     if session.usage_reported is True:
-        return f"session-wide {total} processed tok"
+        return f"session-wide {total} tok"
     if session.legacy_token_totals:
-        return f"session-wide {total} processed tok legacy"
+        return f"session-wide {total} tok legacy"
     return "session tokens unknown"
 
 
@@ -1081,7 +1060,12 @@ def _agent_token_groups(usage: _AgentUsageSummary) -> list[Text]:
     known_runs = usage.usage_reported_runs + usage.legacy_token_runs
     if not known_runs:
         return [grey(USAGE_TOKENS_UNKNOWN)]
-    groups = [_processed_text(usage.tokens.processed)]
+    groups = [
+        Text.assemble(
+            (compact_count(usage.input_tokens + usage.output_tokens), _BOLD_STEEL),
+            (f" {USAGE_TOKENS_WORD}", SECONDARY_TEXT_COLOR),
+        )
+    ]
     if usage.run_count > known_runs:
         groups.append(grey(f"{usage.run_count - known_runs} {USAGE_WITHOUT_TOKENS_WORD}"))
     return groups
@@ -1144,11 +1128,9 @@ class AgentUsageDetails:
         else:
             provenance = "legacy recorded · " if session.legacy_token_totals else "reported · "
             tokens = (
-                f"{provenance}{USAGE_UNCACHED_INPUT_LABEL} "
-                f"{_optional_count_text(session.uncached_input_tokens)} · "
-                f"{USAGE_CACHE_READ_LABEL} {_optional_count_text(session.cache_read_tokens)} · "
-                f"{USAGE_CACHE_WRITE_LABEL} {_optional_count_text(session.cache_write_tokens)} · "
-                f"{USAGE_OUTPUT_LABEL} {_optional_count_text(session.output_tokens)}"
+                f"{provenance}input {session.input_tokens:,} · output {session.output_tokens:,} · "
+                f"cache read {session.cache_read_tokens:,} · "
+                f"cache write {session.cache_write_tokens:,}"
             )
         cost = _session_cost_text(session)[0]
         cost_basis = f"Cost basis · {session.cost_basis} · {cost}"

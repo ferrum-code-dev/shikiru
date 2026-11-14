@@ -14,20 +14,9 @@ from shikiru.agents.contracts import (
 )
 from shikiru.domain.levels import displayed_pct
 from shikiru.domain.tasks import DomainModel, Role
-from shikiru.domain.token_usage import UsageAccounting
 
 NO_USAGE = Usage(
-    uncached_input_tokens=None,
-    output_tokens=None,
-    cache_read_tokens=None,
-    cache_write_tokens=None,
-    cost_usd=None,
-    cost_basis="unknown",
-    context_used_pct=None,
-)
-
-NO_TOKENS_USAGE = Usage(
-    uncached_input_tokens=0,
+    input_tokens=0,
     output_tokens=0,
     cache_read_tokens=0,
     cache_write_tokens=0,
@@ -45,26 +34,6 @@ class RunStatus(StrEnum):
     CLOSED = auto()
 
 
-class LegacyUsageSource(StrEnum):
-    """Where a preserved ambiguous token observation came from."""
-
-    PRE_CATEGORY_COLUMNS = auto()
-    PREVIOUS_CATEGORY_FIELDS = auto()
-    PREVIOUSLY_CLEARED_FIELDS = auto()
-
-
-class LegacyUsage(DomainModel):
-    """Historical token counters kept as evidence, not comparable usage."""
-
-    source: LegacyUsageSource
-    usage_reported: bool | None = None
-    input_tokens: int | None = None
-    uncached_input_tokens: int | None = None
-    output_tokens: int | None = None
-    cache_read_tokens: int | None = None
-    cache_write_tokens: int | None = None
-
-
 class Run(DomainModel):
     """One agent session for a task role (mirrors the `runs` table)."""
 
@@ -79,60 +48,24 @@ class Run(DomainModel):
     last_message: str | None = None
     status: RunStatus
     usage: Usage = NO_USAGE
-    legacy_usage: LegacyUsage | None = None
     usage_reported: bool | None = None
-    usage_accounting: UsageAccounting = UsageAccounting.CATEGORIES
     billing_mode: BillingMode = BILLING_MODE_UNKNOWN
     billing_source: BillingSource = BILLING_SOURCE_UNKNOWN
     started_at: datetime
     ended_at: datetime | None = None
 
 
-def has_token_evidence(run: Run) -> bool:
-    """Return whether `run` reports at least one token category."""
-    usage = run.usage
+def has_positive_token_evidence(run: Run) -> bool:
+    """Return whether `run` records a positive token count in any usage field."""
     return any(
-        category is not None
-        for category in (
-            usage.uncached_input_tokens,
-            usage.output_tokens,
-            usage.cache_read_tokens,
-            usage.cache_write_tokens,
+        token > 0
+        for token in (
+            run.usage.input_tokens,
+            run.usage.output_tokens,
+            run.usage.cache_read_tokens,
+            run.usage.cache_write_tokens,
         )
     )
-
-
-def is_legacy_usage(run: Run) -> bool:
-    """Return whether the run's token observations use historical accounting."""
-    return run.usage_accounting is UsageAccounting.LEGACY or (
-        run.usage_reported is None and has_token_evidence(run)
-    )
-
-
-def normalized_usage(run: Run) -> Usage:
-    """Return only token categories safe to combine with current provider accounting."""
-    if not is_legacy_usage(run):
-        return run.usage
-    return Usage(
-        uncached_input_tokens=None,
-        output_tokens=None,
-        cache_read_tokens=None,
-        cache_write_tokens=None,
-        cost_usd=run.usage.cost_usd,
-        cost_basis=run.usage.cost_basis,
-        context_used_pct=run.usage.context_used_pct,
-    )
-
-
-def starting_usage(run: Run) -> Usage:
-    """Return the usage a new turn of `run` builds on.
-
-    A run without a session has made no model calls, so its base is a known zero. A run with a
-    session builds on what it recorded, which stays unknown where it reported nothing.
-    """
-    if run.session_id is None:
-        return NO_TOKENS_USAGE
-    return normalized_usage(run)
 
 
 MISSING_TITLE_VALUE = "\N{EN DASH}"

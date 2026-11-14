@@ -29,7 +29,6 @@ from shikiru.domain.runs import RunStatus
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step
 from shikiru.domain.tasks import Hold, Status, Task
-from shikiru.domain.token_usage import PROCESSED_TOKENS_NOTE, CategoryTotal, TotalStatus
 from shikiru.errors import (
     CommandFailed,
     CommandRejectedError,
@@ -157,21 +156,10 @@ DOCTOR_CHECK_NAMES = {
     "config.plugins": "Agent configuration",
 }
 DOCTOR_PLUGIN_CHECK_NAMES = {"model_choices": "Model choices"}
-STATUS_USAGE_TABLE_MIN_WIDTH = 160
+STATUS_USAGE_TABLE_MIN_WIDTH = 80
 STATUS_ESCALATION_NO_STEP_LABEL = "no step"
-STATUS_USAGE_HEADERS = (
-    "Agent",
-    "Runs",
-    "Processed",
-    "Uncached input",
-    "Cache read",
-    "Cache write",
-    "Output",
-    "Costs",
-    "Quota used 5h/7d",
-)
+STATUS_USAGE_HEADERS = ("Agent", "Runs", "Input", "Output", "Costs", "Quota used 5h/7d")
 ESCALATION_EVENT_HEADLINE_SEPARATORS = (" · ", ": ")
-_TOKEN_ROW_LABELS = ("Processed", "Uncached input", "Cache read", "Cache write", "Output")
 QUOTA_PERIODS = ("5h", "7d")
 QUOTA_PROVIDER_SLOTS = ("primary", "secondary")
 STATUS_STEP_LABELS = {
@@ -989,10 +977,7 @@ def _usage_section(
             )
             for agent in agents
         ]
-        return _section(
-            "Usage",
-            Group(_status_rows(rows, width=width), _usage_note()),
-        )
+        return _status_section("Usage", rows, width=width)
 
     table = Table.grid(expand=False, padding=(0, STATUS_USAGE_COLUMN_PADDING))
     headers = STATUS_USAGE_HEADERS
@@ -1008,11 +993,8 @@ def _usage_section(
         table.add_row(
             Text(agent, style=BOLD_PRIMARY),
             Text(str(usage.run_count if usage is not None else 0), style=BOLD_PRIMARY),
-            _category_text(usage.tokens.processed) if usage is not None else _unknown_text(),
-            _category_text(usage.tokens.uncached_input) if usage is not None else _unknown_text(),
-            _category_text(usage.tokens.cache_read) if usage is not None else _unknown_text(),
-            _category_text(usage.tokens.cache_write) if usage is not None else _unknown_text(),
-            _category_text(usage.tokens.output) if usage is not None else _unknown_text(),
+            _token_total(usage, input_tokens=True),
+            _token_total(usage, input_tokens=False),
             _cost_total(usage),
             _quota_cell(
                 quotas.get(agent, []),
@@ -1021,7 +1003,7 @@ def _usage_section(
                 quota_alert_pct=quota_alert_pct,
             ),
         )
-    return _section("Usage", Group(table, _usage_note()))
+    return _section("Usage", table)
 
 
 def _usage_groups(
@@ -1034,7 +1016,8 @@ def _usage_groups(
 ) -> tuple[Text, ...]:
     return (
         _fact("Runs", str(usage.run_count if usage is not None else 0), BOLD_PRIMARY),
-        *_token_rows(usage),
+        _labeled_value("Input", _token_total(usage, input_tokens=True)),
+        _labeled_value("Output", _token_total(usage, input_tokens=False)),
         _labeled_value("Costs", _cost_total(usage)),
         _labeled_value(
             "Quota used 5h/7d",
@@ -1055,36 +1038,14 @@ def _labeled_value(label: str, value: Text) -> Text:
     return result
 
 
-def _usage_note() -> Text:
-    return Text(PROCESSED_TOKENS_NOTE, style=SECONDARY_TEXT_COLOR, overflow="fold")
-
-
-def _token_rows(usage: UsageView | None) -> tuple[Text, ...]:
-    if usage is None:
-        return tuple(_labeled_value(label, _unknown_text()) for label in _TOKEN_ROW_LABELS)
-    tokens = usage.tokens
-    values = (
-        tokens.processed,
-        tokens.uncached_input,
-        tokens.cache_read,
-        tokens.cache_write,
-        tokens.output,
-    )
-    return tuple(
-        _labeled_value(label, _category_text(total))
-        for label, total in zip(_TOKEN_ROW_LABELS, values, strict=True)
-    )
-
-
-def _category_text(total: CategoryTotal) -> Text:
-    if total.total is None:
-        return _unknown_text()
-    partial = " (partial)" if total.status is TotalStatus.PARTIAL else ""
-    return Text(compact_count(total.total) + partial, style=BOLD_STEEL)
-
-
-def _unknown_text() -> Text:
-    return Text("unknown", style=SECONDARY_TEXT_COLOR)
+def _token_total(usage: UsageView | None, *, input_tokens: bool) -> Text:
+    if usage is None or usage.run_count == 0:
+        return Text("unknown", style=SECONDARY_TEXT_COLOR)
+    known_runs = usage.usage_reported_runs + usage.legacy_token_runs
+    if known_runs != usage.run_count:
+        return Text("unknown", style=SECONDARY_TEXT_COLOR)
+    tokens = usage.input_tokens if input_tokens else usage.output_tokens
+    return Text(compact_count(tokens), style=BOLD_STEEL)
 
 
 def _cost_total(usage: UsageView | None) -> Text:

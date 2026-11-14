@@ -135,8 +135,8 @@ _STREAMED_QUOTA_RESET_AT = _SAMPLE_NOW + timedelta(hours=5)
 _EXHAUSTED_USED_PERCENT = 100
 _USAGE_LIMIT_STDERR = "ERROR: You've hit your usage limit."
 _CONTEXT_WINDOW = 258_400
-_USAGE_FIRST = Usage(3_579, 330, 52_096, 0, None, "unknown", 5.506578947368421)
-_USAGE_RESUMED = Usage(24_049, 608, 105_344, 0, None, "unknown", 7.201238390092879)
+_USAGE_FIRST = Usage(55_675, 330, 52_096, 0, None, "unknown", 5.506578947368421)
+_USAGE_RESUMED = Usage(129_393, 608, 105_344, 0, None, "unknown", 7.201238390092879)
 _OPENROUTER_LIVE_CONTEXT_WINDOW = 997_500
 _BUNDLED_CONTEXT_WINDOW = 272_000
 _OPENROUTER_LIVE_INPUT_TOKENS = 12_340
@@ -156,7 +156,7 @@ _SYNTHETIC_OPENAI_KEY = "synthetic-openai-key"
 _SYNTHETIC_CODEX_KEY = "synthetic-codex-key"
 _SYNTHETIC_PROVIDER_KEY = "synthetic-provider-key"
 _OPENROUTER_LIVE_USAGE = Usage(
-    None,
+    _OPENROUTER_LIVE_INPUT_TOKENS,
     _OPENROUTER_LIVE_OUTPUT_TOKENS,
     0,
     _OPENROUTER_LIVE_CACHE_WRITE_TOKENS,
@@ -224,7 +224,7 @@ _MIDTURN_SIGNALS = [
     Message("DONE KESTREL-4471"),
     Compacted(36_697, 14_270),
     Compacted(37_330, 14_387),
-    UsageReported(Usage(78_265, 1_145, 152_320, 0, None, "unknown", 37_348 / 258_400 * 100)),
+    UsageReported(Usage(230_585, 1_145, 152_320, 0, None, "unknown", 37_348 / 258_400 * 100)),
     TurnEnded("DONE KESTREL-4471"),
 ]
 
@@ -348,7 +348,6 @@ class TestCodexHeadlessContract(AgentContractSuite):
                     ToolFinished("command"),
                     ToolStarted("command", ""),
                     ToolFinished("command", ToolOutcome.SUCCESS, 0),
-                    UsageReported(Usage(None, None, None, None, None, "unknown", None)),
                     TurnEnded(""),
                 ],
             ),

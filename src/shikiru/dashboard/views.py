@@ -102,7 +102,7 @@ from shikiru.domain.reports import (
     Verdict,
 )
 from shikiru.domain.results import derive_task_results, new_task_ids, tracks_live_work
-from shikiru.domain.runs import RunStatus, is_legacy_usage, normalized_usage
+from shikiru.domain.runs import RunStatus, has_positive_token_evidence
 from shikiru.domain.scheduling import (
     WaitReason,
     dispatch_sort_key,
@@ -122,7 +122,6 @@ from shikiru.domain.steps import (
 from shikiru.domain.tasks import ACTIVE_STATUSES, Hold, Role, Status, Task
 from shikiru.domain.timeline import TIMELINE_EVIDENCE_CATEGORY
 from shikiru.domain.timeline_phrases import GLYPH_ATTENTION, Tone
-from shikiru.domain.token_usage import TokenTotals, sum_usages
 from shikiru.domain.workflow import WorkflowProgress, WorkflowReport, project_workflow
 from shikiru.errors import ShikiruError
 from shikiru.operator.queries import (
@@ -1750,7 +1749,10 @@ class StateDashboardViews:
             result.append(
                 AgentUsageView(
                     agent=agent,
-                    tokens=item.tokens if item is not None else TokenTotals(),
+                    input_tokens=item.input_tokens if item is not None else 0,
+                    output_tokens=item.output_tokens if item is not None else 0,
+                    cache_read_tokens=item.cache_read_tokens if item is not None else 0,
+                    cache_write_tokens=item.cache_write_tokens if item is not None else 0,
                     cost_usd=item.cost_usd if item is not None else None,
                     cost_basis=item.cost_basis if item is not None else COST_BASIS_UNKNOWN,
                     quotas=windows,
@@ -2218,13 +2220,18 @@ def _recorded_usage(runs: Sequence[Run]) -> RecordedUsageView:
     api_equivalent_sessions = sum(item.api_equivalent_cost_runs for item in usage)
     return RecordedUsageView(
         session_count=len(runs),
-        tokens=sum_usages(normalized_usage(run) for run in runs),
-        reported_sessions=sum(
-            run.usage_reported is True and not is_legacy_usage(run) for run in runs
+        input_tokens=sum(item.input_tokens for item in usage),
+        output_tokens=sum(item.output_tokens for item in usage),
+        cache_read_tokens=sum(item.cache_read_tokens for item in usage),
+        cache_write_tokens=sum(item.cache_write_tokens for item in usage),
+        reported_sessions=sum(run.usage_reported is True for run in runs),
+        legacy_token_sessions=sum(
+            run.usage_reported is None and has_positive_token_evidence(run) for run in runs
         ),
-        legacy_token_sessions=sum(is_legacy_usage(run) for run in runs),
         unknown_token_sessions=sum(
-            run.usage_reported is not True and not is_legacy_usage(run) for run in runs
+            run.usage_reported is not True
+            and not (run.usage_reported is None and has_positive_token_evidence(run))
+            for run in runs
         ),
         billed_cost_usd=_cost_total((item.billed_cost_usd for item in usage), billed_sessions),
         billed_cost_sessions=billed_sessions,
@@ -2254,7 +2261,10 @@ def _cost_total(amounts: Iterable[float | None], count: int) -> float | None:
 def _agent_usage(item: UsageView, *, quotas: tuple[QuotaGaugeView, ...]) -> AgentUsageView:
     return AgentUsageView(
         agent=item.agent,
-        tokens=item.tokens,
+        input_tokens=item.input_tokens,
+        output_tokens=item.output_tokens,
+        cache_read_tokens=item.cache_read_tokens,
+        cache_write_tokens=item.cache_write_tokens,
         cost_usd=item.cost_usd,
         cost_basis=item.cost_basis,
         quotas=quotas,

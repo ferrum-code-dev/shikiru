@@ -84,7 +84,7 @@ class SessionState(TypedDict):
     """One fake session's remembered prompts, usage totals and context fill."""
 
     prompts: list[str]
-    uncached_input_tokens: int
+    input_tokens: int
     output_tokens: int
     cache_read_tokens: int
     cache_write_tokens: int
@@ -135,7 +135,7 @@ def load_session_state(state_path: Path) -> SessionState:
     if not state_path.is_file():
         return {
             "prompts": [],
-            "uncached_input_tokens": 0,
+            "input_tokens": 0,
             "output_tokens": 0,
             "cache_read_tokens": 0,
             "cache_write_tokens": 0,

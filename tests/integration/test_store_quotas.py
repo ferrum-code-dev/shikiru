@@ -13,7 +13,6 @@ from shikiru.agents.contracts import QuotaWindow
 from shikiru.store.database import Database, format_timestamp, transaction
 from shikiru.store.quotas import QuotaStore, fetch_quotas
 from tests.support.clock import LONG_AGO
-from tests.support.schema import database_at_schema
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -103,16 +102,16 @@ def _insert_legacy(connection: Connection, agent: str, window: str, used_pct: fl
 def test_legacy_builtin_window_aliases_are_dropped_and_never_shown_beside_canonical_ones(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "state.db"
-    database_at_schema(path, _PRE_CANONICAL_SCHEMA_VERSION)
-    legacy = sqlite3.connect(path)
-    _insert_legacy(legacy, "claude", "five_hour", 36.0)
-    _insert_legacy(legacy, "codex", "primary", 20.0)
-    _insert_legacy(legacy, "other", "primary", 7.0)
-    legacy.commit()
-    legacy.close()
+    database = Database(tmp_path / "state.db")
+    connection = database.connect()
+    _insert_legacy(connection, "claude", "five_hour", 36.0)
+    _insert_legacy(connection, "codex", "primary", 20.0)
+    _insert_legacy(connection, "other", "primary", 7.0)
+    connection.execute(f"PRAGMA user_version = {_PRE_CANONICAL_SCHEMA_VERSION}")
+    connection.commit()
+    connection.close()
 
-    connection = Database(path).connect()
+    connection = database.connect()
     try:
         assert fetch_quotas(connection, "claude") == []
         assert fetch_quotas(connection, "codex") == []
@@ -207,22 +206,21 @@ _ORPHAN_REPAIR_BEFORE_VERSION = 14
 def test_upgrade_repairs_block_rows_left_half_written_by_the_previous_schema(
     tmp_path: Path,
 ) -> None:
-    path = tmp_path / "state.db"
-    database_at_schema(path, _ORPHAN_REPAIR_BEFORE_VERSION)
+    database = Database(tmp_path / "state.db")
+    connection = database.connect()
     until = START + timedelta(hours=1)
-    legacy = sqlite3.connect(path)
-    legacy.execute(
+    connection.execute(
         "INSERT INTO agent_blocks (agent, until, reason) VALUES ('claude', ?, 'quota')",
         (format_timestamp(until),),
     )
-    legacy.execute(
+    connection.execute(
         "INSERT INTO agent_block_times (agent, blocked_at) VALUES ('codex', ?)",
         (format_timestamp(START),),
     )
-    legacy.commit()
-    legacy.close()
+    connection.execute(f"PRAGMA user_version = {_ORPHAN_REPAIR_BEFORE_VERSION}")
+    connection.close()
 
-    connection = Database(path).connect()
+    connection = database.connect()
     try:
         store = _make_store(connection)
         [active] = store.active_blocks(START)

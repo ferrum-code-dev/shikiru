@@ -1068,7 +1068,7 @@ async def _assert_mixed_home_readouts(app: DashboardApp) -> None:
     attention_rows = attention.query_one("#escalation-panels", VerticalScroll)
     await wait_until(
         lambda: (
-            "2.7k processed tokens" in " ".join(_rendered_widget_lines(usage))
+            "2.7k tokens" in " ".join(_rendered_widget_lines(usage))
             and attention.display
             and "Operator owns" in _rendered_text(attention_rows.query_one(Static))
             and "paused" in _rendered_text(attention_rows.query_one(Static))
@@ -1106,7 +1106,7 @@ async def _assert_mixed_home_readouts(app: DashboardApp) -> None:
     resource_text = " ".join(_rendered_widget_lines(resources))
     attention_text = " ".join(_rendered_widget_lines(attention_rows.query_one(Static)))
     assert "Engine running" in identity_text
-    assert "2.7k processed tokens" in usage_text
+    assert "2.7k tokens" in usage_text
     assert "$0.42 API" in usage_text
     assert "2 costs unreported" in usage_text
     assert "API-equiv. est. $0.11" not in usage_text
