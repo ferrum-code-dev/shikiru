@@ -12,6 +12,8 @@ from shikiru.agents.contracts import Compacted
 from shikiru.plugins.agents.muse.options import (
     BUDGET_AFTER_KEY,
     BUDGET_BEFORE_KEY,
+    CACHE_READ_TOKENS_KEY,
+    CACHE_WRITE_TOKENS_KEY,
     CACHED_TOKENS_KEY,
     COMPACTION_INSTALLED_EVENT,
     DEFAULT_DATA_HOME_PARTS,
@@ -55,6 +57,7 @@ class ModelCompletion:
     input_tokens: int
     output_tokens: int
     cached_tokens: int
+    cache_write_tokens: int
     estimated_prompt_tokens: int | None
 
 
@@ -75,6 +78,7 @@ class SessionLogProgress:
 
     compactions: list[Compacted]
     latest_prompt_tokens: int | None
+    cache_write_by_model: Mapping[str, int]
 
 
 def muse_home(environ: Mapping[str, str], user_home: Path) -> Path:
@@ -130,15 +134,24 @@ def progress_since(
     records: Sequence[Mapping[str, Any]], mark: SessionLogMark
 ) -> SessionLogProgress:
     """Return the compactions and the latest known prompt estimate recorded after `mark`."""
+    completions = model_completions(records)[mark.model_calls :]
     estimates = [
         completion.estimated_prompt_tokens
-        for completion in model_completions(records)[mark.model_calls :]
+        for completion in completions
         if completion.estimated_prompt_tokens is not None
     ]
     return SessionLogProgress(
         compactions=compactions_after(records, mark.compactions),
         latest_prompt_tokens=estimates[-1] if estimates else None,
+        cache_write_by_model=_cache_writes_by_model(completions),
     )
+
+
+def _cache_writes_by_model(completions: Sequence[ModelCompletion]) -> dict[str, int]:
+    writes: dict[str, int] = {}
+    for completion in completions:
+        writes[completion.model] = writes.get(completion.model, 0) + completion.cache_write_tokens
+    return writes
 
 
 def session_records(lines: Iterable[str]) -> list[Mapping[str, Any]]:
@@ -192,7 +205,12 @@ def _completion(event: Mapping[str, Any]) -> ModelCompletion:
         model=_text(event, MODEL_KEY),
         input_tokens=_count(usage, INPUT_TOKENS_KEY),
         output_tokens=_count(usage, OUTPUT_TOKENS_KEY),
-        cached_tokens=_count(usage, CACHED_TOKENS_KEY),
+        cached_tokens=(
+            _count(usage, CACHED_TOKENS_KEY)
+            if CACHED_TOKENS_KEY in usage
+            else _count(usage, CACHE_READ_TOKENS_KEY)
+        ),
+        cache_write_tokens=_optional_count(usage, CACHE_WRITE_TOKENS_KEY),
         estimated_prompt_tokens=_reported_count(event, ESTIMATED_PROMPT_TOKENS_KEY),
     )
 
@@ -237,6 +255,13 @@ def _text(record: Mapping[str, Any], key: str) -> str:
 
 def _count(record: Mapping[str, Any], key: str) -> int:
     value = record.get(key)
+    if type(value) is not int:
+        raise SessionLogError(_MALFORMED_RECORD_MESSAGE)
+    return value
+
+
+def _optional_count(record: Mapping[str, Any], key: str) -> int:
+    value = record.get(key, 0)
     if type(value) is not int:
         raise SessionLogError(_MALFORMED_RECORD_MESSAGE)
     return value

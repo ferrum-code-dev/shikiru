@@ -43,11 +43,13 @@ from shikiru.agents.sdk.turn import (
     write_prompt_if_missing,
 )
 from shikiru.plugins.agents.muse.options import (
+    CACHE_WRITE_TOKENS_KEY,
     EXEC_SUBCOMMAND,
     HARD_THRESHOLD_FLAG,
     HARD_THRESHOLD_MARGIN,
     JSON_FLAG,
     MODEL_FLAG,
+    MODEL_KEY,
     MUSE_COMMAND,
     NO_AUTO_UPDATE_ENV_VAR,
     NO_AUTO_UPDATE_VALUE,
@@ -95,7 +97,9 @@ if TYPE_CHECKING:
 
 _MISSING_LOG_MESSAGE = "Muse session log is missing; compactions and context usage are unknown"
 _UNAVAILABLE_AT_START_MESSAGE = "Muse session log was missing or unreadable before the turn started"
-_NO_PROGRESS = SessionLogProgress(compactions=[], latest_prompt_tokens=None)
+_NO_PROGRESS = SessionLogProgress(
+    compactions=[], latest_prompt_tokens=None, cache_write_by_model={}
+)
 _TEXT_KEY = "text"
 _REASON_KEY = "reason"
 _EVENT_KEY = "event"
@@ -158,6 +162,8 @@ class _TurnTotals(NamedTuple):
     input_tokens: int
     output_tokens: int
     cached_tokens: int
+    reported_cache_write_tokens: int
+    unreported_cache_write_models: frozenset[str]
 
 
 class _FailedRun(NamedTuple):
@@ -413,7 +419,7 @@ class MuseTurnParser:
     def _usage_reports(self, progress: SessionLogProgress) -> list[AgentSignal]:
         if self._totals is None:
             return []
-        usage = self._cumulative_usage(self._totals, progress.latest_prompt_tokens)
+        usage = self._cumulative_usage(self._totals, progress)
         return [*self._window_faults(), UsageReported(usage)]
 
     def _window_faults(self) -> list[AgentSignal]:
@@ -461,17 +467,23 @@ class MuseTurnParser:
     def _classify(self, reason: str) -> TurnFailed:
         return classify_failure(reason, self._windows, self._clock.now(), self._reset_time)
 
-    def _cumulative_usage(self, totals: _TurnTotals, latest_prompt_tokens: int | None) -> Usage:
+    def _cumulative_usage(self, totals: _TurnTotals, progress: SessionLogProgress) -> Usage:
         base = self._initial_usage
+        cache_write_tokens = _cache_write_tokens(totals, progress)
         return Usage(
-            input_tokens=base.input_tokens + totals.input_tokens - totals.cached_tokens,
+            input_tokens=base.input_tokens
+            + totals.input_tokens
+            - totals.cached_tokens
+            - cache_write_tokens,
             output_tokens=base.output_tokens + totals.output_tokens,
             cache_read_tokens=base.cache_read_tokens + totals.cached_tokens,
-            cache_write_tokens=base.cache_write_tokens,
+            cache_write_tokens=base.cache_write_tokens + cache_write_tokens,
             cost_usd=None,
             cost_basis=COST_BASIS_UNKNOWN,
             context_used_pct=context_pct(
-                latest_prompt_tokens, self._watch.context_window.tokens, base.context_used_pct
+                progress.latest_prompt_tokens,
+                self._watch.context_window.tokens,
+                base.context_used_pct,
             ),
         )
 
@@ -701,15 +713,36 @@ def _from_milliseconds(value: int) -> datetime:
 
 
 def _turn_totals(models: Sequence[object]) -> _TurnTotals:
-    totals = _TurnTotals(0, 0, 0)
+    input_tokens = output_tokens = cached_tokens = reported_cache_writes = 0
+    reported_models: set[str] = set()
+    omitted_models: set[str] = set()
     for model in models:
         entry = _mapping(model)
-        totals = _TurnTotals(
-            totals.input_tokens + _count(entry, _INPUT_TOKENS_KEY),
-            totals.output_tokens + _count(entry, _OUTPUT_TOKENS_KEY),
-            totals.cached_tokens + _count(entry, _CACHED_TOKENS_KEY),
-        )
-    return totals
+        input_tokens += _count(entry, _INPUT_TOKENS_KEY)
+        output_tokens += _count(entry, _OUTPUT_TOKENS_KEY)
+        cached_tokens += _count(entry, _CACHED_TOKENS_KEY)
+        name = _optional_text(entry, MODEL_KEY)
+        if CACHE_WRITE_TOKENS_KEY in entry:
+            reported_cache_writes += _count(entry, CACHE_WRITE_TOKENS_KEY)
+            if name is not None:
+                reported_models.add(name)
+        elif name is not None:
+            omitted_models.add(name)
+    return _TurnTotals(
+        input_tokens,
+        output_tokens,
+        cached_tokens,
+        reported_cache_writes,
+        frozenset(omitted_models - reported_models),
+    )
+
+
+def _cache_write_tokens(totals: _TurnTotals, progress: SessionLogProgress) -> int:
+    logged = sum(
+        progress.cache_write_by_model.get(model, 0)
+        for model in totals.unreported_cache_write_models
+    )
+    return totals.reported_cache_write_tokens + logged
 
 
 def _allowance_windows(allowance: object) -> tuple[QuotaWindow, ...]:

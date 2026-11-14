@@ -45,7 +45,7 @@ from shikiru.plugins.agents.muse.options import (
     TASK_PROPOSED_TYPE,
     TOOL_RESULT_TYPE,
 )
-from shikiru.plugins.agents.muse.session_log import NO_SESSION_LOG_MARK
+from shikiru.plugins.agents.muse.session_log import NO_SESSION_LOG_MARK, SessionLogMark
 from shikiru.plugins.agents.muse.turn import (
     ContextWindow,
     MuseTurnParser,
@@ -572,6 +572,231 @@ def test_turn_usage_is_summed_over_models_and_added_to_prior_usage(
     usage = _of_type(_signals(_fixture_lines(fixture), initial_usage=initial), UsageReported)
 
     assert usage == [UsageReported(expected)]
+
+
+def test_turn_usage_reports_cache_writes_without_including_them_in_input() -> None:
+    lines = _rewrite(
+        _fixture_lines("turn_first"),
+        RUN_USAGE_TYPE,
+        models=[
+            {
+                "model": "muse-ember-1.0",
+                "input_tokens": 100,
+                "cached_tokens": 20,
+                "cache_write_tokens": 7,
+                "output_tokens": 10,
+            }
+        ],
+    )
+
+    assert _of_type(_signals(lines), UsageReported) == [
+        UsageReported(Usage(73, 10, 20, 7, None, COST_BASIS_UNKNOWN, None))
+    ]
+
+
+@pytest.mark.parametrize(
+    ("models", "expected"),
+    [
+        (
+            [
+                {
+                    "model": "muse-ember-1.0",
+                    "input_tokens": 100,
+                    "cached_tokens": 20,
+                    "output_tokens": 10,
+                }
+            ],
+            Usage(73, 10, 20, 7, None, COST_BASIS_UNKNOWN, None),
+        ),
+        (
+            [
+                {
+                    "model": "muse-ember-1.0",
+                    "input_tokens": 100,
+                    "cached_tokens": 20,
+                    "cache_write_tokens": 7,
+                    "output_tokens": 10,
+                },
+                {
+                    "model": "muse-spark-1.2",
+                    "input_tokens": 200,
+                    "cached_tokens": 0,
+                    "output_tokens": 20,
+                },
+            ],
+            Usage(273, 30, 20, 7, None, COST_BASIS_UNKNOWN, None),
+        ),
+    ],
+    ids=("stream-omits-cache-writes", "mixed-stream-fields-prefer-reported-writes"),
+)
+def test_turn_usage_uses_stream_or_session_cache_writes_without_double_counting(
+    tmp_path: Path, models: list[dict[str, object]], expected: Usage
+) -> None:
+    session_id = _FIRST_SESSION_ID
+    session_log = tmp_path / "sessions" / "2026" / "11" / "12" / session_id / "session.jsonl"
+    session_log.parent.mkdir(parents=True)
+    session_log.write_text(
+        json.dumps(
+            {
+                "payload_type": "runtime.session",
+                "payload": {
+                    "event": {
+                        "kind": "model_completed",
+                        "model": "muse-ember-1.0",
+                        "usage": {
+                            "input_tokens": 100,
+                            "cache_read_tokens": 20,
+                            "cache_write_tokens": 7,
+                            "output_tokens": 10,
+                        },
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    clock = FakeClock(_NOW)
+    parser = MuseTurnParser(
+        clock,
+        ResetTimeParser(clock),
+        SessionWatch(
+            tmp_path,
+            session_id,
+            ContextWindow(tokens=_CONTEXT_WINDOW),
+            SessionLogMark(compactions=0, model_calls=0),
+        ),
+    )
+    lines = _rewrite(
+        _fixture_lines("turn_first"),
+        RUN_USAGE_TYPE,
+        models=models,
+    )
+    signals = [signal for line in lines for signal in parser.feed(line)]
+    signals.extend(parser.finish(_EXIT_OK, ""))
+
+    assert _of_type(signals, UsageReported) == [UsageReported(expected)]
+
+
+def test_mixed_stream_cache_writes_survive_without_session_log_evidence() -> None:
+    lines = _rewrite(
+        _fixture_lines("turn_first"),
+        RUN_USAGE_TYPE,
+        models=[
+            {
+                "model": "muse-ember-1.0",
+                "input_tokens": 100,
+                "cached_tokens": 20,
+                "cache_write_tokens": 7,
+                "output_tokens": 10,
+            },
+            {
+                "model": "muse-spark-1.2",
+                "input_tokens": 200,
+                "cached_tokens": 0,
+                "output_tokens": 20,
+            },
+        ],
+    )
+
+    assert _of_type(_signals(lines), UsageReported) == [
+        UsageReported(Usage(273, 30, 20, 7, None, COST_BASIS_UNKNOWN, None))
+    ]
+
+
+def test_session_log_fills_cache_writes_only_for_models_the_stream_omits(tmp_path: Path) -> None:
+    session_id = _FIRST_SESSION_ID
+    session_log = tmp_path / "sessions" / "2026" / "11" / "12" / session_id / "session.jsonl"
+    session_log.parent.mkdir(parents=True)
+    completions = [
+        {
+            "model": "muse-ember-1.0",
+            "usage": {
+                "input_tokens": 100,
+                "cache_read_tokens": 20,
+                "cache_write_tokens": 7,
+                "output_tokens": 10,
+            },
+        },
+        {
+            "model": "muse-spark-1.2",
+            "usage": {
+                "input_tokens": 200,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 5,
+                "output_tokens": 20,
+            },
+        },
+    ]
+    session_log.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "payload_type": "runtime.session",
+                    "payload": {"event": {"kind": "model_completed", **completion}},
+                }
+            )
+            for completion in completions
+        ),
+        encoding="utf-8",
+    )
+    clock = FakeClock(_NOW)
+    parser = MuseTurnParser(
+        clock,
+        ResetTimeParser(clock),
+        SessionWatch(
+            tmp_path,
+            session_id,
+            ContextWindow(tokens=_CONTEXT_WINDOW),
+            SessionLogMark(compactions=0, model_calls=0),
+        ),
+        Usage(1_000, 50, 30, 11, None, COST_BASIS_UNKNOWN, 40.0),
+    )
+    lines = _rewrite(
+        _fixture_lines("turn_first"),
+        RUN_USAGE_TYPE,
+        models=[
+            {
+                "model": "muse-ember-1.0",
+                "input_tokens": 100,
+                "cached_tokens": 20,
+                "cache_write_tokens": 7,
+                "output_tokens": 10,
+            },
+            {
+                "model": "muse-spark-1.2",
+                "input_tokens": 200,
+                "cached_tokens": 0,
+                "output_tokens": 20,
+            },
+        ],
+    )
+    signals = [signal for line in lines for signal in parser.feed(line)]
+    signals.extend(parser.finish(_EXIT_OK, ""))
+
+    assert _of_type(signals, UsageReported) == [
+        UsageReported(Usage(1_268, 80, 50, 23, None, COST_BASIS_UNKNOWN, 40.0))
+    ]
+
+
+def test_resumed_turn_adds_cache_writes_to_prior_usage_and_excludes_them_from_input() -> None:
+    initial_usage = Usage(1_000, 50, 30, 11, None, COST_BASIS_UNKNOWN, 40.0)
+    lines = _rewrite(
+        _fixture_lines("turn_first"),
+        RUN_USAGE_TYPE,
+        models=[
+            {
+                "model": "muse-ember-1.0",
+                "input_tokens": 100,
+                "cached_tokens": 20,
+                "cache_write_tokens": 7,
+                "output_tokens": 10,
+            }
+        ],
+    )
+
+    assert _of_type(_signals(lines, initial_usage=initial_usage), UsageReported) == [
+        UsageReported(Usage(1_073, 60, 50, 18, None, COST_BASIS_UNKNOWN, 40.0))
+    ]
 
 
 _FIXTURE_ALLOWANCE = _first_record(_fixture_lines("turn_first"), RUN_USAGE_TYPE)[

@@ -41,7 +41,7 @@ _MODEL_COMPLETED_LINE = json.dumps(
                 "model": "muse-ember-1.0",
                 "usage": {
                     "cache_read_tokens": 0,
-                    "cache_write_tokens": 0,
+                    "cache_write_tokens": 15,
                     "cached_tokens": 0,
                     "input_tokens": 30570,
                     "output_tokens": 273,
@@ -103,6 +103,7 @@ def test_model_completed_events_carry_exact_call_usage() -> None:
             input_tokens=30570,
             output_tokens=273,
             cached_tokens=0,
+            cache_write_tokens=15,
             estimated_prompt_tokens=31082,
         )
     ]
@@ -122,6 +123,7 @@ def test_progress_since_a_mark_reports_only_new_compactions_and_prompt_estimates
 
     assert progress.compactions == [Compacted(pre_tokens=40000, post_tokens=20000)]
     assert progress.latest_prompt_tokens == 22000
+    assert progress.cache_write_by_model == {"muse-ember-1.0": 15}
 
 
 @pytest.mark.parametrize("line", ["not json", "[1, 2]"])
