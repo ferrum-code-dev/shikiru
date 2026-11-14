@@ -53,7 +53,7 @@ keep running.
 - Python 3.14+ and [uv](https://docs.astral.sh/uv/).
 - Git 2.45+ and tmux 3.5+.
 - One Git repository per project, with at least one commit at its root. No submodules or multi-repo projects.
-- Claude Code, Codex CLI or Muse Code, installed and signed in. For Muse, sign in with `muse login`.
+- Claude Code, Codex CLI or Muse Code, installed and signed in.
 - `gh` and a GitHub remote, only for pull-request integration.
 
 ## Install and update
