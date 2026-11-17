@@ -1182,6 +1182,7 @@ class InitWizardApp(App[InitWizardResult | None]):
             return
         width = report_widget.content_region.width
         if width < 1:
+            self.call_after_refresh(self._update_doctor_report)
             return
         if width == self._doctor_report_width:
             self.call_after_refresh(self._update_navigation_hint)

@@ -58,7 +58,10 @@ from tests.support.waiting import LONG_WAIT_SECONDS, MEDIUM_WAIT_SECONDS
 
 pytestmark = pytest.mark.asyncio
 
+_OUTER_PYTEST_TIMEOUT_SECONDS = 240
 
+
+@pytest.mark.timeout(_OUTER_PYTEST_TIMEOUT_SECONDS)
 async def test_init_writes_mixed_multirung_ladders_and_runtime_resolves_complexity(
     tmp_path: Path,
     monkeypatch: MonkeyPatch,
@@ -82,15 +85,16 @@ async def test_init_writes_mixed_multirung_ladders_and_runtime_resolves_complexi
             cast("Select[str]", app.query_one("#ladder-effort", Select)),
             app.query_one("#ladder-add", Button),
         )
-        await wait_until(
-            lambda: (
+
+        def ladder_editor_is_ready() -> bool:
+            return (
                 len(scopes.query(".row-list-row")) == len(LADDER_SCOPES)
                 and body.max_scroll_y == 0
                 and all(row.is_on_screen for row in scopes.query(".row-list-row"))
                 and all(control.is_on_screen for control in editor_controls)
-            ),
-            timeout=UI_WAIT_SECONDS,
-        )
+            )
+
+        await wait_until(ladder_editor_is_ready, timeout=UI_WAIT_SECONDS)
         await configure_leader_ladder(pilot)
         await configure_implementer_ladder(pilot)
         await configure_complexity_ladders(pilot)
@@ -101,11 +105,15 @@ async def test_init_writes_mixed_multirung_ladders_and_runtime_resolves_complexi
         await advance_orchestration_to_finish(pilot)
         await click_button(pilot, "#wizard-finish")
         config_path = tmp_path / ".shikiru" / "config.toml"
-        await wait_until(config_path.is_file, timeout=UI_WAIT_SECONDS)
-        await wait_until(
-            lambda: bool(doctor_text(app.query_one("#doctor-report", Static)).strip()),
-            timeout=LONG_WAIT_SECONDS,
-        )
+
+        def config_file_is_written() -> bool:
+            return config_path.is_file()
+
+        def doctor_report_is_rendered() -> bool:
+            return bool(doctor_text(app.query_one("#doctor-report", Static)).strip())
+
+        await wait_until(config_file_is_written, timeout=UI_WAIT_SECONDS)
+        await wait_until(doctor_report_is_rendered, timeout=LONG_WAIT_SECONDS)
         await click_button(pilot, "#wizard-finish")
 
     assert_written_ladders(tmp_path, cast("InitWizardResult", app.return_value))
@@ -363,6 +371,38 @@ async def test_invalid_push_interval_focuses_its_field_and_zero_is_saved(
         await pilot.click("#wizard-finish")
 
     assert load_settings(tmp_path).orchestration.push_interval_seconds == 0
+
+
+async def test_doctor_report_renders_after_an_attempt_before_layout(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    await git_project(tmp_path)
+    private_doctor_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(registry_module, "entry_points", no_entry_points)
+    app = await app_with_agents(tmp_path, {"fake": create_fake_agent})
+
+    async with app.run_test(size=WIZARD_SIZE) as pilot:
+        await advance_to_orchestration(pilot)
+        await advance_orchestration_to_finish(pilot)
+        await click_button(pilot, "#wizard-finish")
+        config_path = tmp_path / ".shikiru" / "config.toml"
+        await wait_until(config_path.is_file, timeout=UI_WAIT_SECONDS)
+        await wait_until(
+            lambda: bool(doctor_text(app.query_one("#doctor-report", Static)).strip()),
+            timeout=LONG_WAIT_SECONDS,
+        )
+        report_widget = app.query_one("#doctor-report", Static)
+        page = app.query_one("#wizard-page-7")
+        report_widget.update("")
+        app._doctor_report_width = None  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        page.display = False
+        await pilot.pause()
+        app._update_doctor_report()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        page.display = True
+        await pilot.pause()
+        assert doctor_text(report_widget).strip()
+        await click_button(pilot, "#wizard-finish")
 
 
 async def test_ladder_text_typed_before_its_change_event_survives_a_scope_switch(
