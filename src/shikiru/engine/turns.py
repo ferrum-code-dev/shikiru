@@ -221,6 +221,7 @@ class TurnRunner:
                 session_id=selection.session_id,
                 usage=selection.run.usage,
                 on_process=self._monitor.process_recorder(task_run_dir, role),
+                billing_mode=selection.run.billing_mode,
             )
             turn = await agent.start_turn(turn_spec)
             terminal = await self._monitor.run(

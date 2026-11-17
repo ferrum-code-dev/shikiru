@@ -338,6 +338,7 @@ class TurnSpec:
 
     `on_process` receives the id of every process the turn spawns, a context retry included,
     before that process starts running (`SubprocessRunner.spawn(on_started=...)`).
+    `billing_mode` is the declaration recorded for the run this turn belongs to.
     """
 
     rung: Rung
@@ -351,6 +352,7 @@ class TurnSpec:
     session_id: str | None
     usage: Usage | None
     on_process: Callable[[int], None] = ignore_started
+    billing_mode: BillingMode = BILLING_MODE_UNKNOWN
 
 
 class Turn(Protocol):

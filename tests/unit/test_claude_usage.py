@@ -1,8 +1,22 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 
-from shikiru.agents.contracts import SessionStarted, TurnEnded, UsageReported
+import pytest
+
+from shikiru.agents.contracts import (
+    BILLING_MODE_API,
+    BILLING_MODE_SUBSCRIPTION,
+    BILLING_MODE_UNKNOWN,
+    COST_BASIS_API_EQUIVALENT,
+    COST_BASIS_BILLED,
+    BillingMode,
+    CostBasis,
+    SessionStarted,
+    TurnEnded,
+    UsageReported,
+)
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.plugins.agents.claude.turn import ClaudeTurnParser
 from tests.support.clock import FakeClock
@@ -97,3 +111,41 @@ def test_complete_reported_zero_context_remains_a_measured_zero() -> None:
 
     [usage] = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
     assert usage.context_used_pct == 0
+
+
+_LIST_COST_FIXTURE = (
+    Path(__file__).parents[1] / "fixtures" / "agents" / "claude" / "turn_list_cost.jsonl"
+)
+
+
+@pytest.mark.parametrize(
+    ("billing_mode", "expected_basis"),
+    [
+        (BILLING_MODE_API, COST_BASIS_BILLED),
+        (BILLING_MODE_SUBSCRIPTION, COST_BASIS_API_EQUIVALENT),
+        (BILLING_MODE_UNKNOWN, COST_BASIS_API_EQUIVALENT),
+    ],
+)
+def test_provider_cost_basis_follows_the_declared_billing_mode(
+    billing_mode: BillingMode, expected_basis: CostBasis
+) -> None:
+    clock = FakeClock(CONTEXT_NOW)
+    parser = ClaudeTurnParser(
+        session_id=CONTEXT_SESSION,
+        model="claude-haiku-4-5-20251001",
+        initial_usage=None,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+        billing_mode=billing_mode,
+    )
+
+    signals = [
+        signal
+        for line in _LIST_COST_FIXTURE.read_text(encoding="utf-8").splitlines()
+        for signal in parser.feed(line)
+    ]
+    signals.extend(parser.finish(0, ""))
+
+    [usage] = [signal.usage for signal in signals if isinstance(signal, UsageReported)]
+    assert usage.cost_usd == 0.00002
+    assert usage.cost_basis == expected_basis

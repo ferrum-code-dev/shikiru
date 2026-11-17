@@ -152,6 +152,7 @@ class ClaudeAgent:
             compact_at_pct=self._options.compact_at_pct,
             args=self._options.args,
             environment=self._turn_environment,
+            billing_mode=spec.billing_mode,
         )
 
     def interactive_command(self, session_id: str, run_dir: Path, rung: Rung) -> Sequence[str]:

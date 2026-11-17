@@ -10,11 +10,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from shikiru.agents.contracts import (
+    BILLING_MODE_API,
+    BILLING_MODE_UNKNOWN,
+    COST_BASIS_API_EQUIVALENT,
+    COST_BASIS_BILLED,
+    COST_BASIS_UNKNOWN,
     PERCENT,
     QUOTA_WINDOW_FIVE_HOUR,
     QUOTA_WINDOW_SEVEN_DAY,
     TOOL_DETAIL_MAX_CHARS,
     AgentSignal,
+    BillingMode,
     Compacted,
     FailureKind,
     Message,
@@ -207,9 +213,11 @@ class ClaudeTurnParser:
         clock: Clock,
         reset_time: ResetTimeParser,
         compact_limit_tokens: int | None = None,
+        billing_mode: BillingMode = BILLING_MODE_UNKNOWN,
     ) -> None:
         self._session_id = session_id
         self._model = model
+        self._billing_mode: BillingMode = billing_mode
         self._initial_usage = initial_usage or _empty_usage()
         self._clock = clock
         self._reset_time = reset_time
@@ -608,7 +616,13 @@ class ClaudeTurnParser:
             cache_read_tokens=cache_read_tokens,
             cache_write_tokens=cache_write_tokens,
             cost_usd=self._latest_cost if priced else None,
-            cost_basis="api_equivalent" if priced else "unknown",
+            cost_basis=(
+                COST_BASIS_BILLED
+                if priced and self._billing_mode == BILLING_MODE_API
+                else COST_BASIS_API_EQUIVALENT
+                if priced
+                else COST_BASIS_UNKNOWN
+            ),
             context_used_pct=context_pct,
         )
 
@@ -674,10 +688,12 @@ class ClaudeTurnSequence(TurnProcessSequence):
         compact_at_pct: float,
         args: Sequence[str],
         environment: Callable[[TurnSpec], Mapping[str, str]],
+        billing_mode: BillingMode = BILLING_MODE_UNKNOWN,
         session_id: str | None = None,
     ) -> None:
         self._clock = clock
         self._reset_time = reset_time
+        self._billing_mode: BillingMode = billing_mode
         self._limit = compact_limit_tokens(spec.rung.model, compact_at_pct)
         self._args = tuple(args)
         self._environment = environment
@@ -736,6 +752,7 @@ class ClaudeTurnSequence(TurnProcessSequence):
             clock=self._clock,
             reset_time=self._reset_time,
             compact_limit_tokens=self._limit if compact else None,
+            billing_mode=self._billing_mode,
         )
         return TurnProcess(tuple(argv), spec.cwd, self._environment(spec), self._parser)
 
@@ -764,7 +781,7 @@ class ClaudeTurnSequence(TurnProcessSequence):
 
 
 def _empty_usage() -> Usage:
-    return Usage(0, 0, 0, 0, None, "unknown", None)
+    return Usage(0, 0, 0, 0, None, COST_BASIS_UNKNOWN, None)
 
 
 def _mapping(value: object) -> Mapping[str, Any] | None:

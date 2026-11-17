@@ -304,3 +304,9 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - Exhausted repair attempts appear with an explicit exhaustion reason and attached failure evidence in operator views.
 - Integration tests exercise the visible repair and escalation states, including refresh or restart where applicable.
 - Tick this entry and update user-facing documentation for the final behavior.
+
+### Billed vs estimated cost (T-172)
+
+- [x] Show API-declared Claude costs as billed
+  - Acceptance: an API-declared agent with a provider-reported cost shows it as billed; a subscription agent still shows an estimate; a task mixing both shows two separate figures, not a blended one; existing behaviour is otherwise unchanged.
+  - Rework (review): classification follows the run's persisted billing declaration (`TurnSpec.billing_mode`, set from `selection.run.billing_mode`), not the current agent options, so a resumed session keeps its original basis after a configuration change. Integration coverage in `tests/integration/test_claude_billed_cost.py` drives a real Claude turn over both change directions, and runs a mixed task through the engine flow (API implementer, subscription leader) to the dashboard usage panel, which shows the billed and estimated totals separately.
