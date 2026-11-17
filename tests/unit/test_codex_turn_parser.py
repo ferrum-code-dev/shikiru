@@ -20,6 +20,7 @@ from shikiru.agents.contracts import (
     UsageReported,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
+from shikiru.domain.model_pricing import priced_usage
 from shikiru.domain.recovery import (
     QUOTA_MARGIN,
     Action,
@@ -442,3 +443,180 @@ def _quota_recovery(failure: TurnFailed, now: datetime) -> Action:
             unavailable_max_retries=3,
         ),
     )
+
+
+def test_prices_new_rollout_call(tmp_path: Path) -> None:
+    clock = FakeClock(_SAMPLE_NOW)
+    rollout = tmp_path / "rollout.jsonl"
+    parser = CodexTurnParser(
+        session_id=None,
+        initial_usage=None,
+        home=tmp_path,
+        rollout_path=rollout,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+        prices={
+            "openai/test": {
+                "pricing": {
+                    "prompt": "1",
+                    "completion": "2",
+                    "input_cache_read": "3",
+                    "input_cache_write": "4",
+                }
+            }
+        },
+        pricer=priced_usage,
+    )
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 10,
+        "cached_input_tokens": 20,
+        "cache_write_input_tokens": 0,
+    }
+    rollout.write_text(
+        json.dumps({"type": "turn_context", "payload": {"model": "test"}})
+        + "\n"
+        + json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {"total_token_usage": usage, "last_token_usage": usage},
+                },
+            }
+        )
+        + "\n"
+    )
+    parser.feed(json.dumps({"type": "thread.started", "thread_id": "x"}))
+    parser.feed(json.dumps({"type": "turn.completed", "usage": usage}))
+    usages = [signal.usage for signal in parser.finish(0, "") if isinstance(signal, UsageReported)]
+    assert usages[0].cost_usd == 80 + 10 * 2 + 20 * 3
+    assert usages[0].cost_basis == "api_equivalent"
+
+
+def _pricing_rollout_count(total: int, last: int) -> dict[str, object]:
+    def counts(value: int) -> dict[str, int]:
+        return {
+            "input_tokens": value,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+        }
+
+    return {
+        "type": "event_msg",
+        "payload": {
+            "type": "token_count",
+            "info": {"total_token_usage": counts(total), "last_token_usage": counts(last)},
+        },
+    }
+
+
+def _priced_rollout_result(
+    tmp_path: Path,
+    entries: list[dict[str, object]],
+    previous: list[dict[str, object]] | None = None,
+) -> Usage:
+    clock = FakeClock(_SAMPLE_NOW)
+    rollout = tmp_path / "rollout.jsonl"
+    initial = previous or []
+    rollout.write_text("".join(json.dumps(entry) + "\n" for entry in initial))
+    prior = Usage(10, 0, 0, 0, 10.0, "api_equivalent", None) if initial else None
+    parser = CodexTurnParser(
+        session_id="existing" if initial else None,
+        initial_usage=prior,
+        home=tmp_path,
+        rollout_path=rollout,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+        prices={
+            "openai/first": {
+                "pricing": {
+                    "prompt": "1",
+                    "completion": "2",
+                    "input_cache_read": "3",
+                    "input_cache_write": "4",
+                }
+            },
+            "openai/second": {
+                "pricing": {
+                    "prompt": "10",
+                    "completion": "2",
+                    "input_cache_read": "3",
+                    "input_cache_write": "4",
+                }
+            },
+        },
+        pricer=priced_usage,
+    )
+    with rollout.open("a") as output:
+        output.writelines(json.dumps(entry) + "\n" for entry in entries)
+    parser.feed(json.dumps({"type": "thread.started", "thread_id": "existing"}))
+    parser.feed(json.dumps({"type": "turn.completed"}))
+    return next(
+        signal.usage for signal in parser.finish(0, "") if isinstance(signal, UsageReported)
+    )
+
+
+def test_pricing_uses_each_reported_runtime_model(tmp_path: Path) -> None:
+    first: dict[str, object] = {"type": "turn_context", "payload": {"model": "first"}}
+    second: dict[str, object] = {"type": "turn_context", "payload": {"model": "second"}}
+    usage = _priced_rollout_result(
+        tmp_path, [first, _pricing_rollout_count(10, 10), second, _pricing_rollout_count(30, 20)]
+    )
+    assert usage.cost_usd == 210
+    assert usage.cost_basis == "api_equivalent"
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        None,
+        {"type": "turn_context", "payload": {}},
+        {"type": "turn_context", "payload": {"model": " "}},
+        {"type": "turn_context", "payload": {"model": "not-listed"}},
+    ],
+)
+def test_pricing_is_unknown_when_runtime_model_is_missing(
+    tmp_path: Path, context: dict[str, object] | None
+) -> None:
+    entries = [] if context is None else [context]
+    usage = _priced_rollout_result(tmp_path, [*entries, _pricing_rollout_count(10, 10)])
+    assert usage.cost_usd is None
+    assert usage.cost_basis == "unknown"
+
+
+def test_pricing_does_not_use_a_previous_turn_model(tmp_path: Path) -> None:
+    prior: list[dict[str, object]] = [
+        {"type": "turn_context", "payload": {"model": "first"}},
+        _pricing_rollout_count(10, 10),
+    ]
+    usage = _priced_rollout_result(tmp_path, [_pricing_rollout_count(20, 10)], previous=prior)
+    assert usage.cost_usd is None
+    assert usage.cost_basis == "unknown"
+
+
+def test_pricing_clears_model_after_unresolvable_context(tmp_path: Path) -> None:
+    entries: list[dict[str, object]] = [
+        {"type": "turn_context", "payload": {"model": "first"}},
+        _pricing_rollout_count(10, 10),
+        {"type": "turn_context", "payload": {}},
+        _pricing_rollout_count(20, 10),
+    ]
+    usage = _priced_rollout_result(tmp_path, entries)
+    assert usage.cost_usd is None
+    assert usage.cost_basis == "unknown"
+
+
+def test_pricing_a_resumed_turn_uses_its_new_model(tmp_path: Path) -> None:
+    prior: list[dict[str, object]] = [
+        {"type": "turn_context", "payload": {"model": "first"}},
+        _pricing_rollout_count(10, 10),
+    ]
+    entries: list[dict[str, object]] = [
+        {"type": "turn_context", "payload": {"model": "second"}},
+        _pricing_rollout_count(20, 10),
+    ]
+    usage = _priced_rollout_result(tmp_path, entries, previous=prior)
+    assert usage.cost_usd == 110
+    assert usage.cost_basis == "api_equivalent"

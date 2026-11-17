@@ -22,9 +22,11 @@ from shikiru.agents.contracts import (
     EvidenceRecovered,
     FailureKind,
     Message,
+    PriceUsage,
     QuotaReported,
     QuotaWindow,
     SessionStarted,
+    TokenCounts,
     ToolDetailReported,
     ToolFinished,
     ToolOutcome,
@@ -212,7 +214,13 @@ class MuseTurnParser:
         reset_time: ResetTimeParser,
         watch: SessionWatch,
         initial_usage: Usage | None = None,
+        *,
+        prices: Mapping[str, Any] | None = None,
+        pricer: PriceUsage | None = None,
     ) -> None:
+        self._pricer = pricer
+        self._prices = prices or {}
+        self._model_entries: list[object] = []
         self._clock = clock
         self._reset_time = reset_time
         self._watch = watch
@@ -387,7 +395,8 @@ class MuseTurnParser:
         return matches[0] if len(matches) == 1 else None
 
     def _usage(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
-        self._totals = _turn_totals(_models(payload.get(_MODELS_KEY)))
+        self._model_entries = _models(payload.get(_MODELS_KEY))
+        self._totals = _turn_totals(self._model_entries)
         windows = _allowance_windows(payload.get(_ALLOWANCE_KEY))
         if not windows:
             return []
@@ -470,7 +479,7 @@ class MuseTurnParser:
     def _cumulative_usage(self, totals: _TurnTotals, progress: SessionLogProgress) -> Usage:
         base = self._initial_usage
         cache_write_tokens = _cache_write_tokens(totals, progress)
-        return Usage(
+        usage = Usage(
             input_tokens=base.input_tokens
             + totals.input_tokens
             - totals.cached_tokens
@@ -485,6 +494,40 @@ class MuseTurnParser:
                 self._watch.context_window.tokens,
                 base.context_used_pct,
             ),
+        )
+        calls = [
+            (
+                completion.model,
+                TokenCounts(
+                    completion.input_tokens
+                    - completion.cached_tokens
+                    - completion.cache_write_tokens,
+                    completion.output_tokens,
+                    completion.cached_tokens,
+                    completion.cache_write_tokens,
+                ),
+            )
+            for completion in progress.completions
+        ]
+        if not calls and len(self._model_entries) == 1:
+            entry = _mapping(self._model_entries[0])
+            name = _optional_text(entry, MODEL_KEY)
+            if name is not None and entry.get("calls") == 1:
+                calls = [
+                    (
+                        name,
+                        TokenCounts(
+                            totals.input_tokens - totals.cached_tokens - cache_write_tokens,
+                            totals.output_tokens,
+                            totals.cached_tokens,
+                            cache_write_tokens,
+                        ),
+                    )
+                ]
+        return (
+            usage
+            if self._pricer is None
+            else self._pricer(base, usage, self._prices, "meta", calls)
         )
 
 
@@ -501,7 +544,11 @@ class MuseTurnSequence(TurnProcessSequence):
         user_home: Path,
         context_window: ContextWindow,
         compact_at_pct: float,
+        prices: Mapping[str, Any] | None = None,
+        pricer: PriceUsage | None = None,
     ) -> None:
+        self._pricer = pricer
+        self._prices = prices
         self._args = tuple(args)
         self._base_environment = base_environment
         self._clock = clock
@@ -537,7 +584,14 @@ class MuseTurnSequence(TurnProcessSequence):
             context_window=self._context_window,
             mark=start_mark(home, self._session_id),
         )
-        parser = MuseTurnParser(self._clock, self._reset_time, watch, self._usage)
+        parser = MuseTurnParser(
+            self._clock,
+            self._reset_time,
+            watch,
+            self._usage,
+            prices=self._prices,
+            pricer=self._pricer,
+        )
         self._parser = parser
         return TurnProcess(
             argv=self._argv(spec),

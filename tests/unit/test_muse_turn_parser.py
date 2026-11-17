@@ -30,6 +30,7 @@ from shikiru.agents.contracts import (
     UsageReported,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
+from shikiru.domain.model_pricing import priced_usage
 from shikiru.domain.tasks import Role
 from shikiru.plugins.agents.muse.options import (
     RECORD_PAYLOAD_KEY,
@@ -1006,3 +1007,29 @@ def test_invalid_allowance_percentage_fails_turn_as_malformed(used_percent: Any)
     assert [failure.kind for failure in _failures(parser.finish(_EXIT_OK, ""))] == [
         FailureKind.UNKNOWN
     ]
+
+
+def test_prices_runtime_model_from_recorded_usage(tmp_path: Path) -> None:
+    clock = FakeClock(_NOW)
+    watch = SessionWatch(tmp_path, None, ContextWindow(None), NO_SESSION_LOG_MARK)
+    parser = MuseTurnParser(
+        clock,
+        ResetTimeParser(clock),
+        watch,
+        prices={
+            "meta/muse-ember": {
+                "pricing": {
+                    "prompt": "1",
+                    "completion": "2",
+                    "input_cache_read": "3",
+                    "input_cache_write": "4",
+                }
+            }
+        },
+        pricer=priced_usage,
+    )
+    for line in _fixture_lines("turn_first"):
+        parser.feed(line)
+    usages = [signal.usage for signal in parser.finish(0, "") if isinstance(signal, UsageReported)]
+    assert usages[0].cost_usd == 32358 + 18 * 2
+    assert usages[0].cost_basis == "api_equivalent"

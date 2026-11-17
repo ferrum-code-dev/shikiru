@@ -79,6 +79,7 @@ class SessionLogProgress:
     compactions: list[Compacted]
     latest_prompt_tokens: int | None
     cache_write_by_model: Mapping[str, int]
+    completions: tuple[ModelCompletion, ...] = ()
 
 
 def muse_home(environ: Mapping[str, str], user_home: Path) -> Path:
@@ -144,6 +145,7 @@ def progress_since(
         compactions=compactions_after(records, mark.compactions),
         latest_prompt_tokens=estimates[-1] if estimates else None,
         cache_write_by_model=_cache_writes_by_model(completions),
+        completions=tuple(completions),
     )
 
 

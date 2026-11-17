@@ -391,3 +391,20 @@ unfixable escalation states the observed cause. Surface active repair and escala
 existing dashboard and operator-facing interfaces. Update the design and user configuration guidance
 to match the chosen policy. Use real SQLite and git, fake GitHub/agents, `FakeClock` and `wait_until`
 in integration coverage, including restart and the published-head checks boundary.
+
+## API-equivalent costs (T-175)
+
+OpenRouter's model-list `pricing.overrides` uses `min_prompt_tokens` to identify long-prompt tiers. Price calculations must use separate input, output, cache-read and cache-write counts and must not guess missing cache rates. Historical usage must retain its recorded cost.
+
+The Operator resolved the Muse retry: after an exact miss, remove `-1.0` in full when present, otherwise remove a trailing `.0`. On 2026-11-17, authenticated Muse turns on a real setup completed for each of the four models in the previously recorded catalog. Each turn reported its requested name in both `run.model.configured.model_id` and the nonzero-call `run.usage.models[].model`:
+
+| Runtime name | OpenRouter ID selected | Required price fields present |
+| --- | --- | --- |
+| `muse-wonder-1.0` | `meta/muse-wonder` (retry) | No: cache-write price missing |
+| `muse-ember-1.0` | `meta/muse-ember` (retry) | Yes |
+| `muse-spark-1.3` | `meta/muse-spark-1.3` (exact) | No: cache-write price missing |
+| `muse-spark-1.2` | `meta/muse-spark-1.2` (exact) | No: cache-write price missing |
+
+The price-field observations come from OpenRouter's public model list on the same date and may change. A missing cache-write price leaves cost unknown. The live `model/list` call returned an empty list despite successful authentication, so these turns verify the four names from the earlier real catalog, not the completeness of the current catalog. No credentials or raw turn output were retained.
+
+The Codex review rework associates each new token-count record with the most recent `turn_context.model` in the current turn. A missing or malformed model context makes the estimate unknown; a previous turn’s model is not reused.

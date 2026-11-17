@@ -12,9 +12,11 @@ from shikiru.agents.contracts import (
     Compacted,
     FailureKind,
     Message,
+    PriceUsage,
     QuotaReported,
     QuotaWindow,
     SessionStarted,
+    TokenCounts,
     ToolFinished,
     ToolOutcome,
     ToolStarted,
@@ -127,6 +129,7 @@ _MCP_TOOL_NAME = "mcp_tool"
 _ZERO_TOKENS = 0
 _ZERO_EXIT_CODE = 0
 _UNKNOWN_COST = "unknown"
+_REQUIRED_USAGE_FIELDS = 3
 
 
 class CodexTurnParser:
@@ -141,7 +144,11 @@ class CodexTurnParser:
         rollout_path: Path | None = None,
         clock: Clock,
         reset_time: ResetTimeParser,
+        prices: Mapping[str, Any] | None = None,
+        pricer: PriceUsage | None = None,
     ) -> None:
+        self._pricer = pricer
+        self._prices = prices or {}
         self._session_id = session_id
         self._initial_usage = initial_usage or Usage(
             _ZERO_TOKENS,
@@ -168,6 +175,7 @@ class CodexTurnParser:
         self._did_complete = False
         self._context_exceeded = False
         self._rollout = rollout_path or _rollout_path(home, session_id)
+        self._initial_entry_count = len(_read_rollout(self._rollout)) if session_id else 0
         self._initial_compaction_count = (
             _compaction_count(_read_rollout(self._rollout)) if session_id is not None else 0
         )
@@ -204,6 +212,12 @@ class CodexTurnParser:
             self._latest_streamed_quota = observation.windows
             signals.append(QuotaReported(observation.windows))
         return signals
+
+    def _price_usage(self, usage: Usage, entries: Sequence[Mapping[str, Any]]) -> Usage:
+        if self._pricer is None:
+            return usage
+        calls = _priced_calls(entries[self._initial_entry_count :])
+        return self._pricer(self._initial_usage, usage, self._prices, "openai", calls)
 
     def _turn_completed(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         self._did_complete = True
@@ -247,7 +261,7 @@ class CodexTurnParser:
             quota = rollout_reading
         usage = _reported_usage(entries, self._turn_usage, self._initial_usage)
         if usage is not None:
-            signals.append(UsageReported(usage))
+            signals.append(UsageReported(self._price_usage(usage, entries)))
         if self._failure is not None:
             signals.append(self._failed_signal(self._failure, stderr, quota))
         elif self._did_complete:
@@ -383,7 +397,11 @@ class CodexTurnSequence(TurnProcessSequence):
         git_dirs: Sequence[Path],
         compact_at_pct: float,
         model_context_windows: Mapping[str, int] | None = None,
+        prices: Mapping[str, Any] | None = None,
+        pricer: PriceUsage | None = None,
     ) -> None:
+        self._pricer = pricer
+        self._prices = prices
         self._spec = spec
         self._args = tuple(args)
         self._environment = environment
@@ -441,6 +459,8 @@ class CodexTurnSequence(TurnProcessSequence):
             home=self._home,
             clock=self._clock,
             reset_time=self._reset_time,
+            prices=self._prices,
+            pricer=self._pricer,
         )
         self._parser = parser
         return TurnProcess(tuple(argv), spec.cwd, self._environment(spec), parser)
@@ -626,6 +646,41 @@ def _quota_is_newer(candidate: QuotaObservation, current: Sequence[QuotaWindow])
         return False
     current_time = max(window.observed_at for window in current)
     return candidate.timestamp > current_time
+
+
+def _priced_calls(entries: Sequence[Mapping[str, Any]]) -> list[tuple[str, TokenCounts]]:
+    calls: list[tuple[str, TokenCounts]] = []
+    previous_total: Mapping[str, Any] | None = None
+    model: str | None = None
+    for entry in entries:
+        if entry.get(_TYPE_FIELD) == _TURN_CONTEXT_TYPE:
+            payload = _mapping(entry.get(_PAYLOAD_FIELD))
+            value = payload.get(_MODEL_FIELD) if payload is not None else None
+            model = value if isinstance(value, str) and value.strip() else None
+            continue
+        count = latest_token_count([entry])
+        if count is None:
+            continue
+        total, last, _ = count
+        if total == previous_total:
+            continue
+        previous_total = total
+        if model is None:
+            return []
+        values = [
+            last.get(key)
+            for key in (
+                _INPUT_TOKENS_FIELD,
+                _OUTPUT_TOKENS_FIELD,
+                _CACHED_INPUT_TOKENS_FIELD,
+                _CACHE_WRITE_TOKENS_FIELD,
+            )
+        ]
+        if any(not isinstance(value, int) for value in values[:_REQUIRED_USAGE_FIELDS]):
+            return []
+        raw, output, read, write = (int(value or 0) for value in values)
+        calls.append((model, TokenCounts(raw - read - write, output, read, write)))
+    return calls
 
 
 def _reported_usage(

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import AgentContext, BillingDeclaration, billing_declaration_for
+from shikiru.domain.model_pricing import priced_usage
 from shikiru.errors import ConfigError
 
 if TYPE_CHECKING:
@@ -51,7 +52,9 @@ class AgentPool:
         if config is None:
             message = f"agent {name!r} is used by a rung but has no [agents.{name}] table"
             raise ConfigError(message)
-        context = AgentContext(options=config.options, runner=self._runner, clock=self._clock)
+        context = AgentContext(
+            options=config.options, runner=self._runner, clock=self._clock, price_usage=priced_usage
+        )
         agent = self._create(name, context)
         self._agents[name] = agent
         return agent

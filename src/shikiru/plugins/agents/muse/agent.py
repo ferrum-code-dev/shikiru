@@ -18,8 +18,10 @@ from shikiru.agents.contracts import (
     BillingDeclaration,
     CheckResult,
     ModelCatalog,
+    PriceUsage,
     assess_model_choice,
 )
+from shikiru.agents.sdk.model_prices import model_prices
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.clock import from_local
@@ -104,7 +106,9 @@ class MuseAgent:
         clock: Clock,
         options: MuseOptions,
         user_home: Path,
+        pricer: PriceUsage | None = None,
     ) -> None:
+        self._pricer = pricer
         self._runner = runner
         self._clock = clock
         self._options = options
@@ -129,11 +133,18 @@ class MuseAgent:
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one Muse process-per-turn exchange."""
         context_window = await self._context_window(spec.rung.model)
+        prices = (
+            await model_prices(spec.run_dir.parent.parent, self._clock.now())
+            if self._pricer is not None
+            else {}
+        )
         return await StreamingTurn.start(
-            spec, self._runner, self.process_sequence(spec, context_window)
+            spec, self._runner, self.process_sequence(spec, context_window, prices)
         )
 
-    def process_sequence(self, spec: TurnSpec, context_window: ContextWindow) -> MuseTurnSequence:
+    def process_sequence(
+        self, spec: TurnSpec, context_window: ContextWindow, prices: dict[str, object] | None = None
+    ) -> MuseTurnSequence:
         """Build the process sequence that runs one Muse turn for `spec`."""
         del spec
         return MuseTurnSequence(
@@ -144,6 +155,8 @@ class MuseAgent:
             user_home=self._user_home,
             context_window=context_window,
             compact_at_pct=self._options.compact_at_pct,
+            prices=prices,
+            pricer=self._pricer,
         )
 
     def interactive_command(self, session_id: str, run_dir: Path, rung: Rung) -> Sequence[str]:
@@ -346,4 +359,4 @@ def create(context: AgentContext) -> MuseAgent:
         options = MuseOptions.model_validate(context.options)
     except ValidationError as error:
         raise options_error(MUSE_COMMAND, error) from error
-    return MuseAgent(context.runner, context.clock, options, Path.home())
+    return MuseAgent(context.runner, context.clock, options, Path.home(), context.price_usage)

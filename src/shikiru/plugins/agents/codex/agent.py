@@ -17,7 +17,9 @@ from shikiru.agents.contracts import (
     BillingDeclaration,
     CheckResult,
     ModelCatalog,
+    PriceUsage,
 )
+from shikiru.agents.sdk.model_prices import model_prices
 from shikiru.agents.sdk.reset_time import ResetTimeParser
 from shikiru.agents.sdk.turn import StreamingTurn
 from shikiru.clock import from_local
@@ -102,7 +104,14 @@ class CodexAgent:
 
     name = "codex"
 
-    def __init__(self, runner: SubprocessRunner, clock: Clock, options: CodexOptions) -> None:
+    def __init__(
+        self,
+        runner: SubprocessRunner,
+        clock: Clock,
+        options: CodexOptions,
+        pricer: PriceUsage | None = None,
+    ) -> None:
+        self._pricer = pricer
         self._runner = runner
         self._clock = clock
         self._options = options
@@ -138,8 +147,13 @@ class CodexAgent:
         """Start one Codex process-per-turn exchange."""
         model_context_windows = await self._context_windows_for_turn(spec)
         git_dirs = await self._git_dirs_for_turn(spec)
+        prices = (
+            await model_prices(spec.run_dir.parent.parent, self._clock.now())
+            if self._pricer is not None
+            else {}
+        )
         sequence = self.process_sequence(
-            spec, git_dirs=git_dirs, model_context_windows=model_context_windows
+            spec, git_dirs=git_dirs, model_context_windows=model_context_windows, prices=prices
         )
         return await StreamingTurn.start(spec, self._runner, sequence)
 
@@ -149,6 +163,7 @@ class CodexAgent:
         *,
         git_dirs: Sequence[Path],
         model_context_windows: Mapping[str, int] | None = None,
+        prices: Mapping[str, object] | None = None,
     ) -> CodexTurnSequence:
         """Build Codex's prompt and context-failure retry sequence for `spec`."""
         home = Path(spec.env.get(CODEX_HOME_ENV_VAR, str(self._codex_home)))
@@ -161,6 +176,8 @@ class CodexAgent:
             home=home,
             git_dirs=git_dirs,
             compact_at_pct=self._options.compact_at_pct,
+            prices=prices,
+            pricer=self._pricer,
             model_context_windows=(
                 self._bundled_context_windows
                 if model_context_windows is None
@@ -483,4 +500,4 @@ def create(context: AgentContext) -> CodexAgent:
         options = CodexOptions.model_validate(context.options)
     except ValidationError as error:
         raise options_error(CODEX_COMMAND, error) from error
-    return CodexAgent(context.runner, context.clock, options)
+    return CodexAgent(context.runner, context.clock, options, context.price_usage)

@@ -19,6 +19,7 @@ dependencies = [
   "textual>=6.3,<6.4",
   "psutil>=7.0,<8.0",
   "mcp>=1.26,<2.0",
+  "httpx>=0.28,<0.29",
 ]
 
 [project.urls]

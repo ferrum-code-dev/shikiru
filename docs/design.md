@@ -406,6 +406,8 @@ and scope update one card, unrelated faults stay separate, and cards needing the
 before those that retry on their own, each group in order of first occurrence. Cards are keyed by
 task and scope, so a refresh keeps each card's disclosure state, focus and scroll position.
 
+Codex and Muse may record API-equivalent estimates using OpenRouter’s public model list, refreshed daily and retained locally for outages. Exact vendor-prefixed IDs are used; after a Muse exact miss, `-1.0` is removed in full, or otherwise a trailing `.0` is removed. Missing model or cache prices leave the cost unknown. New calls are priced individually at their prompt-length tier, while previously recorded usage is not re-priced. Claude retains its provider-reported cost.
+
 Usage preserves provenance and uncertainty: absent tokens/cost/context/billing are not invented,
 and quota readings can be stale. A window whose known reset has passed shows as unknown (`○ --%`,
 `resets unknown`) until a newer reading replaces it; stored readings still drive blocks and JSON.

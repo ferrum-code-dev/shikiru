@@ -310,3 +310,11 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [x] Show API-declared Claude costs as billed
   - Acceptance: an API-declared agent with a provider-reported cost shows it as billed; a subscription agent still shows an estimate; a task mixing both shows two separate figures, not a blended one; existing behaviour is otherwise unchanged.
   - Rework (review): classification follows the run's persisted billing declaration (`TurnSpec.billing_mode`, set from `selection.run.billing_mode`), not the current agent options, so a resumed session keeps its original basis after a configuration change. Integration coverage in `tests/integration/test_claude_billed_cost.py` drives a real Claude turn over both change directions, and runs a mixed task through the engine flow (API implementer, subscription leader) to the dashboard usage panel, which shows the billed and estimated totals separately.
+
+### API-equivalent costs for Codex and Muse (T-175)
+
+- [x] Fetch and retain OpenRouter model prices and apply them to current turn usage for the existing usage views.
+- [x] Resolve the Muse retry: remove `-1.0` in full, otherwise remove `.0`, only after an exact miss.
+- [x] Verify the four previously cataloged Muse runtime model names on an authenticated real setup; record the empty current catalog response.
+- [x] Run the final project check.
+- [x] Rework Codex estimates to use the runtime model recorded for each call; unknown runtime models stay unknown.

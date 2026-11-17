@@ -122,6 +122,21 @@ class Usage:
 
 
 @dataclass(frozen=True)
+class TokenCounts:
+    """Token counts for one prompt and completion."""
+
+    input: int
+    output: int
+    cache_read: int
+    cache_write: int
+
+
+type PriceUsage = Callable[
+    [Usage, Usage, Mapping[str, Any], str, Sequence[tuple[str, TokenCounts]]], Usage
+]
+
+
+@dataclass(frozen=True)
 class BillingDeclaration:
     """A plugin's normalized billing mode and the source that established it."""
 
@@ -605,6 +620,7 @@ class AgentContext:
     options: Mapping[str, Any]
     runner: SubprocessRunner
     clock: Clock
+    price_usage: PriceUsage | None = None
 
 
 type AgentFactory = Callable[[AgentContext], Agent]
