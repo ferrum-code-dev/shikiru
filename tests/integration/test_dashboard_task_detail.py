@@ -397,6 +397,7 @@ def _operator_task_app(
         project_root=project_root,
         engine_up=services.engine_up,
         max_parallel=settings.orchestration.max_parallel,
+        pr_check_max_attempts=settings.orchestration.pr_check_max_attempts,
         clock=clock,
     )
     active_apps: list[DashboardApp] = []
@@ -549,6 +550,7 @@ async def _navigation_context(
         project_root=project_root,
         engine_up=lambda: False,
         max_parallel=settings.orchestration.max_parallel,
+        pr_check_max_attempts=settings.orchestration.pr_check_max_attempts,
         clock=clock,
     )
     navigation = TaskNavigation(tmux, queries, session_target)

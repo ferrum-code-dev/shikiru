@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from shikiru.domain.check_repair import CheckFailure
+from shikiru.domain.check_repair import (
+    CheckFailure,
+    ExhaustionEvidence,
+    exhaustion_question,
+)
 from shikiru.domain.events import EventKind
 from shikiru.domain.feedback import FeedbackSnapshot
 from shikiru.domain.feedback_rounds import FeedbackStage
@@ -125,22 +129,23 @@ class FeedbackIntake:
             raise InvariantError(message)
         if any(round_.snapshot.head_sha == status.head_sha for round_ in rounds):
             return False
-        if len(rounds) >= limit:
-            raise PullRequestStalled(
-                url, f"check repair attempts exhausted after {len(rounds)}: {evidence}"
+        failures = [
+            CheckFailure(
+                name=check.name,
+                result=check.result,
+                kind=check.kind,
+                details_url=check.details_url,
             )
+            for check in status.failing_checks
+        ]
+        if len(rounds) >= limit:
+            exhausted = ExhaustionEvidence(head_sha=status.head_sha, failures=failures)
+            question = exhaustion_question(len(rounds), evidence, exhausted)
+            raise PullRequestStalled(url, question)
         snapshot = FeedbackSnapshot(
             pull_request_url=url,
             head_sha=status.head_sha,
-            failures=[
-                CheckFailure(
-                    name=check.name,
-                    result=check.result,
-                    kind=check.kind,
-                    details_url=check.details_url,
-                )
-                for check in status.failing_checks
-            ],
+            failures=failures,
         )
         started = self._store.start_check(task_id, snapshot)
         self._events.append(

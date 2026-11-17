@@ -20,6 +20,15 @@ from shikiru.agents.contracts import (
     Usage,
 )
 from shikiru.config.settings import MAX_TIMELINE_PAGE_SIZE, MAX_TIMELINE_SIGNAL_SCAN_ROWS
+from shikiru.domain.check_repair import (
+    EXHAUSTION_MARKER,
+    CheckFailure,
+    ExhaustionEvidence,
+    check_repair_attempt,
+    check_repair_progress,
+    exhaustion_reason,
+    parse_exhaustion_evidence,
+)
 from shikiru.domain.commands import (
     Command,
     CommandStatus,
@@ -286,6 +295,41 @@ class TaskExportFiles:
     errors: tuple[tuple[str, str], ...]
 
 
+class CheckFailureView(OperatorView):
+    """One failing check: its name, result, GitHub kind and detail link, when recorded."""
+
+    name: str
+    result: str
+    kind: str
+    details_url: str | None
+
+
+class CheckRepairRoundView(OperatorView):
+    """One check repair attempt: the head it repairs, its stage and its failure evidence."""
+
+    id: int
+    head_sha: str
+    stage: str
+    verified_sha: str | None = None
+    published_sha: str | None = None
+    failures: list[CheckFailureView] = Field(default_factory=list)
+
+
+class CheckRepairView(OperatorView):
+    """The repair state of a task's pull request: the active attempt and exhaustion."""
+
+    active: bool
+    attempt: int | None
+    max_attempts: int
+    stage: str | None
+    head_sha: str | None
+    failures: list[CheckFailureView] = Field(default_factory=list)
+    rounds: list[CheckRepairRoundView] = Field(default_factory=list)
+    exhausted: bool = False
+    exhaustion_reason: str | None = None
+    interrupted: bool = False
+
+
 class TaskDetail(OperatorView):
     """A task with its runs and event timeline."""
 
@@ -297,6 +341,7 @@ class TaskDetail(OperatorView):
     evidence_errors: list[str] = Field(default_factory=list)
     branches: list[str] = Field(default_factory=list)
     sessions: list[Run] = Field(default_factory=list)
+    check_repair: CheckRepairView | None = None
 
 
 type TaskStaticFileEvidence = tuple[
@@ -456,6 +501,7 @@ class OperatorQueries:
         engine_up: EngineState,
         engine_identity: EngineIdentity | None = None,
         max_parallel: int,
+        pr_check_max_attempts: int,
         clock: Clock,
     ) -> None:
         """Use `reader` and `engine_up` for the operator's read boundaries."""
@@ -465,6 +511,7 @@ class OperatorQueries:
         self._engine_up = engine_up
         self._engine_identity = engine_identity
         self._max_parallel = max_parallel
+        self._pr_check_max_attempts = pr_check_max_attempts
         self._clock = clock
         self._task_detail_file_cache: TaskFileCache | None = None
         self._escalation_packet_cache: dict[Path, PacketFileCache] = {}
@@ -521,6 +568,69 @@ class OperatorQueries:
             task=task_detail,
         )
 
+    def check_repair(self, task_id: str) -> CheckRepairView | None:
+        """Return the repair state of `task_id`, or `None` when it never repaired a check."""
+        rounds = self._reader.check_repair_rounds(task_id)
+        if not rounds:
+            return None
+        views = [
+            CheckRepairRoundView(
+                id=item.id,
+                head_sha=item.head_sha,
+                stage=item.stage.value,
+                verified_sha=item.verified_sha,
+                published_sha=item.published_sha,
+                failures=[_failure_view(failure) for failure in item.failures],
+            )
+            for item in rounds
+        ]
+        task = self._reader.get_task(task_id)
+        progress = check_repair_progress(
+            rounds,
+            escalated=task is not None and task.status is Status.ESCALATED,
+            held=task is not None and bool(task.holds),
+        )
+        exhaustion = self._recorded_exhaustion(task_id)
+        if exhaustion is not None:
+            reason, evidence = exhaustion
+            current = rounds[-1]
+            return CheckRepairView(
+                active=False,
+                attempt=check_repair_attempt(rounds, current),
+                max_attempts=self._pr_check_max_attempts,
+                stage=current.stage.value,
+                head_sha=evidence.head_sha if evidence is not None else None,
+                failures=[]
+                if evidence is None
+                else [_failure_view(failure) for failure in evidence.failures],
+                rounds=views,
+                exhausted=True,
+                exhaustion_reason=reason,
+                interrupted=False,
+            )
+        current = progress.current if progress.current is not None else rounds[-1]
+        return CheckRepairView(
+            active=progress.active,
+            attempt=check_repair_attempt(rounds, current),
+            max_attempts=self._pr_check_max_attempts,
+            stage=current.stage.value,
+            head_sha=current.head_sha,
+            failures=[_failure_view(failure) for failure in current.failures],
+            rounds=views,
+            interrupted=progress.interrupted,
+        )
+
+    def _recorded_exhaustion(self, task_id: str) -> tuple[str, ExhaustionEvidence | None] | None:
+        """Return the readable reason and recorded evidence of an open exhaustion, if any."""
+        for view in self.list_escalations():
+            if view.escalation.task_id != task_id:
+                continue
+            question = view.question or ""
+            if EXHAUSTION_MARKER not in question:
+                continue
+            return exhaustion_reason(question), parse_exhaustion_evidence(question)
+        return None
+
     def _human_task_detail(self, task_id: str) -> TaskDetail | None:
         task = self._reader.get_task(task_id)
         if task is None:
@@ -546,6 +656,7 @@ class OperatorQueries:
             evidence_errors=evidence_errors,
             branches=[task.repo.branch] if task.repo is not None else [],
             sessions=runs,
+            check_repair=self.check_repair(task_id),
         )
 
     def engine_is_up(self) -> bool:
@@ -720,6 +831,7 @@ class OperatorQueries:
             reports=self._reports(task_id),
             branches=[task.repo.branch] if task.repo is not None else [],
             sessions=runs,
+            check_repair=self.check_repair(task_id),
         )
 
     async def get_task_detail(self, task_id: str) -> TaskDetail | None:
@@ -777,6 +889,7 @@ class OperatorQueries:
             evidence_errors=evidence_errors,
             branches=[task.repo.branch] if task.repo is not None else [],
             sessions=runs,
+            check_repair=self.check_repair(task_id),
         )
 
     async def task_timeline(
@@ -1587,6 +1700,15 @@ def _escalation_question(parsed: EscalationPacket) -> str | None:
     if request is not None and request.question:
         return request.question
     return parsed.question
+
+
+def _failure_view(failure: CheckFailure) -> CheckFailureView:
+    return CheckFailureView(
+        name=failure.name,
+        result=failure.result,
+        kind=failure.kind,
+        details_url=failure.details_url,
+    )
 
 
 def _escalation_resolutions(

@@ -52,6 +52,7 @@ if TYPE_CHECKING:
 
 
 MAX_PARALLEL = 2
+PR_CHECK_MAX_ATTEMPTS = 3
 
 
 def operator_services(
@@ -71,6 +72,7 @@ def operator_services(
         project_root=project_dir,
         engine_up=lambda: engine_up,
         max_parallel=MAX_PARALLEL,
+        pr_check_max_attempts=PR_CHECK_MAX_ATTEMPTS,
         clock=clock,
     )
     commands = OperatorCommands(

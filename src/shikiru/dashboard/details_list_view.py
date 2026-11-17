@@ -115,13 +115,30 @@ def _results_headline(view: TaskDetailView) -> str | None:
     if results is None:
         return None
     if results.outcome is ResultOutcome.SO_FAR:
+        repair = view.check_repair
+        if repair is not None and repair.active and repair.attempt is not None:
+            attempt = f"check repair attempt {repair.attempt}/{repair.max_attempts}"
+            return f"{ResultOutcome.SO_FAR.value} · {attempt}"
+        if repair is not None and repair.interrupted and repair.attempt is not None:
+            attempt = f"check repair interrupted at attempt {repair.attempt}/{repair.max_attempts}"
+            return f"{ResultOutcome.SO_FAR.value} · {attempt}"
+        if repair is not None and repair.exhausted:
+            return f"{ResultOutcome.SO_FAR.value} · check repair exhausted"
         return ResultOutcome.SO_FAR.value
     commits = len(results.commits) + results.more_commits
     pull_request = results.pull_request
+    repair = view.check_repair
     parts = [
         f"{commits} {_COMMIT_NOUNS[commits == 1]}" if commits else "",
         f"{_PR_WORD} #{pull_request.number}"
         if pull_request is not None and pull_request.number is not None
+        else "",
+        f"check repair attempt {repair.attempt}/{repair.max_attempts}"
+        if repair is not None and repair.active and repair.attempt is not None
+        else f"check repair interrupted at attempt {repair.attempt}/{repair.max_attempts}"
+        if repair is not None and repair.interrupted and repair.attempt is not None
+        else "check repair exhausted"
+        if repair is not None and repair.exhausted
         else "",
     ]
     return GROUP_SEPARATOR.join(part for part in parts if part) or None

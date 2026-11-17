@@ -12,6 +12,7 @@ from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
+from shikiru.domain.check_repair import CHECK_STAGE_LABELS, CheckRepairStage
 from shikiru.domain.escalation import escalation_reason_label
 from shikiru.domain.events import EventKind
 from shikiru.domain.levels import effective_used_pct, reset_is_known
@@ -103,6 +104,7 @@ if TYPE_CHECKING:
     from shikiru.operator.doctor import DoctorCheck, DoctorReport
     from shikiru.operator.lifecycle import RestartResult, StartResult
     from shikiru.operator.queries import (
+        CheckRepairView,
         EscalationView,
         HumanStatusView,
         StatusView,
@@ -487,7 +489,7 @@ def _task_status_renderable(
     blockers = _task_blocker_rows(detail, escalations)
     if blockers:
         body.extend((Text(""), _status_section("Attention", blockers, width=width)))
-    progress_rows = _task_progress_rows(task, state)
+    progress_rows = _task_progress_rows(detail, state)
     if progress_rows:
         body.extend((Text(""), _status_section("Progress", progress_rows, width=width)))
     report_rows = _latest_report_rows(detail)
@@ -1142,7 +1144,8 @@ def _escalation_attention_values(escalation: Escalation) -> tuple[Text, ...]:
     return tuple(values)
 
 
-def _task_progress_rows(task: Task, state: str) -> list[tuple[Text, tuple[Text, ...]]]:
+def _task_progress_rows(detail: TaskDetail, state: str) -> list[tuple[Text, tuple[Text, ...]]]:
+    task = detail.task
     rows: list[tuple[Text, tuple[Text, ...]]] = []
     if task.step is not None:
         stage = STATUS_STEP_LABELS[Step(task.step)]
@@ -1158,7 +1161,39 @@ def _task_progress_rows(task: Task, state: str) -> list[tuple[Text, tuple[Text, 
     )
     if holds:
         rows.append((row_name("Holds"), (Text(", ".join(holds), style=AMBER),)))
+    repair = detail.check_repair
+    if repair is not None:
+        rows.append((row_name("Check repair"), _check_repair_values(repair)))
     return rows
+
+
+def _check_repair_values(repair: CheckRepairView) -> tuple[Text, ...]:
+    try:
+        stage = CHECK_STAGE_LABELS[CheckRepairStage(repair.stage or "")]
+    except ValueError:
+        stage = repair.stage or ""
+    if repair.exhausted:
+        headline = repair.exhaustion_reason or "check repair exhausted"
+        style = ALERT_COLOR
+    elif repair.active:
+        headline = f"attempt {repair.attempt} of {repair.max_attempts} · {stage}"
+        if repair.head_sha:
+            headline += f" on {repair.head_sha}"
+        style = AMBER
+    elif repair.interrupted:
+        headline = f"attempt {repair.attempt} of {repair.max_attempts} · {stage} · interrupted"
+        if repair.head_sha:
+            headline += f" on {repair.head_sha}"
+        style = AMBER
+    else:
+        return (Text(f"attempt {repair.attempt} of {repair.max_attempts} · {stage}"),)
+    values = [Text(headline, style=style)]
+    for failure in repair.failures:
+        line = Text(f"{failure.name} ({failure.result}, {failure.kind})")
+        if failure.details_url:
+            line.append(f" {failure.details_url}")
+        values.append(line)
+    return tuple(values)
 
 
 def _task_identity_state(task: Task) -> tuple[str, str]:

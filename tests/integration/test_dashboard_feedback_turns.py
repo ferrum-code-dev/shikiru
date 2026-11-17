@@ -173,6 +173,7 @@ async def test_integrate_acting_role_follows_the_running_turn(
         project_root=project_dir,
         engine_up=lambda: False,
         max_parallel=2,
+        pr_check_max_attempts=3,
         clock=clock,
     )
     assert detail is not None

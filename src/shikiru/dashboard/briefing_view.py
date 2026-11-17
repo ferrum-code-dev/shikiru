@@ -27,6 +27,7 @@ from shikiru.domain.briefing import (
     rework_progress,
     squashed,
 )
+from shikiru.domain.check_repair import CHECK_STAGE_LABELS, CheckRepairStage
 from shikiru.domain.results import ResultOutcome
 from shikiru.domain.tasks import Hold, Role, Status
 from shikiru.ui.compact import ROLE_LABELS, StageActivity, duration_text, recorded_age
@@ -63,7 +64,7 @@ if TYPE_CHECKING:
 
     from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 
-    from shikiru.dashboard.contract import TaskDetailView, TaskSessionView
+    from shikiru.dashboard.contract import CheckRepairView, TaskDetailView, TaskSessionView
     from shikiru.domain.results import TaskResults
 
 PROGRESS_TITLE = "Progress"
@@ -80,6 +81,7 @@ SQUASHED_LABEL = "Squashed"
 COMMITS_LABEL = "Commits"
 TESTS_LABEL = "Tests"
 PR_LABEL = "PR"
+CHECK_LABEL = "Check repair"
 VERDICT_LABEL = "Verdict"
 DECISION_LABEL = "Decision"
 ADDED_LABEL = "Added"
@@ -100,6 +102,7 @@ LABEL_WIDTH = max(
         COMMITS_LABEL,
         TESTS_LABEL,
         PR_LABEL,
+        CHECK_LABEL,
         VERDICT_LABEL,
         DECISION_LABEL,
         BLOCKERS_LABEL,
@@ -296,7 +299,7 @@ class Briefing:
         view = self.view
         if view.status in TERMINAL_STATUSES:
             return []
-        rows = [*_step_rows(view, self.now), *_rework_rows(view)]
+        rows = [*_step_rows(view, self.now), *_rework_rows(view), *_check_repair_rows(view)]
         if _working(view):
             rows.append((grey(NOW_LABEL), _now_groups(view, self.now)))
             if view.last_words is not None:
@@ -345,6 +348,10 @@ class Briefing:
         escalation = _escalation_text(view)
         if escalation is not None:
             lines.append(escalation)
+        repair = check_repair_text(view.check_repair)
+        if repair is not None:
+            repair.truncate(max(width, 1), overflow="ellipsis")
+            lines.append(repair)
         return lines
 
 
@@ -479,6 +486,7 @@ def _problem_rows(view: TaskDetailView, now: datetime) -> list[Row]:
     if counts is not None and counts.has_problems:
         rows.append(_row(VERDICT_LABEL, _verdict_groups(counts)))
     rows.extend(decision_rows(view, DECISION_LABEL))
+    rows.extend(_exhaustion_rows(view))
     rows.extend(_risk_rows(view))
     rows.extend(blocker_rows(view, now))
     return [row for row in rows if row is not None]
@@ -507,7 +515,10 @@ def _cost_rows(view: TaskDetailView) -> list[Row]:
 
 
 def _compact_problems(view: TaskDetailView, now: datetime, width: int) -> list[RenderableType]:
-    return _labelled([*decision_rows(view, DECISION_LABEL), *blocker_rows(view, now)], width)
+    return _labelled(
+        [*decision_rows(view, DECISION_LABEL), *_exhaustion_rows(view), *blocker_rows(view, now)],
+        width,
+    )
 
 
 def _compact_summary(view: TaskDetailView, width: int) -> list[RenderableType]:
@@ -647,6 +658,65 @@ def _escalation_text(view: TaskDetailView) -> Text | None:
         return None
     noun = REJECTION_NOUNS[0] if remaining == 1 else REJECTION_NOUNS[1]
     return grey(ESCALATION_NEAR.format(count=remaining, noun=noun))
+
+
+INTERRUPTED_WORD = "interrupted"
+
+
+def check_repair_text(repair: CheckRepairView | None) -> Text | None:
+    """Return the one-line repair state for compact layouts, or nothing when inactive."""
+    if repair is None or not (repair.active or repair.interrupted):
+        return None
+    return grey(f"{CHECK_LABEL} · {check_repair_status(repair)}")
+
+
+SHORT_SHA_LENGTH = 12
+
+
+def check_repair_status(repair: CheckRepairView) -> str:
+    """Return the attempt, stage and failing head of one repair state."""
+    try:
+        stage = CHECK_STAGE_LABELS[CheckRepairStage(repair.stage or "")]
+    except ValueError:
+        stage = repair.stage or ""
+    attempt = f"attempt {repair.attempt} of {repair.max_attempts}"
+    head = f" on {repair.head_sha[:SHORT_SHA_LENGTH]}" if repair.head_sha else ""
+    paused = f" · {INTERRUPTED_WORD}" if repair.interrupted else ""
+    return f"{attempt} · {stage}{head}{paused}"
+
+
+def check_failure_lines(repair: CheckRepairView) -> tuple[Text, ...]:
+    """Return one line per failing check of the current attempt."""
+    lines: list[Text] = []
+    for failure in repair.failures:
+        line = Text.assemble(
+            (failure.name, STEEL_BLUE),
+            (f" ({failure.result}, {failure.kind})", SECONDARY_TEXT_COLOR),
+        )
+        if failure.details_url:
+            line.append(f" {failure.details_url}")
+        lines.append(line)
+    return tuple(lines)
+
+
+def _check_repair_rows(view: TaskDetailView) -> list[Row]:
+    repair = view.check_repair
+    if repair is None or not (repair.active or repair.interrupted):
+        return []
+    status = check_repair_status(repair)
+    groups = [Text(status, style=AMBER)]
+    groups.extend(check_failure_lines(repair))
+    return [(grey(CHECK_LABEL), tuple(groups))]
+
+
+def _exhaustion_rows(view: TaskDetailView) -> list[Row]:
+    repair = view.check_repair
+    if repair is None or not repair.exhausted:
+        return []
+    reason = repair.exhaustion_reason or f"exhausted after {repair.max_attempts} attempts"
+    groups = [Text(reason, style=ALERT_COLOR)]
+    groups.extend(check_failure_lines(repair))
+    return [(grey(CHECK_LABEL), tuple(groups))]
 
 
 def counted(count: int, noun: str) -> str:

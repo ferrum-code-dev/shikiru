@@ -57,6 +57,7 @@ def _queries(reader: StateReader, tmp_path: Path, clock: FakeClock) -> OperatorQ
         project_root=tmp_path,
         engine_up=lambda: True,
         max_parallel=2,
+        pr_check_max_attempts=3,
         clock=clock,
     )
 

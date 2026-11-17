@@ -226,6 +226,20 @@ published in the meantime moves that boundary to its newer tip. Exhaustion of
 failure evidence and attempt count. Conflicts and the PR wait budget retain their existing
 handling. Repository review and merge policy remain in force.
 
+Operator views expose the repair: the task's `check_repair` (operator `TaskDetail` and dashboard
+`TaskDetailView`, same data) records the active attempt, its stage, the failing head and every
+attempt's failure evidence, plus the configured limit. Exhaustion is shown only from the recorded
+exhaustion escalation: its question carries the readable account plus the exact triggering head and
+checks as JSON, so check names and links are read back unchanged. An exhaustion escalation without
+that evidence shows its reason with no head or failures, never an earlier round's checks. An
+unrelated escalation is never reported as exhaustion. An unfinished round whose task is escalated or
+held is interrupted, not active. The dashboard briefing shows an active or interrupted repair in its
+Progress section (attempt, stage, failing head, failing checks with detail links) and an exhausted
+repair in its Problems section (exhaustion reason with the triggering failures); the Results fold
+repeats the repair rows and its headline carries the attempt, interruption or exhaustion. The CLI
+task detail renders a `Check repair` Progress row and the MCP `get_task`/`status` JSON carries the
+same fields, so human and scripted operators see the same repair state.
+
 **PR feedback rounds.** While the PR waits (status `integrating`, wait reason `PR open`, no slot),
 `orchestration.pr_feedback` decides which feedback starts a round. Under `changes_requested`
 (default) a newly submitted `CHANGES_REQUESTED` review ID starts a round, and so does a new comment in

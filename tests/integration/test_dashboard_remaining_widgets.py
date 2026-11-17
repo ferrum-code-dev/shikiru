@@ -212,6 +212,7 @@ def _dashboard_views(
         project_root=project_dir,
         engine_up=sources.engine_up,
         max_parallel=settings.orchestration.max_parallel,
+        pr_check_max_attempts=settings.orchestration.pr_check_max_attempts,
         clock=clock,
     )
     live_settings = fixed_settings(reader, settings)

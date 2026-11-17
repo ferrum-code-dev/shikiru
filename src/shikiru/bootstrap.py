@@ -616,6 +616,7 @@ def build_operator(
         engine_up=engine_state,
         engine_identity=lambda: EngineLock.identity_if_running(engine_lock),
         max_parallel=resolved_settings.orchestration.max_parallel,
+        pr_check_max_attempts=resolved_settings.orchestration.pr_check_max_attempts,
         clock=resolved_clock,
     )
     commands = OperatorCommands(

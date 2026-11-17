@@ -453,6 +453,7 @@ def _palette_screen_for_app(
         project_root=project_dir,
         engine_up=services.engine_up,
         max_parallel=settings.orchestration.max_parallel,
+        pr_check_max_attempts=settings.orchestration.pr_check_max_attempts,
         clock=clock,
     )
     request = request or PaletteRequest()
@@ -2109,6 +2110,7 @@ async def test_dashboard_engine_action_tracks_lock_and_refuses_a_stale_stop(
         project_root=project_dir,
         engine_up=engine_up,
         max_parallel=settings.orchestration.max_parallel,
+        pr_check_max_attempts=settings.orchestration.pr_check_max_attempts,
         clock=clock,
     )
     active_apps: list[DashboardApp] = []
@@ -5518,6 +5520,7 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
         project_root=project_dir,
         engine_up=lambda: False,
         max_parallel=settings.orchestration.max_parallel,
+        pr_check_max_attempts=settings.orchestration.pr_check_max_attempts,
         clock=clock,
     )
     opened: list[str] = []

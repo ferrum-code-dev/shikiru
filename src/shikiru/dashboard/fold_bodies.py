@@ -12,6 +12,7 @@ from rich.text import Text
 from shikiru.dashboard.briefing_view import (
     BRANCH_ARROW,
     BRANCH_LABEL,
+    CHECK_LABEL,
     COMMITS_LABEL,
     MINUS,
     PR_LABEL,
@@ -19,6 +20,8 @@ from shikiru.dashboard.briefing_view import (
     SUMMARY_LABEL,
     TESTS_LABEL,
     branch_row,
+    check_failure_lines,
+    check_repair_status,
     decision_rows,
     live_unavailable_rows,
     pull_request_groups,
@@ -38,7 +41,7 @@ from shikiru.ui.tokens import (
 if TYPE_CHECKING:
     from rich.console import Console, ConsoleOptions, RenderableType, RenderResult
 
-    from shikiru.dashboard.contract import TaskDetailView
+    from shikiru.dashboard.contract import CheckRepairView, TaskDetailView
     from shikiru.domain.briefing import ProducedNumbers
     from shikiru.domain.decisions import DecisionEntry
     from shikiru.domain.results import PlanChange, TaskResults
@@ -111,7 +114,21 @@ def _summary_rows(results: TaskResults) -> list[Row]:
     return [(grey(SUMMARY_LABEL), (Text(results.plan_summary),))]
 
 
-def _results_rows(results: TaskResults) -> list[Row]:
+def _repair_rows(repair: CheckRepairView | None) -> list[Row]:
+    if repair is None:
+        return []
+    if repair.exhausted:
+        groups = [Text(repair.exhaustion_reason or "exhausted", style=ALERT_COLOR)]
+        groups.extend(check_failure_lines(repair))
+        return [(grey(CHECK_LABEL), tuple(groups))]
+    if repair.active or repair.interrupted:
+        groups = [Text(check_repair_status(repair), style=AMBER)]
+        groups.extend(check_failure_lines(repair))
+        return [(grey(CHECK_LABEL), tuple(groups))]
+    return []
+
+
+def _results_rows(results: TaskResults, repair: CheckRepairView | None = None) -> list[Row]:
     optional = (
         (CHANGES_LABEL, _changes_groups(results.produced)),
         (TESTS_LABEL, tests_groups(results.tests)),
@@ -127,6 +144,7 @@ def _results_rows(results: TaskResults) -> list[Row]:
         *branch_row(results),
         *_commit_rows(results),
         *((grey(label), groups) for label, groups in optional if groups),
+        *_repair_rows(repair),
         *([] if lead else plan),
         *_stacked(RISKS_LABEL, [Text(risk, style=AMBER) for risk in results.residual_risks]),
     ]
@@ -144,12 +162,13 @@ class ResultsBody:
     """The Results fold body: where the work went, what it contains and what is left open."""
 
     results: TaskResults | None
+    check_repair: CheckRepairView | None = None
 
     def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
         """Yield the so-far note when work is in progress, then the labelled rows."""
         del console
         results = self.results
-        rows = _results_rows(results) if results is not None else []
+        rows = _results_rows(results, self.check_repair) if results is not None else []
         so_far = results is not None and results.outcome is ResultOutcome.SO_FAR
         yield _body(
             options.max_width, rows, [grey(ResultOutcome.SO_FAR.value)] if so_far and rows else []

@@ -297,7 +297,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 #### Task 48
 
-- [ ] 48. Show check repair in operator views
+- [x] 48. Show check repair in operator views
 
 ## Acceptance criteria
 - The dashboard and operator-facing views identify a task actively fixing PR checks and expose the relevant failure details.

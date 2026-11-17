@@ -870,7 +870,9 @@ class TaskDetailPanel(Vertical):
         self._render_relationships(view)
         self._render_activity(view)
         self.query_one(f"#{TASK_DETAIL_REQUEST}", Static).update(DescriptionBody(view))
-        self.query_one(f"#{TASK_DETAIL_RESULTS}", Static).update(ResultsBody(view.results))
+        self.query_one(f"#{TASK_DETAIL_RESULTS}", Static).update(
+            ResultsBody(view.results, view.check_repair)
+        )
         self.query_one(f"#{TASK_DETAIL_DECISIONS}", Static).update(DecisionsBody(view))
         self.query_one(f"#{TASK_DETAIL_WORKSPACE}", Static).update(WorkspaceBody(view, Path.home()))
         if self._folds[TASK_VIEW_USAGE].is_open:

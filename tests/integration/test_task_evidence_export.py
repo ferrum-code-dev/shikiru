@@ -105,6 +105,7 @@ def _queries(
         project_root=project_root,
         engine_up=lambda: False,
         max_parallel=2,
+        pr_check_max_attempts=3,
         clock=clock,
     )
 

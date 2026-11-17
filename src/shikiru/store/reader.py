@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from shikiru.errors import DatabaseError
+from shikiru.store.check_repair import CheckRepairStore
 from shikiru.store.commands import (
     CommandHistoryPage,
     StoredCommand,
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
 
     from shikiru.agents.contracts import QuotaWindow
     from shikiru.clock import Clock
+    from shikiru.domain.check_repair import CheckRepairRound
     from shikiru.domain.commands import Command, CommandStatus
     from shikiru.domain.escalation import Escalation
     from shikiru.domain.events import Event, EventKind
@@ -217,6 +219,14 @@ class StateReader:
     def push_target(self, base: str) -> PushTarget | None:
         """See `shikiru.store.pushes.fetch_push_target`."""
         return fetch_push_target(self._connection, base)
+
+    def check_repair_rounds(self, task_id: str) -> list[CheckRepairRound]:
+        """Read every check repair attempt of `task_id` in attempt order."""
+        try:
+            return CheckRepairStore(self._connection).for_task(task_id)
+        except sqlite3.Error as error:
+            message = f"could not query read-only database {self._database_path}: {error}"
+            raise DatabaseError(message) from error
 
     def get_escalation(self, escalation_id: str) -> Escalation | None:
         """See `shikiru.store.escalations.fetch_escalation`."""

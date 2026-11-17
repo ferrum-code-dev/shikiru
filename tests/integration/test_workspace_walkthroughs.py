@@ -286,6 +286,7 @@ async def _runtime(project_root: Path, tmux_server: TmuxServer) -> WorkspaceRunt
         project_root=project_root,
         engine_up=engine_is_up,
         max_parallel=settings.orchestration.max_parallel,
+        pr_check_max_attempts=settings.orchestration.pr_check_max_attempts,
         clock=clock,
     )
     commands = OperatorCommands(queue, clock, engine_up=engine_is_up)

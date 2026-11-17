@@ -224,7 +224,10 @@ closed without merge escalates; only an explicit retry opens a new PR. Once all 
 Shikiru can analyse and repair failing checks, verify and publish a fix, and wait for checks on the
 new head. It escalates demonstrated external failures and exhausted repair attempts with their
 evidence. A pending check keeps it waiting. `orchestration.pr_check_max_attempts` (default `3`, per
-project) bounds the repair rounds.
+project) bounds the repair rounds. The task's dashboard briefing and Results fold, its `shikiru status`
+detail (human and `--json`) and the MCP `get_task` result show the active (or interrupted) repair
+attempt and stage, the failing checks with their detail links, and — once attempts are exhausted —
+the exhaustion reason with the exact failing checks and detail links recorded by that escalation.
 
 If the local base cannot fast-forward to the merged remote tip, the task escalates as integration
 blocked and your uncommitted work is left untouched. Resolve it, then retry.

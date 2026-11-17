@@ -59,6 +59,14 @@ class CheckRepairStore:
         ).fetchall()
         return [_round(row) for row in rows]
 
+    def for_task(self, task_id: str) -> list[CheckRepairRound]:
+        """Return every repair attempt of `task_id` in the order they were recorded."""
+        rows = self._connection.execute(
+            "SELECT * FROM check_repair_rounds WHERE task_id = ? ORDER BY id",
+            (task_id,),
+        ).fetchall()
+        return [_round(row) for row in rows]
+
     def advance(
         self,
         round_id: int,

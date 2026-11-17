@@ -554,6 +554,44 @@ class CommandHistoryView:
 
 
 @dataclass(frozen=True)
+class CheckFailureView:
+    """One failing check: its name, result, GitHub kind and detail link, when recorded."""
+
+    name: str
+    result: str
+    kind: str
+    details_url: str | None
+
+
+@dataclass(frozen=True)
+class CheckRepairRoundView:
+    """One check repair attempt: the head it repairs, its stage and its failure evidence."""
+
+    id: int
+    head_sha: str
+    stage: str
+    verified_sha: str | None = None
+    published_sha: str | None = None
+    failures: tuple[CheckFailureView, ...] = ()
+
+
+@dataclass(frozen=True)
+class CheckRepairView:
+    """The repair state of a task's pull request: the active attempt and exhaustion."""
+
+    active: bool
+    attempt: int | None
+    max_attempts: int
+    stage: str | None
+    head_sha: str | None
+    failures: tuple[CheckFailureView, ...] = ()
+    rounds: tuple[CheckRepairRoundView, ...] = ()
+    exhausted: bool = False
+    exhaustion_reason: str | None = None
+    interrupted: bool = False
+
+
+@dataclass(frozen=True)
 class TaskDetailView:
     """Ready-to-render task state, evidence and existing target metadata."""
 
@@ -601,6 +639,7 @@ class TaskDetailView:
     results: TaskResults | None = None
     decisions: TaskDecisions | None = None
     can_take_over: bool = False
+    check_repair: CheckRepairView | None = None
 
     @property
     def quota_wait(self) -> QuotaWaitView | None:

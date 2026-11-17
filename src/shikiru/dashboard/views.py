@@ -22,6 +22,9 @@ from shikiru.dashboard.contract import (
     AttentionGroupView,
     AttentionView,
     BlockerEvidenceView,
+    CheckFailureView,
+    CheckRepairRoundView,
+    CheckRepairView,
     CommandFeedbackEntryView,
     CommandFeedbackStatus,
     CommandHistoryView,
@@ -128,6 +131,9 @@ from shikiru.operator.queries import (
     AGENT_REPORT_SOURCE,
     OperatorTaskAction,
     aggregate_usage,
+)
+from shikiru.operator.queries import (
+    CheckRepairView as OperatorCheckRepairView,
 )
 from shikiru.operator.strip_views import task_strip_data
 from shikiru.ui.age import SECONDS_PER_DAY, format_age, format_duration
@@ -1260,6 +1266,7 @@ class StateDashboardViews:
             ),
             decisions=self._task_decisions(task.id),
             can_take_over=self._can_take_over(task),
+            check_repair=_check_repair_view(detail.check_repair),
         )
 
     def _can_take_over(self, task: Task) -> bool:
@@ -2208,6 +2215,49 @@ def _task_report(row: ReportRow) -> TaskReportView:
         issues=issues,
         risks=risks,
         tests=tests,
+    )
+
+
+def _check_repair_view(repair: OperatorCheckRepairView | None) -> CheckRepairView | None:
+    if repair is None:
+        return None
+    return CheckRepairView(
+        active=repair.active,
+        attempt=repair.attempt,
+        max_attempts=repair.max_attempts,
+        stage=repair.stage,
+        head_sha=repair.head_sha,
+        failures=tuple(
+            CheckFailureView(
+                name=failure.name,
+                result=failure.result,
+                kind=failure.kind,
+                details_url=failure.details_url,
+            )
+            for failure in repair.failures
+        ),
+        rounds=tuple(
+            CheckRepairRoundView(
+                id=item.id,
+                head_sha=item.head_sha,
+                stage=item.stage,
+                verified_sha=item.verified_sha,
+                published_sha=item.published_sha,
+                failures=tuple(
+                    CheckFailureView(
+                        name=failure.name,
+                        result=failure.result,
+                        kind=failure.kind,
+                        details_url=failure.details_url,
+                    )
+                    for failure in item.failures
+                ),
+            )
+            for item in repair.rounds
+        ),
+        exhausted=repair.exhausted,
+        exhaustion_reason=repair.exhaustion_reason,
+        interrupted=repair.interrupted,
     )
 
 
