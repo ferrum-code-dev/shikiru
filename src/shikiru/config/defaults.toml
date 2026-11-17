@@ -7,6 +7,7 @@ ssh_timeout_seconds = 30
 [orchestration]
 max_parallel = 2
 max_iterations = 5
+pr_check_max_attempts = 3
 integration = "merge"
 pr_feedback = "changes_requested"
 push_interval_seconds = 14400

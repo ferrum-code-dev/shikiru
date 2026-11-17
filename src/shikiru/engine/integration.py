@@ -826,7 +826,18 @@ class PullRequest:
 
 def _stalled(status: PullRequestStatus, *, expired: bool) -> str | None:
     if status.checks_failing and not status.checks_pending:
-        return "failing checks"
+        head = status.head_sha or "unknown head"
+        evidence = "; ".join(
+            f"{check.name} ({check.result}, {check.kind})"
+            + (f" {check.details_url}" if check.details_url else " (no detail link)")
+            for check in status.failing_checks
+        )
+        parts = [f"failing checks on {head}"]
+        if evidence:
+            parts.append(evidence)
+        if status.evidence_error:
+            parts.append(status.evidence_error)
+        return "; ".join(parts)
     return "unmerged beyond the wait budget" if expired else None
 
 

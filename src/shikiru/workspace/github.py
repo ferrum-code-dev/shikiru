@@ -25,7 +25,14 @@ _CHECK_COMPLETED = "COMPLETED"
 _FAILING_CHECK_RESULTS = frozenset(
     ("FAILURE", "ERROR", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE", "ACTION_REQUIRED")
 )
+_PASSING_CHECK_RESULTS = frozenset(("SUCCESS", "NEUTRAL", "SKIPPED"))
 _PENDING_CHECK_STATES = frozenset(("PENDING", "EXPECTED"))
+_RUNNING_CHECK_STATUSES = frozenset(("QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED"))
+_CHECK_RUN_TYPENAME = "CheckRun"
+_STATUS_CONTEXT_TYPENAME = "StatusContext"
+_UNKNOWN_CHECK_NAME = "unknown check"
+_UNKNOWN_CHECK_KIND = "unknown"
+_MISSING_CHECK_EVIDENCE = "check evidence unavailable"
 _GITHUB_MAX_PAGE_SIZE = 100
 _DECIMAL_DIGITS = re.compile(r"[0-9]+")
 _PULL_REQUEST_URL = re.compile(
@@ -145,8 +152,10 @@ class _Key(StrEnum):
     CHECKS = "statusCheckRollup"
     COMMENTS = "comments"
     CONCLUSION = "conclusion"
+    CONTEXT = "context"
     CREATED_AT = "createdAt"
     DATA = "data"
+    DETAILS_URL = "detailsUrl"
     END_CURSOR = "endCursor"
     ERRORS = "errors"
     FULL_DATABASE_ID = "fullDatabaseId"
@@ -160,6 +169,7 @@ class _Key(StrEnum):
     LOGIN = "login"
     MERGE_COMMIT = "mergeCommit"
     MERGEABLE = "mergeable"
+    NAME = "name"
     NODE = "node"
     NODE_ID = "node_id"
     NODES = "nodes"
@@ -175,6 +185,8 @@ class _Key(StrEnum):
     STATE = "state"
     STATUS = "status"
     SUBMITTED_AT = "submittedAt"
+    TARGET_URL = "targetUrl"
+    TYPENAME = "__typename"
     URL = "url"
     USER = "user"
 
@@ -198,11 +210,28 @@ class ReviewState(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class FailingCheck:
+    """One settled failing check: its name, result, available detail link and GitHub kind.
+
+    `kind` is the `__typename` when present (`CheckRun` or `StatusContext`), else inferred
+    from the entry's keys, else `unknown`. `details_url` is None when GitHub gives no link.
+    """
+
+    name: str
+    result: str
+    details_url: str | None
+    kind: str
+
+
+@dataclass(frozen=True, slots=True)
 class PullRequestStatus:
     """A pull request's state, whether it can land, and the commit it landed as once merged.
 
     `checks_failing` is true when any check failed; `checks_pending` when any check has not
-    completed yet, so a failure is final only while nothing is pending.
+    completed yet, so a failure is final only while nothing is pending. `head_sha` is the head
+    the evidence describes. `failing_checks` lists each settled failure with its name, result and
+    available link. `evidence_error` names retrieval that failed or was unavailable; a status
+    with one is never a passing check (`checks_failing` is true).
     """
 
     state: PullRequestState
@@ -210,6 +239,9 @@ class PullRequestStatus:
     conflicting: bool
     checks_failing: bool
     checks_pending: bool
+    head_sha: str | None = None
+    failing_checks: tuple[FailingCheck, ...] = ()
+    evidence_error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,10 +335,171 @@ class _Page:
     next_cursor: str | None
 
 
-def _check_pending(check: dict[str, Any]) -> bool:
-    if _Key.STATUS in check:
-        return check[_Key.STATUS] != _CHECK_COMPLETED
-    return check.get(_Key.STATE) in _PENDING_CHECK_STATES
+def _check_pending(check: dict[str, Any], kind: str) -> tuple[bool, str | None]:
+    """Return whether a check is still running, and an error when its lifecycle is unavailable.
+
+    A check run is pending only in a recognised running status; a missing or unrecognised status
+    is unavailable evidence, never a pending or passing check.
+    """
+    if kind != _CHECK_RUN_TYPENAME:
+        state = check.get(_Key.STATE)
+        return isinstance(state, str) and state in _PENDING_CHECK_STATES, None
+    if _Key.STATUS not in check:
+        return False, f"{_MISSING_CHECK_EVIDENCE}: status is missing"
+    status = check[_Key.STATUS]
+    if status == _CHECK_COMPLETED:
+        return False, None
+    if isinstance(status, str) and status in _RUNNING_CHECK_STATUSES:
+        return True, None
+    return False, f"{_MISSING_CHECK_EVIDENCE}: unrecognized status {status!r}"
+
+
+def _check_kind(check: dict[str, Any]) -> str:
+    typename = check.get(_Key.TYPENAME)
+    if isinstance(typename, str) and typename in (_CHECK_RUN_TYPENAME, _STATUS_CONTEXT_TYPENAME):
+        return typename
+    if any(key in check for key in (_Key.NAME, _Key.CONCLUSION, _Key.DETAILS_URL, _Key.STATUS)):
+        return _CHECK_RUN_TYPENAME
+    if any(key in check for key in (_Key.CONTEXT, _Key.TARGET_URL)):
+        return _STATUS_CONTEXT_TYPENAME
+    return _UNKNOWN_CHECK_KIND
+
+
+def _check_result(check: dict[str, Any], kind: str) -> tuple[str | None, str | None]:
+    """Return the check's result string, and an error when the result is missing or malformed."""
+    keys = (
+        (_Key.CONCLUSION, _Key.STATE)
+        if kind == _CHECK_RUN_TYPENAME
+        else (_Key.STATE, _Key.CONCLUSION)
+    )
+    for key in keys:
+        if key in check:
+            value = check[key]
+            if value is None:
+                return None, None
+            if isinstance(value, str):
+                return value, None
+            return None, f"{_MISSING_CHECK_EVIDENCE}: {key.value} is not a result"
+    return None, f"{_MISSING_CHECK_EVIDENCE}: no result field"
+
+
+def _check_name(check: dict[str, Any], kind: str) -> tuple[str, str | None]:
+    """Return a check's name, falling back to `unknown check` with an error when unavailable."""
+    keys = (
+        (_Key.NAME, _Key.CONTEXT) if kind != _STATUS_CONTEXT_TYPENAME else (_Key.CONTEXT, _Key.NAME)
+    )
+    for key in keys:
+        if key in check:
+            value = check[key]
+            if isinstance(value, str) and value.strip():
+                return value, None
+            return _UNKNOWN_CHECK_NAME, f"{_MISSING_CHECK_EVIDENCE}: {key.value} is unavailable"
+    return _UNKNOWN_CHECK_NAME, f"{_MISSING_CHECK_EVIDENCE}: no name field"
+
+
+def _check_details_url(check: dict[str, Any], kind: str) -> tuple[str | None, str | None]:
+    """Return the check's detail link, None when GitHub gives none, and an error when malformed."""
+    key = _Key.TARGET_URL if kind == _STATUS_CONTEXT_TYPENAME else _Key.DETAILS_URL
+    fallback = _Key.DETAILS_URL if kind == _STATUS_CONTEXT_TYPENAME else _Key.TARGET_URL
+    for candidate in (key, fallback):
+        if candidate in check:
+            value = check[candidate]
+            if value is None:
+                return None, None
+            if isinstance(value, str) and value.strip():
+                return value, None
+            return None, f"{_MISSING_CHECK_EVIDENCE}: {candidate.value} is not a link"
+    return None, None
+
+
+def _one_check(entry: object) -> tuple[list[str], FailingCheck | None, bool]:
+    """Reduce one rollup entry to its errors, failing evidence and pending flag.
+
+    A null result on a genuinely running check stays pending without error. A missing or
+    unrecognized lifecycle status, or a null, empty or unrecognized result on a settled check, is
+    unavailable evidence, never a pass.
+    """
+    if not isinstance(entry, dict):
+        return [f"{_MISSING_CHECK_EVIDENCE}: entry is not an object"], None, False
+    check = cast("dict[str, Any]", entry)
+    kind = _check_kind(check)
+    pending, lifecycle_error = _check_pending(check, kind)
+    result, result_error = _check_result(check, kind)
+    errors = [error for error in (lifecycle_error, result_error) if error is not None]
+    if result is None:
+        if not pending and not errors:
+            errors.append(f"{_MISSING_CHECK_EVIDENCE}: settled check has no result")
+        return errors, None, pending
+    if result in _FAILING_CHECK_RESULTS:
+        name, name_error = _check_name(check, kind)
+        details_url, url_error = _check_details_url(check, kind)
+        errors.extend(error for error in (name_error, url_error) if error is not None)
+        return (
+            errors,
+            FailingCheck(name=name, result=result, details_url=details_url, kind=kind),
+            pending,
+        )
+    if result in _PASSING_CHECK_RESULTS:
+        return errors, None, pending
+    if kind != _CHECK_RUN_TYPENAME and result in _PENDING_CHECK_STATES:
+        return errors, None, pending
+    errors.append(f"{_MISSING_CHECK_EVIDENCE}: unrecognized result {result!r}")
+    return errors, None, pending
+
+
+def _check_evidence(
+    checks: list[Any],
+) -> tuple[bool, bool, tuple[FailingCheck, ...], str | None]:
+    """Reduce the rollup to failing/pending booleans, failing evidence and a retrieval error."""
+    failing: list[FailingCheck] = []
+    pending = False
+    errors: list[str] = []
+    for entry in checks:
+        ev, failed, is_pending = _one_check(entry)
+        errors.extend(ev)
+        pending = pending or is_pending
+        if failed is not None:
+            failing.append(failed)
+    evidence_error = errors[0] if errors else None
+    return bool(failing) or evidence_error is not None, pending, tuple(failing), evidence_error
+
+
+def _merge_commit(merge_commit: object) -> str | None:
+    """Return the merged commit, None when unmerged, or raise when malformed."""
+    if merge_commit is None:
+        return None
+    if isinstance(merge_commit, dict):
+        oid: object = cast("dict[str, Any]", merge_commit).get(_Key.OID)
+        if isinstance(oid, str):
+            return oid
+    raise _malformed(_Key.MERGE_COMMIT)
+
+
+def _head_sha(head: object) -> tuple[str | None, str | None]:
+    """Return the head the evidence describes, and an error when it is unavailable."""
+    if isinstance(head, str) and head.strip():
+        return head, None
+    if head is None:
+        return None, f"{_MISSING_CHECK_EVIDENCE}: head is unavailable"
+    return None, f"{_MISSING_CHECK_EVIDENCE}: head is not a commit"
+
+
+def _rollup(raw_checks: object) -> tuple[bool, bool, tuple[FailingCheck, ...], str | None]:
+    """Reduce the raw rollup, reporting a missing or malformed rollup as evidence error."""
+    if isinstance(raw_checks, list):
+        return _check_evidence(cast("list[Any]", raw_checks))
+    if raw_checks is None:
+        return True, False, (), f"{_MISSING_CHECK_EVIDENCE}: statusCheckRollup is missing"
+    return True, False, (), f"{_MISSING_CHECK_EVIDENCE}: statusCheckRollup is not a list"
+
+
+def _combined_error(check_error: str | None, head_error: str | None) -> str | None:
+    """Join check and head retrieval errors into one visible error, if any."""
+    if check_error is None:
+        return head_error
+    if head_error is None:
+        return check_error
+    return f"{check_error}; {head_error}"
 
 
 def _malformed(key: _Key) -> ShikiruError:
@@ -562,20 +755,35 @@ class GitHub:
         await self._run(repo_dir, "pr", "edit", url, "--body", body)
 
     async def pull_request_status(self, repo_dir: Path, url: str) -> PullRequestStatus:
-        """Return the state, merge commit, conflict and check results of the PR at `url`."""
-        fields = (_Key.STATE, _Key.MERGE_COMMIT, _Key.MERGEABLE, _Key.CHECKS)
+        """Return the state, merge commit, conflict and check evidence of the PR at `url`.
+
+        `checks_failing` and `checks_pending` keep their meaning: a settled failure is final
+        only while nothing is pending. `failing_checks` names each settled failure and
+        `head_sha` the head it describes. Retrieval that is missing or malformed is visible in
+        `evidence_error` and forces `checks_failing` so it is never read as a passing check.
+        """
+        fields = (_Key.STATE, _Key.MERGE_COMMIT, _Key.MERGEABLE, _Key.CHECKS, _Key.HEAD_SHA)
         result = await self._run(repo_dir, "pr", "view", url, "--json", ",".join(fields))
-        view = json.loads(result.stdout)
-        merge_commit = view[_Key.MERGE_COMMIT]
+        view = _object(_json(result.stdout))
+        raw_state = _field(view, _Key.STATE)
+        raw_mergeable = _field(view, _Key.MERGEABLE)
+        if not isinstance(raw_state, str):
+            raise _malformed(_Key.STATE)
+        if not isinstance(raw_mergeable, str):
+            raise _malformed(_Key.MERGEABLE)
+        merge_commit = _merge_commit(_field(view, _Key.MERGE_COMMIT))
+        head_sha, head_error = _head_sha(view.get(_Key.HEAD_SHA))
+        checks_failing, checks_pending, failing_checks, check_error = _rollup(view.get(_Key.CHECKS))
+        evidence_error = _combined_error(check_error, head_error)
         return PullRequestStatus(
-            state=PullRequestState(view[_Key.STATE]),
-            merge_commit=merge_commit[_Key.OID] if merge_commit is not None else None,
-            conflicting=view[_Key.MERGEABLE] == _CONFLICTING,
-            checks_failing=any(
-                {check.get(_Key.CONCLUSION), check.get(_Key.STATE)} & _FAILING_CHECK_RESULTS
-                for check in view[_Key.CHECKS]
-            ),
-            checks_pending=any(_check_pending(check) for check in view[_Key.CHECKS]),
+            state=PullRequestState(raw_state),
+            merge_commit=merge_commit,
+            conflicting=raw_mergeable == _CONFLICTING,
+            checks_failing=checks_failing or evidence_error is not None,
+            checks_pending=checks_pending,
+            head_sha=head_sha,
+            failing_checks=failing_checks,
+            evidence_error=evidence_error,
         )
 
     async def close_pull_request(self, repo_dir: Path, url: str) -> None:

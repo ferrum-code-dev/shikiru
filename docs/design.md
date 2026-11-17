@@ -199,7 +199,20 @@ tip; a base checked out nowhere moves by a compare-and-swap ref update. Local co
 uncommitted changes in files the merge changes, block the sync, so nothing is reset or overwritten;
 the task escalates as integration blocked, and an Operator retry completes the sync before done.
 Dependent tasks start from the synced remote base. Conflicts, failed checks, closure and timeout are
-handled explicitly. Repository review and merge policy remain in force. Integration progress is
+handled explicitly. The GitHub status adapter (`workspace.github`) retains failing check evidence
+alongside the `checks_failing`/`checks_pending` booleans: the head the evidence describes, and for
+each settled failure its name, result, available detail link and GitHub kind (`CheckRun` with
+`name`/`conclusion`/`detailsUrl`, `StatusContext` with `context`/`state`/`targetUrl`; an absent
+link stays absent). A check that has not completed keeps the PR waiting, so a failure is final only
+while nothing is pending, and a conflict stays a conflict. A null result on a genuinely running check
+stays pending; a null, empty or unrecognized result on a settled check is unavailable evidence, never
+a pass. Missing or malformed retrieval (an
+absent rollup, a malformed entry, an unavailable head, an unnamed failure or a settled check without
+a recognized result) is visible as
+`evidence_error` and forces `checks_failing`, so it is never read as a passing check; the stall
+that follows names the head, each failure and any retrieval error. The bounded repair limit that
+later rounds use is `orchestration.pr_check_max_attempts` (default 3, per project, 1–20).
+Repository review and merge policy remain in force. Integration progress is
 recorded for restart reconciliation.
 
 **PR feedback rounds.** While the PR waits (status `integrating`, wait reason `PR open`, no slot),

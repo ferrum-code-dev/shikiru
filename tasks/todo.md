@@ -273,7 +273,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 #### Task 46
 
-- [ ] 46. Capture failing check evidence and settle retry policy
+- [x] 46. Capture failing check evidence and settle retry policy
 
 ## Acceptance criteria
 - Consult the Leader on the default repair-attempt limit and per-project configurability, and record the decision in `tasks/plan.md` before implementing policy; the Leader consults the Operator if needed.

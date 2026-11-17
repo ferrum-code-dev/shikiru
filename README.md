@@ -220,7 +220,10 @@ convention, or Conventional Commits, and carry a `Task: T-n` trailer.
 
 With `pr`, `orchestration.pr_feedback` picks which reviews start a feedback round: `changes_requested`
 (default) or `any_comment`. Shikiru never dismisses reviews, resolves threads, approves or merges. A PR
-closed without merge escalates; only an explicit retry opens a new PR.
+closed without merge escalates; only an explicit retry opens a new PR. A PR with settled failing checks
+blocks with the failing names, results and available links and the head they describe; a pending check
+keeps it waiting. `orchestration.pr_check_max_attempts` (default `3`, per project) bounds the checks the
+later repair rounds may attempt.
 
 If the local base cannot fast-forward to the merged remote tip, the task escalates as integration
 blocked and your uncommitted work is left untouched. Resolve it, then retry.

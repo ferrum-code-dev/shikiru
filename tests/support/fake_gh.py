@@ -144,7 +144,7 @@ def _create(state: Path, options: list[str]) -> str:
         "head": values["--head"],
         "title": values["--title"],
         "body": values["--body"],
-        "headRefOid": None,
+        "headRefOid": "head000000000000000000000000000000000001",
         "reviews": [],
         "reviewThreads": [],
         "conversationComments": [],

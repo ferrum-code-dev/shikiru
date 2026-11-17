@@ -362,9 +362,13 @@ bounded, durable repair flow alongside the existing review-feedback flow. Keep t
 conflict and wait-budget rules, the remote-head safety checks and the verified merge boundary.
 The work is ordered as the three entries in `todo.md`; each entry is a separate dependent task.
 
-The attempt-limit default and whether it is configurable per project are a product decision, not
-settled by this plan. The first Implementer must consult the Leader, who consults the Operator if
-needed, before choosing policy or configuration. The decision must carry forward to the later tasks.
+The attempt-limit default and whether it is configurable per project were settled before
+implementation: the Implementer consulted the Leader, who consulted the Operator, and the host
+reported no human available to answer mid-run, so the task proceeded on stated defaults. Default
+`orchestration.pr_check_max_attempts` is 3 (mirroring `[orchestration.retries]`
+`unavailable_max_retries`), configurable per project through that key in `defaults.toml` and
+validated in `settings.py`, documented in `docs/design.md` and `README.md`. Task 47 carries this
+limit forward to its bounded rounds.
 Do not guess that an unfamiliar failure is an infrastructure outage or outside repository control:
 make the classification and its evidence explicit, and escalate an identified unfixable failure with
 its actual reason. Preserve unavailable details as unavailable rather than inventing them.

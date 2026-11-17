@@ -29,6 +29,7 @@ MAX_RETRY_DELAY_SECONDS = timedelta.max.days * 86_400 + timedelta.max.seconds
 MAX_TIMELINE_PAGE_SIZE = 49
 MAX_TIMELINE_SIGNAL_SCAN_ROWS = 1024
 MAX_USAGE_PCT = 100
+MAX_PR_CHECK_ATTEMPTS = 20
 
 
 class ConfigModel(BaseModel):
@@ -129,6 +130,7 @@ class OrchestrationConfig(ConfigModel):
 
     max_parallel: int
     max_iterations: int
+    pr_check_max_attempts: int = Field(gt=0, le=MAX_PR_CHECK_ATTEMPTS)
     integration: IntegrationStrategy
     pr_feedback: PullRequestFeedbackScope
     push_interval_seconds: int = Field(ge=0)
