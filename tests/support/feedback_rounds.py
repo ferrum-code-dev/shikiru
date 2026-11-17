@@ -111,6 +111,9 @@ def verdict(decision: str, *reply_ids: str) -> dict[str, Any]:
     }
     if decision == _ACCEPT:
         report["commit_subject"] = "feat: verify feedback"
+        report["pr_description"] = (
+            "Updated change.\n\n## What changed and why\nFeedback addressed.\n\n## Task\nSee task."
+        )
     if decision == _CHANGES_REQUESTED:
         report["issues"] = [{"severity": "major", "description": "still wrong"}]
     return {"kind": "report", "report": report}

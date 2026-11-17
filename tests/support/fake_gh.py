@@ -179,6 +179,13 @@ def _close(state: Path, url: str) -> str:
     return ""
 
 
+def _edit(state: Path, url: str, options: list[str]) -> str:
+    path = _pull_request_path(state, url.removeprefix(URL_PREFIX))
+    write_record(path, {**json.loads(path.read_text()), "body": _flag_values(options)["--body"]})
+    _hold(state, "edit")
+    return ""
+
+
 def _connection(nodes: list[dict[str, Any]], cursor: str | None) -> dict[str, Any]:
     start = 0 if cursor is None else int(cursor)
     end = start + PAGE_LIMIT
@@ -374,6 +381,8 @@ def _serve(state: Path, args: list[str]) -> str:
             return _view(state, url, options)
         case ["pr", "close", url]:
             return _close(state, url)
+        case ["pr", "edit", url, *options]:
+            return _edit(state, url, options)
         case _:
             raise _unsupported(args)
 

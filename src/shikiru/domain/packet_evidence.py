@@ -23,6 +23,7 @@ from shikiru.domain.reports import (
     ImplementationReport,
     NewTask,
     PlanReport,
+    PullRequestDescription,
     Report,
     TriageReport,
     Verdict,
@@ -82,6 +83,7 @@ _REPORT_KINDS = {
     Verdict: "verify",
     FeedbackAnalysis: "feedback analysis",
     FeedbackVerdict: "feedback verify",
+    PullRequestDescription: "pull request description",
 }
 
 

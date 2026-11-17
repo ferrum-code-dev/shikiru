@@ -557,6 +557,10 @@ class GitHub:
             raise ShikiruError(message)
         return lines[-1]
 
+    async def edit_pull_request(self, repo_dir: Path, url: str, *, body: str) -> None:
+        """Replace the description of the pull request at `url`."""
+        await self._run(repo_dir, "pr", "edit", url, "--body", body)
+
     async def pull_request_status(self, repo_dir: Path, url: str) -> PullRequestStatus:
         """Return the state, merge commit, conflict and check results of the PR at `url`."""
         fields = (_Key.STATE, _Key.MERGE_COMMIT, _Key.MERGEABLE, _Key.CHECKS)

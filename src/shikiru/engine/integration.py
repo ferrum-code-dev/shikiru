@@ -84,6 +84,10 @@ class IntegrationBlocked(ShikiruError):
         super().__init__(message)
 
 
+class MissingPullRequestDescription(IntegrationBlocked):
+    """An accepted change needs a description before its pull request can open."""
+
+
 class PullRequestStalled(IntegrationBlocked):
     """An open pull request cannot land: it conflicts, fails its checks or waited too long."""
 
@@ -220,6 +224,7 @@ class IntegrationMetadata:
     subject: str
     summary: str
     residual_risks: tuple[str, ...] = ()
+    pr_description: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,6 +238,7 @@ class MergeRequest:
     task_root: Path
     summary: str
     held: Callable[[], bool]
+    pr_description: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -669,17 +675,26 @@ class PullRequest:
         changes = await _landed_changes(self._git, request.task_root, base_sha, branch_sha)
         if not commits:
             return Landing(integration=PULL_REQUEST_INTEGRATION, changes=changes)
+        if not request.pr_description.strip():
+            message = f"{request.task_id} has no accepted pull request description; retry review"
+            raise MissingPullRequestDescription(message)
         lease = await self._git.remote_branch_sha(self._project_root, self._remote, repo.branch)
         await self._git.push(self._project_root, self._remote, repo.branch, lease=lease)
         url = await self._github.open_pull_request(
             self._project_root, base=repo.base, head=repo.branch
-        ) or await self._github.create_pull_request(
-            self._project_root,
-            base=repo.base,
-            head=repo.branch,
-            title=request.title,
-            body=request.summary,
         )
+        if url is None:
+            url = await self._github.create_pull_request(
+                self._project_root,
+                base=repo.base,
+                head=repo.branch,
+                title=request.title,
+                body=request.pr_description,
+            )
+        else:
+            await self._github.edit_pull_request(
+                self._project_root, url, body=request.pr_description
+            )
         self._events.append(
             EventKind.PR_OPENED,
             task_id=request.task_id,
@@ -1035,6 +1050,7 @@ class Integrator:
                     task_root=task_dir,
                     summary=current_metadata.summary,
                     held=lambda: self._is_held(current.id),
+                    pr_description=current_metadata.pr_description,
                 )
             )
             return current, current_metadata, landing

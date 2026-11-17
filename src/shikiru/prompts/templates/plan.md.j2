@@ -15,6 +15,10 @@ Check the target project's instructions and documentation for its commit-message
 `commit_subject` a concise subject for the whole plan change using that convention, or Conventional
 Commits if none is documented (no task reference). Keep `summary` short and describe the whole
 committed plan change.
+Also write `pr_description` for a reader unfamiliar with the task: a one-line summary followed by
+short headed sections covering what changed and why, effects (user behavior, compatibility and
+migrations), checks including omissions, risks or follow-ups, and a task reference. Omit empty
+sections, use bullets when useful, and do not invent facts or reuse the short summary.
 Use that subject for the plan commit, and end the commit message with the trailer
 `Task: {{ task_id }}` on its own line.
 

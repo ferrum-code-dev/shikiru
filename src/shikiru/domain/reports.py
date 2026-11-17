@@ -194,6 +194,7 @@ class PlanReport(DomainModel):
     """The Leader's `plan` report."""
 
     summary: str
+    pr_description: str = Field(default="", description="Whole-change pull request description.")
     commit_subject: str = Field(
         description=(
             "A concise subject for the whole change following the target project's documented "
@@ -252,6 +253,9 @@ class Verdict(DomainModel):
 
     decision: Literal["accept", "changes_requested", "escalate", "supersede"]
     summary: str
+    pr_description: str = Field(
+        default="", description="Whole-change pull request description on acceptance."
+    )
     commit_subject: str = Field(
         default="",
         description=(
@@ -457,6 +461,17 @@ class FeedbackVerdict(Verdict):
         return self
 
 
+class PullRequestDescription(Verdict):
+    """A Leader turn supplying a missing description for an accepted change."""
+
+    @model_validator(mode="after")
+    def _description_is_available(self) -> Self:
+        if self.decision != DECISION_ACCEPT or not self.pr_description.strip():
+            message = "an accepted, non-empty pull request description is required"
+            raise ValueError(message)
+        return self
+
+
 class ReportKind(StrEnum):
     """The `report.kind` discriminator naming a turn's report model."""
 
@@ -468,6 +483,7 @@ class ReportKind(StrEnum):
     FEEDBACK_ANALYSIS = auto()
     FEEDBACK_REWORK = auto()
     FEEDBACK_VERDICT = auto()
+    PULL_REQUEST_DESCRIPTION = auto()
 
 
 FEEDBACK_REPORT_KINDS: Final = frozenset(
@@ -487,6 +503,7 @@ _MODELS_BY_KIND: dict[ReportKind, type[Report]] = {
     ReportKind.FEEDBACK_ANALYSIS: FeedbackAnalysis,
     ReportKind.FEEDBACK_REWORK: FeedbackRework,
     ReportKind.FEEDBACK_VERDICT: FeedbackVerdict,
+    ReportKind.PULL_REQUEST_DESCRIPTION: PullRequestDescription,
 }
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -12,10 +13,12 @@ import pytest
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import transition_for_resolution
 from shikiru.domain.events import EventKind
+from shikiru.domain.reports import REPORT_FILENAME, REPORT_KIND_FILENAME, ReportKind
 from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Transition
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Step
 from shikiru.engine.integration import PullRequest
+from shikiru.paths import turns_dir
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
@@ -127,6 +130,7 @@ class _Run:
 
 async def _die_between_opening_and_recording(github: FakeGitHub, run: _Run) -> None:
     await wait_until(lambda: len(github.pull_requests()) == 1, _WAIT_SECONDS)
+    github.set_fields(1, body="manually edited")
     await run.restart()
     github.release("create")
 
@@ -229,7 +233,9 @@ async def _assert_landed(
         assert pull["head"] == task.repo.branch
         assert pull["base"] == task.repo.base
         assert pull["title"] == task.title
-        assert pull["body"] == final.summary
+        assert pull["body"] != final.summary
+        assert "## What changed and why" in pull["body"]
+        assert "## Task" in pull["body"]
     events = EventLog(env.connection, env.clock)
     opened = events.since(0, kinds=[EventKind.PR_OPENED], task_id=task.id)
     [done] = events.since(0, kinds=[EventKind.TASK_DONE], task_id=task.id)
@@ -338,6 +344,9 @@ async def test_pull_request_lands_through_the_done_path(
         await _await_poll(fake_github, run.clock, views)
         _assert_waiting_on_open_pr(engine_env, task.id)
         assert len(fake_github.pull_requests()) == number
+        if case.crash_after_create:
+            assert fake_github.pull_requests()[0]["body"] != "manually edited"
+            assert fake_github.calls("edit") >= 1
         if case.restart_while_open:
             await run.restart()
             await _await_poll(fake_github, run.clock, views + 1)
@@ -350,6 +359,83 @@ async def test_pull_request_lands_through_the_done_path(
             await _retry_closed(engine_env, run, task.id, case, remote_dir)
 
     await _assert_landed(engine_env, fake_github, remote_dir, task, len(case.outcomes))
+
+
+@pytest.mark.parametrize("description", [None, ""], ids=["legacy", "empty"])
+async def test_missing_description_is_recovered_and_reused_after_a_failed_create(
+    description: str | None,
+    engine_env: EngineEnv,
+    tmux_server: TmuxServer,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
+    task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
+    report = {
+        "decision": "accept",
+        "summary": "original review summary",
+        "commit_subject": "feat: original accepted change",
+    }
+    if description is not None:
+        report["pr_description"] = description
+    await set_role_script(
+        tmux_server, Role.LEADER, [{"kind": "report", "report": report}, {"kind": "accept"}]
+    )
+    fake_github.fail_next("create", 1)
+    run = _Run(engine_env, settings, task.id)
+    await _land(run.clock, run.flow)
+    assert engine_env.tasks.require(task.id).status is Status.ESCALATED
+    events = EventLog(engine_env.connection, engine_env.clock)
+    turns = events.since(0, kinds=[EventKind.TURN_STARTED], task_id=task.id)
+    assert sum(e.data.get("report_kind") == "pull_request_description" for e in turns) == 1
+
+    _retry(engine_env, run, task.id, EscalationReason.ENGINE_ERROR)
+    await _await_poll(fake_github, run.clock, 1)
+    [pull] = fake_github.pull_requests()
+    assert "## What changed and why" in pull["body"]
+    assert pull["body"] != "original review summary"
+    turns = events.since(0, kinds=[EventKind.TURN_STARTED], task_id=task.id)
+    assert sum(e.data.get("report_kind") == "pull_request_description" for e in turns) == 1
+    await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
+    await _land(run.clock, run.flow)
+    assert engine_env.tasks.require(task.id).summary == "original review summary"
+
+
+async def test_legacy_inflight_plan_obtains_description_before_opening_pr(
+    engine_env: EngineEnv,
+    tmux_server: TmuxServer,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    await add_bare_remote(engine_env.project_root, remote_dir, settings.repo.remote)
+    task = await build_flow_task(engine_env, mode=Mode.PLAN)
+    worktree = task_root(engine_env.project_root, task.id)
+    (worktree / "plan.txt").write_text("plan change\n")
+    await commit_all(_RUNNER, worktree, "docs: plan")
+    turn = turns_dir(engine_env.project_root, task.id) / "01-plan-i0"
+    turn.mkdir(parents=True)
+    (turn / REPORT_KIND_FILENAME).write_text(ReportKind.PLAN.value)
+    (turn / REPORT_FILENAME).write_text(
+        json.dumps({"summary": "original plan", "commit_subject": "docs: plan", "commits": []})
+    )
+    engine_env.tasks.apply_transition(
+        task.id, Transition.stay(task, step=Step.INTEGRATE, status=Status.INTEGRATING)
+    )
+    await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
+    run = _Run(engine_env, settings, task.id)
+    await _await_poll(fake_github, run.clock, 1)
+    [pull] = fake_github.pull_requests()
+    assert "## What changed and why" in pull["body"]
+    assert pull["body"] != "original plan"
+    await _merge_remotely(fake_github, remote_dir, 1, MergeStyle.MERGE_COMMIT)
+    await _land(run.clock, run.flow)
+    assert engine_env.tasks.require(task.id).summary == "original plan"
 
 
 async def test_an_agent_that_left_its_task_branch_opens_no_pull_request(

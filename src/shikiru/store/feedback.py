@@ -22,7 +22,9 @@ if TYPE_CHECKING:
 
 _ROUND_COLUMNS = (
     "id, task_id, pull_request_url, review_ids, snapshot, stage, analysis, attempts, blocked, "
-    " expected_remote_sha, verified_sha, published_sha, checks, verified_replies"
+    " expected_remote_sha, verified_sha, published_sha, checks, verified_replies, "
+    "COALESCE((SELECT description FROM feedback_descriptions "
+    "WHERE round_id = feedback_rounds.id), '') AS pr_description"
 )
 _REPLY_COLUMNS = "round_id, source_id, kind, marker, body, state, posted_url"
 _UNFINISHED = tuple(stage.value for stage in sorted(UNFINISHED_STAGES))
@@ -140,6 +142,7 @@ class FeedbackStore:
         replies: dict[str, str],
         stage: FeedbackStage,
         planned: Sequence[FeedbackReply] = (),
+        pr_description: str = "",
     ) -> None:
         """Record the tip and replies the Leader verified, with any `planned` replies owed now.
 
@@ -148,6 +151,11 @@ class FeedbackStore:
         with transaction(self._connection):
             self._set(round_id, "verified_sha", sha)
             self._set(round_id, "verified_replies", json.dumps(replies))
+            self._connection.execute(
+                "INSERT INTO feedback_descriptions (round_id, description) VALUES (?, ?) "
+                "ON CONFLICT(round_id) DO UPDATE SET description = excluded.description",
+                (round_id, pr_description),
+            )
             self._insert_replies(planned)
             self._set(round_id, "stage", stage.value)
 
@@ -251,6 +259,7 @@ def _round(row: sqlite3.Row, comment_ids: list[str]) -> FeedbackRound:
         published_sha=row["published_sha"],
         checks=row["checks"],
         verified_replies=json.loads(row["verified_replies"]),
+        pr_description=row["pr_description"],
     )
 
 

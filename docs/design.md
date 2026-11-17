@@ -188,7 +188,9 @@ an empty integration shows zero commits rather than falling back to earlier repo
 records without these fields keep the previous derivation.
 
 **Pull-request** mode pushes the rebased task branch and creates or adopts a GitHub PR through
-`gh`. The engine polls its state, requires the merge to land, fetches the base from `repo.remote`
+`gh`. The Leader supplies a whole-change description, refreshed when adopting a PR and after each
+accepted feedback round. Refreshing can overwrite a manually edited description. The engine polls
+its state, requires the merge to land, fetches the base from `repo.remote`
 and verifies the merge commit is on it. Before the task is marked done, the local base is synced to
 that verified tip and `refs/remotes/<remote>/<base>` is advanced to the same tip. The sync only
 fast-forwards: a checked-out base advances with `merge --ff-only --no-autostash` in its own

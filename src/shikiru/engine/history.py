@@ -11,6 +11,7 @@ from shikiru.domain.reports import (
     FeedbackVerdict,
     ImplementationReport,
     PlanReport,
+    PullRequestDescription,
     Report,
     Verdict,
 )
@@ -100,7 +101,15 @@ class ReportHistory:
         """
         history = self.load(task.id)
         fallback_subject = f"{FALLBACK_COMMIT_TYPE}: {' '.join(task.title.split())}"
-        for _, report in reversed(history):
+        description = ""
+        rejected_turns: set[str] = set()
+        for label, report in reversed(history):
+            if isinstance(report, Verdict) and report.decision != DECISION_ACCEPT:
+                rejected_turns.add(label)
+            if isinstance(report, PullRequestDescription):
+                if label not in rejected_turns:
+                    description = description or report.pr_description
+                continue
             if (
                 isinstance(report, Verdict)
                 and not isinstance(report, FeedbackVerdict)
@@ -114,6 +123,7 @@ class ReportHistory:
                     ),
                     summary=report.summary,
                     residual_risks=tuple(report.residual_risks),
+                    pr_description=description or report.pr_description,
                 )
         for _, report in reversed(history):
             if isinstance(report, PlanReport):
@@ -124,5 +134,8 @@ class ReportHistory:
                         else report.commit_subject
                     ),
                     summary=report.summary,
+                    pr_description=description or report.pr_description,
                 )
-        return IntegrationMetadata(subject=fallback_subject, summary=task.title)
+        return IntegrationMetadata(
+            subject=fallback_subject, summary=task.title, pr_description=description
+        )

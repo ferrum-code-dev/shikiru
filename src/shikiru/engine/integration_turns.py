@@ -18,6 +18,7 @@ from shikiru.domain.reports import (
     ConsultAnswer,
     FeedbackRework,
     ImplementationReport,
+    PullRequestDescription,
     ReportKind,
     Verdict,
 )
@@ -32,6 +33,7 @@ from shikiru.engine.integration import (
     IntegrationCoordinator,
     IntegrationHeld,
     IntegrationMetadata,
+    MissingPullRequestDescription,
     OffTaskBranch,
     PullRequestClosed,
     RebaseConflict,
@@ -50,6 +52,7 @@ if TYPE_CHECKING:
     from shikiru.engine.escalation_filing import EscalationFiler
     from shikiru.engine.feedback import FeedbackRounds
     from shikiru.engine.history import ReportHistory
+    from shikiru.engine.integration import ConflictResolver
     from shikiru.engine.step_runner import StepRunner
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
@@ -118,9 +121,7 @@ class IntegrationTurns:
 
                 await self._feedback.run(task, prepare)
                 current = self._tasks.require(task.id)
-            await self._coordinator.run(
-                current, resolve_conflicts, metadata, self._conflict_recovery
-            )
+            await self._integrate(current, metadata, resolve_conflicts)
         except FeedbackPending:
             self._queue(task)
         except TurnStopped, IntegrationHeld:
@@ -135,6 +136,33 @@ class IntegrationTurns:
             current = self._tasks.require(task.id)
             transition = Transition.escalate(current, error.reason, step=Step.INTEGRATE)
             await self._escalations.escalate(current, transition, None, question=str(error))
+
+    async def _integrate(
+        self, task: Task, metadata: IntegrationMetadata, resolve_conflicts: ConflictResolver
+    ) -> None:
+        current = task
+        while True:
+            try:
+                await self._coordinator.run(
+                    current, resolve_conflicts, metadata, self._conflict_recovery
+                )
+            except MissingPullRequestDescription:
+                current = self._tasks.require(task.id)
+                if current.slot is None:
+                    self._queue(current)
+                    return
+                current, outcome = await self._steps.run_report_turn(
+                    current,
+                    role=Role.LEADER,
+                    template=PromptName.PULL_REQUEST_DESCRIPTION,
+                    kind=ReportKind.PULL_REQUEST_DESCRIPTION,
+                )
+                if not isinstance(outcome, PullRequestDescription):
+                    message = f"{task.id} could not produce a pull request description"
+                    raise IntegrationBlocked(message) from None
+                metadata = self._history.integration_metadata(current)
+            else:
+                return
 
     def _queue(self, task: Task) -> None:
         current = self._tasks.require(task.id)

@@ -135,16 +135,23 @@ class TurnContextPreparer:
         fresh = session_handoff and not continue_turn
         handoff = (fresh and bool(history)) or next_turn.handoff
         needs_facts = (
-            template in (PromptName.VERIFY, PromptName.CONFLICTS, *FEEDBACK_TEMPLATES) or handoff
+            template
+            in (
+                PromptName.VERIFY,
+                PromptName.CONFLICTS,
+                PromptName.PULL_REQUEST_DESCRIPTION,
+                *FEEDBACK_TEMPLATES,
+            )
+            or handoff
         )
         facts_text = await self._facts.text(task) if needs_facts else ""
-        if handoff and template not in FEEDBACK_TEMPLATES:
+        if handoff and template not in (*FEEDBACK_TEMPLATES, PromptName.PULL_REQUEST_DESCRIPTION):
             template = PromptName.HANDOFF
         if needs_facts:
             context[ContextKey.FACTS] = facts_text
         if template in FEEDBACK_TEMPLATES:
             context.update(self._feedback_context(task, template, feedback))
-        if template is PromptName.VERIFY:
+        if template in (PromptName.VERIFY, PromptName.PULL_REQUEST_DESCRIPTION):
             context[ContextKey.BASE] = require_repo(task).base_ref
             context[ContextKey.FINAL_ROUND] = (
                 task.iteration >= self._settings.orchestration.max_iterations

@@ -92,6 +92,7 @@ async def test_an_accepted_change_is_published_while_a_clarify_thread_gets_its_q
 
     after = await pull.remote_branch()
     assert after != before
+    assert fake_github.pull_requests()[0]["body"].startswith("Updated change.")
     assert not pull.escalated()
     [fix] = pull.thread_replies(THREAD)
     assert f"Fixed in {after[:12]}" in fix
@@ -316,11 +317,42 @@ async def test_a_round_without_accepted_work_replies_without_publishing(
     await wait_until(lambda: pull.handled() and pull.waiting(), WAIT_SECONDS)
 
     assert await pull.remote_branch() == before
+    assert fake_github.pull_requests()[0]["body"].startswith("Updated change.")
     [reply] = pull.replies()
     assert "Fixed in" not in reply
     started = pull.events.since(0, kinds=[EventKind.TURN_STARTED], task_id=pull.task.id)
     rework = [e for e in started if e.data.get("report_kind") == "feedback_rework"]
     assert rework == []
+    await pull.stop()
+
+
+async def test_description_update_failure_is_retried_before_the_round_completes(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmux_server: TmuxServer,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(engine_env, fake_github, tmp_path_factory)
+    await pull.request_changes(with_thread=False)
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [feedback_analysis(decision(REVIEW, "disagree")), verdict("accept", REVIEW)],
+    )
+    fake_github.fail_next("edit", 1)
+    await pull.until(pull.flow.done)
+    await pull.dispatch()
+    await wait_until(pull.escalated, WAIT_SECONDS)
+    active = pull.store.active(pull.task.id)
+    assert active is not None
+    assert active.pr_description.startswith("Updated change.")
+    assert not pull.handled()
+    assert pull.replies() == []
+
+    pull.retry(EscalationReason.INTEGRATION_BLOCKED)
+    await pull.until(lambda: pull.handled() and pull.waiting())
+    assert fake_github.pull_requests()[0]["body"] == active.pr_description
+    assert fake_github.calls("edit") == 2
     await pull.stop()
 
 

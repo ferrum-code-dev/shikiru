@@ -20,6 +20,11 @@ you `accept`, `commit_subject` is a concise subject for the whole change followi
 or Conventional Commits if none is documented (no task reference). Keep `summary` short and describe
 the entire change as it will land, drawing on every implementation and rework turn in the reports
 above, not only this review.
+On acceptance, also write `pr_description` for a reader who has not seen the task. Start with a
+one-line summary, then short headed sections for what changed and why, effects (including user
+behavior, compatibility and migrations), checks including what was not checked, risks or
+follow-ups, and a reference to the task. Omit empty sections and use bullets when useful. Base it
+on the whole change and available evidence; do not invent facts or reuse the short review summary.
 {% if final_round %}
 This is the final round: choose `accept`, `supersede` (decompose into `new_tasks`) or
 `escalate`. `changes_requested` is not available this round.

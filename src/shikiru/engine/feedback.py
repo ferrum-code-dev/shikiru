@@ -85,6 +85,7 @@ _REMOTE_MOVED = (
     "{expected}; both sides are kept"
 )
 _PUSH_FAILED = "publishing {branch} for {url} failed: {error}"
+_DESCRIPTION_FAILED = "updating the description of {url} failed: {error}"
 _REPLY_FAILED = "replying to {source} on {url} failed: {error}"
 _ALIGN_FAILED = "reading the remote branch {branch} of {url} failed: {error}"
 _THREAD_MISSING = "the discussion {source} is no longer on {url}; its reply cannot be posted"
@@ -169,6 +170,9 @@ class FeedbackRounds:
         while (active := self._store.active(task.id)) is not None:
             self._require_not_held(task.id)
             await self._require_open(active)
+            if active.stage is FeedbackStage.REPLIES and not active.pr_description:
+                self._store.set_stage(active.id, FeedbackStage.VERIFICATION)
+                continue
             match active.stage:
                 case FeedbackStage.ANALYSIS:
                     current = await self._analyse(current, active)
@@ -272,10 +276,18 @@ class FeedbackRounds:
             raise InvariantError(message)
         links = self._source_links(active)
         if outcome.decision == DECISION_ACCEPT:
+            if not outcome.pr_description.strip():
+                raise self._blocked(
+                    active, f"{task.id} feedback verification has no pull request description"
+                )
             replies = publishable_replies(active.snapshot, analysis, outcome)
             if analysis.work:
                 self._store.save_verified(
-                    active.id, sha=tip, replies=replies, stage=FeedbackStage.PUBLICATION
+                    active.id,
+                    sha=tip,
+                    replies=replies,
+                    stage=FeedbackStage.PUBLICATION,
+                    pr_description=outcome.pr_description,
                 )
             else:
                 self._store.save_verified(
@@ -284,6 +296,7 @@ class FeedbackRounds:
                     replies=replies,
                     stage=FeedbackStage.REPLIES,
                     planned=self._planned_replies(active, replies, None),
+                    pr_description=outcome.pr_description,
                 )
         elif outcome.decision == DECISION_CHANGES_REQUESTED and analysis.work:
             self._store.set_stage(active.id, FeedbackStage.IMPLEMENTATION)
@@ -421,6 +434,14 @@ class FeedbackRounds:
         return planned
 
     async def _reply(self, active: FeedbackRound) -> None:
+        try:
+            await self._github.edit_pull_request(
+                self._project_root, active.pull_request_url, body=active.pr_description
+            )
+        except ShikiruError as error:
+            raise self._blocked(
+                active, _DESCRIPTION_FAILED.format(url=active.pull_request_url, error=error)
+            ) from error
         for reply in self._store.replies(active.id):
             if reply.state is ReplyState.SENT:
                 continue

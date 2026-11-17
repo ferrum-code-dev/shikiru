@@ -53,6 +53,7 @@ class PromptName(StrEnum):
     FEEDBACK_ANALYSIS = auto()
     FEEDBACK_REWORK = auto()
     FEEDBACK_VERIFY = auto()
+    PULL_REQUEST_DESCRIPTION = auto()
 
 
 class PromptRenderer:

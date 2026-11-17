@@ -285,6 +285,9 @@ def _plan_report(step: TurnStep, prompt_text: str, commits: list[Commit]) -> Rep
         _unsupported(ReportKind.PLAN, step)
     return PlanReport(
         summary=f"planned: {prompt_text}",
+        pr_description=(
+            f"Plan the change.\n\n## What changed and why\n{prompt_text}\n\n## Task\nSee task."
+        ),
         commit_subject=FAKE_COMMIT_SUBJECT,
         commits=commits,
         new_tasks=_new_tasks(step.new_tasks),
@@ -310,6 +313,10 @@ def _verdict_report(step: TurnStep, prompt_text: str) -> Report:
         return Verdict(
             decision="accept",
             summary=f"verified: {prompt_text}",
+            pr_description=(
+                f"Implement the change.\n\n## What changed and why\n{prompt_text}"
+                "\n\n## Task\nSee task."
+            ),
             commit_subject=FAKE_COMMIT_SUBJECT,
         )
     if isinstance(step, ChangesRequestedStep):
@@ -357,7 +364,7 @@ def _build_report(
         return _plan_report(step, prompt_text, commits)
     if kind is ReportKind.CONSULT:
         return _consult_report(step, prompt_text)
-    if kind is ReportKind.VERDICT:
+    if kind in (ReportKind.VERDICT, ReportKind.PULL_REQUEST_DESCRIPTION):
         return _verdict_report(step, prompt_text)
     return _implementation_report(step, prompt_text, commits)
 

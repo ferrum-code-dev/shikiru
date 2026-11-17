@@ -78,6 +78,33 @@ async def test_an_interrupted_reply_is_found_by_its_marker_instead_of_posted_twi
     await pull.stop()
 
 
+async def test_an_interrupted_description_update_is_retried_after_restart(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmux_server: TmuxServer,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(engine_env, fake_github, tmp_path_factory)
+    await pull.request_changes(with_thread=False)
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [feedback_analysis(decision(REVIEW, "disagree")), verdict("accept", REVIEW)],
+    )
+    await pull.until(pull.flow.done)
+    fake_github.hold("edit")
+    await pull.dispatch()
+    await wait_until(lambda: fake_github.calls("edit") == 1, WAIT_SECONDS)
+    assert not pull.handled()
+    assert pull.store.active(pull.task.id) is not None
+    await pull.restart()
+    fake_github.release("edit")
+    await pull.until(lambda: pull.handled() and pull.waiting())
+    assert fake_github.calls("edit") >= 2
+    assert fake_github.pull_requests()[0]["body"].startswith("Updated change.")
+    await pull.stop()
+
+
 async def test_a_feedback_rebase_is_verified_again_and_the_landing_keeps_every_commit(
     engine_env: EngineEnv,
     fake_github: FakeGitHub,

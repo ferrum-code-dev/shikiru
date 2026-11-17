@@ -91,6 +91,7 @@ class FeedbackRound(DomainModel):
     published_sha: str | None = None
     checks: str = ""
     verified_replies: dict[str, str] = Field(default_factory=dict)
+    pr_description: str = ""
 
 
 class FeedbackReply(DomainModel):

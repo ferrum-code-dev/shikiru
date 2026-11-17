@@ -26,6 +26,12 @@ names; it must not claim any change or promise work. Choose `accept` only when e
 reply is right; give the final reply for each source item that has one in `replies`. Check the
 target project's instructions and documentation for its commit-message convention. On `accept`, also give `commit_subject`: a concise subject for the whole
 change following that convention, or Conventional Commits if none is documented (no task reference).
+On acceptance, write `pr_description` anew for the entire final change, for a reader unfamiliar
+with the task. Start with a one-line summary, then short headed sections for what changed and why,
+effects (including user behavior, compatibility and migrations), checks including what was not
+checked, risks or follow-ups, and a reference to the task. Omit empty sections and use bullets
+when useful. Use the change and verification evidence; do not invent facts or reuse the short
+review summary. Do this even when the feedback round made no code changes.
 Choose `changes_requested` with `issues` for further rework, or `escalate` with options for the
 Operator. `supersede` is not available.
 {% if final_round %}

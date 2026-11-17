@@ -1,0 +1,15 @@
+{% extends "_base.md.j2" %}
+{% import "_macros.md.j2" as macros %}
+{% block body %}
+You are the Leader writing a missing pull request description for an already accepted change.
+
+{{ macros.facts_section(facts) }}
+
+Inspect `git diff {{ base }}...HEAD` and the task and reports above. Do not change files. In
+`pr_description`, write for a reader unfamiliar with the task: a one-line summary followed by
+short headed sections covering what changed and why, effects (user behavior, compatibility and
+migrations), checks including omissions, risks or follow-ups, and a task reference. Omit empty
+sections, use bullets when useful, and do not invent facts or reuse the short review summary.
+Submit an `accept` verdict with the description. The `summary` and `commit_subject` fields are
+required by the report format but do not replace the accepted review's summary or commit subject.
+{% endblock %}
