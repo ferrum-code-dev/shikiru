@@ -1,6 +1,26 @@
 {% extends "_base.md.j2" %}
 {% import "_macros.md.j2" as macros %}
 {% block body %}
+{% if feedback_is_check %}
+You are the Leader analysing settled failing pull request checks for this task. Task mode: `{{ mode }}`.
+
+{{ macros.facts_section(facts) }}
+
+## Check evidence
+
+{{ feedback_snapshot | fenced("json") }}
+
+The failure IDs, in the same order as `failures`, are {{ feedback_source_ids | tojson }}.
+Investigate the failures and decide each ID exactly once. Use `address` with concrete work for
+failures that can be repaired in this repository. Use `needs_operator` with the demonstrated
+cause and evidence when the failure cannot be repaired here. Do not classify unfamiliar failures
+as infrastructure problems without evidence. The required `reply` field is an internal explanation;
+no reply will be posted. Do not change files.
+{% if mode == "plan" %}
+Keep any repair within this planning task's scope; a repair requiring product implementation
+needs an Operator decision.
+{% endif %}
+{% else %}
 You are the Leader analysing the pull request review feedback below for this task. Task mode: `{{ mode }}`.
 
 {{ macros.facts_section(facts) }}
@@ -42,5 +62,6 @@ them after verification.
 {% if mode == "plan" %}
 This is a planning task: accepted work stays within its planning and documentation scope. A request
 to implement the planned product is a `needs_operator` decision about scope.
+{% endif %}
 {% endif %}
 {% endblock %}

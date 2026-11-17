@@ -283,7 +283,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 #### Task 47
 
-- [ ] 47. Repair settled failing checks through bounded durable rounds
+- [x] 47. Repair settled failing checks through bounded durable rounds
 
 ## Acceptance criteria
 - A PR with a fixable failing check ends up merged without operator involvement.

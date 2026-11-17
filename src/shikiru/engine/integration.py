@@ -315,8 +315,12 @@ class IntegrationStrategy(Protocol):
 class FeedbackIntake(Protocol):
     """Where a waiting pull request learns whether review feedback awaits a round."""
 
-    async def arrived(self, task_id: str, url: str) -> bool:
+    async def arrived(self, task_id: str, url: str) -> bool | None:
         """Return whether `task_id`'s pull request at `url` has feedback awaiting a round."""
+        ...
+
+    def checks_arrived(self, task_id: str, url: str, status: PullRequestStatus, limit: int) -> bool:
+        """Return whether settled checks started a repair round."""
         ...
 
 
@@ -720,10 +724,10 @@ class PullRequest:
         Raises `PullRequestClosed` for a closed one, `PullRequestConflicting` when the open PR
         conflicts with its base, `IntegrationBlocked` when the merged commit cannot be fetched
         from and verified on the remote base, when the local base cannot fast-forward to it
-        without losing work, when the open PR has failing, settled checks, or
-        when it stays unmerged for `pr_wait` seconds (counted from the start of each wait), and
+        without losing work, when check evidence is unavailable or repair attempts are exhausted,
+        or when it stays unmerged for `pr_wait` seconds (counted from the start of each wait),
         `IntegrationHeld` before any poll once `held()` is true, and `FeedbackPending` when review
-        feedback awaits a round.
+        feedback or settled failing checks await a round.
         """
         opened = self._open_pull_request(task_id)
         if opened is None:
@@ -737,14 +741,9 @@ class PullRequest:
             status = await self._status(task_id, opened.url, held)
             if status.state is not PullRequestState.OPEN:
                 break
-            if status.conflicting:
-                self._tasks.set_wait_reason(task_id, None)
-                raise PullRequestConflicting(opened.url)
-            stalled = _stalled(status, expired=self._clock.now() >= deadline)
-            if stalled is not None:
-                self._tasks.set_wait_reason(task_id, None)
-                raise PullRequestStalled(opened.url, stalled)
-            await self._end_wait_for_feedback(task_id, opened.url)
+            await self._check_wait(
+                task_id, opened.url, status, expired=self._clock.now() >= deadline
+            )
             await self._clock.sleep(self._settings.network.pr_poll_seconds)
         self._tasks.set_wait_reason(task_id, None)
         if status.state is PullRequestState.CLOSED:
@@ -770,10 +769,45 @@ class PullRequest:
                 break
         return await self._landed_pull_request(opened, merge_commit, base_sha)
 
-    async def _end_wait_for_feedback(self, task_id: str, url: str) -> None:
-        if self._feedback is not None and await self._feedback.arrived(task_id, url):
+    async def _end_wait_for_feedback(self, task_id: str, url: str) -> bool:
+        if self._feedback is None:
+            return True
+        arrived = await self._feedback.arrived(task_id, url)
+        if arrived:
             self._tasks.set_wait_reason(task_id, None)
             raise FeedbackPending
+        return arrived is not None
+
+    async def _check_wait(
+        self, task_id: str, url: str, status: PullRequestStatus, *, expired: bool
+    ) -> None:
+        if status.conflicting:
+            self._tasks.set_wait_reason(task_id, None)
+            raise PullRequestConflicting(url)
+        if expired:
+            self._tasks.set_wait_reason(task_id, None)
+            stalled = describe_pr_stall(status, expired=True)
+            if stalled is None:
+                message = f"{task_id} expired without a stall description"
+                raise InvariantError(message)
+            raise PullRequestStalled(url, stalled)
+        available = await self._end_wait_for_feedback(task_id, url)
+        if self._feedback is None:
+            stalled = describe_pr_stall(status, expired=False)
+            if stalled is not None:
+                self._tasks.set_wait_reason(task_id, None)
+                raise PullRequestStalled(url, stalled)
+        elif available:
+            try:
+                pending = self._feedback.checks_arrived(
+                    task_id, url, status, self._settings.pr_check_max_attempts
+                )
+            except PullRequestStalled:
+                self._tasks.set_wait_reason(task_id, None)
+                raise
+            if pending:
+                self._tasks.set_wait_reason(task_id, None)
+                raise FeedbackPending
 
     async def _landed_pull_request(
         self, opened: _OpenPullRequest, merge_commit: str, base_sha: str
@@ -824,7 +858,8 @@ class PullRequest:
         return _open_pull_request(self._events, task_id, _INTEGRATION_RESTARTED_BY)
 
 
-def _stalled(status: PullRequestStatus, *, expired: bool) -> str | None:
+def describe_pr_stall(status: PullRequestStatus, *, expired: bool) -> str | None:
+    """Describe a settled failure or an expired wait budget."""
     if status.checks_failing and not status.checks_pending:
         head = status.head_sha or "unknown head"
         evidence = "; ".join(

@@ -62,6 +62,8 @@ class ContextKey(StrEnum):
     FEEDBACK_SNAPSHOT = "feedback_snapshot"
     FEEDBACK_ANALYSIS = "feedback_analysis"
     FEEDBACK_WORK = "feedback_work"
+    FEEDBACK_IS_CHECK = "feedback_is_check"
+    FEEDBACK_SOURCE_IDS = "feedback_source_ids"
 
 
 def template_for_step(step: Step, iteration: int) -> tuple[PromptName, ReportKind]:
@@ -194,7 +196,9 @@ class TurnContextPreparer:
             message = f"{task.id} {template.value} turn has no feedback to work from"
             raise InvariantError(message)
         context: dict[str, object] = {
-            ContextKey.MODE: task.mode.value if task.mode is not None else ""
+            ContextKey.MODE: task.mode.value if task.mode is not None else "",
+            ContextKey.FEEDBACK_IS_CHECK: bool(feedback.snapshot.failures),
+            ContextKey.FEEDBACK_SOURCE_IDS: feedback.snapshot.source_ids,
         }
         if template is PromptName.FEEDBACK_ANALYSIS:
             context[ContextKey.FEEDBACK_SNAPSHOT] = feedback.snapshot.model_dump_json(

@@ -77,10 +77,12 @@ class PromptRenderer:
     def render(self, name: PromptName, context: Mapping[str, object]) -> str:
         """Render `name`'s template against `context`, raising on any undefined variable."""
         template = self._env.get_template(f"{name.value}{TEMPLATE_FILENAME_SUFFIX}")
-        merged = {
+        merged: dict[str, object] = {
             "report_instruction": REPORT_INSTRUCTION,
             "already_done_sentence": ALREADY_DONE_SENTENCE,
             "acceptance_criteria_heading": ACCEPTANCE_CRITERIA_HEADING,
+            "feedback_is_check": False,
+            "feedback_source_ids": [],
             **context,
         }
         return template.render(**merged)

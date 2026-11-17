@@ -1,4 +1,4 @@
-"""The frozen PR review feedback a Leader analyses, and the rules its reports must satisfy."""
+"""Frozen PR review feedback or check failures and the rules for their reports."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Annotated
 
 from pydantic import Field, StringConstraints, model_validator
 
+from shikiru.domain.check_repair import CheckFailure
 from shikiru.domain.reports import (
     DECISION_ACCEPT,
     FeedbackAction,
@@ -17,6 +18,7 @@ from shikiru.domain.reports import (
 from shikiru.domain.tasks import DomainModel
 
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+CHECK_SOURCE_PREFIX = "check-"
 
 
 class FeedbackContractError(ValueError):
@@ -64,14 +66,18 @@ class FeedbackSource(DomainModel):
 
 
 class FeedbackSnapshot(DomainModel):
-    """The feedback of one round, fixed when the round starts."""
+    """The review sources or check failures of one round, fixed when it starts."""
 
     pull_request_url: str
     head_sha: str
-    sources: list[FeedbackSource] = Field(min_length=1)
+    sources: list[FeedbackSource] = Field(default_factory=list)
+    failures: list[CheckFailure] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _source_ids_are_unique(self) -> FeedbackSnapshot:
+        if bool(self.sources) == bool(self.failures):
+            message = "a snapshot must contain feedback sources or check failures"
+            raise ValueError(message)
         ids = self.source_ids
         if len(set(ids)) != len(ids):
             message = "sources: duplicate ids"
@@ -80,11 +86,15 @@ class FeedbackSnapshot(DomainModel):
 
     @property
     def source_ids(self) -> list[str]:
-        """The identities of the sources, in snapshot order."""
+        """The identities of the review sources or indexed checks, in snapshot order."""
+        if self.failures:
+            return [f"{CHECK_SOURCE_PREFIX}{index}" for index in range(len(self.failures))]
         return [source.id for source in self.sources]
 
     def only(self, source_ids: set[str]) -> FeedbackSnapshot:
-        """Return the snapshot restricted to `source_ids`."""
+        """Restrict review sources to `source_ids`; check repairs retain all their evidence."""
+        if self.failures:
+            return self
         return self.model_copy(
             update={"sources": [source for source in self.sources if source.id in source_ids]}
         )

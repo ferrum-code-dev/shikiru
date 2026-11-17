@@ -74,7 +74,7 @@ class Alignment(StrEnum):
 
 
 class FeedbackRound(DomainModel):
-    """One batch of review feedback and everything done about it so far."""
+    """One batch of review feedback or check failures and its progress so far."""
 
     id: int
     task_id: str

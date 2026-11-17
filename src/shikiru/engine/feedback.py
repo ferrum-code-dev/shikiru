@@ -33,6 +33,7 @@ from shikiru.domain.reports import (
     DECISION_CHANGES_REQUESTED,
     DECISION_ESCALATE,
     STATUS_COMPLETED,
+    FeedbackAction,
     FeedbackAnalysis,
     FeedbackRework,
     FeedbackVerdict,
@@ -199,6 +200,20 @@ class FeedbackRounds:
         if not isinstance(outcome, FeedbackAnalysis):
             message = f"{task.id} feedback analysis produced no analysis"
             raise InvariantError(message)
+        if active.snapshot.failures:
+            nonrepair = [
+                decision
+                for decision in outcome.decisions
+                if decision.action is not FeedbackAction.ADDRESS
+            ]
+            if nonrepair:
+                self._store.save_analysis(active.id, outcome, FeedbackStage.ANALYSIS)
+                reason = _ISSUE_SEPARATOR.join(decision.detail for decision in nonrepair)
+                raise self._blocked(
+                    active,
+                    f"check repair on {active.pull_request_url} stopped: "
+                    f"{reason}; {self._source_links(active)}",
+                )
         match next_feedback_step(outcome):
             case FeedbackStep.ESCALATE:
                 self._store.save_analysis(active.id, outcome, FeedbackStage.ANALYSIS)
@@ -216,6 +231,19 @@ class FeedbackRounds:
                     error=FeedbackQuestion,
                 )
             case FeedbackStep.IMPLEMENT:
+                if active.snapshot.failures:
+                    remote = await self._observed_head(active)
+                    if remote != active.expected_remote_sha:
+                        raise self._blocked(
+                            active,
+                            _REMOTE_MOVED.format(
+                                branch=self._branch(current),
+                                url=active.pull_request_url,
+                                remote_sha=remote,
+                                expected=active.expected_remote_sha,
+                            ),
+                        )
+                self._require_not_held(active.task_id)
                 await self._align_with_remote(current, active)
                 self._store.save_analysis(active.id, outcome, FeedbackStage.IMPLEMENTATION)
             case FeedbackStep.VERIFY:
@@ -324,6 +352,10 @@ class FeedbackRounds:
         if verified is None:
             message = _NOTHING_VERIFIED.format(task=task.id, round=active.id)
             raise InvariantError(message)
+        if active.snapshot.failures and verified == active.expected_remote_sha:
+            raise self._blocked(
+                active, f"check repair produced no new commit: {self._source_links(active)}"
+            )
         task_dir = task_root(self._project_root, task.id)
         branch = self._branch(task)
         remote_head = await self._observed_head(active)
@@ -331,6 +363,7 @@ class FeedbackRounds:
         if remote_head == verified and local_tip == verified:
             await self._published(task, active, verified)
             return task
+        self._require_not_held(active.task_id)
         current = await prepare(task)
         tip = await self._git.rev_parse(task_dir, branch)
         if tip != verified:
@@ -434,6 +467,7 @@ class FeedbackRounds:
         return planned
 
     async def _reply(self, active: FeedbackRound) -> None:
+        self._require_not_held(active.task_id)
         try:
             await self._github.edit_pull_request(
                 self._project_root, active.pull_request_url, body=active.pr_description
@@ -533,6 +567,7 @@ class FeedbackRounds:
                 local_in_remote=await self._git.merge_base_is_ancestor(task_dir, branch, expected),
             )
             if alignment is Alignment.FAST_FORWARD:
+                self._require_not_held(active.task_id)
                 await self._git.merge_ff_only(task_dir, expected)
         except ShikiruError as error:
             raise self._blocked(
@@ -584,6 +619,10 @@ class FeedbackRounds:
         *,
         error: type[FeedbackBlocked] = FeedbackBlocked,
     ) -> FeedbackBlocked:
+        if active.snapshot.failures:
+            evidence = self._source_links(active)
+            if evidence not in question:
+                question = f"{question}; {evidence}"
         self._store.set_blocked(active.id, blocked=True)
         return error(question)
 
@@ -594,6 +633,13 @@ class FeedbackRounds:
         return active.analysis
 
     def _source_links(self, active: FeedbackRound) -> str:
+        if active.snapshot.failures:
+            failures = _SOURCE_LINK_SEPARATOR.join(
+                f"{failure.name} ({failure.result}, {failure.kind}) "
+                f"{failure.details_url or '(no detail link)'}"
+                for failure in active.snapshot.failures
+            )
+            return f"head {active.snapshot.head_sha}; {failures}"
         return _SOURCE_LINK_SEPARATOR.join(
             _SOURCE_LINK.format(id=source.id, url=source.url) for source in active.snapshot.sources
         )

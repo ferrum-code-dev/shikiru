@@ -209,11 +209,22 @@ stays pending; a null, empty or unrecognized result on a settled check is unavai
 a pass. Missing or malformed retrieval (an
 absent rollup, a malformed entry, an unavailable head, an unnamed failure or a settled check without
 a recognized result) is visible as
-`evidence_error` and forces `checks_failing`, so it is never read as a passing check; the stall
-that follows names the head, each failure and any retrieval error. The bounded repair limit that
-later rounds use is `orchestration.pr_check_max_attempts` (default 3, per project, 1–20).
-Repository review and merge policy remain in force. Integration progress is
-recorded for restart reconciliation.
+`evidence_error` and forces `checks_failing`, so it is never read as a passing check. Missing
+evidence escalates with the retrieval error. Once all checks settle, the engine records the head
+and failures and starts a repair round, after any review feedback already waiting. The Leader
+analyses the check evidence, the Implementer repairs actionable failures, and the Leader verifies
+the result. A demonstrated external failure escalates with its reason and evidence. The verified
+tip is rebased and verified again if needed, then published with the same expected-head lease and
+restart reconciliation as feedback; no check repair posts review replies. A hold stops the round,
+and closure or merge ends it. A remote head change blocks publication instead of overwriting it.
+
+Each observed failing head consumes at most one round, recorded together with the resumable
+workflow. Repeated polls or a restart do not start another for that head. After publication the
+engine waits for the published head's checks to settle before another attempt; review feedback
+published in the meantime moves that boundary to its newer tip. Exhaustion of
+`orchestration.pr_check_max_attempts` (default 3, per project, 1–20) escalates with the latest
+failure evidence and attempt count. Conflicts and the PR wait budget retain their existing
+handling. Repository review and merge policy remain in force.
 
 **PR feedback rounds.** While the PR waits (status `integrating`, wait reason `PR open`, no slot),
 `orchestration.pr_feedback` decides which feedback starts a round. Under `changes_requested`

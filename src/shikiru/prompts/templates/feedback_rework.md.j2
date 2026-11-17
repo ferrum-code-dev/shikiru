@@ -1,7 +1,11 @@
 {% extends "_base.md.j2" %}
 {% import "_macros.md.j2" as macros %}
 {% block body %}
+{% if feedback_is_check %}
+You are the Implementer repairing the failing pull request checks below. Task mode: `{{ mode }}`.
+{% else %}
 You are the Implementer applying the accepted work from pull request review feedback. Task mode: `{{ mode }}`.
+{% endif %}
 
 {{ macros.facts_section(facts) }}
 
@@ -15,8 +19,10 @@ You are the Implementer applying the accepted work from pull request review feed
 
 {{ feedback_snapshot | fenced("json") }}
 
+{% if not feedback_is_check %}
 In a discussion, the messages marked `"new": true` are the ones the work answers; the unmarked ones
 are context.
+{% endif %}
 
 Do exactly this work, commit it, run the project's tests and keep the trackers current. Do not
 reply to the reviewers or touch other feedback.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
+from shikiru.domain.check_repair import CheckRepairStage
 from shikiru.domain.feedback import FeedbackSnapshot, FeedbackSourceKind
 from shikiru.domain.feedback_rounds import (
     UNFINISHED_STAGES,
@@ -14,6 +15,7 @@ from shikiru.domain.feedback_rounds import (
     ReplyState,
 )
 from shikiru.domain.reports import FeedbackAnalysis
+from shikiru.store.check_repair import CheckRepairStore
 from shikiru.store.database import transaction
 
 if TYPE_CHECKING:
@@ -28,6 +30,17 @@ _ROUND_COLUMNS = (
 )
 _REPLY_COLUMNS = "round_id, source_id, kind, marker, body, state, posted_url"
 _UNFINISHED = tuple(stage.value for stage in sorted(UNFINISHED_STAGES))
+_STAGE_COLUMN = "stage"
+_MIRRORED_COLUMNS = frozenset((_STAGE_COLUMN, "verified_sha", "published_sha"))
+_CHECK_STAGES = {
+    FeedbackStage.ANALYSIS.value: CheckRepairStage.ANALYSIS.value,
+    FeedbackStage.IMPLEMENTATION.value: CheckRepairStage.IMPLEMENTATION.value,
+    FeedbackStage.VERIFICATION.value: CheckRepairStage.VERIFICATION.value,
+    FeedbackStage.PUBLICATION.value: CheckRepairStage.PUBLICATION.value,
+    FeedbackStage.REPLIES.value: CheckRepairStage.PUBLISHED.value,
+    FeedbackStage.HANDLED.value: CheckRepairStage.PUBLISHED.value,
+    FeedbackStage.ABANDONED.value: CheckRepairStage.ABANDONED.value,
+}
 
 
 class FeedbackStore:
@@ -77,6 +90,50 @@ class FeedbackStore:
             (task_id, *_UNFINISHED),
         ).fetchone()
         return None if row is None else self._load(row)
+
+    def check_rounds(self, task_id: str, url: str) -> list[FeedbackRound]:
+        """Return the check-repair rounds of this PR in attempt order."""
+        rows = self._connection.execute(
+            f"SELECT {_ROUND_COLUMNS} FROM feedback_rounds WHERE id IN "
+            "(SELECT feedback_round_id FROM check_feedback_rounds) "
+            "AND task_id = ? AND pull_request_url = ? ORDER BY id",
+            (task_id, url),
+        ).fetchall()
+        return [self._load(row) for row in rows]
+
+    def latest_published_sha(self, task_id: str, url: str) -> str | None:
+        """Return the latest tip published by any round of this pull request."""
+        row = self._connection.execute(
+            "SELECT published_sha FROM feedback_rounds WHERE task_id = ? "
+            "AND pull_request_url = ? AND published_sha IS NOT NULL ORDER BY id DESC LIMIT 1",
+            (task_id, url),
+        ).fetchone()
+        return None if row is None else str(row["published_sha"])
+
+    def start_check(self, task_id: str, snapshot: FeedbackSnapshot) -> FeedbackRound:
+        """Atomically create one check attempt and its resumable feedback workflow."""
+        with transaction(self._connection, immediate=True):
+            rounds = self.check_rounds(task_id, snapshot.pull_request_url)
+            for existing in rounds:
+                if existing.snapshot.head_sha == snapshot.head_sha:
+                    return existing
+            check = CheckRepairStore(self._connection).start(
+                task_id, snapshot.pull_request_url, snapshot.head_sha, snapshot.failures
+            )
+            started = self.start(
+                task_id=task_id,
+                pull_request_url=snapshot.pull_request_url,
+                review_ids=[],
+                comment_ids=[],
+                snapshot=snapshot,
+                expected_remote_sha=snapshot.head_sha,
+            )
+            self._connection.execute(
+                "INSERT INTO check_feedback_rounds (check_round_id, feedback_round_id) "
+                "VALUES (?, ?)",
+                (check.id, started.id),
+            )
+            return started
 
     def last_pull_request_url(self, task_id: str) -> str | None:
         """Return the pull request of `task_id`'s latest round, or `None` without any round."""
@@ -224,9 +281,18 @@ class FeedbackStore:
         return _round(row, [str(comment["comment_id"]) for comment in comments])
 
     def _set(self, round_id: int, column: str, value: str | int) -> None:
-        self._connection.execute(
-            f"UPDATE feedback_rounds SET {column} = ? WHERE id = ?", (value, round_id)
-        )
+        with transaction(self._connection):
+            self._connection.execute(
+                f"UPDATE feedback_rounds SET {column} = ? WHERE id = ?", (value, round_id)
+            )
+            if column in _MIRRORED_COLUMNS:
+                check_value = _CHECK_STAGES[str(value)] if column == _STAGE_COLUMN else value
+                self._connection.execute(
+                    f"UPDATE check_repair_rounds SET {column} = ? WHERE id = "
+                    "(SELECT check_round_id FROM check_feedback_rounds "
+                    "WHERE feedback_round_id = ?)",
+                    (check_value, round_id),
+                )
 
 
 def _row_id(cursor: sqlite3.Cursor) -> int:
