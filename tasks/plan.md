@@ -353,3 +353,37 @@ own classes; no sleeping; coverage stays at or above 80%.
 - **Interactive resume:** `muse resume <id>` was read from help only; verify in tmux during the E2E.
 - **Cost:** the probes used about 25 tiny turns; the E2E rung should stay at one small turn per role. A forced
   compaction run (Phase 0 entry 4) made 4 model calls with 133k input tokens, so it stays out of the default gate.
+
+## Plan: repair failing pull request checks (T-168)
+
+A settled check failure currently ends the PR wait as a stall; the GitHub status adapter reduces
+checks to two booleans. Extend that boundary to retain actionable check evidence, then use a
+bounded, durable repair flow alongside the existing review-feedback flow. Keep the existing PR
+conflict and wait-budget rules, the remote-head safety checks and the verified merge boundary.
+The work is ordered as the three entries in `todo.md`; each entry is a separate dependent task.
+
+The attempt-limit default and whether it is configurable per project are a product decision, not
+settled by this plan. The first Implementer must consult the Leader, who consults the Operator if
+needed, before choosing policy or configuration. The decision must carry forward to the later tasks.
+Do not guess that an unfamiliar failure is an infrastructure outage or outside repository control:
+make the classification and its evidence explicit, and escalate an identified unfixable failure with
+its actual reason. Preserve unavailable details as unavailable rather than inventing them.
+
+Check evidence needs to identify the PR head it describes, the failing check names, results and
+available details or links. Distinguish GitHub check runs and status contexts where applicable.
+Failure to retrieve evidence must remain visible and must not be treated as a successful check. A
+running check prevents a repair round even when another check has failed. Avoid retrying the same
+observation merely because it was polled again; after a repair, wait for checks belonging to the
+published head to settle before consuming another attempt. Preserve attempt counts and round
+progress across restart, interruptions, and publication reconciliation. A changed remote head must
+not be overwritten. Review feedback, PR closure, merge conflicts, operator holds and timeout need
+explicit interaction with the repair flow, not parallel competing writers.
+
+Reuse feedback-round analysis, implementation, verification and safe publication where appropriate,
+without fabricating review comments or posting unsolicited replies. The agent receives the actual
+check evidence and can distinguish actionable failures from demonstrated external failures. An
+exhausted escalation retains the latest failure evidence and names the exhausted attempts; an
+unfixable escalation states the observed cause. Surface active repair and escalation evidence in the
+existing dashboard and operator-facing interfaces. Update the design and user configuration guidance
+to match the chosen policy. Use real SQLite and git, fake GitHub/agents, `FakeClock` and `wait_until`
+in integration coverage, including restart and the published-head checks boundary.

@@ -268,3 +268,39 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - A window whose known reset has passed shows `○ --%` and `resets unknown` in the dashboard and `shikiru status`; a window without a reset keeps its percentage and shows `resets unknown`.
 - The stored reading, block logic, JSON output and blocker evidence keep the raw values; the rule lives once in `effective_used_pct` and `reset_is_known`.
 - Domain tables cover expired, exactly-at-reset, future and no-reset windows; a FakeClock integration test shows an expired 100% window as unknown with the stored value still 100.0.
+
+### PR check repair (T-168)
+
+#### Task 46
+
+- [ ] 46. Capture failing check evidence and settle retry policy
+
+## Acceptance criteria
+- Consult the Leader on the default repair-attempt limit and per-project configurability, and record the decision in `tasks/plan.md` before implementing policy; the Leader consults the Operator if needed.
+- GitHub PR status exposes failing check names, results, available details or links, and the head to which they apply while preserving pending-check and conflict behavior.
+- Missing or failed evidence retrieval is visible and is not interpreted as a passing check; tests cover check runs, status contexts and pending checks.
+- Tick this entry and document any chosen configuration in the appropriate project documentation.
+
+#### Task 47
+
+- [ ] 47. Repair settled failing checks through bounded durable rounds
+
+## Acceptance criteria
+- A PR with a fixable failing check ends up merged without operator involvement.
+- A PR with a persistently failing check escalates after the attempt limit, with the failure details attached.
+- Merge conflicts and the wait-budget timeout behave as they do today.
+- A repair round starts only when all checks have settled, gives the agent the failing check evidence, verifies and safely publishes its fix, and waits for the published head's checks before another attempt.
+- Attempts and round progress survive restart and repeated polls without duplicate attempts or unsafe pushes; review feedback, holds, closure and remote-head changes are handled safely.
+- A demonstrated infrastructure or external failure escalates with its evidence and actual reason; exhausted attempts are identified in the escalation reason.
+- Integration tests cover successful repair, exhaustion, unfixable failures, pending checks, restart, publication reconciliation, conflicts and timeout using the established test infrastructure.
+- Tick this entry and update the design documentation for the implemented workflow.
+
+#### Task 48
+
+- [ ] 48. Show check repair in operator views
+
+## Acceptance criteria
+- The dashboard and operator-facing views identify a task actively fixing PR checks and expose the relevant failure details.
+- Exhausted repair attempts appear with an explicit exhaustion reason and attached failure evidence in operator views.
+- Integration tests exercise the visible repair and escalation states, including refresh or restart where applicable.
+- Tick this entry and update user-facing documentation for the final behavior.
