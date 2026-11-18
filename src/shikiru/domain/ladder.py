@@ -62,6 +62,7 @@ def move_up(
     *,
     different_agent: bool = False,
     blocked_agents: frozenset[str] = frozenset(),
+    allow_earlier: bool = True,
 ) -> RungMove | None:
     """Advance `role` one rung up its ladder from the rung currently resolved by `pick_rung`.
 
@@ -76,7 +77,8 @@ def move_up(
 
     With `different_agent=True` the move is a quota fallback: rungs above the current one come
     first, then the rungs from the bottom of the ladder up, so a role parked on the last rung can
-    return to an earlier agent that is no longer blocked.
+    return to an earlier agent that is no longer blocked. `allow_earlier=False` drops that second
+    leg, so the move only ever goes up.
 
     Returns `None` once no rung satisfies the constraints; the caller then keeps the task on its
     current rung.
@@ -85,7 +87,7 @@ def move_up(
     current_rung = pick_rung(task, role, settings)
     current_index = task.rung_index.get(role, 0)
     above = range(current_index + 1, len(ladder))
-    below = range(current_index + 1) if different_agent else range(0)
+    below = range(current_index + 1) if different_agent and allow_earlier else range(0)
     for index in (*above, *below):
         candidate = ladder[index]
         if candidate.agent in blocked_agents:

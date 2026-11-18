@@ -141,8 +141,9 @@ The retry count can be set to zero for immediate ladder fallback and is capped a
 are loaded when the engine starts; stop and restart it to apply changes. A later rung may use another
 model on the same agent. Engine tick retries remain configured separately under
 `[orchestration.faults]`.
-Authentication errors, unsupported/unclassified failures, missing reports and exhausted limits
-produce visible decisions.
+An authentication error moves to the next later rung on an unblocked different agent, never back
+to an earlier one, and escalates only when none exists. Unsupported/unclassified failures, missing
+reports and exhausted limits produce visible decisions.
 Helper can rebuild a missing report or classify an otherwise unknown failure, trying its own
 ladder after call failures or unusable answers within one shared timeout. Its output is validated
 before recovery uses it.

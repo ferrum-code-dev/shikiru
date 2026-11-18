@@ -805,6 +805,26 @@ async def test_auth_failure_escalates_with_the_agent_auth_reason(
     assert await asyncio.to_thread(Path(escalation[0].packet_path).is_file)
 
 
+async def test_auth_failure_moves_to_a_later_different_agent_rung(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _rung_settings(Rung(agent=FAKE_AGENT_ALIAS, model="fake-2", effort=None))
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=[{"kind": "fail", "failure_kind": "auth"}],
+    )
+
+    await _drive(flow_task, clock, engine_env)
+
+    runs = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
+    assert [run.agent for run in runs] == [FAKE_AGENT_ALIAS, FAKE_AGENT_NAME]
+    assert not fetch_open_escalations(engine_env.connection)
+
+
 async def test_other_failure_retries_once_on_the_same_session(
     database: Database, engine_env: EngineEnv, tmux_server: TmuxServer
 ) -> None:

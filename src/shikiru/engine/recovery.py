@@ -125,12 +125,21 @@ class TurnRecovery:
         different = move_up(
             task, role, self._settings, different_agent=True, blocked_agents=self._blocked_agents()
         )
+        later_different = move_up(
+            task,
+            role,
+            self._settings,
+            different_agent=True,
+            blocked_agents=self._blocked_agents(),
+            allow_earlier=False,
+        )
         retries = self._settings.orchestration.retries
         return RecoveryPolicy(
             now=self._clock.now(),
             max_quota_wait=timedelta(seconds=self._settings.orchestration.timeouts.max_quota_wait),
             has_next_rung=current is not None,
             has_next_rung_different_agent=different is not None,
+            has_later_rung_different_agent=later_different is not None,
             unavailable_initial_seconds=retries.unavailable_initial_seconds,
             unavailable_multiplier=retries.unavailable_multiplier,
             unavailable_max_seconds=retries.unavailable_max_seconds,

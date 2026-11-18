@@ -85,6 +85,7 @@ class _MoveUpCase:
     expected_cleared: dict[Role, Rung]
     expected_counters: Counters
     blocked_agents: frozenset[str] = frozenset()
+    allow_earlier: bool = True
 
 
 @pytest.mark.parametrize(
@@ -159,6 +160,30 @@ class _MoveUpCase:
         ),
         pytest.param(
             _MoveUpCase(
+                make_task(rung_index={Role.IMPLEMENTER: len(IMPLEMENTER_RUNGS) - 1}),
+                Role.IMPLEMENTER,
+                True,
+                None,
+                {},
+                Counters(),
+                allow_earlier=False,
+            ),
+            id="different-agent-without-earlier-never-wraps",
+        ),
+        pytest.param(
+            _MoveUpCase(
+                make_task(rung_index={Role.IMPLEMENTER: 0}),
+                Role.IMPLEMENTER,
+                True,
+                2,
+                {},
+                Counters(),
+                allow_earlier=False,
+            ),
+            id="different-agent-without-earlier-goes-up",
+        ),
+        pytest.param(
+            _MoveUpCase(
                 make_task(
                     rung_index={Role.IMPLEMENTER: 1},
                     overrides={Role.IMPLEMENTER: _ACTIVE_OVERRIDE},
@@ -209,6 +234,7 @@ def test_move_up_selects_the_next_allowed_rung_and_updates_role_state(case: _Mov
         _SETTINGS,
         different_agent=case.different_agent,
         blocked_agents=case.blocked_agents,
+        allow_earlier=case.allow_earlier,
     )
 
     if case.expected_index is None:
