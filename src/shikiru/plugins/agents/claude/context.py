@@ -16,9 +16,14 @@ EXTENDED_CONTEXT_MODEL_SUFFIX = "[1m]"
 CHARS_PER_TOKEN = 3
 _PERCENT = 100
 _TYPE_FIELD = "type"
+_SUBTYPE_FIELD = "subtype"
 _ASSISTANT_TYPE = "assistant"
 _USER_TYPE = "user"
+_SYSTEM_TYPE = "system"
 _TOOL_RESULT_TYPE = "tool_result"
+_COMPACT_BOUNDARY_SUBTYPE = "compact_boundary"
+_COMPACT_METADATA_FIELD = "compactMetadata"
+_POST_TOKENS_FIELD = "postTokens"
 _MESSAGE_FIELD = "message"
 _ID_FIELD = "id"
 _USAGE_FIELD = "usage"
@@ -29,6 +34,13 @@ _CONTEXT_USAGE_FIELDS = (
     "cache_creation_input_tokens",
     "output_tokens",
 )
+_MALFORMED_COMPACT_BOUNDARY_MESSAGE = (
+    "Claude transcript compact_boundary does not record a usable postTokens count"
+)
+
+
+class MalformedCompactBoundaryError(ValueError):
+    """A compact_boundary transcript entry lacks the post-compaction token count it must record."""
 
 
 def compact_limit_tokens(model: str, compact_at_pct: float) -> int:
@@ -70,13 +82,16 @@ def last_assistant_context(entries: Iterable[Mapping[str, Any]]) -> tuple[str | 
 
 
 def transcript_context_tokens(entries: Iterable[Mapping[str, Any]]) -> int:
-    """Estimate the next request: the last assistant context plus the tool results since."""
+    """Estimate the next request: last compaction or assistant context plus later tool results."""
     tokens = 0
     pending = 0
     for entry in entries:
         message = _assistant_message(entry)
         if message is not None:
             tokens = _usage_tokens(message.get(_USAGE_FIELD))
+            pending = 0
+        elif _is_compact_boundary(entry):
+            tokens = _post_compaction_tokens(entry)
             pending = 0
         else:
             pending += sum(pending_tokens(result) for result in _tool_results(entry))
@@ -87,6 +102,21 @@ def _assistant_message(entry: Mapping[str, Any]) -> Mapping[str, Any] | None:
     if entry.get(_TYPE_FIELD) != _ASSISTANT_TYPE:
         return None
     return _mapping(entry.get(_MESSAGE_FIELD))
+
+
+def _is_compact_boundary(entry: Mapping[str, Any]) -> bool:
+    return (
+        entry.get(_TYPE_FIELD) == _SYSTEM_TYPE
+        and entry.get(_SUBTYPE_FIELD) == _COMPACT_BOUNDARY_SUBTYPE
+    )
+
+
+def _post_compaction_tokens(entry: Mapping[str, Any]) -> int:
+    metadata = _mapping(entry.get(_COMPACT_METADATA_FIELD))
+    tokens = metadata.get(_POST_TOKENS_FIELD) if metadata is not None else None
+    if type(tokens) is not int or tokens < 0:
+        raise MalformedCompactBoundaryError(_MALFORMED_COMPACT_BOUNDARY_MESSAGE)
+    return tokens
 
 
 def _tool_results(entry: Mapping[str, Any]) -> list[object]:
