@@ -15,6 +15,7 @@ from shikiru.agents.contracts import (
     Compacted,
     FailureKind,
     Message,
+    QuotaReported,
     Rung,
     SessionStarted,
     TurnEnded,
@@ -484,6 +485,76 @@ async def test_claude_activity_after_task_notification_reaches_the_turn_consumer
     assert (usage.input_tokens, usage.output_tokens) == (122, 49109)
     assert (usage.cache_read_tokens, usage.cache_write_tokens) == (4828854, 121323)
     assert (spec.turn_dir / "implementer.stream.jsonl").read_bytes() == stream
+
+
+@pytest.mark.asyncio
+async def test_claude_compaction_turn_survives_a_quota_report_before_session_start(
+    tmp_path: Path,
+) -> None:
+    session_id = "session-compact-quota-redacted"
+    records: list[dict[str, object]] = [
+        {"type": "system", "subtype": "status", "status": "compacting", "session_id": session_id},
+        {
+            "type": "rate_limit_event",
+            "rate_limit_info": {
+                "unifiedWindows": {
+                    "five_hour": {"utilization": 0.5, "resetsAt": "2030-01-01T01:00:00+00:00"}
+                }
+            },
+        },
+        {
+            "type": "system",
+            "subtype": "status",
+            "compact_result": "success",
+            "session_id": session_id,
+        },
+        {
+            "type": "system",
+            "subtype": "init",
+            "session_id": session_id,
+            "model": "claude-haiku-4-5-20251001",
+        },
+        {
+            "type": "system",
+            "subtype": "compact_boundary",
+            "compact_metadata": {"trigger": "manual", "pre_tokens": 147542, "post_tokens": 13268},
+        },
+        {
+            "type": "user",
+            "message": {"content": [{"type": "text", "text": "[redacted replayed user record]"}]},
+        },
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": False,
+            "result": "",
+            "local_command": "compact",
+            "session_id": session_id,
+        },
+    ]
+    output = "".join(f"{json.dumps(record)}\n" for record in records).encode()
+    program = f"import sys; sys.stdout.buffer.write({output!r}); sys.stdout.flush()"
+    spec = replace(_spec(tmp_path, session_id=None), rung=Rung("claude", "haiku"))
+    clock = FakeClock(_TEST_NOW)
+    parser = ClaudeTurnParser(
+        session_id=session_id,
+        model="haiku",
+        initial_usage=None,
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+        compact_limit_tokens=160_000,
+    )
+    process = TurnProcess((sys.executable, "-c", program), tmp_path, {}, parser)
+    turn = await StreamingTurn.start(spec, SubprocessRunner(), _SingleProcessSequence(process))
+
+    signals = [signal async for signal in turn.signals()]
+
+    assert signals[0] == SessionStarted(session_id)
+    [quota] = [signal for signal in signals if isinstance(signal, QuotaReported)]
+    assert [window.name for window in quota.windows] == ["5h"]
+    assert Compacted(147542, 13268) in signals
+    assert not any(isinstance(signal, TurnFailed) for signal in signals)
+    assert signals[-1] == TurnEnded("")
 
 
 @pytest.mark.asyncio

@@ -392,12 +392,12 @@ class ClaudeTurnParser:
         ]
 
     def _system_activity(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
-        activity = self._background_activity(payload)
-        if not activity:
-            return []
+        return self._emit_or_buffer(self._background_activity(payload))
+
+    def _emit_or_buffer(self, signals: list[AgentSignal]) -> list[AgentSignal]:
         if self._session_started:
-            return activity
-        self._pending_activity.extend(activity)
+            return signals
+        self._pending_activity.extend(signals)
         return []
 
     def _background_activity(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
@@ -505,7 +505,7 @@ class ClaudeTurnParser:
         if not reported:
             return []
         self._latest_quota = reported
-        return [QuotaReported(reported)]
+        return self._emit_or_buffer([QuotaReported(reported)])
 
     def _quota_window(
         self, name: str, raw: Mapping[str, Any], observed_at: datetime

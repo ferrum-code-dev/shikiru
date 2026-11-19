@@ -26,6 +26,7 @@ def _claude_windows(five_hour: float, seven_day: float) -> list[tuple[str, float
         clock=clock,
         reset_time=ResetTimeParser(clock),
     )
+    parser.feed(json.dumps({"type": "system", "subtype": "init", "session_id": "s"}))
     line = json.dumps(
         {
             "type": "rate_limit_event",
