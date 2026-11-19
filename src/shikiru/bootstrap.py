@@ -326,6 +326,7 @@ def build_session_tools(
             runner=runner,
             engine_up=engine_up,
             reader_factory=reader_for,
+            clock=clock,
             remote_timeout_seconds=session_settings.ssh_timeout_seconds,
         ),
         SessionAttacher(runner, tmux, prompt_for_session),

@@ -408,3 +408,7 @@ The Operator resolved the Muse retry: after an exact miss, remove `-1.0` in full
 The price-field observations come from OpenRouter's public model list on the same date and may change. A missing cache-write price leaves cost unknown. The live `model/list` call returned an empty list despite successful authentication, so these turns verify the four names from the earlier real catalog, not the completeness of the current catalog. No credentials or raw turn output were retained.
 
 The Codex review rework associates each new token-count record with the most recent `turn_context.model` in the current turn. A missing or malformed model context makes the estimate unknown; a previous turn’s model is not reused.
+
+## Waiting turns in session listing (T-176)
+
+`shikiru ls` counts an active turn (running or integrating) as waiting, not running, when the turn is held, carries a wait reason, or sits in a mid-turn quota wait whose agent block still holds. The Waiting count sits between Running and Queued in the table, the narrow view and JSON. The dashboard and lister share `current_turn_quota_wait`; the lister uses the agent from the current `TURN_STARTED` event so the wait follows the rung the engine actually selected, including start-time overrides and changed or out-of-range stored rung indices. The dashboard supplies its live routing so a task that changed rungs no longer appears to wait on its previous agent. Remote listings require the field, so a remote host running an older shikiru fails to list until it is upgraded.

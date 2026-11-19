@@ -7,17 +7,20 @@ import os
 import shlex
 import shutil
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
 
+from shikiru.agents.contracts import Rung
 from shikiru.bootstrap import build_operator
 from shikiru.cli.app import app
 from shikiru.config.loader import load_settings
-from shikiru.domain.steps import Transition
-from shikiru.domain.tasks import EscalationReason, Status, Step
+from shikiru.domain.ladder import pick_rung
+from shikiru.domain.scheduling import WaitReason
+from shikiru.domain.steps import Transition, task_acting_role
+from shikiru.domain.tasks import EscalationReason, Hold, Status, Step
 from shikiru.engine.daemon import EngineLock, engine_is_running
 from shikiru.errors import (
     EXIT_GENERIC_ERROR,
@@ -28,7 +31,7 @@ from shikiru.errors import (
 )
 from shikiru.operator.lifecycle import ProjectLifecycle, home_command
 from shikiru.operator.sessions import SessionAttacher, SessionLister, SessionRow
-from shikiru.paths import engine_lock_path, engine_output_path
+from shikiru.paths import engine_lock_path, engine_output_path, project_config_path
 from shikiru.process import SpawnedTerminalProcess, SubprocessRunner
 from shikiru.store.database import Database
 from shikiru.store.reader import StateReader
@@ -36,6 +39,8 @@ from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR, SESSION_PREFIX, SessionView, session_name
 from tests.support.clock import FakeClock
+from tests.support.config import MINIMAL_PROJECT_CONFIG
+from tests.support.quota_waits import record_quota_wait, record_turn_start
 from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
 from tests.support.waiting import MEDIUM_WAIT_SECONDS, UI_WAIT_SECONDS, wait_until
@@ -44,9 +49,13 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+    from shikiru.domain.tasks import Role, Task
+    from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
 START = datetime(2026, 1, 1, tzinfo=UTC)
+QUOTA_BLOCK_SECONDS = 3600
+QUOTA_BLOCK_UNTIL = START + timedelta(seconds=QUOTA_BLOCK_SECONDS)
 SSH_TIMEOUT_SECONDS = 30
 JSON_ROWS_ENV = "SHIKIRU_TEST_SESSION_ROWS"
 TMUX_SOCKET_ENV = "SHIKIRU_TEST_TMUX_SOCKET"
@@ -85,6 +94,10 @@ def _make_project(root: Path, statuses: tuple[Status, ...]) -> None:
         connection.close()
 
 
+def _write_project_config(root: Path) -> None:
+    project_config_path(root).write_text(MINIMAL_PROJECT_CONFIG)
+
+
 def _make_unavailable_project(root: Path, failure_mode: str) -> None:
     state_dir = root / ".shikiru"
     if failure_mode == "missing_database":
@@ -109,6 +122,57 @@ def _make_unavailable_project(root: Path, failure_mode: str) -> None:
             connection.close()
 
 
+def _park_task(
+    root: Path,
+    index: int,
+    *,
+    holds: frozenset[Hold] = frozenset(),
+    wait_reason: WaitReason | None = None,
+) -> None:
+    connection = Database(root / ".shikiru" / "state.db").connect()
+    try:
+        task = connection.execute(
+            "SELECT id FROM tasks ORDER BY seq LIMIT 1 OFFSET ?", (index,)
+        ).fetchone()
+        assert task is not None
+        tasks = TaskStore(connection, FakeClock(START))
+        tasks.set_holds(task["id"], holds)
+        tasks.set_wait_reason(task["id"], wait_reason)
+    finally:
+        connection.close()
+
+
+def _first_turn(connection: Connection, clock: FakeClock, root: Path) -> tuple[Task, Role, Rung]:
+    row = connection.execute("SELECT id FROM tasks ORDER BY seq LIMIT 1").fetchone()
+    assert row is not None
+    task = TaskStore(connection, clock).require(row["id"])
+    role = task_acting_role(task)
+    return task, role, pick_rung(task, role, load_settings(root))
+
+
+def _record_quota_wait(root: Path, clock: FakeClock) -> None:
+    connection = Database(root / ".shikiru" / "state.db").connect()
+    try:
+        task, role, rung = _first_turn(connection, clock, root)
+        record_quota_wait(connection, clock, task, role=role, rung=rung, until=QUOTA_BLOCK_UNTIL)
+    finally:
+        connection.close()
+
+
+def _restart_turn(root: Path, clock: FakeClock) -> None:
+    connection = Database(root / ".shikiru" / "state.db").connect()
+    try:
+        task, role, rung = _first_turn(connection, clock, root)
+        record_turn_start(connection, clock, task, role, rung)
+    finally:
+        connection.close()
+
+
+async def _turn_counts(lister: SessionLister) -> tuple[int, int]:
+    [row] = (await lister.list_sessions()).rows
+    return row.running, row.waiting
+
+
 async def _add_session(server: TmuxServer, name: str, project_dir: Path) -> None:
     await server.run(
         "new-session",
@@ -120,8 +184,8 @@ async def _add_session(server: TmuxServer, name: str, project_dir: Path) -> None
     )
 
 
-def _lister(server: TmuxServer) -> SessionLister:
-    clock = FakeClock(START)
+def _lister(server: TmuxServer, clock: FakeClock | None = None) -> SessionLister:
+    clock = FakeClock(START) if clock is None else clock
 
     def read_project(root: Path) -> StateReader:
         return StateReader(Database(root / ".shikiru" / "state.db"), clock)
@@ -131,6 +195,7 @@ def _lister(server: TmuxServer) -> SessionLister:
         runner=server.runner,
         engine_up=lambda root: engine_is_running(engine_lock_path(root)),
         reader_factory=read_project,
+        clock=clock,
         remote_timeout_seconds=SSH_TIMEOUT_SECONDS,
     )
 
@@ -314,6 +379,7 @@ async def test_lister_reads_two_projects_progress_and_liveness_without_mutations
         first,
         (Status.RUNNING, Status.INTEGRATING, Status.QUEUED, Status.ESCALATED),
     )
+    _write_project_config(first)
     _make_project(second, (Status.QUEUED,))
     first_session = f"{SESSION_PREFIX}first project"
     second_session = f"{SESSION_PREFIX}second project"
@@ -609,6 +675,7 @@ async def test_lister_omits_session_removal_when_tmux_cannot_supply_a_native_id(
         reader_factory=lambda root: StateReader(
             Database(root / ".shikiru" / "state.db"), FakeClock(START)
         ),
+        clock=FakeClock(START),
         remote_timeout_seconds=SSH_TIMEOUT_SECONDS,
     )
 
@@ -663,11 +730,133 @@ async def test_session_metadata_transport_failure_remains_global(
         runner=runner,
         engine_up=lambda _root: False,
         reader_factory=unexpected_reader,
+        clock=FakeClock(START),
         remote_timeout_seconds=SSH_TIMEOUT_SECONDS,
     )
 
     with pytest.raises(CommandFailed):
         await lister.list_sessions()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "holds", "wait_reason", "expected"),
+    [
+        pytest.param(Status.RUNNING, frozenset[Hold](), None, (1, 0), id="running turn"),
+        pytest.param(Status.RUNNING, frozenset({Hold.PAUSED}), None, (0, 1), id="paused turn"),
+        pytest.param(
+            Status.RUNNING,
+            frozenset({Hold.INTERVENTION}),
+            None,
+            (0, 1),
+            id="operator-owned turn",
+        ),
+        pytest.param(
+            Status.INTEGRATING,
+            frozenset[Hold](),
+            WaitReason.PR_OPEN,
+            (0, 1),
+            id="turn waiting on a pull request",
+        ),
+        pytest.param(Status.INTEGRATING, frozenset[Hold](), None, (1, 0), id="integrating turn"),
+    ],
+)
+async def test_lister_counts_held_or_waiting_turns_as_waiting_not_running(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    *,
+    status: Status,
+    holds: frozenset[Hold],
+    wait_reason: WaitReason | None,
+    expected: tuple[int, int],
+) -> None:
+    project = tmp_path / "project"
+    _make_project(project, (status,))
+    _write_project_config(project)
+    _park_task(project, 0, holds=holds, wait_reason=wait_reason)
+    session = f"{SESSION_PREFIX}project"
+    await _add_session(tmux_server, session, project)
+
+    [row] = (await _lister(tmux_server).list_sessions()).rows
+
+    assert (row.running, row.waiting) == expected
+    assert (row.queued, row.escalated) == (0, 0)
+
+
+@pytest.mark.asyncio
+async def test_turn_in_a_quota_wait_is_waiting_only_while_its_block_holds(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+) -> None:
+    project = tmp_path / "project"
+    _make_project(project, (Status.RUNNING,))
+    _write_project_config(project)
+    await _add_session(tmux_server, f"{SESSION_PREFIX}project", project)
+    clock = FakeClock(START)
+    lister = _lister(tmux_server, clock)
+
+    assert await _turn_counts(lister) == (1, 0)
+    _record_quota_wait(project, clock)
+    assert await _turn_counts(lister) == (0, 1)
+    clock.advance(QUOTA_BLOCK_SECONDS)
+    assert await _turn_counts(lister) == (1, 0)
+
+
+@pytest.mark.asyncio
+async def test_turn_quota_wait_uses_started_agent_when_rung_index_is_out_of_range(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+) -> None:
+    project = tmp_path / "project"
+    _make_project(project, (Status.RUNNING,))
+    _write_project_config(project)
+    session = f"{SESSION_PREFIX}project"
+    await _add_session(tmux_server, session, project)
+    clock = FakeClock(START)
+    connection = Database(project / ".shikiru" / "state.db").connect()
+    try:
+        task, role, _ = _first_turn(connection, clock, project)
+        started_rung = Rung(agent="start-override", model="model")
+        assert load_settings(project).roles.implementer.ladder[0].agent != started_rung.agent
+        record_quota_wait(
+            connection,
+            clock,
+            task,
+            role=role,
+            rung=started_rung,
+            until=QUOTA_BLOCK_UNTIL,
+        )
+        connection.execute(
+            "UPDATE tasks SET rung_index = ? WHERE id = ?",
+            (json.dumps({role.value: 99}), task.id),
+        )
+    finally:
+        connection.close()
+
+    listing = await _lister(tmux_server, clock).list_sessions()
+    assert not listing.diagnostics, listing.diagnostics
+    [row] = listing.rows
+
+    assert (row.running, row.waiting) == (0, 1)
+
+
+@pytest.mark.asyncio
+async def test_turn_is_running_again_once_it_restarts_after_its_quota_failure(
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+) -> None:
+    project = tmp_path / "project"
+    _make_project(project, (Status.RUNNING,))
+    _write_project_config(project)
+    await _add_session(tmux_server, f"{SESSION_PREFIX}project", project)
+    clock = FakeClock(START)
+    lister = _lister(tmux_server, clock)
+    _record_quota_wait(project, clock)
+    assert await _turn_counts(lister) == (0, 1)
+
+    _restart_turn(project, clock)
+
+    assert await _turn_counts(lister) == (1, 0)
 
 
 @pytest.mark.asyncio
@@ -677,7 +866,9 @@ async def test_cli_local_and_remote_ls_work_without_an_initialized_current_proje
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project = tmp_path / "project with spaces"
-    _make_project(project, (Status.RUNNING, Status.QUEUED))
+    _make_project(project, (Status.RUNNING, Status.RUNNING, Status.QUEUED))
+    _write_project_config(project)
+    _park_task(project, 1, holds=frozenset({Hold.PAUSED}))
     engine_lock = EngineLock(engine_lock_path(project))
     engine_lock.acquire()
     session = f"{SESSION_PREFIX}project with spaces"
@@ -693,6 +884,7 @@ async def test_cli_local_and_remote_ls_work_without_an_initialized_current_proje
         project_dir="/remote project/[literal]/" + "path-segment-" * 7,
         engine_state="up",
         running=3,
+        waiting=2,
         queued=2,
         escalated=1,
     )
@@ -723,12 +915,17 @@ print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
         )
         remote_argv = capture.read_text()
         listing_cases = (
-            (None, session, str(project), (1, 1, 0)),
+            (None, session, str(project), (1, 1, 1, 0)),
             (
                 "remote.example",
                 remote_row.session,
                 remote_row.project_dir,
-                (remote_row.running, remote_row.queued, remote_row.escalated),
+                (
+                    remote_row.running,
+                    remote_row.waiting,
+                    remote_row.queued,
+                    remote_row.escalated,
+                ),
             ),
         )
         for width in (80, 60, 40):
@@ -742,6 +939,7 @@ print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
                 )
                 assert result.exit_code == 0
                 _assert_session_data(result.stdout, identity, project_dir, counts)
+                assert "waiting" in result.stdout.lower()
                 if host is not None:
                     assert result.stdout.count(host) == 1
     finally:
@@ -757,6 +955,7 @@ print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
             ("project_dir", str(project)),
             ("engine_state", "up"),
             ("running", 1),
+            ("waiting", 1),
             ("queued", 1),
         )
     )
@@ -830,6 +1029,7 @@ async def test_cli_ls_keeps_healthy_json_rows_and_reports_unavailable_projects(
             "project_dir": str(healthy),
             "engine_state": "down",
             "running": 0,
+            "waiting": 0,
             "queued": 1,
             "escalated": 0,
         }
@@ -876,6 +1076,7 @@ async def test_remote_ls_preserves_valid_partial_rows_and_scopes_raw_diagnostics
         project_dir="/remote/healthy",
         engine_state="up",
         running=1,
+        waiting=0,
         queued=2,
         escalated=0,
     )
@@ -1242,6 +1443,7 @@ os.execv("/bin/sh", ["/bin/sh", "-c", arguments[-1]])
                 "project_dir": str(project),
                 "engine_state": "down",
                 "running": 0,
+                "waiting": 0,
                 "queued": 0,
                 "escalated": 0,
             }
@@ -1584,6 +1786,7 @@ Path(os.environ["SHIKIRU_TEST_CAPTURE"]).write_text(json.dumps(sys.argv[1:]))
         project_dir="/projects/O'Brien / spaced project",
         engine_state="up",
         running=1,
+        waiting=0,
         queued=2,
         escalated=0,
     )
@@ -1629,6 +1832,7 @@ asyncio.run(attach())
                     "project_dir": "/projects/first",
                     "engine_state": "down",
                     "running": 0,
+                    "waiting": 0,
                     "queued": 0,
                     "escalated": 0,
                 },
@@ -1714,6 +1918,7 @@ async def test_attach_rejects_an_option_like_name_without_using_it_as_a_target()
         project_dir="/projects/valid",
         engine_state="down",
         running=0,
+        waiting=0,
         queued=0,
         escalated=0,
     )

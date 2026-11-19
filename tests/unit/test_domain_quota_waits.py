@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 import pytest
 
-from shikiru.agents.contracts import QUOTA_WINDOW_FIVE_HOUR, QUOTA_WINDOW_SEVEN_DAY, QuotaWindow
+from shikiru.agents.contracts import (
+    QUOTA_WINDOW_FIVE_HOUR,
+    QUOTA_WINDOW_SEVEN_DAY,
+    FailureKind,
+    QuotaWindow,
+)
+from shikiru.domain.events import Event, EventKind
 from shikiru.domain.quota_waits import (
     ENGINE_RETRY_DIFFERS,
+    current_turn_quota_wait,
     engine_retry_note,
     next_quota_reload,
     provider_reset_text,
@@ -16,6 +24,11 @@ from shikiru.domain.quota_waits import (
     quota_wait_description,
 )
 from shikiru.domain.recovery import QUOTA_MARGIN, QUOTA_PROBE
+from shikiru.domain.tasks import Role, Step
+from tests.support.factories import make_task
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 NOW = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 BEFORE_MIDNIGHT = datetime(2026, 1, 1, 23, 59, 30, tzinfo=UTC)
@@ -29,6 +42,62 @@ DESCRIPTION = "claude quota blocked until 14:20Z"
 SECONDS_PER_MINUTE = 60
 SECONDS_PER_HOUR = 60 * SECONDS_PER_MINUTE
 SECONDS_PER_DAY = 24 * SECONDS_PER_HOUR
+TURN_AGENT = "start-override"
+BLOCK_UNTIL = datetime(2026, 1, 1, 13, 0, tzinfo=UTC)
+
+
+def test_current_turn_quota_wait_uses_the_agent_recorded_when_the_turn_started() -> None:
+    task = make_task(step=Step.IMPLEMENT, iteration=1, rung_index={Role.IMPLEMENTER: 99})
+    events = [
+        Event(
+            id=1,
+            ts=NOW,
+            task_id=task.id,
+            kind=EventKind.TURN_STARTED,
+            message="turn started",
+            data={
+                "step": Step.IMPLEMENT.value,
+                "iteration": task.iteration,
+                "role": Role.IMPLEMENTER.value,
+                "agent": TURN_AGENT,
+            },
+        ),
+        Event(
+            id=2,
+            ts=NOW,
+            task_id=task.id,
+            kind=EventKind.TURN_FAILED,
+            message="quota",
+            data={"step": Step.IMPLEMENT.value, "kind": FailureKind.QUOTA.value},
+        ),
+        Event(
+            id=3,
+            ts=NOW,
+            task_id=task.id,
+            kind=EventKind.QUOTA_BLOCKED,
+            message="quota wait",
+            data={"agent": TURN_AGENT, "until": BLOCK_UNTIL.isoformat()},
+        ),
+    ]
+
+    def latest_events(
+        limit: int,
+        *,
+        kinds: Sequence[EventKind] | None = None,
+        task_id: str | None = None,
+    ) -> list[Event]:
+        matching = [
+            event
+            for event in events
+            if (kinds is None or event.kind in kinds)
+            and (task_id is None or event.task_id == task_id)
+        ]
+        return matching[-limit:]
+
+    turn_wait = current_turn_quota_wait(task, latest_events)
+
+    assert turn_wait is not None
+    assert (turn_wait.role, turn_wait.agent) == (Role.IMPLEMENTER, TURN_AGENT)
 
 
 @pytest.mark.parametrize(

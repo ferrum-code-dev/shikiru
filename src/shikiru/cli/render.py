@@ -120,7 +120,7 @@ SESSION_TABLE_MIN_WIDTH = 65
 SESSION_TABLE_PADDING = 1
 SESSION_TABLE_CELL_PADDING_WIDTH = 2
 SESSION_TABLE_FIRST_COUNT_COLUMN = 2
-SESSION_COUNT_LABELS = ("Running", "Queued", "Escalated")
+SESSION_COUNT_LABELS = ("Running", "Waiting", "Queued", "Escalated")
 SESSION_PATH_INDENT = 2
 SESSION_COLUMN_LABEL = "Session"
 SESSION_ENGINE_LABEL = "Engine"
@@ -787,7 +787,9 @@ def session_options_renderable(
                 identity,
                 *_wrap_text(path, width=console.width, indent=SESSION_PATH_INDENT),
                 WrappedGroups(
-                    session_facts(row.engine_state, row.running, row.queued, row.escalated)
+                    session_facts(
+                        row.engine_state, row.running, row.waiting, row.queued, row.escalated
+                    )
                 ),
             )
         )
@@ -799,7 +801,9 @@ def _stacked_session(row: SessionRow, *, console: Console, host: str | None) -> 
     return Group(
         *_wrap_text(session_identity(row.session), width=console.width),
         *_wrap_text(path, width=console.width, indent=SESSION_PATH_INDENT),
-        WrappedGroups(session_facts(row.engine_state, row.running, row.queued, row.escalated)),
+        WrappedGroups(
+            session_facts(row.engine_state, row.running, row.waiting, row.queued, row.escalated)
+        ),
     )
 
 
@@ -844,6 +848,7 @@ def _session_table_cells(row: SessionRow) -> tuple[Text, ...]:
         session_identity(row.session),
         session_engine_value(row.engine_state),
         number(str(row.running)),
+        number(str(row.waiting)),
         number(str(row.queued)),
         escalation_count(row.escalated),
     )

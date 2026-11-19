@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
+from shikiru.domain.quota_waits import current_turn_quota_wait
 from shikiru.domain.tasks import Status
 from shikiru.errors import (
     CommandFailed,
@@ -25,6 +26,10 @@ from shikiru.tmux.client import exact_target
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR, SESSION_PREFIX
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
+    from shikiru.clock import Clock
+    from shikiru.domain.tasks import Task
     from shikiru.process import SubprocessRunner
     from shikiru.tmux.client import Tmux
 
@@ -56,11 +61,13 @@ class SessionRow(BaseModel):
     project_dir: str
     engine_state: Literal["up", "down"]
     running: int
+    waiting: int
     queued: int
     escalated: int
 
 
 _ROWS_ADAPTER: TypeAdapter[list[SessionRow]] = TypeAdapter(list[SessionRow])
+_TURN_STATUSES = frozenset((Status.RUNNING, Status.INTEGRATING))
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,13 +114,15 @@ class SessionLister:
         runner: SubprocessRunner,
         engine_up: EngineState,
         reader_factory: ReaderFactory,
+        clock: Clock,
         remote_timeout_seconds: float,
     ) -> None:
-        """Inject tmux, process, liveness, database-reader, and timeout boundaries."""
+        """Inject tmux, process, liveness, reader, clock and timeout boundaries."""
         self._tmux = tmux
         self._runner = runner
         self._engine_up = engine_up
         self._reader_factory = reader_factory
+        self._clock = clock
         self._remote_timeout_seconds = remote_timeout_seconds
 
     async def list_sessions(
@@ -215,11 +224,14 @@ class SessionLister:
         try:
             tasks = reader.list_tasks()
             engine_state = ENGINE_UP if self._engine_up(root) else ENGINE_DOWN
+            turns = [task for task in tasks if task.status in _TURN_STATUSES]
+            waiting = self._count_waiting_turns(reader, turns)
             return SessionRow(
                 session=session,
                 project_dir=project_dir,
                 engine_state=engine_state,
-                running=sum(task.status in {Status.RUNNING, Status.INTEGRATING} for task in tasks),
+                running=len(turns) - waiting,
+                waiting=waiting,
                 queued=sum(task.status is Status.QUEUED for task in tasks),
                 escalated=sum(task.status is Status.ESCALATED for task in tasks),
             )
@@ -231,6 +243,12 @@ class SessionLister:
             raise ConfigError(message) from error
         finally:
             reader.close()
+
+    def _count_waiting_turns(self, reader: StateReader, turns: Sequence[Task]) -> int:
+        if not turns:
+            return 0
+        now = self._clock.now()
+        return sum(_turn_is_waiting(task, reader, now) for task in turns)
 
 
 class SessionAttacher:
@@ -281,6 +299,16 @@ class SessionAttacher:
 
 def _session_matches_name(session: str, name: str) -> bool:
     return session == name or session.removeprefix(SESSION_PREFIX) == name
+
+
+def _turn_is_waiting(task: Task, reader: StateReader, now: datetime) -> bool:
+    if task.held or task.wait_reason is not None:
+        return True
+    turn_wait = current_turn_quota_wait(task, reader.latest_events)
+    if turn_wait is None:
+        return False
+    block = reader.agent_block(turn_wait.agent)
+    return block is not None and block.until > now
 
 
 def _same_project(session_project: Path, requested_project: Path) -> bool:

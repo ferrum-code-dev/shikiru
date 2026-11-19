@@ -90,7 +90,7 @@ from shikiru.domain.levels import (
 from shikiru.domain.motion import MotionStampKind, QuotaMotionState
 from shikiru.domain.quota_waits import (
     QUOTA_NOT_REPORTED,
-    current_quota_wait_events,
+    current_turn_quota_wait,
     engine_retry_note,
     next_quota_reload,
     quota_banner,
@@ -1513,18 +1513,23 @@ class StateDashboardViews:
         )
 
     def _running_quota_wait(self, task: Task, now: datetime) -> _RunningQuotaWait | None:
-        if task.status not in _ACTIVE_TURN_STATUSES or task.step is None:
+        if task.status not in _ACTIVE_TURN_STATUSES:
             return None
-        role = task_acting_role(task)
         settings = self._settings.current()
-        agent = pick_rung(task, role, settings).agent
-        quota_events = current_quota_wait_events(task, role, agent, self._state.latest_events)
-        if quota_events is None:
+        role = task_acting_role(task)
+        turn_wait = current_turn_quota_wait(
+            task,
+            self._state.latest_events,
+            current_agent=pick_rung(task, role, settings).agent,
+        )
+        if turn_wait is None:
             return None
-        failure, quota_block = quota_events
+        agent = turn_wait.agent
         block = self._state.agent_block(agent)
         if block is None or block.until <= now:
             return None
+        failure = turn_wait.failure
+        quota_block = turn_wait.quota_block
         reset_at = failure.data.get(_RESET_AT_FIELD)
         reset_text = (
             reset_at
@@ -1534,7 +1539,7 @@ class StateDashboardViews:
             else _UNAVAILABLE
         )
         raw = (
-            f"Current turn quota wait · {role.value} · {agent}",
+            f"Current turn quota wait · {turn_wait.role.value} · {agent}",
             f"{_RECORDED_QUOTA_RESET} · {reset_text}",
             f"Task quota-block event · {quota_block.ts.isoformat()}",
             _account_raw(agent, block, now),

@@ -53,6 +53,7 @@ def escalation_count(count: int) -> Text:
 def session_facts(
     engine_state: _SessionEngineState,
     running: int,
+    waiting: int,
     queued: int,
     escalated: int,
 ) -> tuple[Text, ...]:
@@ -60,6 +61,7 @@ def session_facts(
     return (
         session_engine_fact(engine_state),
         session_count("running", running),
+        session_count("waiting", waiting),
         session_count("queued", queued),
         Text.assemble(("escalated ", SECONDARY_TEXT_COLOR), escalation_count(escalated)),
     )

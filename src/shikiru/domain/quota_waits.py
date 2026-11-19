@@ -16,6 +16,7 @@ from shikiru.agents.contracts import (
 )
 from shikiru.domain.events import EventKind
 from shikiru.domain.recovery import quota_block_until
+from shikiru.domain.steps import task_acting_role
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -217,3 +218,40 @@ def current_quota_wait_events(
     ):
         return None
     return failure, quota_events[0]
+
+
+@dataclass(frozen=True)
+class TurnQuotaWait:
+    """The quota failure that put a task's current turn of `role` on `agent` into a wait."""
+
+    role: Role
+    agent: str
+    failure: Event
+    quota_block: Event
+
+
+def current_turn_quota_wait(
+    task: Task, latest_events: LatestEvents, *, current_agent: str | None = None
+) -> TurnQuotaWait | None:
+    """Return the quota wait of `task`'s current turn, or None when that turn is not in one.
+
+    By default, the agent comes from the turn's `TURN_STARTED` event, preserving the rung the
+    engine actually selected if project settings have since changed. A caller with authoritative
+    current routing may supply it to detect a rung change after the turn failed.
+    """
+    if task.step is None:
+        return None
+    role = task_acting_role(task)
+    agent = current_agent
+    if agent is None:
+        starts = latest_events(1, kinds=(EventKind.TURN_STARTED,), task_id=task.id)
+        if not starts:
+            return None
+        agent = starts[0].data.get("agent")
+        if not isinstance(agent, str) or not agent:
+            return None
+    events = current_quota_wait_events(task, role, agent, latest_events)
+    if events is None:
+        return None
+    failure, quota_block = events
+    return TurnQuotaWait(role, agent, failure, quota_block)

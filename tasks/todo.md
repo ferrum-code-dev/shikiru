@@ -318,3 +318,8 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [x] Verify the four previously cataloged Muse runtime model names on an authenticated real setup; record the empty current catalog response.
 - [x] Run the final project check.
 - [x] Rework Codex estimates to use the runtime model recorded for each call; unknown runtime models stay unknown.
+
+### Waiting turns in shikiru ls (T-176)
+
+- [x] Count held, wait-reason and mid-turn quota-waiting turns as Waiting in `shikiru ls`
+  - Acceptance: the table, narrow view and JSON show a Waiting count between Running and Queued. A turn is waiting while it is held, while it carries a wait reason, or while its quota block holds; it counts as running again once the block lifts or the turn restarts after its quota failure. `shikiru ls` uses the agent recorded by `TURN_STARTED`, including when project settings differ or the stored rung index is out of range; the dashboard stops showing the wait after routing changes. Queued and escalated counts are unchanged. Integration coverage in `tests/integration/test_operator_sessions.py`.
