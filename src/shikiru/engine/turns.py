@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from shikiru.engine.sessions import SessionManager, SessionSelection
     from shikiru.helper.helper import Helper
     from shikiru.prompts.renderer import PromptName, PromptRenderer
+    from shikiru.store.context_windows import ContextWindowStore
     from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
     from shikiru.store.tasks import TaskStore
@@ -140,6 +141,7 @@ class TurnRunner:
         messages: OperatorMessages,
         events: EventLog,
         runs: RunStore,
+        windows: ContextWindowStore,
         tasks: TaskStore,
         project_root: Path,
         settings: Settings,
@@ -152,6 +154,7 @@ class TurnRunner:
         self._messages = messages
         self._events = events
         self._runs = runs
+        self._windows = windows
         self._tasks = tasks
         self._project_root = project_root
         self._settings = settings
@@ -222,6 +225,7 @@ class TurnRunner:
                 usage=selection.run.usage,
                 on_process=self._monitor.process_recorder(task_run_dir, role),
                 billing_mode=selection.run.billing_mode,
+                context_window=self._windows.window(selection.rung.agent, selection.rung.model),
             )
             turn = await agent.start_turn(turn_spec)
             terminal = await self._monitor.run(

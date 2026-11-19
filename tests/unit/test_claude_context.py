@@ -12,17 +12,19 @@ from shikiru.plugins.agents.claude.context import (
 
 
 @pytest.mark.parametrize(
-    ("model", "compact_at_pct", "expected"),
+    ("window", "compact_at_pct", "expected"),
     [
-        ("haiku", 80, 160_000),
-        ("claude-sonnet-4-5", 25, 50_000),
-        ("sonnet[1m]", 80, 800_000),
+        (200_000, 80, 160_000),
+        (1_000_000, 80, 800_000),
+        (1_000_000, 25, 250_000),
+        (None, 80, None),
     ],
+    ids=["standard-window", "extended-window", "lower-threshold", "unknown-window"],
 )
-def test_the_limit_is_the_threshold_share_of_the_window_claude_assumes(
-    model: str, compact_at_pct: float, expected: int
+def test_the_limit_is_the_threshold_share_of_the_reported_window(
+    window: int | None, compact_at_pct: float, expected: int | None
 ) -> None:
-    assert compact_limit_tokens(model, compact_at_pct) == expected
+    assert compact_limit_tokens(window, compact_at_pct) == expected
 
 
 def _assistant(message_id: str, **usage: int) -> dict[str, Any]:

@@ -116,6 +116,7 @@ from shikiru.private import PrivateRotatingFileHandler, make_private_dir, tighte
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
 from shikiru.store.commands import CommandQueue
+from shikiru.store.context_windows import ContextWindowStore
 from shikiru.store.database import Database, transaction
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
@@ -814,6 +815,7 @@ def build_engine(
     monitor = TurnMonitor(
         sessions=sessions,
         runs=runs,
+        windows=ContextWindowStore(connection),
         quotas=reconciler,
         events=events,
         clock=resolved_clock,
@@ -965,6 +967,7 @@ def build_engine(
             messages=messages,
             events=events,
             runs=runs,
+            windows=ContextWindowStore(connection),
             tasks=tasks,
             project_root=project_root,
             settings=resolved_settings,

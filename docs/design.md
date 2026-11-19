@@ -124,7 +124,13 @@ agent/model/effort from the next turn. Same-provider sessions can resume; a prov
 a fresh session with handoff context from recorded work. Plugins own the actual resume and context
 compaction behavior. Muse performs compaction internally using its context thresholds; its session
 log records installed compactions, which the plugin maps to the shared `Compacted` signal after a
-turn. The JSON stream itself has no compaction record.
+turn. The JSON stream itself has no compaction record. Claude's context window is identified from
+the model, never guessed from a model name or a default: each turn's result reports the window of
+the model it ran on as `ContextWindowReported`, the engine stores it per agent and model, and the
+next turn of that model receives it as `TurnSpec.context_window`. Claude compacts before a request
+once that request reaches `compact_at_pct` of the window. Until a window has been reported, Claude
+neither compacts before a request nor installs its in-turn hook; a context-overflow failure still
+triggers one compaction and retry.
 
 Recovery is explicit and bounded by failure type: unavailable providers receive backoff/retries,
 quota failures wait for reset within policy or move to an unblocked different-provider rung (a

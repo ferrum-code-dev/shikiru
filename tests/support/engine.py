@@ -38,6 +38,7 @@ from shikiru.helper.helper import Helper, HelperEntry
 from shikiru.process import SubprocessRunner
 from shikiru.prompts.renderer import PromptRenderer
 from shikiru.store.commands import CommandQueue, CommandStatus
+from shikiru.store.context_windows import ContextWindowStore
 from shikiru.store.database import transaction
 from shikiru.store.escalations import EscalationStore
 from shikiru.store.events import EventLog
@@ -256,6 +257,7 @@ def build_turn_system(
     """Build the real headless turn stack used by integration tests."""
     events = EventLog(connection, clock)
     quotas = QuotaStore(connection)
+    windows = ContextWindowStore(connection)
     decorator = build_decorator(tmux)
     tasks = TaskStore(connection, clock)
     schedule = QuotaSchedule()
@@ -299,6 +301,7 @@ def build_turn_system(
     monitor = TurnMonitor(
         sessions=sessions,
         runs=runs,
+        windows=windows,
         quotas=reconciler,
         events=events,
         clock=clock,
@@ -316,6 +319,7 @@ def build_turn_system(
         messages=OperatorMessages(project_root),
         events=events,
         runs=runs,
+        windows=windows,
         tasks=tasks,
         project_root=project_root,
         settings=settings,

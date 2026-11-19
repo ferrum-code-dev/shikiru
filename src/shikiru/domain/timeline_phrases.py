@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, cast
 
 from shikiru.agents.contracts import (
     Compacted,
+    ContextWindowReported,
     EvidenceFault,
     EvidenceRecovered,
     Message,
@@ -45,6 +46,7 @@ _BOOKKEEPING = frozenset(
         UsageReported.__name__,
         QuotaReported.__name__,
         Compacted.__name__,
+        ContextWindowReported.__name__,
         EvidenceFault.__name__,
         EvidenceRecovered.__name__,
         ToolDetailReported.__name__,

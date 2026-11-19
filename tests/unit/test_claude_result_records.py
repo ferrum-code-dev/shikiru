@@ -8,6 +8,7 @@ import pytest
 
 from shikiru.agents.contracts import (
     Compacted,
+    ContextWindowReported,
     FailureKind,
     Message,
     SessionStarted,
@@ -37,6 +38,7 @@ def _parser(*, compact: bool = False) -> ClaudeTurnParser:
         initial_usage=None,
         clock=clock,
         reset_time=ResetTimeParser(clock),
+        compaction=compact,
         compact_limit_tokens=_COMPACT_LIMIT if compact else None,
     )
 
@@ -67,11 +69,12 @@ def test_task_notification_result_keeps_later_activity_and_final_usage() -> None
         Message("The latest follow-up is complete."),
     ]
     assert len([signal for signal in activity if isinstance(signal, SessionStarted)]) == 1
-    [usage_signal, terminal_signal] = terminal
+    [usage_signal, window_signal, terminal_signal] = terminal
     assert isinstance(usage_signal, UsageReported)
     assert usage_signal.usage == Usage(
         122, 49109, 4828854, 121323, 0.2708916, "api_equivalent", 0.0022
     )
+    assert window_signal == ContextWindowReported(1_000_000)
     assert terminal_signal == TurnEnded("The latest follow-up is complete.")
 
 
@@ -89,6 +92,7 @@ def test_intermediate_result_before_compact_boundary_does_not_fail_compaction() 
     ]
     assert terminal == [
         UsageReported(Usage(2111, 11959, 146037, 910, 1.481823215, "api_equivalent", None)),
+        ContextWindowReported(1_000_000),
         TurnEnded(""),
     ]
 

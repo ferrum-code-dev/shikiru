@@ -23,6 +23,7 @@ from shikiru.agents.contracts import (
     AgentContext,
     AgentFactory,
     Compacted,
+    ContextWindowReported,
     FailureKind,
     Message,
     QuotaReported,
@@ -85,11 +86,10 @@ _OPENROUTER_REPORT_LIVE_RESPONSE = "[redacted live report response]"
 _SESSION_RESUMED = "session-resumed"
 _HOOK_SESSION = "session-hook-live-redacted"
 _HOOK_MODULE = "shikiru.plugins.agents.claude.hook"
-_DEFAULT_LIMIT_TOKENS = 160_000
 _STANDARD_WINDOW_TOKENS = 200_000
-_EXTENDED_WINDOW_TOKENS = 1_000_000
 _DEFAULT_COMPACT_AT_PCT = 80
 _PERCENT = 100
+_DEFAULT_LIMIT_TOKENS = _STANDARD_WINDOW_TOKENS * _DEFAULT_COMPACT_AT_PCT // _PERCENT
 _LIVE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_MODEL"
 _LIVE_CHANGE_MODEL_ENV = "SHIKIRU_CLAUDE_LIVE_CHANGE_MODEL"
 _SAMPLE_NOW = datetime(2026, 9, 25, 12, tzinfo=UTC)
@@ -287,7 +287,8 @@ class TestClaudeHeadlessContract(AgentContractSuite):
             initial_usage=None,
             clock=FakeClock(_SAMPLE_NOW),
             reset_time=ResetTimeParser(FakeClock(_SAMPLE_NOW)),
-            compact_limit_tokens=_DEFAULT_LIMIT_TOKENS if "compact" in sample.name else None,
+            compaction="compact" in sample.name,
+            compact_limit_tokens=_DEFAULT_LIMIT_TOKENS,
         )
 
     def recorded_streams(self) -> Sequence[RecordedStream]:
@@ -317,6 +318,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                         )
                     ),
                     UsageReported(subscription_usage),
+                    ContextWindowReported(200_000),
                     TurnEnded("Ready."),
                 ],
                 session_id="session-subscription",
@@ -330,6 +332,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     SessionStarted("session-list-cost"),
                     Message("Provider list-cost response."),
                     UsageReported(list_cost_usage),
+                    ContextWindowReported(200_000),
                     TurnEnded("Provider list-cost response."),
                 ],
                 session_id="session-list-cost",
@@ -343,6 +346,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     SessionStarted("session-openrouter"),
                     Message("OpenRouter response."),
                     UsageReported(openrouter_usage),
+                    ContextWindowReported(200_000),
                     TurnEnded("OpenRouter response."),
                 ],
                 session_id="session-openrouter",
@@ -356,6 +360,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     SessionStarted(_OPENROUTER_LIVE_SESSION_ID),
                     Message(_OPENROUTER_LIVE_RESPONSE),
                     UsageReported(Usage(17094, 2, 0, 0, None, "unknown", None)),
+                    ContextWindowReported(200_000),
                     TurnEnded(_OPENROUTER_LIVE_RESPONSE),
                 ],
                 session_id=_OPENROUTER_LIVE_SESSION_ID,
@@ -375,6 +380,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     ToolFinished("Bash", ToolOutcome.SUCCESS),
                     Message(_OPENROUTER_REPORT_LIVE_RESPONSE),
                     UsageReported(openrouter_report_usage),
+                    ContextWindowReported(200_000),
                     TurnEnded(_OPENROUTER_REPORT_LIVE_RESPONSE),
                 ],
                 session_id=_OPENROUTER_REPORT_LIVE_SESSION_ID,
@@ -410,6 +416,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     UsageReported(
                         Usage(17, 484, 15902, 18432, 0.0408912, "api_equivalent", 13.0885)
                     ),
+                    ContextWindowReported(200_000),
                     TurnEnded(""),
                 ],
                 session_id=_HOOK_SESSION,
@@ -423,6 +430,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     SessionStarted(_HOOK_SESSION),
                     Compacted(37968, 1691),
                     UsageReported(Usage(0, 0, 0, 0, 0.0704921, "api_equivalent", None)),
+                    ContextWindowReported(200_000),
                     TurnEnded(""),
                 ],
                 session_id=_HOOK_SESSION,
@@ -436,6 +444,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     SessionStarted(_HOOK_SESSION),
                     Message("DONE KESTREL-4471"),
                     UsageReported(Usage(10, 254, 8812, 3367, 0.4819954, "api_equivalent", 6.0945)),
+                    ContextWindowReported(200_000),
                     TurnEnded("DONE KESTREL-4471"),
                 ],
                 session_id=_HOOK_SESSION,
@@ -450,6 +459,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
                     Compacted(12000, 1100),
                     Message("Context compacted."),
                     UsageReported(compact_usage),
+                    ContextWindowReported(200_000),
                     TurnEnded("Context compacted."),
                 ],
                 session_id=_SESSION_RESUMED,
@@ -554,6 +564,7 @@ class TestClaudeHeadlessContract(AgentContractSuite):
             env={"SHIKIRU_RUN_DIR": str(run_dir), "SHIKIRU_ROLE": _ROLE},
             session_id=_SESSION_RESUMED,
             usage=None,
+            context_window=_STANDARD_WINDOW_TOKENS,
         )
         changed_model = replace(resumed, rung=Rung("claude", _OTHER_MODEL, "high"))
         operator_access_spec = replace(
@@ -719,12 +730,12 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         return {"compact_at_pct": _LIVE_COMPACT_AT_PCT}
 
     def compaction_scenarios(self, tmp_path: Path) -> Sequence[CompactionScenario]:
-        hook_spec = _scenario_spec(tmp_path / "hook", _HOOK_SESSION)
+        hook_spec = _scenario_spec(tmp_path / "hook", _HOOK_SESSION, _STANDARD_WINDOW_TOKENS)
         marker = {hook_spec.turn_dir / f"{_ROLE}.compact-marker": ""}
         stop = ReplayedProcess(_record(_HOOK_STOP, _EMPTY_STDERR, _HOOK_SESSION), marker)
         compact = ReplayedProcess(_record(_HOOK_COMPACT, _EMPTY_STDERR, _HOOK_SESSION))
         done = ReplayedProcess(_record(_HOOK_CONTINUE, _EMPTY_STDERR, _HOOK_SESSION))
-        recovery_spec = _scenario_spec(tmp_path / "recovery", _SESSION_RESUMED)
+        recovery_spec = _scenario_spec(tmp_path / "recovery", _SESSION_RESUMED, None)
         context_failure = ReplayedProcess(
             _record("turn_context_failure.jsonl", _EMPTY_STDERR, _SESSION_RESUMED)
         )
@@ -832,6 +843,9 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         )
         usages = [signal.usage for signal in first_signals if isinstance(signal, UsageReported)]
         assert usages, "live turn reported no usage"
+        assert any(isinstance(signal, ContextWindowReported) for signal in first_signals), (
+            "live turn reported no context window"
+        )
         resumed = self.build_spec(
             tmp_path,
             resume_session_id=session_id,
@@ -841,20 +855,24 @@ class TestClaudeHeadlessContract(AgentContractSuite):
         signals = await self._run_turn(replace(resumed, prompt=RESUME_RECALL_PROMPT))
         message = "\n".join(signal.text for signal in signals if isinstance(signal, Message))
         assert nonce in message, "resumed turn did not recall the nonce"
-        assert self._emitted_limit(first) == _window_limit(first.rung.model)
-        assert self._emitted_limit(resumed) == _window_limit(changed_model)
 
     @pytest.mark.parametrize(
-        ("model", "expected"),
-        [("sonnet", 160_000), ("sonnet[1m]", 800_000)],
+        ("window", "expected"),
+        [(200_000, 160_000), (1_000_000, 800_000)],
         ids=["standard window", "extended window"],
     )
-    def test_emitted_compaction_limit_follows_the_selected_model(
-        self, tmp_path: Path, model: str, expected: int
+    def test_emitted_compaction_limit_follows_the_reported_window(
+        self, tmp_path: Path, window: int, expected: int
     ) -> None:
-        spec = self.build_spec(tmp_path, resume_session_id=None, model=model)
+        spec = replace(self.build_spec(tmp_path, resume_session_id=None), context_window=window)
 
         assert self._emitted_limit(spec) == expected
+
+    def test_turn_without_a_reported_window_emits_no_compaction_hook(self, tmp_path: Path) -> None:
+        spec = self.build_spec(tmp_path, resume_session_id=None)
+        argv = cast("ClaudeAgent", self._build_agent()).process_sequence(spec).start(spec).argv
+
+        assert "--settings" not in argv
 
     def _emitted_limit(self, spec: TurnSpec) -> int:
         argv = cast("ClaudeAgent", self._build_agent()).process_sequence(spec).start(spec).argv
@@ -1010,11 +1028,6 @@ def _record(name: str, stderr: str, session_id: str) -> RecordedStream:
     )
 
 
-def _window_limit(model: str) -> int:
-    window = _EXTENDED_WINDOW_TOKENS if model.endswith("[1m]") else _STANDARD_WINDOW_TOKENS
-    return window * _DEFAULT_COMPACT_AT_PCT // _PERCENT
-
-
 def _hook_settings(turn_dir: Path, limit_tokens: int) -> str:
     command = shlex.join(
         (
@@ -1041,7 +1054,7 @@ def _write_transcript(config_dir: Path, session_id: str, context_tokens: int) ->
     (project / f"{session_id}.jsonl").write_text(json.dumps(entry) + "\n")
 
 
-def _scenario_spec(tmp_path: Path, session_id: str) -> TurnSpec:
+def _scenario_spec(tmp_path: Path, session_id: str, context_window: int | None) -> TurnSpec:
     repo = tmp_path / "repo"
     repo.mkdir(parents=True)
     run_dir = tmp_path / "run"
@@ -1056,6 +1069,7 @@ def _scenario_spec(tmp_path: Path, session_id: str) -> TurnSpec:
         env={"CLAUDE_CONFIG_DIR": str(tmp_path / "claude-config")},
         session_id=session_id,
         usage=None,
+        context_window=context_window,
     )
 
 
@@ -1063,6 +1077,11 @@ def _scenario_argv(spec: TurnSpec, prompt: str) -> tuple[str, ...]:
     if spec.session_id is None:
         message = "compaction scenarios resume a recorded session"
         raise AssertionError(message)
+    settings = (
+        ("--settings", _hook_settings(spec.turn_dir, _DEFAULT_LIMIT_TOKENS))
+        if spec.context_window is not None
+        else ()
+    )
     return (
         "claude",
         "-p",
@@ -1078,7 +1097,6 @@ def _scenario_argv(spec: TurnSpec, prompt: str) -> tuple[str, ...]:
         "low",
         "--add-dir",
         str(spec.run_dir),
-        "--settings",
-        _hook_settings(spec.turn_dir, _DEFAULT_LIMIT_TOKENS),
+        *settings,
         *DEFAULT_ARGS,
     )

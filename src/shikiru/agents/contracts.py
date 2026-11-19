@@ -304,6 +304,13 @@ class Compacted:
 
 
 @dataclass(frozen=True)
+class ContextWindowReported:
+    """The context window, in tokens, of the model this turn ran on, as the agent reported it."""
+
+    tokens: int
+
+
+@dataclass(frozen=True)
 class EvidenceFault:
     """Evidence the agent keeps for the turn could not be read; the turn's result still stands."""
 
@@ -340,6 +347,7 @@ type AgentSignal = (
     | UsageReported
     | QuotaReported
     | Compacted
+    | ContextWindowReported
     | EvidenceFault
     | EvidenceRecovered
     | TurnEnded
@@ -354,6 +362,8 @@ class TurnSpec:
     `on_process` receives the id of every process the turn spawns, a context retry included,
     before that process starts running (`SubprocessRunner.spawn(on_started=...)`).
     `billing_mode` is the declaration recorded for the run this turn belongs to.
+    `context_window` is the window in tokens last reported for `rung`'s agent and model, or `None`
+    when none has been reported; an agent must not assume one.
     """
 
     rung: Rung
@@ -368,6 +378,7 @@ class TurnSpec:
     usage: Usage | None
     on_process: Callable[[int], None] = ignore_started
     billing_mode: BillingMode = BILLING_MODE_UNKNOWN
+    context_window: int | None = None
 
 
 class Turn(Protocol):

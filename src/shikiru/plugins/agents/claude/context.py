@@ -1,4 +1,4 @@
-"""Claude's context window and next-request token estimate used for compaction decisions."""
+"""Claude's compaction limit and next-request token estimate used for compaction decisions."""
 
 from __future__ import annotations
 
@@ -10,9 +10,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
 
-CONTEXT_WINDOW_TOKENS = 200_000
-EXTENDED_CONTEXT_WINDOW_TOKENS = 1_000_000
-EXTENDED_CONTEXT_MODEL_SUFFIX = "[1m]"
 CHARS_PER_TOKEN = 3
 _PERCENT = 100
 _TYPE_FIELD = "type"
@@ -43,13 +40,10 @@ class MalformedCompactBoundaryError(ValueError):
     """A compact_boundary transcript entry lacks the post-compaction token count it must record."""
 
 
-def compact_limit_tokens(model: str, compact_at_pct: float) -> int:
-    """Return the tokens at which a request on `model` must be preceded by compaction."""
-    window = (
-        EXTENDED_CONTEXT_WINDOW_TOKENS
-        if model.endswith(EXTENDED_CONTEXT_MODEL_SUFFIX)
-        else CONTEXT_WINDOW_TOKENS
-    )
+def compact_limit_tokens(window: int | None, compact_at_pct: float) -> int | None:
+    """Return the tokens at which a request must be preceded by compaction, or `None` if unknown."""
+    if window is None:
+        return None
     return int(window * compact_at_pct / _PERCENT)
 
 

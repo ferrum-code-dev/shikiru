@@ -11,6 +11,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from shikiru.agents.contracts import (
     Compacted,
+    ContextWindowReported,
     QuotaReported,
     SessionStarted,
     UsageReported,
@@ -74,6 +75,7 @@ _SIGNAL_KINDS = {
     SessionStarted.__name__: "session",
     QuotaReported.__name__: "quota",
     Compacted.__name__: "compacted",
+    ContextWindowReported.__name__: "context window",
 }
 _REPORT_KINDS = {
     TriageReport: "triage",

@@ -8,6 +8,7 @@ from rich.text import Text
 
 from shikiru.agents.contracts import (
     Compacted,
+    ContextWindowReported,
     EvidenceFault,
     EvidenceRecovered,
     Message,
@@ -62,6 +63,7 @@ class StreamLine:
             UsageReported.__name__: _usage,
             QuotaReported.__name__: _silent,
             Compacted.__name__: _compacted,
+            ContextWindowReported.__name__: _silent,
             EvidenceFault.__name__: _evidence_fault,
             EvidenceRecovered.__name__: _silent,
             TurnEnded.__name__: _turn_ended,

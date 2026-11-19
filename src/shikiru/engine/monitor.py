@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 from shikiru.agents.contracts import (
     AgentSignal,
     Compacted,
+    ContextWindowReported,
     EvidenceFault,
     EvidenceRecovered,
     Message,
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
     from shikiru.engine.quota_reconciler import QuotaReconciler
     from shikiru.engine.sessions import SessionManager
     from shikiru.engine.turn_processes import TurnProcesses
+    from shikiru.store.context_windows import ContextWindowStore
     from shikiru.store.events import EventLog
     from shikiru.store.runs import RunStore
     from shikiru.tmux.decorator import PaneDecorator
@@ -74,6 +76,7 @@ class TurnMonitor:
         *,
         sessions: SessionManager,
         runs: RunStore,
+        windows: ContextWindowStore,
         quotas: QuotaReconciler,
         events: EventLog,
         clock: Clock,
@@ -84,6 +87,7 @@ class TurnMonitor:
     ) -> None:
         self._sessions = sessions
         self._runs = runs
+        self._windows = windows
         self._quotas = quotas
         self._events = events
         self._clock = clock
@@ -256,6 +260,8 @@ class TurnMonitor:
         elif isinstance(signal, UsageReported):
             self._runs.record_usage(run_id, signal.usage)
             await self._refresh_titles(task)
+        elif isinstance(signal, ContextWindowReported):
+            self._windows.record(rung.agent, rung.model, signal.tokens)
         elif isinstance(signal, ToolStarted):
             tool_running = True
         elif isinstance(signal, ToolFinished):

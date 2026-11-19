@@ -22,6 +22,7 @@ from shikiru.agents.contracts import (
     AgentSignal,
     BillingMode,
     Compacted,
+    ContextWindowReported,
     FailureKind,
     Message,
     QuotaReported,
@@ -212,6 +213,7 @@ class ClaudeTurnParser:
         initial_usage: Usage | None,
         clock: Clock,
         reset_time: ResetTimeParser,
+        compaction: bool = False,
         compact_limit_tokens: int | None = None,
         billing_mode: BillingMode = BILLING_MODE_UNKNOWN,
     ) -> None:
@@ -221,6 +223,7 @@ class ClaudeTurnParser:
         self._initial_usage = initial_usage or _empty_usage()
         self._clock = clock
         self._reset_time = reset_time
+        self._compaction = compaction
         self._compact_limit_tokens = compact_limit_tokens
         self._tool_names: dict[str, str] = {}
         self._tool_ids: list[str] = []
@@ -318,6 +321,9 @@ class ClaudeTurnParser:
         signals: list[AgentSignal] = []
         if usage is not None:
             signals.append(UsageReported(usage))
+        context_window = self._context_window()
+        if context_window is not None:
+            signals.append(ContextWindowReported(context_window))
         signals.append(TurnEnded(last_message))
         return signals
 
@@ -596,18 +602,11 @@ class ClaudeTurnParser:
         cache_read_tokens = self._initial_usage.cache_read_tokens + cache_read_delta
         cache_write_tokens = self._initial_usage.cache_write_tokens + cache_write_delta
         priced = self._latest_cost_basis == _LIST_COST_BASIS and self._latest_cost is not None
-        context_window = (
-            self._latest_model_usage.get(_CONTEXT_WINDOW_FIELD)
-            if self._latest_model_usage is not None
-            else None
-        )
+        context_window = self._context_window()
         context_tokens = _context_tokens(self._latest_assistant_usage)
         context_pct = (
             context_tokens / context_window * PERCENT
-            if context_tokens is not None
-            and isinstance(context_window, int | float)
-            and not isinstance(context_window, bool)
-            and context_window > 0
+            if context_tokens is not None and context_window is not None
             else None
         )
         return Usage(
@@ -625,6 +624,11 @@ class ClaudeTurnParser:
             ),
             context_used_pct=context_pct,
         )
+
+    def _context_window(self) -> int | None:
+        if self._latest_model_usage is None:
+            return None
+        return _positive_integer(self._latest_model_usage.get(_CONTEXT_WINDOW_FIELD))
 
     def _fail(self, payload: Mapping[str, Any], stderr: str) -> list[AgentSignal]:
         failure = self._classify_failure(payload, stderr)
@@ -663,13 +667,15 @@ class ClaudeTurnParser:
         return classified
 
     def _compaction_problem(self) -> str | None:
-        limit = self._compact_limit_tokens
-        if limit is None:
+        if not self._compaction:
             return None
         if not self._did_compact:
             return _INVALID_COMPACTION_MESSAGE
         if self._malformed_compaction_metadata:
             return _MALFORMED_COMPACTION_MESSAGE
+        limit = self._compact_limit_tokens
+        if limit is None:
+            return None
         post_tokens = self._post_compaction_tokens
         if post_tokens is None or post_tokens >= limit:
             return _INEFFECTIVE_COMPACTION_MESSAGE.format(post_tokens=post_tokens, limit=limit)
@@ -694,7 +700,7 @@ class ClaudeTurnSequence(TurnProcessSequence):
         self._clock = clock
         self._reset_time = reset_time
         self._billing_mode: BillingMode = billing_mode
-        self._limit = compact_limit_tokens(spec.rung.model, compact_at_pct)
+        self._limit = compact_limit_tokens(spec.context_window, compact_at_pct)
         self._args = tuple(args)
         self._environment = environment
         self._session_id = spec.session_id or session_id or str(uuid.uuid4())
@@ -712,7 +718,11 @@ class ClaudeTurnSequence(TurnProcessSequence):
 
     def start(self, spec: TurnSpec) -> TurnProcess:
         self._marker.unlink(missing_ok=True)
-        if self._session_exists and self._transcript_tokens(spec) >= self._limit:
+        if (
+            self._limit is not None
+            and self._session_exists
+            and self._transcript_tokens(spec) >= self._limit
+        ):
             return self._compact(spec, then=spec.prompt)
         return self._process(spec, spec.prompt)
 
@@ -743,7 +753,8 @@ class ClaudeTurnSequence(TurnProcessSequence):
             argv.extend([EFFORT_FLAG, spec.rung.effort])
         for directory in _unique_paths((spec.run_dir, *spec.add_dirs)):
             argv.extend([ADD_DIR_FLAG, str(directory)])
-        argv.extend([SETTINGS_FLAG, self._hook_settings()])
+        if self._limit is not None:
+            argv.extend([SETTINGS_FLAG, self._hook_settings(self._limit)])
         argv.extend(self._args)
         self._parser = ClaudeTurnParser(
             session_id=self._session_id,
@@ -751,13 +762,14 @@ class ClaudeTurnSequence(TurnProcessSequence):
             initial_usage=self._usage,
             clock=self._clock,
             reset_time=self._reset_time,
-            compact_limit_tokens=self._limit if compact else None,
+            compaction=compact,
+            compact_limit_tokens=self._limit,
             billing_mode=self._billing_mode,
         )
         return TurnProcess(tuple(argv), spec.cwd, self._environment(spec), self._parser)
 
-    def _hook_settings(self) -> str:
-        command = module_command(HOOK_MODULE, str(self._state), str(self._marker), str(self._limit))
+    def _hook_settings(self, limit: int) -> str:
+        command = module_command(HOOK_MODULE, str(self._state), str(self._marker), str(limit))
         hook = {_HOOK_TYPE_FIELD: _COMMAND_HOOK_TYPE, _HOOK_COMMAND_FIELD: command}
         matcher = {_HOOK_MATCHER_FIELD: _ANY_TOOL_MATCHER, _HOOKS_FIELD: [hook]}
         return json.dumps({_HOOKS_FIELD: {_POST_TOOL_USE_EVENT: [matcher]}})
@@ -793,6 +805,10 @@ def _optional_nonnegative_integer(payload: Mapping[str, Any] | None, key: str) -
         return None
     value = payload.get(key)
     return value if type(value) is int and value >= 0 else None
+
+
+def _positive_integer(value: object) -> int | None:
+    return value if type(value) is int and value > 0 else None
 
 
 def _tool_detail(value: object) -> str:

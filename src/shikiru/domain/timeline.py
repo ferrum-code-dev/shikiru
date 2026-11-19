@@ -38,7 +38,7 @@ TIMELINE_CATEGORIES = frozenset(
 )
 SIGNAL_TOOL_NAMES = frozenset({"ToolStarted", "ToolDetailReported", "ToolFinished"})
 SIGNAL_MESSAGE_NAMES = frozenset({"Message"})
-SIGNAL_USAGE_NAMES = frozenset({"UsageReported", "QuotaReported"})
+SIGNAL_USAGE_NAMES = frozenset({"UsageReported", "QuotaReported", "ContextWindowReported"})
 SIGNAL_LIFECYCLE_NAMES = frozenset({"SessionStarted", "TurnEnded", "TurnFailed", "Compacted"})
 TIMELINE_DECISION_KINDS = frozenset(
     {
