@@ -323,3 +323,12 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 - [x] Count held, wait-reason and mid-turn quota-waiting turns as Waiting in `shikiru ls`
   - Acceptance: the table, narrow view and JSON show a Waiting count between Running and Queued. A turn is waiting while it is held, while it carries a wait reason, or while its quota block holds; it counts as running again once the block lifts or the turn restarts after its quota failure. `shikiru ls` uses the agent recorded by `TURN_STARTED`, including when project settings differ or the stored rung index is out of range; the dashboard stops showing the wait after routing changes. Queued and escalated counts are unchanged. Integration coverage in `tests/integration/test_operator_sessions.py`.
+
+### Cache folder candidates for init (T-178)
+
+- [x] Suggest the well-known cache and dependency folders that are Git-ignored
+  - Acceptance: `init` suggests `.mypy_cache`, `.ruff_cache`, `.tox`, `.next`, `.nuxt`, `.dart_tool` and `vendor` alongside the existing names, only when Git ignores the directories. Matching ignored files are not suggested. `build` is not suggested: it is a generic output name that this repository also writes release-smoke artifacts into. Integration coverage in `tests/integration/test_init_cache_detection.py`.
+- [x] Make `doctor` suggest newly detected Git-ignored cache folders missing from `[repo] caches`
+  - Acceptance: Doctor lists informational suggestions for detected folders missing from configured cache patterns; suggestions never affect its status. The README lists the detected names. Integration coverage in `tests/integration/test_operator_doctor.py`.
+- [x] Agree the final cache list with the Product Owner before merge.
+  - Agreed: `.venv`, `node_modules`, `target`, `.gradle`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, `.next`, `.nuxt`, `.dart_tool` and `vendor`; `build` excluded. Detection stays limited to Git-ignored folders, and doctor's cache suggestions stay non-failing.

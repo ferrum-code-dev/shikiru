@@ -15,6 +15,13 @@ CACHE_NAMES = (
     "target",
     ".gradle",
     ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".tox",
+    ".next",
+    ".nuxt",
+    ".dart_tool",
+    "vendor",
 )
 
 

@@ -298,13 +298,15 @@ class Doctor:
         return DoctorCheck(name=COW_CHECK_NAME, ok=True, detail=detail), supported
 
     async def _cache_suggestions(self, settings: Settings) -> list[DoctorSuggestion]:
-        ignored = frozenset(
-            self._relative_path(path) for path in await self._git.ignored_paths(self._project_root)
-        )
+        ignored_paths = await self._git.ignored_paths(self._project_root)
+        ignored = frozenset(self._relative_path(path) for path in ignored_paths)
         matches_by_entry = {entry: self._cache_matches(entry) for entry in settings.repo.caches}
         copied = {match for matches in matches_by_entry.values() for match in matches}
         suggestions: list[DoctorSuggestion] = []
-        missing = uncached_detections(detected_caches(ignored), copied)
+        detected = detected_caches(
+            self._relative_path(path) for path in ignored_paths if path.is_dir()
+        )
+        missing = uncached_detections(detected, copied)
         if missing:
             suggestions.append(MissingCacheSuggestion(paths=list(missing)))
         for entry in settings.repo.caches:

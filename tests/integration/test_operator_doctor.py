@@ -622,15 +622,49 @@ def _rendered(report: DoctorReport) -> list[str]:
     return buffer.getvalue().splitlines()
 
 
-async def test_doctor_suggests_a_detected_cache_missing_from_config(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("folder", "path_kind", "configured", "suggested"),
+    [
+        (".mypy_cache", "ignored_directory", False, True),
+        (".ruff_cache", "ignored_directory", False, True),
+        (".tox", "ignored_directory", False, True),
+        (".next", "ignored_directory", False, True),
+        (".nuxt", "ignored_directory", False, True),
+        (".dart_tool", "ignored_directory", False, True),
+        ("vendor", "ignored_directory", False, True),
+        ("node_modules", "ignored_directory", False, True),
+        (".mypy_cache", "directory", False, False),
+        (".next", "ignored_directory", True, False),
+        ("build", "ignored_directory", False, False),
+        ("vendor", "ignored_file", False, False),
+    ],
+)
+async def test_doctor_suggests_only_unconfigured_git_ignored_cache_folders(
+    tmp_path: Path, folder: str, path_kind: str, configured: bool, suggested: bool
+) -> None:
     await _git_init(tmp_path)
-    _git_ignore(tmp_path, "node_modules/")
-    _directory_with_file(tmp_path, "node_modules")
-    _write_config(tmp_path, _with_caches([]))
+    is_ignored = path_kind != "directory"
+    is_directory = path_kind != "ignored_file"
+    if is_ignored:
+        pattern = f"{folder}/" if is_directory else folder
+        _git_ignore(tmp_path, pattern)
+    path = tmp_path / folder
+    if is_directory:
+        _directory_with_file(tmp_path, folder)
+    else:
+        path.write_text("cached")
+    _write_config(tmp_path, _with_caches([folder] if configured else []))
 
     report = await _suggestion_report(tmp_path)
 
-    assert report.suggestions == [MissingCacheSuggestion(paths=["node_modules"])]
+    missing = [
+        suggestion
+        for suggestion in report.suggestions
+        if isinstance(suggestion, MissingCacheSuggestion)
+    ]
+    assert bool(missing) is suggested
+    if suggested:
+        assert missing == [MissingCacheSuggestion(paths=[folder])]
     assert report.ok is True
     assert _rendered(report)[-1].startswith("✔ Doctor passed")
 
