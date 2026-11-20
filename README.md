@@ -107,7 +107,9 @@ orchestration limits and integration mode, reviews each agent's options, then wr
 - `shikiru init --yes` writes editable defaults with model placeholders. Replace them with models your
   agent supports, then run `doctor`.
 - `shikiru doctor` checks setup without running task turns. `doctor --probe` also runs live checks and
-  can use paid provider usage.
+  can use paid provider usage. Doctor also lists informational cache suggestions after its checks: detected
+  caches missing from `caches`, and configured entries with no effect. Suggestions never fail Doctor or
+  change its exit status.
 
 ## CLI
 
@@ -242,7 +244,10 @@ is rechecked every `orchestration.remote_recheck_seconds` (default `60`). Pendin
 ### Caches, notifications and retries
 
 - **Caches:** selected Git-ignored paths can be cloned into task worktrees with copy-on-write. If the
-  filesystem cannot, Shikiru warns and skips them; it never silently makes a full copy.
+  filesystem cannot, Shikiru warns and skips them; it never silently makes a full copy. `doctor` suggests
+  detected caches such as `node_modules` or `.venv` that `caches` does not list, and flags entries that
+  match nothing or only paths Git does not ignore. These suggestions are informational only and are
+  omitted when copy-on-write is unsupported.
 - **Notifications:** tmux messages and an optional `notify` command report completions, escalations,
   waits and faults. Hooks should tolerate duplicates after a crash.
 - **Retries:** `[orchestration.retries]` sets provider-unavailable backoff. Defaults: 30 s, ×4, 300 s

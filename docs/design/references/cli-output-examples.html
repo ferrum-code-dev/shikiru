@@ -172,6 +172,9 @@ code, pre, .terminal { font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, Cons
 .doctor-gap { min-height: 1.65em; }
 .ls-failure-gap { min-height: 1.4em; }
 .doctor-summary { font-weight: 700; }
+.suggestion-row, .suggestion-hint { display: block; white-space: pre-wrap; overflow-wrap: anywhere; }
+.suggestion-hint { color: var(--secondary); }
+.suggestion-marker { color: var(--amber); font-weight: 700; }
 .doctor-summary.pass { color: var(--sage); }
 .doctor-summary.fail { color: var(--rose); }
 
@@ -465,7 +468,7 @@ const EXAMPLES = [
   {id: "status", command: "shikiru status", scenarios: ["Project status", "Empty project"]},
   {id: "task_status", command: "shikiru status T-42", scenarios: ["Task detail", "Escalated task", "Completed task", "Unknown task ID"]},
   {id: "watch", command: "shikiru status --watch", scenarios: ["Plain updates"]},
-  {id: "doctor", command: "shikiru doctor", scenarios: ["Passed", "Unsupported model ID", "Unsupported effort"]},
+  {id: "doctor", command: "shikiru doctor", scenarios: ["Passed", "Unsupported model ID", "Unsupported effort", "Cache suggestions"]},
   {id: "doctor_probe", command: "shikiru doctor --probe", scenarios: ["Probe passed", "Provider unavailable"]},
   {id: "mcp", command: "shikiru mcp", scenarios: ["Stdio server"]}
 ];
@@ -1302,6 +1305,8 @@ function renderDoctorExample(id, scenario, view) {
         ["Agent codex · Model choices", "Configured model ID \"GPT-6-Luna\" is unsupported; use \"gpt-6-luna\".", "fail"],
         ["Copy-on-write", "Supported", "pass"]
       ]);
+    } else if (scenario === "Cache suggestions") {
+      renderDoctorReport(view, CACHE_SUGGESTION_CHECKS, CACHE_SUGGESTIONS);
     } else {
       renderDoctorReport(view, [
         ["Tmux", "Version 3.7c", "pass"],
@@ -1324,7 +1329,35 @@ function renderDoctorExample(id, scenario, view) {
   }
 }
 
-function renderDoctorReport(parent, checks) {
+const CACHE_SUGGESTION_CHECKS = [
+  ["Tmux", "tmux 3.7c", "pass"],
+  ["Git", "git version 2.55.0", "pass"],
+  ["Repository", "/projects/demo", "pass"],
+  ["Configuration", "/projects/demo/.shikiru/config.toml", "pass"],
+  ["Database", "schema 21", "pass"],
+  ["Copy-on-write", "copy-on-write supported", "pass"],
+  ["Agent fake · binary", "fake-agent-repl", "pass"],
+  ["Agent fake · Model choices", "configured model and effort choices are listed in the agent catalog", "pass"]
+];
+
+const CACHE_SUGGESTIONS = [
+  ["+", "Detected cache not in config: node_modules", "      Add them to caches in .shikiru/config.toml to reuse them in task worktrees."],
+  ["!", "Cache entry has no effect: \".next\" (matches nothing right now)"],
+  ["!", "Cache entry has no effect: \"dist/\" (not Git-ignored)"]
+];
+
+function renderSuggestions(parent, suggestions) {
+  appendLine(parent, "", "doctor-gap");
+  appendSection(parent, "Suggestions");
+  for (const [marker, text, hint] of suggestions) {
+    const row = node("div", "suggestion-row");
+    row.append(document.createTextNode("  "), node("span", "suggestion-marker", marker), document.createTextNode(` ${text}`));
+    parent.append(row);
+    if (hint) appendLine(parent, hint, "suggestion-hint");
+  }
+}
+
+function renderDoctorReport(parent, checks, suggestions = []) {
   for (const [label, value, state] of checks) {
     const row = node("div", "check-row");
     const glyph = state === "fail" ? "✕" : "✔";
@@ -1336,6 +1369,7 @@ function renderDoctorReport(parent, checks) {
     );
     parent.append(row);
   }
+  if (suggestions.length) renderSuggestions(parent, suggestions);
   appendLine(parent, "", "doctor-gap");
   const failed = checks.filter(([, , state]) => state === "fail").length;
   const state = failed ? "fail" : "pass";

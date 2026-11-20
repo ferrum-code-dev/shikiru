@@ -12,6 +12,7 @@ from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 
+from shikiru.domain.caches import CacheEntryEffect
 from shikiru.domain.check_repair import CHECK_STAGE_LABELS, CheckRepairStage
 from shikiru.domain.escalation import escalation_reason_label
 from shikiru.domain.events import EventKind
@@ -53,6 +54,8 @@ from shikiru.operator.doctor import (
     PLUGIN_CHECK_SEPARATOR,
     PLUGINS_CHECK_NAME,
     PROBE_CHECK_PREFIX,
+    IneffectiveCacheSuggestion,
+    MissingCacheSuggestion,
 )
 from shikiru.operator.queries import TaskNotFoundError
 from shikiru.ui.age import format_duration
@@ -101,7 +104,7 @@ if TYPE_CHECKING:
     from shikiru.domain.escalation import Escalation
     from shikiru.operator.commands import Ack
     from shikiru.operator.detectors import InitWizardResult
-    from shikiru.operator.doctor import DoctorCheck, DoctorReport
+    from shikiru.operator.doctor import DoctorCheck, DoctorReport, DoctorSuggestion
     from shikiru.operator.lifecycle import RestartResult, StartResult
     from shikiru.operator.queries import (
         CheckRepairView,
@@ -113,7 +116,7 @@ if TYPE_CHECKING:
         UsageView,
     )
     from shikiru.operator.sessions import SessionDiagnostic, SessionRow
-from shikiru.paths import project_config_path
+from shikiru.paths import PROJECT_CONFIG_RELATIVE_PATH, project_config_path
 
 STATUS_ROW_STACKED_BELOW_WIDTH = 60
 SESSION_TABLE_MIN_WIDTH = 65
@@ -158,6 +161,20 @@ DOCTOR_CHECK_NAMES = {
     "config.plugins": "Agent configuration",
 }
 DOCTOR_PLUGIN_CHECK_NAMES = {"model_choices": "Model choices"}
+DOCTOR_SUGGESTIONS_TITLE = "Suggestions"
+DOCTOR_SUGGESTION_INDENT = 2
+DOCTOR_SUGGESTION_HINT_INDENT = 6
+DOCTOR_SUGGESTION_ADDED_MARKER = "+"
+DOCTOR_SUGGESTION_NOTICE_MARKER = "!"
+DOCTOR_MISSING_CACHE_LABEL = "Detected cache not in config"
+DOCTOR_MISSING_CACHE_HINT = (
+    f"Add them to caches in {PROJECT_CONFIG_RELATIVE_PATH} to reuse them in task worktrees."
+)
+DOCTOR_INEFFECTIVE_CACHE_LABEL = "Cache entry has no effect"
+CACHE_EFFECT_LABELS = {
+    CacheEntryEffect.MATCHES_NOTHING: "matches nothing right now",
+    CacheEntryEffect.NOT_GIT_IGNORED: "not Git-ignored",
+}
 STATUS_USAGE_TABLE_MIN_WIDTH = 80
 STATUS_ESCALATION_NO_STEP_LABEL = "no step"
 STATUS_USAGE_HEADERS = ("Agent", "Runs", "Input", "Output", "Costs", "Quota used 5h/7d")
@@ -604,6 +621,10 @@ def doctor_renderable(report: DoctorReport, *, width: int) -> RenderableType:
         rows.extend(row.wrap(wrap_console, max(1, width), overflow="fold"))
     if rows:
         rows.append(Text(""))
+    suggestion_rows = _doctor_suggestion_rows(report.suggestions, width=width)
+    if suggestion_rows:
+        rows.extend(suggestion_rows)
+        rows.append(Text(""))
     if report.ok:
         result = _outcome_line(GLYPH_DONE, "Doctor passed", SUCCESS_COLOR)
         result.append(" · ", style=SECONDARY_TEXT_COLOR)
@@ -617,6 +638,47 @@ def doctor_renderable(report: DoctorReport, *, width: int) -> RenderableType:
             style=PRIMARY_TEXT_COLOR,
         )
     return Group(*rows, result)
+
+
+def _doctor_suggestion_rows(
+    suggestions: list[DoctorSuggestion], *, width: int
+) -> list[RenderableType]:
+    if not suggestions:
+        return []
+    wrap_console = Console(width=max(1, width), force_terminal=False, color_system=None)
+    rows: list[Text] = []
+    for suggestion in suggestions:
+        match suggestion:
+            case MissingCacheSuggestion(paths=paths):
+                rows.append(
+                    _suggestion_text(
+                        DOCTOR_SUGGESTION_ADDED_MARKER,
+                        f"{DOCTOR_MISSING_CACHE_LABEL}: {', '.join(paths)}",
+                    )
+                )
+                hint = " " * DOCTOR_SUGGESTION_HINT_INDENT + DOCTOR_MISSING_CACHE_HINT
+                rows.append(Text(hint, style=SECONDARY_TEXT_COLOR))
+            case IneffectiveCacheSuggestion(entry=entry, reason=reason):
+                rows.append(
+                    _suggestion_text(
+                        DOCTOR_SUGGESTION_NOTICE_MARKER,
+                        f'{DOCTOR_INEFFECTIVE_CACHE_LABEL}: "{entry}" '
+                        f"({CACHE_EFFECT_LABELS[reason]})",
+                    )
+                )
+    wrapped: list[RenderableType] = [
+        Text(DOCTOR_SUGGESTIONS_TITLE, style=f"{STYLE_BOLD} {STEEL_BLUE}")
+    ]
+    for row in rows:
+        wrapped.extend(row.wrap(wrap_console, max(1, width), overflow="fold"))
+    return wrapped
+
+
+def _suggestion_text(marker: str, label: str) -> Text:
+    row = Text(" " * DOCTOR_SUGGESTION_INDENT)
+    row.append(marker, style=f"{STYLE_BOLD} {AMBER}")
+    row.append(f" {label}", style=PRIMARY_TEXT_COLOR)
+    return row
 
 
 def _doctor_display_checks(checks: list[DoctorCheck]) -> list[DoctorCheck]:

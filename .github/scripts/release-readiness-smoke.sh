@@ -45,6 +45,7 @@ HOME_DASHBOARD_CHECK="not run"
 PICKER_CHECK="not run"
 SMALL_CLIENT_SIZE="not run"
 WORKSPACE_NAVIGATION_CHECK="not run"
+CACHE_SUGGESTION_CHECK="not run"
 
 sha256() {
     if command -v sha256sum > /dev/null; then
@@ -93,7 +94,7 @@ finish() {
             sha256 "$ROOT/tests/support/release_wait.py"
         } | sha256 | awk '{print $1}'
     )"
-    SMOKE_EXIT_STATUS="$exit_status" "$PYTHON_BIN" - "$ARTIFACT" "$DATE" "$STARTED_AT" "$ARTIFACT_NAME" "$SOURCE_COMMIT" "$SOURCE_FINGERPRINT" "$SMOKE_STAGE" "$HOME_DASHBOARD_CHECK" "$PICKER_CHECK" "$SMALL_CLIENT_SIZE" "$WORKSPACE_NAVIGATION_CHECK" <<'PY'
+    SMOKE_EXIT_STATUS="$exit_status" "$PYTHON_BIN" - "$ARTIFACT" "$DATE" "$STARTED_AT" "$ARTIFACT_NAME" "$SOURCE_COMMIT" "$SOURCE_FINGERPRINT" "$SMOKE_STAGE" "$HOME_DASHBOARD_CHECK" "$PICKER_CHECK" "$SMALL_CLIENT_SIZE" "$WORKSPACE_NAVIGATION_CHECK" "$CACHE_SUGGESTION_CHECK" <<'PY'
 import json
 import os
 import sys
@@ -111,11 +112,12 @@ data = {
     "fresh_disposable_home": True,
     "runtime_isolation": ["HOME", "XDG directories", "uv cache/tools/bin", "private tmux socket"],
     "installed_package_data_and_entrypoints": "verified" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
-    "installed_cli_flows": ["interactive init wizard and Doctor", "init --yes", "doctor", "start", "submit", "status", "ls", "picker attach", "named attach", "installed-package Textual workspace boundary", "stop and cleanup"],
+    "installed_cli_flows": ["interactive init wizard and Doctor", "init --yes", "doctor", "doctor cache suggestions in a disposable project", "start", "submit", "status", "ls", "picker attach", "named attach", "installed-package Textual workspace boundary", "stop and cleanup"],
     "wizard_terminals": ["120x38", "68x16"],
     "picker_terminal": sys.argv[9],
     "small_picker_client_size": sys.argv[10],
     "workspace_navigation": sys.argv[11],
+    "doctor_cache_suggestions": sys.argv[12],
     "home_dashboard_pane_after_merge": sys.argv[8],
     "task_result": "T-1 merged on main and A1 ticked from interactive quickstart" if os.environ["SMOKE_EXIT_STATUS"] == "0" else "incomplete",
     "agent_cost": "unknown; test-only fake agent reports no billed cost",
@@ -446,6 +448,57 @@ report = json.loads(Path(sys.argv[1]).read_text())
 assert report["ok"]
 assert {"config", "plugins"} <= {check["name"] for check in report["checks"]}
 PY
+SMOKE_STAGE="doctor cache suggestions"
+CACHE_PROJECT="$RUN_ROOT/cache-suggestions"
+prepare_project "$CACHE_PROJECT"
+printf 'node_modules/\n.next/\n' > "$CACHE_PROJECT/.gitignore"
+mkdir "$CACHE_PROJECT/node_modules"
+printf 'cached\n' > "$CACHE_PROJECT/node_modules/artifact"
+record app "$CACHE_PROJECT" init --yes
+record "$PACKAGE_PYTHON" - "$CACHE_PROJECT/.shikiru/config.toml" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+contents = path.read_text()
+if 'caches = ["node_modules"]' not in contents:
+    raise SystemExit("init --yes did not detect the ignored node_modules cache")
+contents = contents.replace('caches = ["node_modules"]', 'caches = [".next"]')
+contents = contents.replace('"fake:default"', '"fake:smoke"')
+path.write_text(contents)
+PY
+CACHE_DOCTOR_JSON="$RUN_ROOT/cache-doctor.json"
+CACHE_DOCTOR_TEXT="$RUN_ROOT/cache-doctor.txt"
+app "$CACHE_PROJECT" --json doctor > "$CACHE_DOCTOR_JSON" 2>> "$LOG"
+app "$CACHE_PROJECT" doctor > "$CACHE_DOCTOR_TEXT" 2>> "$LOG"
+cat "$CACHE_DOCTOR_TEXT" | tee -a "$LOG"
+CACHE_SUGGESTION_CHECK="$("$PACKAGE_PYTHON" - "$CACHE_DOCTOR_JSON" "$CACHE_DOCTOR_TEXT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+report = json.loads(Path(sys.argv[1]).read_text())
+text = Path(sys.argv[2]).read_text()
+cow = next(check for check in report["checks"] if check["name"] == "cow")
+assert report["ok"]
+assert text.rstrip().splitlines()[-1].startswith("✔ Doctor passed")
+if cow["ok"] and cow["detail"] == "copy-on-write supported":
+    assert {"kind": "missing_cache", "paths": ["node_modules"]} in report["suggestions"]
+    assert {
+        "kind": "ineffective_cache",
+        "entry": ".next",
+        "reason": "matches_nothing",
+    } in report["suggestions"]
+    assert "Detected cache not in config: node_modules" in text
+    assert 'Cache entry has no effect: ".next" (matches nothing right now)' in text
+    print("suggested node_modules for config and reported .next as having no effect")
+else:
+    assert report["suggestions"] == []
+    assert "Suggestions" not in text
+    print("copy-on-write is unsupported here, so doctor omitted cache suggestions")
+PY
+)"
+printf '%s\n' "$CACHE_SUGGESTION_CHECK" | tee -a "$LOG"
 SMOKE_STAGE="quickstart start and task merge"
 record app "$WORK_PROJECT" \
     --set orchestration.poll_seconds=1 \

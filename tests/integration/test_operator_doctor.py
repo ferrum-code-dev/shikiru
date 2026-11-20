@@ -1,28 +1,42 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 import shutil
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from fake_agent.turn_cli import CRASH_STDERR
+from rich.console import Console
 
 from shikiru.agents.registry import AgentRegistry
-from shikiru.operator.doctor import Doctor
+from shikiru.cli.render import doctor_renderable
+from shikiru.domain.caches import CacheEntryEffect
+from shikiru.operator.doctor import (
+    Doctor,
+    DoctorCheck,
+    DoctorReport,
+    IneffectiveCacheSuggestion,
+    MissingCacheSuggestion,
+)
 from shikiru.operator.plugin_checks import PluginChecks
 from shikiru.operator.probe import AgentProbe
 from shikiru.paths import state_db_path
 from shikiru.process import SubprocessRunner
 from shikiru.store.database import Database
-from shikiru.workspace.caches import CacheCloner
+from shikiru.workspace.caches import CACHE_COW_UNSUPPORTED_WARNING, CacheCloner
 from shikiru.workspace.git import Git
 from tests.support.clock import LONG_AGO, FakeClock
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT
 from tests.support.waiting import LONG_WAIT_SECONDS, MEDIUM_WAIT_SECONDS
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 pytestmark = pytest.mark.asyncio
 
@@ -562,3 +576,199 @@ async def test_doctor_probe_failure_shows_the_stream_tail_and_stderr(tmp_path: P
     human_text = "".join(human_stdout.split())
     assert '"event":"session_started"' in human_text
     assert "".join(CRASH_STDERR.split()) in human_text
+
+
+PLAIN_COPY_ARGS = ("cp",)
+
+
+def _with_caches(caches: Sequence[str]) -> str:
+    return f"{FAKE_CONFIG}\n[repo]\ncaches = {json.dumps(list(caches))}\n"
+
+
+def _rewrite_config(root: Path, config: str) -> None:
+    (root / ".shikiru" / "config.toml").write_text(config)
+
+
+def _git_ignore(root: Path, *patterns: str) -> None:
+    (root / ".gitignore").write_text("\n".join(patterns) + "\n")
+
+
+def _directory_with_file(root: Path, name: str) -> None:
+    (root / name).mkdir()
+    (root / name / "artifact").write_text("cached")
+
+
+async def _suggestion_report(
+    root: Path, *, cow_args: tuple[str, ...] | None = PLAIN_COPY_ARGS
+) -> DoctorReport:
+    runner = SubprocessRunner()
+    clock = FakeClock(LONG_AGO)
+    doctor = Doctor(
+        root,
+        cache_cloner=CacheCloner(runner, cow_args=cow_args, copy_timeout=CACHE_COPY_TIMEOUT),
+        git=Git(runner, command_timeout=GIT_COMMAND_TIMEOUT),
+        runner=runner,
+        clock=clock,
+        plugin_checks=PluginChecks(AgentRegistry(), runner, clock),
+        probe=AgentProbe(AgentRegistry(), runner, clock),
+    )
+    return await doctor.run()
+
+
+def _rendered(report: DoctorReport) -> list[str]:
+    buffer = io.StringIO()
+    console = Console(file=buffer, width=100, color_system=None, force_terminal=False)
+    console.print(doctor_renderable(report, width=100))
+    return buffer.getvalue().splitlines()
+
+
+async def test_doctor_suggests_a_detected_cache_missing_from_config(tmp_path: Path) -> None:
+    await _git_init(tmp_path)
+    _git_ignore(tmp_path, "node_modules/")
+    _directory_with_file(tmp_path, "node_modules")
+    _write_config(tmp_path, _with_caches([]))
+
+    report = await _suggestion_report(tmp_path)
+
+    assert report.suggestions == [MissingCacheSuggestion(paths=["node_modules"])]
+    assert report.ok is True
+    assert _rendered(report)[-1].startswith("✔ Doctor passed")
+
+
+async def test_doctor_suggests_nothing_when_every_detected_cache_is_configured(
+    tmp_path: Path,
+) -> None:
+    await _git_init(tmp_path)
+    _git_ignore(tmp_path, "node_modules/")
+    _directory_with_file(tmp_path, "node_modules")
+    _write_config(tmp_path, _with_caches(["node_modules"]))
+
+    report = await _suggestion_report(tmp_path)
+
+    assert report.suggestions == []
+    assert "Suggestions" not in "\n".join(_rendered(report))
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [
+        pytest.param(["node_modules/"], id="trailing-slash"),
+        pytest.param(["node_*"], id="glob"),
+    ],
+)
+async def test_doctor_does_not_suggest_a_cache_that_a_configured_pattern_already_copies(
+    tmp_path: Path, configured: list[str]
+) -> None:
+    await _git_init(tmp_path)
+    _git_ignore(tmp_path, "node_modules/")
+    _directory_with_file(tmp_path, "node_modules")
+    _write_config(tmp_path, _with_caches(configured))
+
+    report = await _suggestion_report(tmp_path)
+
+    assert not [s for s in report.suggestions if isinstance(s, MissingCacheSuggestion)]
+
+
+@pytest.mark.parametrize(
+    ("entry", "reason"),
+    [
+        pytest.param(".next", CacheEntryEffect.MATCHES_NOTHING, id="matches-nothing"),
+        pytest.param("dist/", CacheEntryEffect.NOT_GIT_IGNORED, id="not-git-ignored"),
+        pytest.param("/elsewhere", CacheEntryEffect.MATCHES_NOTHING, id="not-a-relative-pattern"),
+    ],
+)
+async def test_doctor_flags_a_cache_entry_that_has_no_effect(
+    tmp_path: Path, entry: str, reason: CacheEntryEffect
+) -> None:
+    await _git_init(tmp_path)
+    _git_ignore(tmp_path, ".next/")
+    _directory_with_file(tmp_path, "dist")
+    _write_config(tmp_path, _with_caches([entry]))
+
+    report = await _suggestion_report(tmp_path)
+
+    assert report.suggestions == [IneffectiveCacheSuggestion(entry=entry, reason=reason)]
+    assert report.ok is True
+
+
+async def test_doctor_does_not_flag_a_cache_entry_when_one_match_is_git_ignored(
+    tmp_path: Path,
+) -> None:
+    await _git_init(tmp_path)
+    _git_ignore(tmp_path, "build-*/")
+    _directory_with_file(tmp_path, "build-cache")
+    _directory_with_file(tmp_path, "build-notes")
+    _write_config(tmp_path, _with_caches(["build-*"]))
+
+    report = await _suggestion_report(tmp_path)
+
+    assert not [s for s in report.suggestions if isinstance(s, IneffectiveCacheSuggestion)]
+
+
+async def test_doctor_omits_cache_suggestions_when_copy_on_write_is_unsupported(
+    tmp_path: Path,
+) -> None:
+    await _git_init(tmp_path)
+    _git_ignore(tmp_path, "node_modules/", ".next/")
+    _directory_with_file(tmp_path, "node_modules")
+    _write_config(tmp_path, _with_caches([".next"]))
+
+    report = await _suggestion_report(tmp_path, cow_args=None)
+
+    checks = {check.name: check for check in report.checks}
+    assert checks["cow"].detail == CACHE_COW_UNSUPPORTED_WARNING
+    assert report.suggestions == []
+    assert report.ok is True
+
+
+async def test_doctor_suggestions_leave_checks_status_and_summary_unchanged(
+    tmp_path: Path,
+) -> None:
+    await _git_init(tmp_path)
+    _git_ignore(tmp_path, "node_modules/", ".next/")
+    _directory_with_file(tmp_path, "node_modules")
+    _write_config(tmp_path, _with_caches([".next"]))
+    with_suggestions = await _suggestion_report(tmp_path)
+    _rewrite_config(tmp_path, _with_caches(["node_modules"]))
+    without_suggestions = await _suggestion_report(tmp_path)
+
+    assert with_suggestions.suggestions != []
+    assert without_suggestions.suggestions == []
+    assert [check.name for check in with_suggestions.checks] == [
+        check.name for check in without_suggestions.checks
+    ]
+    assert with_suggestions.ok is without_suggestions.ok is True
+    assert _rendered(with_suggestions)[-1] == _rendered(without_suggestions)[-1]
+
+
+async def test_doctor_cli_json_keeps_ok_and_exit_status_with_suggestions(tmp_path: Path) -> None:
+    await _git_init(tmp_path)
+    _git_ignore(tmp_path, "node_modules/")
+    _directory_with_file(tmp_path, "node_modules")
+    _write_config(tmp_path, _with_caches([".next"]))
+
+    code, stdout, stderr = await _cli(tmp_path, "--json", "doctor")
+
+    report = json.loads(stdout)
+    assert code == 0
+    assert stderr == ""
+    assert report["ok"] is True
+    assert isinstance(report["suggestions"], list)
+
+
+async def test_rendered_suggestions_use_distinct_markers_without_color() -> None:
+    report = DoctorReport.from_checks(
+        [DoctorCheck(name="git", ok=True, detail="Version 2.55.0")],
+        [
+            MissingCacheSuggestion(paths=["node_modules", ".venv"]),
+            IneffectiveCacheSuggestion(entry="dist/", reason=CacheEntryEffect.NOT_GIT_IGNORED),
+            IneffectiveCacheSuggestion(entry=".next", reason=CacheEntryEffect.MATCHES_NOTHING),
+        ],
+    )
+
+    lines = _rendered(report)
+
+    assert "  + Detected cache not in config: node_modules, .venv" in lines
+    assert any(line.startswith('  ! Cache entry has no effect: "dist/"') for line in lines)
+    assert any(line.startswith('  ! Cache entry has no effect: ".next"') for line in lines)
+    assert lines[-1].startswith("✔ Doctor passed")

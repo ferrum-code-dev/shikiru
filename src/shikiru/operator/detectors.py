@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import RUNTIME_DEFAULT_MODEL, ModelCatalog, Rung, short_rung_text
 from shikiru.config.loader import validate_project_config_text
+from shikiru.domain.caches import detected_caches
 from shikiru.errors import ConfigError, ProjectNotRepositoryRootError, RepositoryHasNoCommitsError
 from shikiru.operator.toml_text import toml_key, toml_value
 from shikiru.paths import EXCLUDE_LINE, SHIKIRU_DIR_NAME, project_config_path
@@ -35,13 +36,6 @@ MAX_SCAN_DEPTH = 4
 TRACKER_DIRECTORY = "tasks"
 TRACKER_NAMES = ("plan", "todo")
 MARKDOWN_SUFFIX = ".md"
-CACHE_NAMES = (
-    ".venv",
-    "node_modules",
-    "target",
-    ".gradle",
-    ".pytest_cache",
-)
 LEADER_ROLE = "leader"
 IMPLEMENTER_ROLE = "implementer"
 HELPER_ROLE = "helper"
@@ -129,7 +123,7 @@ class ProjectDetectors:
             name=self._root.name,
             base=base,
             worktree_clean=worktree_clean,
-            caches=tuple(await self._caches()),
+            caches=await self._caches(),
             trackers=tuple(self._trackers()),
             agents=agents,
             agent_settings=tuple(self._plugin_checks.settings(name) for name in agents),
@@ -230,11 +224,9 @@ class ProjectDetectors:
                 candidates.add(relative)
         return sorted(candidates)
 
-    async def _caches(self) -> list[str]:
+    async def _caches(self) -> tuple[str, ...]:
         ignored = await self._git.ignored_paths(self._root)
-        return sorted(
-            path.relative_to(self._root).as_posix() for path in ignored if path.name in CACHE_NAMES
-        )
+        return detected_caches(path.relative_to(self._root).as_posix() for path in ignored)
 
     async def _agents(self) -> tuple[str, ...]:
         results = [
