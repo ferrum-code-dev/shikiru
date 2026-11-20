@@ -32,7 +32,9 @@ REPORT_INSTRUCTION = (
     f"Write the report JSON matching `report.schema.json` to `{REPORT_DRAFT_FILENAME}` in this "
     "prompt's directory, never inside the workspace, and run "
     f"`{shikiru_command('report', '--file')} <that file>`. If it exits non-zero, fix it and run "
-    "it again. Then end your turn."
+    "it again. Submitting the report is your final action: finish all work, checks and background "
+    "tasks first, because the engine stops your turn as soon as a valid report is submitted. "
+    "Then end your turn."
 )
 OPERATOR_MESSAGES_KEY = "operator_messages"
 ALREADY_DONE_SENTENCE = "If this work is already done in the workspace, verify it and report."

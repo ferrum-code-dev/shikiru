@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import asdict
+import math
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from enum import Enum
 from functools import partial
@@ -68,6 +69,34 @@ _LINE_ENDING = "\n"
 _EVIDENCE_SCOPE_SUFFIX = "session log"
 
 
+@dataclass(frozen=True)
+class _Drained:
+    tool_running: bool
+    pending_signal: asyncio.Task[AgentSignal]
+    terminal: TurnEnded | TurnFailed | None
+    timed_out: bool
+
+
+class _ReportGrace:
+    """Times the short wait for an agent to end its own turn once its report is submitted."""
+
+    def __init__(self, clock: Clock, seconds: float) -> None:
+        self._clock = clock
+        self._seconds = seconds
+        self._seen_at: datetime | None = None
+
+    def remaining(self) -> float:
+        if self._seen_at is None:
+            return math.inf
+        elapsed = (self._clock.now() - self._seen_at).total_seconds()
+        return max(0.0, self._seconds - elapsed)
+
+    def expired(self, report_submitted: Callable[[], bool]) -> bool:
+        if self._seen_at is None and report_submitted():
+            self._seen_at = self._clock.now()
+        return self._seen_at is not None and self.remaining() <= 0
+
+
 class TurnMonitor:
     """Read a turn's signals once, persist run facts and stop a stalled process."""
 
@@ -111,9 +140,21 @@ class TurnMonitor:
         run_id: int,
         turn_dir: Path,
         run_dir: Path,
+        report_submitted: Callable[[], bool],
     ) -> TurnEnded | TurnFailed | Stalled | ProtocolError:
-        """Consume `turn` through its terminal signal, or stop it when it stalls."""
+        """Consume `turn` through its terminal signal, or stop it when it stalls.
+
+        `report_submitted` is checked after every non-terminal signal and every poll tick. When it
+        first holds, the agent gets `report_grace_seconds` to end its own turn, which keeps its
+        final usage and message. After that the turn is stopped and its remaining signals drained
+        within the shutdown bound. The agent's own terminal signal, failure included, wins;
+        without one the turn ends as if the agent had finished. A drain that outlasts the bound
+        means shutdown is unconfirmed, so the turn is `Stalled` instead of consuming the report.
+        An error from stopping propagates.
+        """
         iterator = turn.signals()
+        last_message = ""
+        grace = _ReportGrace(self._clock, self._settings.orchestration.report_grace_seconds)
         last_signal_at = self._clock.now()
         tool_running = False
         pending_signal = asyncio.create_task(_next_signal(iterator))
@@ -126,7 +167,7 @@ class TurnMonitor:
                 timeouts = self._settings.orchestration.timeouts
                 if is_stalled(last_signal_at, tool_running, now, timeouts):
                     await turn.stop()
-                    tool_running, pending_signal = await self._drain_stopped_turn(
+                    drained = await self._drain_stopped_turn(
                         pending_signal,
                         iterator,
                         turn_dir=turn_dir,
@@ -138,38 +179,52 @@ class TurnMonitor:
                         run_id=run_id,
                         tool_running=tool_running,
                     )
-                    await self._decorator.set_pane_state(
-                        task.panes[role], color=HOLD_COLOR, glyph=GLYPH_STALLED
-                    )
-                    return Stalled()
+                    tool_running, pending_signal = drained.tool_running, drained.pending_signal
+                    return await self._stalled(task, role)
                 poll_timeout = min(
                     self._settings.orchestration.poll_seconds,
                     seconds_until_stall(last_signal_at, tool_running, now, timeouts),
+                    grace.remaining(),
                 )
                 signal_ready = await self._wait_for_signal(pending_signal, poll_timeout)
-                if not signal_ready:
-                    continue
-                signal = pending_signal.result()
-                pending_signal = asyncio.create_task(_next_signal(iterator))
-                last_signal_at = self._clock.now()
-                self._append_view(run_dir, turn_dir, role, rung, signal)
-                tool_running, terminal = await self._record_signal(
-                    signal,
-                    agent=agent,
-                    task=task,
-                    role=role,
-                    rung=rung,
-                    run_id=run_id,
-                    run_dir=run_dir,
-                    tool_running=tool_running,
-                )
-                if terminal is not None:
-                    return terminal
+                if signal_ready:
+                    signal = pending_signal.result()
+                    pending_signal = asyncio.create_task(_next_signal(iterator))
+                    last_signal_at = self._clock.now()
+                    self._append_view(run_dir, turn_dir, role, rung, signal)
+                    last_message = signal.text if isinstance(signal, Message) else last_message
+                    tool_running, terminal = await self._record_signal(
+                        signal,
+                        agent=agent,
+                        task=task,
+                        role=role,
+                        rung=rung,
+                        run_id=run_id,
+                        run_dir=run_dir,
+                        tool_running=tool_running,
+                    )
+                    if terminal is not None:
+                        return terminal
+                if grace.expired(report_submitted):
+                    return await self._stop_for_report(
+                        turn,
+                        pending_signal,
+                        iterator,
+                        last_message,
+                        turn_dir=turn_dir,
+                        run_dir=run_dir,
+                        agent=agent,
+                        task=task,
+                        role=role,
+                        rung=rung,
+                        run_id=run_id,
+                        tool_running=tool_running,
+                    )
         except StopAsyncIteration:
             return ProtocolError()
         except asyncio.CancelledError:
             await turn.stop()
-            _, pending_signal = await asyncio.shield(
+            drained = await asyncio.shield(
                 self._drain_stopped_turn(
                     pending_signal,
                     iterator,
@@ -183,6 +238,7 @@ class TurnMonitor:
                     tool_running=tool_running,
                 )
             )
+            pending_signal = drained.pending_signal
             raise
         except BaseException:
             await turn.stop()
@@ -192,6 +248,45 @@ class TurnMonitor:
                 pending_signal.cancel()
             await asyncio.gather(pending_signal, return_exceptions=True)
             self._processes.clear(run_dir, role)
+
+    async def _stalled(self, task: Task, role: Role) -> Stalled:
+        await self._decorator.set_pane_state(
+            task.panes[role], color=HOLD_COLOR, glyph=GLYPH_STALLED
+        )
+        return Stalled()
+
+    async def _stop_for_report(
+        self,
+        turn: Turn,
+        pending_signal: asyncio.Task[AgentSignal],
+        iterator: AsyncIterator[AgentSignal],
+        last_message: str,
+        *,
+        turn_dir: Path,
+        run_dir: Path,
+        agent: Agent,
+        task: Task,
+        role: Role,
+        rung: Rung,
+        run_id: int,
+        tool_running: bool,
+    ) -> TurnEnded | TurnFailed | Stalled:
+        await turn.stop()
+        drained = await self._drain_stopped_turn(
+            pending_signal,
+            iterator,
+            turn_dir=turn_dir,
+            run_dir=run_dir,
+            agent=agent,
+            task=task,
+            role=role,
+            rung=rung,
+            run_id=run_id,
+            tool_running=tool_running,
+        )
+        if drained.timed_out:
+            return await self._stalled(task, role)
+        return drained.terminal if drained.terminal is not None else TurnEnded(last_message)
 
     async def _drain_stopped_turn(
         self,
@@ -206,14 +301,14 @@ class TurnMonitor:
         rung: Rung,
         run_id: int,
         tool_running: bool,
-    ) -> tuple[bool, asyncio.Task[AgentSignal]]:
+    ) -> _Drained:
         try:
             async with asyncio.timeout(self._settings.orchestration.shutdown_seconds):
                 while True:
                     try:
                         signal = await pending_signal
                     except StopAsyncIteration:
-                        return tool_running, pending_signal
+                        return _Drained(tool_running, pending_signal, None, timed_out=False)
                     self._append_view(run_dir, turn_dir, role, rung, signal)
                     tool_running, terminal = await self._record_signal(
                         signal,
@@ -226,13 +321,13 @@ class TurnMonitor:
                         tool_running=tool_running,
                     )
                     if terminal is not None:
-                        return tool_running, pending_signal
+                        return _Drained(tool_running, pending_signal, terminal, timed_out=False)
                     pending_signal = asyncio.create_task(_next_signal(iterator))
         except TimeoutError:
             if not pending_signal.done():
                 pending_signal.cancel()
             await asyncio.gather(pending_signal, return_exceptions=True)
-            return tool_running, pending_signal
+            return _Drained(tool_running, pending_signal, None, timed_out=True)
 
     async def _record_signal(
         self,

@@ -137,6 +137,7 @@ class OrchestrationConfig(ConfigModel):
     remote_recheck_seconds: int = Field(gt=0)
     poll_seconds: int
     shutdown_seconds: float = Field(gt=0)
+    report_grace_seconds: float = Field(ge=0)
     dispatch_budget_seconds: float = Field(gt=0)
     engine_start_seconds: float = Field(gt=0)
     resources: ResourcesConfig

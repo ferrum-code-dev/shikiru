@@ -332,3 +332,12 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
   - Acceptance: Doctor lists informational suggestions for detected folders missing from configured cache patterns; suggestions never affect its status. The README lists the detected names. Integration coverage in `tests/integration/test_operator_doctor.py`.
 - [x] Agree the final cache list with the Product Owner before merge.
   - Agreed: `.venv`, `node_modules`, `target`, `.gradle`, `.pytest_cache`, `.mypy_cache`, `.ruff_cache`, `.tox`, `.next`, `.nuxt`, `.dart_tool` and `vendor`; `build` excluded. Detection stays limited to Git-ignored folders, and doctor's cache suggestions stay non-failing.
+
+### Report handoff ends the turn (T-179)
+
+- [x] Stop a turn as soon as it submits its report instead of waiting for its agent process to end
+  - Acceptance: the monitor stops the turn through `Turn.stop()` once a new valid report appears, drains it within `shutdown_seconds`, then the existing report validation, workflow and Git checks run. A terminal signal already waiting is consumed first; a report that is invalid or unchanged since the attempt began never triggers the stop. Prompts tell agents that submitting is their final action. Integration coverage in `tests/integration/test_engine_report_handoff.py`.
+- [x] Rework the handoff after review: honour a terminal drained during the stop, check the report after every signal, parse it only when it changes, and cover failure, chatter, ignored-stop and cancellation races
+  - Acceptance: `tests/integration/test_engine_report_handoff.py` covers a failure arriving with the report, a continuously emitting agent, an agent ignoring the stop (killed after the grace period) and cancellation while stopping. The fake CLI parser honours `interrupted` like the real plugins.
+- [x] Rework the handoff after the second review: give the agent `report_grace_seconds` to end its own turn, and treat an unended stream after the stop as stalled
+  - Acceptance: ordinary turns keep their final usage and message; a lingering agent costs at most the grace period; a drain timeout returns `Stalled` and does not consume the report. Integration coverage in `tests/integration/test_engine_report_handoff.py`.

@@ -227,6 +227,7 @@ class TurnRunner:
                 billing_mode=selection.run.billing_mode,
                 context_window=self._windows.window(selection.rung.agent, selection.rung.model),
             )
+            submitted = _ReportWatch(turn_dir, request)
             turn = await agent.start_turn(turn_spec)
             terminal = await self._monitor.run(
                 turn,
@@ -237,6 +238,7 @@ class TurnRunner:
                 run_id=selection.run.id,
                 turn_dir=turn_dir,
                 run_dir=task_run_dir,
+                report_submitted=submitted.is_new_valid_report,
             )
             if isinstance(terminal, TurnFailed):
                 return await self._classify_unknown(terminal, task, selection), selection
@@ -428,6 +430,37 @@ class TurnRunner:
             turn_dir / HELPER_REPORT_FILENAME, report.model_dump_json(indent=REPORT_JSON_INDENT)
         )
         return Completed(report=report, rebuilt=True)
+
+
+class _ReportWatch:
+    """Tells whether the turn's agent has since submitted a valid, contract-abiding report."""
+
+    def __init__(self, turn_dir: Path, request: TurnRequest) -> None:
+        self._turn_dir = turn_dir
+        self._request = request
+        self._examined = _report_stamp(turn_dir)
+        self._valid = False
+
+    def is_new_valid_report(self) -> bool:
+        stamp = _report_stamp(self._turn_dir)
+        if stamp is None or stamp == self._examined:
+            return self._valid and stamp is not None
+        self._examined = stamp
+        try:
+            _require_feedback_contract(self._request, read_turn_report(self._turn_dir))
+        except InvalidTurnReportError, FeedbackContractError:
+            self._valid = False
+        else:
+            self._valid = True
+        return self._valid
+
+
+def _report_stamp(turn_dir: Path) -> tuple[int, int] | None:
+    try:
+        stat = (turn_dir / REPORT_FILENAME).stat()
+    except FileNotFoundError:
+        return None
+    return stat.st_ino, stat.st_mtime_ns
 
 
 def _turn_matches_request(turn_dir: Path, request: TurnRequest) -> bool:

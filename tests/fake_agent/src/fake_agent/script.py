@@ -26,6 +26,11 @@ class _StepModel(BaseModel):
     evidence_fault: str | None = None
     evidence_recovered: bool = False
     release_fifo: str = ""
+    stall_after_report: bool = False
+    chatter_after_report: bool = False
+    ignore_stop_after_report: bool = False
+    hold_stream_pid_file: str = ""
+    fail_after_report: FailureKind | None = None
     context_used_pct: float | None = None
 
 
@@ -48,7 +53,6 @@ class AcceptStep(_StepModel):
     uncommitted: str = ""
     leave_branch: Literal["", "branch", "detach"] = ""
     corrupt_report: bool = False
-    stall_after_report: bool = False
     triage_title: str = "fake triage"
     triage_complexity: ComplexityName = "normal"
 

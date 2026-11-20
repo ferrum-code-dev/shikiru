@@ -107,7 +107,8 @@ class FakeTurnParser:
     def finish(
         self, exit_code: int, stderr: str, *, interrupted: bool = False
     ) -> list[AgentSignal]:
-        del interrupted
+        if interrupted:
+            return []
         if exit_code != 0:
             return [
                 TurnFailed(

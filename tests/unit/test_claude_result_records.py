@@ -173,3 +173,12 @@ def test_malformed_compaction_token_counts_fail(
     assert isinstance(failure, TurnFailed)
     assert failure.kind is FailureKind.OTHER
     assert "malformed token counts" in failure.message
+
+
+def test_a_stopped_process_after_a_success_result_still_ends_the_turn() -> None:
+    parser = _parser()
+    _feed(parser, "turn_background_result_then_activity.jsonl")
+
+    [*_, terminal] = parser.finish(-15, "", interrupted=True)
+
+    assert isinstance(terminal, TurnEnded)

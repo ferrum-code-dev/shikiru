@@ -14,6 +14,7 @@ push_interval_seconds = 14400
 remote_recheck_seconds = 60
 poll_seconds = 2
 shutdown_seconds = 15
+report_grace_seconds = 3
 dispatch_budget_seconds = 10
 engine_start_seconds = 5
 

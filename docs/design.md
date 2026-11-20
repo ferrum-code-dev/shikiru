@@ -73,6 +73,32 @@ A report must match the expected schema and allowed outcomes. Accepting or super
 uncommitted work or the wrong checked-out task branch is rejected by engine checks. This validates
 the workflow contract; it does not establish the correctness of the implementation or its tests.
 
+Submitting the report is the turn's completion handoff, for every agent plugin. Prompts tell the
+agent to finish all work, checks and background tasks first and submit last. When the engine sees
+a new valid report for the current attempt (the atomically written `report.json`, replaced since
+the attempt began and passing its schema and feedback contract), the agent gets
+`[orchestration] report_grace_seconds` to end its own turn, so an ordinary agent keeps its final
+usage and message. After the grace period the engine stops the turn through `Turn.stop()`, drains
+the stream within `shutdown_seconds`, and only then validates the report and runs the workflow and
+Git checks as for any completed turn. An agent that lingers on background tasks after submitting
+therefore costs at most the grace period instead of stalling the turn. The report check runs after
+every non-terminal signal and every poll tick, so a chatty agent cannot postpone it.
+
+The agent's own terminal signal wins over the handoff, whether it was already waiting or arrives
+while the stream drains: a genuine failure, such as quota or authentication, is handled as a
+failed turn even when a valid report exists, and a normal end is taken as is. A stop that merely
+interrupts the process produces no terminal, so the turn then ends as completed. If the stream
+does not end within `shutdown_seconds` of the stop, shutdown is unconfirmed: the turn is treated as
+stalled and the report is not consumed, so the existing recovery path continues the work. An
+invalid, partial or stale report never triggers the stop: the turn continues, stalls, nudges or
+fails as before. An error from stopping propagates as the turn's error. The session stays
+resumable.
+
+Stopping is graceful for 10 seconds and then forcible. It ends the agent's process group, but a
+detached subprocess that left the group is not guaranteed to be cleaned up, and a detached
+subprocess that keeps the output pipe open leaves the stream unended, which is the stalled case
+above. The engine offers no stronger process isolation.
+
 ## Scheduling, agent selection and recovery
 
 The scheduler respects dependency completion, task priority, available parallel slots, task holds,

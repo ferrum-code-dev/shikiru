@@ -7,7 +7,9 @@ import asyncio
 import json
 import os
 import shlex
+import signal
 import sys
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -49,7 +51,13 @@ from fake_agent.turns import (
     THRESHOLD_REACHED_EVENT,
     WORK_CONTEXT_USAGE_PERCENT,
 )
-from shikiru.agents.contracts import RUN_DIR_ENV_VAR, ToolOutcome, role_dir, shikiru_command
+from shikiru.agents.contracts import (
+    RUN_DIR_ENV_VAR,
+    FailureKind,
+    ToolOutcome,
+    role_dir,
+    shikiru_command,
+)
 from shikiru.domain.reports import CURRENT_TURN_LINK_NAME, REPORT_FILENAME
 
 if TYPE_CHECKING:
@@ -88,6 +96,10 @@ _COST_BASIS_FIELD = "cost_basis"
 _CONTEXT_USED_PCT_FIELD = "context_used_pct"
 _REPORT_DRAFT_FILENAME = "report.draft.json"
 _INVALID_REPORT_JSON = "{"
+_HOLDER_PROGRAM = "import time; time.sleep(600)"
+_CHATTER_TEXT = "still working"
+_CHATTER_INTERVAL_SECONDS = 0.01
+_CHATTER_PAUSE = threading.Event()
 
 
 def _emit(entry: Mapping[str, object]) -> None:
@@ -110,15 +122,29 @@ def _emit_evidence_recovered(recovered: bool) -> None:
         _emit({"event": _EVENT_EVIDENCE_RECOVERED})
 
 
-def _failure(step: FailStep) -> None:
-    _emit(
-        {
-            "event": _EVENT_TURN_FAILED,
-            "kind": step.failure_kind.value,
-            "message": f"scripted {step.failure_kind.value} failure",
-            "resets_at": step.resets_at,
-        }
+def _hold_stream_open(pid_file: Path) -> None:
+    holder_pid = os.posix_spawn(
+        sys.executable, [sys.executable, "-c", _HOLDER_PROGRAM], os.environ, setsid=True
     )
+    pid_file.write_text(str(holder_pid))
+
+
+def _failure_entry(kind: FailureKind, resets_at: str | None) -> dict[str, object]:
+    return {
+        "event": _EVENT_TURN_FAILED,
+        "kind": kind.value,
+        "message": f"scripted {kind.value} failure",
+        "resets_at": resets_at,
+    }
+
+
+def _failure(step: FailStep) -> None:
+    _emit(_failure_entry(step.failure_kind, step.resets_at))
+
+
+def _emit_together(entries: list[dict[str, object]]) -> None:
+    sys.stdout.write("".join(json.dumps(entry, separators=(",", ":")) + "\n" for entry in entries))
+    sys.stdout.flush()
 
 
 def _response(prompt: str, earlier_prompts: list[str]) -> str:
@@ -167,8 +193,19 @@ async def _report(context: ScriptContext, step: TurnStep, prompt: str, current_t
     await submit_scripted_report(context, step, prompt)
     if isinstance(step, AcceptStep) and step.corrupt_report:
         await asyncio.to_thread(_corrupt_report, current_turn)
-    _emit({"event": _EVENT_TOOL_FINISHED, "name": _REPORT_TOOL_NAME})
-    if isinstance(step, AcceptStep) and step.stall_after_report:
+    if step.hold_stream_pid_file:
+        _hold_stream_open(Path(step.hold_stream_pid_file))
+    finished: dict[str, object] = {"event": _EVENT_TOOL_FINISHED, "name": _REPORT_TOOL_NAME}
+    if step.ignore_stop_after_report:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    if step.fail_after_report is not None:
+        _emit_together([finished, _failure_entry(step.fail_after_report, None)])
+    else:
+        _emit(finished)
+    while step.chatter_after_report:
+        _emit({"event": _EVENT_MESSAGE, "text": _CHATTER_TEXT})
+        await asyncio.to_thread(_CHATTER_PAUSE.wait, _CHATTER_INTERVAL_SECONDS)
+    if step.stall_after_report:
         await asyncio.Event().wait()
 
 

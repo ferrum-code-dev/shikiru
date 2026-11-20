@@ -299,7 +299,7 @@ class ClaudeTurnParser:
             self._terminal = True
             return self._fail(self._failure_payload, stderr)
         if self._success_payload is not None:
-            if exit_code != 0:
+            if exit_code != 0 and not interrupted:
                 return self._finish_failed_process(exit_code, stderr)
             return self._finish_success(self._success_payload)
         return self._finish_without_result(exit_code, stderr, interrupted=interrupted)
