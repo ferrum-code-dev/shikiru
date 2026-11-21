@@ -342,7 +342,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [x] Rework the handoff after the second review: give the agent `report_grace_seconds` to end its own turn, and treat an unended stream after the stop as stalled
   - Acceptance: ordinary turns keep their final usage and message; a lingering agent costs at most the grace period; a drain timeout returns `Stalled` and does not consume the report. Integration coverage in `tests/integration/test_engine_report_handoff.py`.
 
-### Stream holder ordering in report handoff tests (T-180)
+### Stream holder spawn in report handoff tests (T-180)
 
 - [x] Fix the Ubuntu CI failure of the stream-holder handoff test
-  - Acceptance: the fake agent starts its detached stream holder before submitting its report, so a stop triggered by the report always finds the holder; the test no longer fails with a missing `stream-holder.pid` when the engine observes the report early under load. Integration coverage in `tests/integration/test_engine_report_handoff.py`.
+  - Acceptance: the fake agent starts its detached stream holder in its own process group instead of its own session, because the uv-managed Linux Python lacks `POSIX_SPAWN_SETSID`; the test no longer fails with a missing `stream-holder.pid` on Linux. Integration coverage in `tests/integration/test_engine_report_handoff.py`.

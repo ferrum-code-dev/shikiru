@@ -190,11 +190,11 @@ async def _await_release(step: TurnStep) -> None:
 async def _report(context: ScriptContext, step: TurnStep, prompt: str, current_turn: Path) -> None:
     await _await_release(step)
     _emit({"event": _EVENT_TOOL_STARTED, "name": _REPORT_TOOL_NAME, "detail": _REPORT_TOOL_DETAIL})
-    if step.hold_stream_pid_file:
-        _hold_stream_open(Path(step.hold_stream_pid_file))
     await submit_scripted_report(context, step, prompt)
     if isinstance(step, AcceptStep) and step.corrupt_report:
         await asyncio.to_thread(_corrupt_report, current_turn)
+    if step.hold_stream_pid_file:
+        _hold_stream_open(Path(step.hold_stream_pid_file))
     finished: dict[str, object] = {"event": _EVENT_TOOL_FINISHED, "name": _REPORT_TOOL_NAME}
     if step.ignore_stop_after_report:
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
