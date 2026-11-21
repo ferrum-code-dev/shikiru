@@ -124,7 +124,7 @@ def _emit_evidence_recovered(recovered: bool) -> None:
 
 def _hold_stream_open(pid_file: Path) -> None:
     holder_pid = os.posix_spawn(
-        sys.executable, [sys.executable, "-c", _HOLDER_PROGRAM], os.environ, setsid=True
+        sys.executable, [sys.executable, "-c", _HOLDER_PROGRAM], os.environ, setpgroup=0
     )
     pid_file.write_text(str(holder_pid))
 
