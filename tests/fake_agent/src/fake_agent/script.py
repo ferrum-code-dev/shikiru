@@ -46,6 +46,7 @@ class AcceptStep(_StepModel):
     """Submit a successful report for whatever `report.kind` the current turn dir names.
 
     `new_tasks` only takes effect for a `plan` report and is ignored for every other report kind.
+    `write_plan` writes the plan file for a no-trackers `plan` report instead of committing.
     """
 
     kind: Literal["accept"] = "accept"
@@ -55,6 +56,7 @@ class AcceptStep(_StepModel):
     corrupt_report: bool = False
     triage_title: str = "fake triage"
     triage_complexity: ComplexityName = "normal"
+    write_plan: bool = False
 
 
 class SupersedeStep(_StepModel):

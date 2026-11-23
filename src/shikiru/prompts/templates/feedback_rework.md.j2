@@ -24,7 +24,7 @@ In a discussion, the messages marked `"new": true` are the ones the work answers
 are context.
 {% endif %}
 
-Do exactly this work, commit it, run the project's tests and keep the trackers current. Do not
+{% if plans_dir is not none %}Do exactly this work, commit it and run the project's tests.{% else %}Do exactly this work, commit it, run the project's tests and keep the trackers current.{% endif %} Do not
 reply to the reviewers or touch other feedback.
 
 Before committing, check the target project's instructions and documentation for its commit-message

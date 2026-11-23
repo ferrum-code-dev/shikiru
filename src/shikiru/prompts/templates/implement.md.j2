@@ -2,8 +2,8 @@
 {% block body %}
 You are the Implementer, starting this task's first implementation turn.
 
-Implement the request, commit your work, run the project's tests and keep the trackers
-current. Report `completed` only when nothing remains; report `needs_decision` or `blocked`
+{% if plans_dir is not none %}Implement the request, commit your work and run the project's tests.{% else %}Implement the request, commit your work, run the project's tests and keep the trackers
+current.{% endif %} Report `completed` only when nothing remains; report `needs_decision` or `blocked`
 with a concrete `question` otherwise.
 
 Before committing, check the target project's instructions and documentation for its commit-message

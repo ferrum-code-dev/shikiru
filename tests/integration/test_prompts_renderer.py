@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 _REQUEST = "Add retries to the flaky parser"
 _WORKSPACE = "/projects/demo/.shikiru/worktrees/T-7"
+_PLANS_DIR = "/projects/demo/.shikiru/plans"
 _BASE = "release-7"
 _FEEDBACK_PROMPTS = (
     PromptName.FEEDBACK_ANALYSIS,
@@ -113,6 +114,40 @@ def test_committing_turns_follow_project_convention_or_default_to_conventional_c
         assert "no task reference" in rendered
     else:
         assert "Task: T-7" in rendered
+
+
+@pytest.mark.parametrize("name", list(PromptName))
+def test_every_template_shows_the_trackers_line_and_no_plans_folder_when_trackers_are_set(
+    tmp_path: Path, name: PromptName
+) -> None:
+    rendered = PromptRenderer(tmp_path).render(name, _full_context(name))
+
+    assert "Trackers: `tasks/plan.md`, `tasks/todo.md`" in rendered
+    assert "Plans folder:" not in rendered
+
+
+@pytest.mark.parametrize("name", list(PromptName))
+def test_every_template_shows_the_plans_folder_and_no_trackers_line_without_trackers(
+    tmp_path: Path, name: PromptName
+) -> None:
+    context = _full_context(name)
+    context["trackers"] = []
+    context["plans_dir"] = _PLANS_DIR
+    rendered = PromptRenderer(tmp_path).render(name, context)
+
+    assert f"Plans folder: `{_PLANS_DIR}`" in rendered
+    assert "Trackers:" not in rendered
+
+
+def test_tracker_updates_are_not_asked_for_when_there_are_no_trackers(tmp_path: Path) -> None:
+    renderer = PromptRenderer(tmp_path)
+    for name in (PromptName.IMPLEMENT, PromptName.REWORK, PromptName.FEEDBACK_REWORK):
+        context = _full_context(name)
+        context["trackers"] = []
+        context["plans_dir"] = _PLANS_DIR
+        rendered = renderer.render(name, context)
+
+        assert "keep the trackers current" not in rendered
 
 
 def test_a_project_override_replaces_the_packaged_template(tmp_path: Path) -> None:

@@ -62,6 +62,7 @@ _STATE_DIRNAME = "fake_state"
 FAKE_CHANGE_FILENAME = "fake-agent-changes.txt"
 _TASK_CHANGE_PREFIX = "fake-agent-"
 _REPORT_FILENAME_PREFIX = "fake-agent-report-"
+FAKE_PLAN_CONTENT = "fake plan\n"
 _TODO_FILENAME = "todo.md"
 _A1_UNCHECKED = "- [ ] A1"
 _A1_CHECKED = "- [x] A1"
@@ -395,6 +396,14 @@ async def _scripted_payload(
     return _build_report(kind, step, prompt_text, commits).model_dump_json()
 
 
+def _write_plan_file(run_dir: Path) -> Path:
+    plans = run_dir.parents[2] / ".shikiru" / "plans"
+    plans.mkdir(parents=True, exist_ok=True)
+    path = plans / f"{_require_env(TASK_ENV_VAR)}.md"
+    path.write_text(FAKE_PLAN_CONTENT)
+    return path
+
+
 async def submit_scripted_report(ctx: ScriptContext, step: TurnStep, prompt_text: str) -> None:
     """Write a report for the fake turn and submit it through the installed command."""
     turn_dir = resolve_current_turn_dir(os.environ)
@@ -407,9 +416,15 @@ async def submit_scripted_report(ctx: ScriptContext, step: TurnStep, prompt_text
         await asyncio.to_thread(_tick_a1, ctx.cwd)
     if isinstance(step, AcceptStep) and step.leave_branch:
         await _leave_branch(ctx, step.leave_branch)
+    write_plan = isinstance(step, AcceptStep) and step.write_plan and kind is ReportKind.PLAN
+    if write_plan:
+        await asyncio.to_thread(_write_plan_file, ctx.run_dir)
     commits = (
         await _commit_changes(ctx.runner, ctx.cwd, prompt_text)
-        if isinstance(step, AcceptStep) and kind in _KINDS_WITH_COMMITS and _commits_for_turn(ctx)
+        if isinstance(step, AcceptStep)
+        and kind in _KINDS_WITH_COMMITS
+        and not write_plan
+        and _commits_for_turn(ctx)
         else []
     )
     if isinstance(step, AcceptStep | SupersedeStep) and step.uncommitted:

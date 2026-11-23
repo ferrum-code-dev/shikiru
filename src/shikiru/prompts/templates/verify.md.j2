@@ -7,13 +7,14 @@ You are the Leader verifying the Implementer's work on this task.
 
 Review the change with `git diff {{ base }}...HEAD` in the workspace. The facts above outrank
 the Implementer's claims. Do not change code or tests: when something is missing or wrong,
-choose `changes_requested` with the issues. The only files you may edit are the trackers, for
-scope changes, and you commit those edits. Accept only when no issues remain;
+choose `changes_requested` with the issues. {% if plans_dir is not none %}Do not change any files.{% else %}The only files you may edit are the trackers, for
+scope changes, and you commit those edits.{% endif %} Accept only when no issues remain;
 non-blocking residual risks go into `residual_risks` or `new_tasks`, not `issues`.
-
+{% if plans_dir is none %}
 If you commit tracker scope changes, follow the target project's documented commit-message
 convention, using Conventional Commits if none is documented. Summarize the changes and end the
 message with the trailer `Task: {{ task_id }}` on its own line.
+{% endif %}
 
 Check the target project's instructions and documentation for its commit-message convention. When
 you `accept`, `commit_subject` is a concise subject for the whole change following that convention,

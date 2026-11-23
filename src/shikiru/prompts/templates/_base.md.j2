@@ -2,9 +2,14 @@
 {{ macros.operator_messages_section(operator_messages) }}
 {{ macros.request_section(request) }}
 
+{% if plans_dir is not none %}
+{{ macros.plans_folder_line(plans_dir) }}
+{%- else %}
 {{ macros.trackers_line(trackers) }}
+{%- endif %}
 
-Your workspace is `{{ workspace }}`, the current directory: read and change files only there.
+Your workspace is `{{ workspace }}`, the current directory: read and change files only there.{% if plans_dir is not none %} The plans folder `{{ plans_dir }}` is the exception: you may read and write files there.{% endif %}
+
 The project checkout it came from is off limits. Stay on the branch checked out there:
 never switch branches or detach `HEAD`, or your commits are not integrated.
 

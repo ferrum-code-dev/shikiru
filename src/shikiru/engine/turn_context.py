@@ -11,7 +11,7 @@ from shikiru.domain.tasks import Step
 from shikiru.engine.task_facts import require_repo
 from shikiru.engine.turns import TurnRequest
 from shikiru.errors import InvariantError
-from shikiru.paths import task_root
+from shikiru.paths import plans_dir, task_root
 from shikiru.prompts.renderer import PromptName
 
 if TYPE_CHECKING:
@@ -51,6 +51,7 @@ class ContextKey(StrEnum):
     TASK_ID = "task_id"
     WORKSPACE = "workspace"
     TRACKERS = "trackers"
+    PLANS_DIR = "plans_dir"
     REPORTS = "reports"
     QUESTION = "question"
     OPERATOR_DECISION = "operator_decision"
@@ -133,6 +134,8 @@ class TurnContextPreparer:
             ContextKey.TRACKERS: list(self._settings.project.trackers),
             ContextKey.REPORTS: self._history.context(history),
         }
+        if not self._settings.project.trackers:
+            context[ContextKey.PLANS_DIR] = str(plans_dir(self._project_root))
         context.update(self._decision_context(task, template, history))
         fresh = session_handoff and not continue_turn
         handoff = (fresh and bool(history)) or next_turn.handoff

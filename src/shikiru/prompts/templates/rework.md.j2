@@ -2,8 +2,8 @@
 {% block body %}
 You are the Implementer, reworking this task after a verdict requested changes.
 
-Address every issue raised in the verdict above, commit your work, run the project's tests
-and keep the trackers current. Report `completed` only when nothing remains; report
+{% if plans_dir is not none %}Address every issue raised in the verdict above, commit your work and run the project's tests.{% else %}Address every issue raised in the verdict above, commit your work, run the project's tests
+and keep the trackers current.{% endif %} Report `completed` only when nothing remains; report
 `needs_decision` or `blocked` with a concrete `question` otherwise.
 
 Before committing, check the target project's instructions and documentation for its commit-message

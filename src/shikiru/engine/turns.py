@@ -39,7 +39,7 @@ from shikiru.domain.reports import (
 from shikiru.errors import InvariantError, ShikiruError
 from shikiru.helper.helper import FailureClassification
 from shikiru.helper.models import Unrecoverable
-from shikiru.paths import run_dir, task_root, turns_dir
+from shikiru.paths import plans_dir, run_dir, task_root, turns_dir
 from shikiru.private import make_private_dir, write_private_text
 from shikiru.prompts.renderer import OPERATOR_MESSAGES_KEY
 from shikiru.view_log import TURN_DIR_ITERATION_MARKER, TURN_DIR_SEPARATOR
@@ -219,7 +219,7 @@ class TurnRunner:
                 cwd=task_root_dir,
                 run_dir=task_run_dir,
                 turn_dir=turn_dir,
-                add_dirs=(),
+                add_dirs=self._add_dirs(),
                 env=turn_environment(task, role, task_run_dir, self._settings.project.name),
                 session_id=selection.session_id,
                 usage=selection.run.usage,
@@ -289,11 +289,19 @@ class TurnRunner:
             return None
         return Completed(report=report), turn_dir
 
+    def _add_dirs(self) -> tuple[Path, ...]:
+        """Return the extra writable directories for every turn, only when no trackers are set."""
+        if self._settings.project.trackers:
+            return ()
+        return (plans_dir(self._project_root),)
+
     def _prepare_turn_dir(
         self, task_run_dir: Path, task_id: str, role: Role, request: TurnRequest
     ) -> Path:
         turns_root = turns_dir(self._project_root, task_id)
         make_private_dir(turns_root)
+        for directory in self._add_dirs():
+            make_private_dir(directory)
         turn_dir = turns_root / _turn_dir_name(_turn_count(turns_root) + 1, request)
         make_private_dir(turn_dir)
         self._requeue_unreported(task_run_dir, task_id, role)

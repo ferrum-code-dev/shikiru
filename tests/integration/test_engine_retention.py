@@ -182,6 +182,17 @@ async def test_a_cancelled_task_whose_pull_request_was_withdrawn_is_pruned(world
     assert not world.has_evidence(task)
 
 
+async def test_a_plan_in_the_untracked_plans_folder_survives_retention(world: _World) -> None:
+    world.task(Status.DONE, age=_PAST_HORIZON)
+    plan = world.root / ".shikiru" / "plans" / "T-1.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text("full plan")
+
+    await world.prune()
+
+    assert plan.read_text() == "full plan"
+
+
 async def test_an_escalation_resolved_since_no_longer_holds_its_task(world: _World) -> None:
     task = world.task(Status.DONE, age=_PAST_HORIZON)
     _open_escalation(world, task)

@@ -23,7 +23,11 @@ Built-in agent plugins are Claude Code (`claude`), OpenAI Codex (`codex`) and Me
 
 The project is one committed Git repository. Each task receives its own branch and worktree under
 `.shikiru/worktrees/`, keeping concurrent task files separate. Tracker files are optional project
-plans/checklists included in agent context and updated as work proceeds. Optional ignored caches
+plans/checklists included in agent context and updated as work proceeds. When a project configures no
+trackers, every prompt shows the untracked `<project root>/.shikiru/plans/` folder instead of a
+`Trackers:` line and passes that folder to every agent turn as an extra writable directory. A plan
+turn then writes the full plan to `<plans>/<task id>.md` and makes no commit, and retention never
+removes the folder or its files. Optional ignored caches
 are cloned into worktrees using copy-on-write; unsupported filesystems produce a warning and no
 cache clone. Neither worktrees nor cache cloning are a sandbox.
 

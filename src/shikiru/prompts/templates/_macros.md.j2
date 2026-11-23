@@ -8,6 +8,10 @@
 Trackers: {% for path in trackers %}`{{ path }}`{% if not loop.last %}, {% endif %}{% endfor %}
 {%- endmacro %}
 
+{% macro plans_folder_line(plans_dir) -%}
+Plans folder: `{{ plans_dir }}`
+{%- endmacro %}
+
 {% macro reports_section(reports) -%}
 {% if reports %}
 ## Earlier reports

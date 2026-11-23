@@ -85,6 +85,7 @@ class PromptRenderer:
             "acceptance_criteria_heading": ACCEPTANCE_CRITERIA_HEADING,
             "feedback_is_check": False,
             "feedback_source_ids": [],
+            "plans_dir": None,
             **context,
         }
         return template.render(**merged)

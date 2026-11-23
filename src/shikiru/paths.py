@@ -17,6 +17,7 @@ ENGINE_LOG_DIR = "logs"
 ENGINE_LOG_FILENAME = "engine.log"
 ENGINE_OUTPUT_FILENAME = "engine.out"
 WORKTREES_DIR_NAME = "worktrees"
+PLANS_DIR_NAME = "plans"
 RUNS_DIR_NAME = "runs"
 TURNS_DIR_NAME = "turns"
 MESSAGES_DIR_NAME = "messages"
@@ -54,6 +55,11 @@ def engine_log_path(project_root: Path) -> Path:
 def engine_output_path(project_root: Path) -> Path:
     """Return the file holding the stdout and stderr of the engine process `start` spawned."""
     return project_state_dir(project_root) / ENGINE_LOG_DIR / ENGINE_OUTPUT_FILENAME
+
+
+def plans_dir(project_root: Path) -> Path:
+    """Return the untracked plans directory under `.shikiru/`."""
+    return project_state_dir(project_root) / PLANS_DIR_NAME
 
 
 def runs_root(project_root: Path) -> Path:
