@@ -412,3 +412,7 @@ The Codex review rework associates each new token-count record with the most rec
 ## Waiting turns in session listing (T-176)
 
 `shikiru ls` counts an active turn (running or integrating) as waiting, not running, when the turn is held, carries a wait reason, or sits in a mid-turn quota wait whose agent block still holds. The Waiting count sits between Running and Queued in the table, the narrow view and JSON. The dashboard and lister share `current_turn_quota_wait`; the lister uses the agent from the current `TURN_STARTED` event so the wait follows the rung the engine actually selected, including start-time overrides and changed or out-of-range stored rung indices. The dashboard supplies its live routing so a task that changed rungs no longer appears to wait on its previous agent. Remote listings require the field, so a remote host running an older shikiru fails to list until it is upgraded.
+
+## Muse API-equivalent cost after report handoff (T-183)
+
+The report handoff (T-179) SIGTERMs the agent process at the end of a turn, so the Muse session log read at `MuseTurn.finish` can hold more model calls than the last `run.usage` stream snapshot (T-181: 113 stream calls vs 120 logged). Pricing all logged calls then disagrees with the stream totals, and the strict `priced_usage` leaves the usage unpriced. `MuseTurn._cumulative_usage` keeps only the first N session-log completions, where N sums the `calls` counts in the last `run.usage` models entries, so the priced calls match the stream totals.

@@ -46,6 +46,7 @@ from shikiru.agents.sdk.turn import (
 )
 from shikiru.plugins.agents.muse.options import (
     CACHE_WRITE_TOKENS_KEY,
+    CALLS_KEY,
     EXEC_SUBCOMMAND,
     HARD_THRESHOLD_FLAG,
     HARD_THRESHOLD_MARGIN,
@@ -478,6 +479,7 @@ class MuseTurnParser:
 
     def _cumulative_usage(self, totals: _TurnTotals, progress: SessionLogProgress) -> Usage:
         base = self._initial_usage
+        progress = _matched_progress(progress, _stream_call_count(self._model_entries))
         cache_write_tokens = _cache_write_tokens(totals, progress)
         usage = Usage(
             input_tokens=base.input_tokens
@@ -512,7 +514,7 @@ class MuseTurnParser:
         if not calls and len(self._model_entries) == 1:
             entry = _mapping(self._model_entries[0])
             name = _optional_text(entry, MODEL_KEY)
-            if name is not None and entry.get("calls") == 1:
+            if name is not None and entry.get(CALLS_KEY) == 1:
                 calls = [
                     (
                         name,
@@ -788,6 +790,31 @@ def _turn_totals(models: Sequence[object]) -> _TurnTotals:
         cached_tokens,
         reported_cache_writes,
         frozenset(omitted_models - reported_models),
+    )
+
+
+def _stream_call_count(models: Sequence[object]) -> int | None:
+    total = 0
+    for model in models:
+        calls = _mapping(model).get(CALLS_KEY)
+        if type(calls) is not int or calls < 0:
+            return None
+        total += calls
+    return total
+
+
+def _matched_progress(progress: SessionLogProgress, call_count: int | None) -> SessionLogProgress:
+    if call_count is None or len(progress.completions) <= call_count:
+        return progress
+    completions = progress.completions[:call_count]
+    writes: dict[str, int] = {}
+    for completion in completions:
+        writes[completion.model] = writes.get(completion.model, 0) + completion.cache_write_tokens
+    return SessionLogProgress(
+        compactions=progress.compactions,
+        latest_prompt_tokens=progress.latest_prompt_tokens,
+        cache_write_by_model=writes,
+        completions=completions,
     )
 
 

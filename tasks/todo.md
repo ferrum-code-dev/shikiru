@@ -346,3 +346,8 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 - [x] Fix the Ubuntu CI failure of the stream-holder handoff test
   - Acceptance: the fake agent starts its detached stream holder in its own process group instead of its own session, because the uv-managed Linux Python lacks `POSIX_SPAWN_SETSID`; the test no longer fails with a missing `stream-holder.pid` on Linux. Integration coverage in `tests/integration/test_engine_report_handoff.py`.
+
+### Muse API-equivalent cost after report handoff (T-183)
+
+- [x] Price Muse turns whose session log holds more completions than the stream's last `run.usage`
+  - Acceptance: `MuseTurn._cumulative_usage` keeps only the first N session-log completions, where N is the sum of the `calls` counts in the last `run.usage` models entries, so the priced calls match the stream totals; `priced_usage` stays strict. Integration coverage in `tests/integration/test_muse_priced_turn.py` uses a fake Muse whose session log holds extra trailing completions beyond the stream's last `run.usage`. Replay of T-181 session `01a20a54-9b19-7661-9ef1-5db3cf6410d5` prices the first 113 calls at about 0.108 USD with `muse-ember-1.0`.
