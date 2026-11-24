@@ -166,6 +166,17 @@ Remote working-directory discovery is the same as local: the nearest `.shikiru/`
 - **Home:** engine, repository state, queue, active work, decisions, usage.
 - **Task details:** briefing, results, dependencies, reports and Git evidence, activity, sessions.
 - Keys: `Up`/`Down` select, `f` filter by status, `/` search, `m` load older tasks, `?` help.
+- **Diff:** with the Results section selected, `d` (or **More… → View diff** in Actions) opens the
+  task's Git diff. **Commit** defaults to **All changes**, the net task diff; choose an individual
+  commit by its short hash and subject. **File** lists the changed files and shows the first one at
+  first; a renamed file appears as its removed and added paths. `Tab` moves between the dropdowns
+  and the patch, which the arrow keys scroll both ways. Added lines are green, removed lines red and
+  hunk headers in the accent colour. Completed tasks show the commits they landed (merge, squash or
+  pull request) even after cleanup. Live tasks are labelled **Changes so far**; the scope line says
+  whether uncommitted changes, including untracked files, are included. `f` expands the popup to
+  full screen and `f` again restores it, keeping the selections and scroll position. `Esc` closes
+  the popup. Empty diffs, binary files, text that is not UTF-8, unavailable evidence and Git errors
+  are shown as such, never replaced by other changes.
 
 Open **Actions** with `Ctrl+P` or `F12`, or your tmux prefix then Space. They apply to the selected
 task and role. Availability depends on state; **More…** shows the rest.
@@ -181,6 +192,7 @@ task and role. Availability depends on state; **More…** shows the rest.
 | Retry / Cancel | Re-run the current step, or abandon the task and keep its branch. |
 | Answer | Resolve an escalation with an offered choice or your own answer. |
 | Export | Write task evidence as Markdown or JSON. |
+| View diff | Open the task's Git diff: all changes or one commit, file by file. |
 | Command history / Diagnostics | Inspect commands, engine health and faults. |
 
 Tmux: each task has a window with a pane per role. Default prefix `Ctrl+B`; prefix then `d` detaches

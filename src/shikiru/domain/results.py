@@ -96,9 +96,15 @@ def _strings(value: object) -> tuple[str, ...]:
     return tuple(item for item in items if isinstance(item, str))
 
 
-def _from_oneline(line: str) -> ResultCommit:
+def parse_oneline(line: str) -> ResultCommit:
+    """Parse one `git log --oneline` line, keeping its abbreviated hash as git wrote it."""
     sha, _, subject = line.partition(" ")
-    return ResultCommit(sha[:SHORT_SHA_LENGTH], subject.strip())
+    return ResultCommit(sha, subject.strip())
+
+
+def _from_oneline(line: str) -> ResultCommit:
+    commit = parse_oneline(line)
+    return ResultCommit(commit.sha[:SHORT_SHA_LENGTH], commit.subject)
 
 
 def _outcome(status: Status) -> ResultOutcome:

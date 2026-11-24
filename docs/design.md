@@ -359,6 +359,20 @@ Pause holds after a turn; Pause now interrupts it. Messages are delivered to a r
 turn. Retry re-runs the current step, and prioritization changes dispatch order. These actions use
 the same queued-command path from dashboard or MCP.
 
+The task diff popup reads Git on demand and changes no task state. An unfinished task shows
+**Changes so far**: all changes compare the worktree, including untracked files, with its merge base,
+and a single commit compares with its first parent. A file removed from the index and recreated is
+compared with its merge-base content, and disappears when identical. A patch is read only for the
+selected file, so one that cannot be shown stays listed, reports its error when selected and leaves
+the other files viewable. A Done task reads only recorded
+landing evidence from the project repository, so it works after cleanup: merge and squash use the
+base and landing commit of the matching `integration_applying` event; a pull request uses the base
+recorded when it was opened, prepared or published for a head it landed unchanged, the first parent
+of a merge commit, or the parent of a single landed commit. Without matching evidence or Git objects
+the popup shows why instead of another range. Patches come from Git with literal paths and without
+rename detection, external diff drivers or text conversion.
+
+
 Take over holds task automation, interrupts its active flow and opens an existing role session
 interactively in its tmux pane. Other eligible tasks keep running. A task waiting on an open pull
 request has no slot; its session still opens, without taking one. Hand back restores engine

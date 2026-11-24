@@ -106,6 +106,7 @@ def actions_screen(
     project_diagnostics_available: bool = False,
     extensions: tuple[ExtensionEntry, ...] = (),
     resolution_screen: ResolutionScreenFactory | None = None,
+    diff_screen: Callable[[str], ModalScreen[None]] | None = None,
 ) -> ActionsListScreen:
     """Build the Actions list for `request` with popups wired as in the dashboard."""
     return ActionsListScreen(
@@ -130,6 +131,7 @@ def actions_screen(
         project_diagnostics_available=project_diagnostics_available,
         extensions=extensions,
         resolution_screen=resolution_screen,
+        diff_screen=diff_screen,
     )
 
 

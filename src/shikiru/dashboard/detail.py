@@ -132,6 +132,8 @@ TASK_DETAIL_HELP_KEY = "question_mark"
 TASK_DETAIL_HINT = "task-detail-hint"
 TASK_WINDOW_KEY = "t"
 TASK_WINDOW_ACTION = "task_window"
+TASK_DIFF_KEY = "d"
+TASK_DIFF_ACTION = "show_diff"
 TASK_DETAIL_EVIDENCE = "task-detail-evidence"
 TASK_DETAIL_RAW_EVENTS = "task-detail-raw-events"
 RAW_EVENTS_TITLE = "Raw events"
@@ -241,7 +243,8 @@ class TaskDetailPanel(Vertical):
     """Render shared task detail from the injected dashboard view contract."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        Binding(TASK_WINDOW_KEY, TASK_WINDOW_ACTION, "Task window", show=False)
+        Binding(TASK_WINDOW_KEY, TASK_WINDOW_ACTION, "Task window", show=False),
+        Binding(TASK_DIFF_KEY, TASK_DIFF_ACTION, "View diff", show=False),
     ]
     DEFAULT_CSS = """
     #task-detail-panel { width: 100%; height: auto; }
@@ -435,10 +438,19 @@ class TaskDetailPanel(Vertical):
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
         del parameters
-        return self._task_window_available() if action == TASK_WINDOW_ACTION else True
+        if action == TASK_WINDOW_ACTION:
+            return self._task_window_available()
+        if action == TASK_DIFF_ACTION:
+            return self._diff_available()
+        return True
 
     async def action_task_window(self) -> None:
         await self._navigate_task_window()
+
+    async def action_show_diff(self) -> None:
+        callback = self._widget_context.open_diff
+        if self._task_id is not None and callback is not None:
+            await callback(self._task_id)
 
     def _task_window_available(self) -> bool:
         view = self._view
@@ -449,6 +461,15 @@ class TaskDetailPanel(Vertical):
             and fold.view_id == TASK_VIEW_WORKSPACE
             and view.status not in TERMINAL_STATUSES
             and view.window_id is not None
+        )
+
+    def _diff_available(self) -> bool:
+        fold = self._fold_of(self.screen.focused)
+        return (
+            self._task_id is not None
+            and fold is not None
+            and fold.view_id == TASK_VIEW_RESULTS
+            and self._widget_context.open_diff is not None
         )
 
     def _hint_target(self) -> HintTarget | None:
@@ -473,6 +494,7 @@ class TaskDetailPanel(Vertical):
             else hint_for(
                 target,
                 task_window=self._task_window_available(),
+                view_diff=self._diff_available(),
                 keys_only=self._briefing_layout().tiny,
             )
         )

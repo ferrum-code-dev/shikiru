@@ -351,3 +351,23 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 - [x] Price Muse turns whose session log holds more completions than the stream's last `run.usage`
   - Acceptance: `MuseTurn._cumulative_usage` keeps only the first N session-log completions, where N is the sum of the `calls` counts in the last `run.usage` models entries, so the priced calls match the stream totals; `priced_usage` stays strict. Integration coverage in `tests/integration/test_muse_priced_turn.py` uses a fake Muse whose session log holds extra trailing completions beyond the stream's last `run.usage`. Replay of T-181 session `01a20a54-9b19-7661-9ef1-5db3cf6410d5` prices the first 113 calls at about 0.108 USD with `muse-ember-1.0`.
+
+### Task diff review rework (T-195)
+
+- [x] Match landed commits by resolved Git object ID
+  - Acceptance: merge and squash landing evidence with full commit IDs resolves to the same objects as abbreviated result commits; a PR whose branch head is itself a task merge commit keeps the full net task range and commit option.
+- [x] Preserve quoted filenames in diff file selection
+  - Acceptance: changed file names use NUL-delimited Git output and a real-Git integration test selects a Unicode and special-character path and renders its patch.
+- [x] Keep selected pathspecs literal
+  - Acceptance: a real-Git test changes both `[ab].txt` and `a.txt`, selects `[ab].txt`, and sees only that file's patch.
+- [x] Compare recreated staged deletions with the merge-base version
+  - Acceptance: real-Git tests cover identical replacements (no net changed file) and changed replacements (only the actual net content changes).
+
+### Task diff popup (T-196)
+
+- [x] Show a task's Git diff from the Results section (`d`) and **More… → View diff**
+  - Acceptance: commit and file dropdowns, coloured two-way scrollable patch, `f` fullscreen keeping selections and scroll, `Esc` close, **Changes so far** labelling, landed merge, squash and pull request evidence after cleanup, and visible empty, binary, non-UTF-8, missing-evidence and Git-error states. Integration coverage in `tests/integration/test_task_diff.py`, with real engine landings in `tests/integration/test_engine_squash.py` and `tests/integration/test_engine_pull_request.py`.
+- [x] Render changed staged-deletion replacements as a correct patch
+  - Acceptance: headers, hunk header, removed and added lines render as separate, coloured lines; identical replacements stay out of the file list; literal and Unicode paths keep working.
+- [x] Keep other files selectable when one staged-deletion replacement cannot be shown
+  - Acceptance: real-Git tests cover an invalid UTF-8 and an unreadable replacement beside a valid changed file; the error is confined to the affected file and identical replacements stay out of the list.

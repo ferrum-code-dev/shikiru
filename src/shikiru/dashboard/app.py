@@ -103,6 +103,7 @@ if TYPE_CHECKING:
         AttentionView,
         DashboardViews,
         DashboardWidget,
+        DiffScreenFactory,
         NavigateHome,
         NavigateTaskWindow,
         OnChange,
@@ -971,6 +972,7 @@ class DashboardApp(CoveredScreens):
         navigate_home: NavigateHome | None = None,
         tmux_detach_hint: str | None = None,
         detach_tmux_client: Callable[[], Awaitable[bool]] | None = None,
+        diff_screen: DiffScreenFactory | None = None,
     ) -> None:
         """Build the home or task workspace with the configured widgets."""
         super().__init__()
@@ -984,6 +986,7 @@ class DashboardApp(CoveredScreens):
         self._open_palette = open_palette
         self._open_palette_context = open_palette_context
         self._resolution_screen = resolution_screen
+        self._diff_screen = diff_screen
         self._palette_drafts = PaletteDrafts()
         self._selected_task_id = focus_task
         self._navigate_task_window = navigate_task_window
@@ -1125,6 +1128,7 @@ class DashboardApp(CoveredScreens):
             placement=placement,
             home_attention_present=self._focus_task is None,
             open_contextual_view=self._open_contextual_view,
+            open_diff=self.open_diff,
         )
 
     async def _activate_home_summary(self, summary: str) -> None:
@@ -1238,6 +1242,17 @@ class DashboardApp(CoveredScreens):
             await self._open_palette(request.action or "")
             return
         await callback(self._palette_drafts.attach(request))
+
+    async def open_diff(self, task_id: str) -> None:
+        """Open the Git diff popup for one task."""
+        factory = self._diff_screen
+        if factory is None:
+            message = "the task diff screen is not configured"
+            raise ConfigError(message)
+        await self.push_screen(
+            factory(task_id),
+            callback=lambda _: self.refresh_task_detail_after_resume(),
+        )
 
     async def open_resolution(self, escalation_id: str) -> None:
         """Open the resolution screen for one escalation."""

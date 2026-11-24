@@ -63,7 +63,11 @@ if TYPE_CHECKING:
     from textual.timer import Timer
     from textual.worker import Worker
 
-    from shikiru.dashboard.contract import OnChangeRegistration, ResolutionScreenFactory
+    from shikiru.dashboard.contract import (
+        DiffScreenFactory,
+        OnChangeRegistration,
+        ResolutionScreenFactory,
+    )
     from shikiru.operator.queries import OperatorQueries
 
 PopupFactory = Callable[[PaletteRequest], ModalScreen[str | None]]
@@ -85,14 +89,17 @@ SWITCH_LABEL = f"Switch task{ELLIPSIS}"
 ANSWER_LABEL = "Answer"
 COMMAND_HISTORY_LABEL = "Command history"
 DIAGNOSTICS_LABEL = "Diagnostics"
+VIEW_DIFF_LABEL = "View diff"
 ANSWER_ROW = "answer"
 MORE_ROW = "more"
 SWITCH_ROW = "switch-task"
+DIFF_ROW = "view-diff"
 ACTION_ROW_PREFIX = "action:"
 ROUTE_ROW_PREFIX = "route:"
 EXTENSION_ROW_PREFIX = "extension:"
 MEANINGS: dict[str, str] = {
     ANSWER_ROW: "Answer the recorded decision",
+    DIFF_ROW: "Show the task's Git diff",
     PaletteAction.MESSAGE: "Delivered on the next turn",
     PaletteAction.TAKE_OVER: "Stop the turn, work in the pane",
     PaletteAction.HAND_BACK: "Return this role to automation",
@@ -144,6 +151,7 @@ TASK_LABEL_WIDTH = max(
     cell_len(label)
     for label in (
         ANSWER_LABEL,
+        VIEW_DIFF_LABEL,
         MORE_LABEL,
         FEWER_LABEL,
         *(SUBMIT_ACTION_LABELS[action] for action in (*PRIMARY_TASK_ACTIONS, *EXTRA_TASK_ACTIONS)),
@@ -200,6 +208,7 @@ class ListContext:
     diagnostics: bool
     engine_up: bool
     extensions: tuple[ExtensionEntry, ...]
+    diff_available: bool = False
 
 
 def _action_row(action: PaletteAction) -> ActionRow:
@@ -223,20 +232,23 @@ def _task_group(context: ListContext) -> ActionGroup:
             rows.append(ActionRow(ANSWER_ROW, ANSWER_LABEL, MEANINGS[ANSWER_ROW]))
         rows.extend(_action_row(a) for a in PRIMARY_TASK_ACTIONS if a in context.task_actions)
         extras = tuple(a for a in EXTRA_TASK_ACTIONS if a in context.task_actions)
-        if extras:
-            rows.append(_more_row(context.expanded, extras))
+        extra_rows = tuple(_action_row(action) for action in extras)
+        if context.diff_available:
+            extra_rows += (ActionRow(DIFF_ROW, VIEW_DIFF_LABEL, MEANINGS[DIFF_ROW]),)
+        if extra_rows:
+            rows.append(_more_row(context.expanded, extra_rows))
             if context.expanded:
-                rows.extend(_action_row(action) for action in extras)
+                rows.extend(extra_rows)
     return ActionGroup(TASK_GROUP, tuple(rows), TASK_LABEL_WIDTH)
 
 
-def _more_row(expanded: bool, extras: tuple[PaletteAction, ...]) -> ActionRow:
+def _more_row(expanded: bool, extra_rows: tuple[ActionRow, ...]) -> ActionRow:
     if expanded:
         return ActionRow(MORE_ROW, FEWER_LABEL, MEANINGS[FEWER_LABEL])
     return ActionRow(
         MORE_ROW,
         MORE_LABEL,
-        GROUP_SEPARATOR.join(SUBMIT_ACTION_LABELS[action] for action in extras),
+        GROUP_SEPARATOR.join(row.label for row in extra_rows),
     )
 
 
@@ -410,6 +422,7 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         project_diagnostics_available: bool = False,
         extensions: tuple[ExtensionEntry, ...] = (),
         resolution_screen: ResolutionScreenFactory | None = None,
+        diff_screen: DiffScreenFactory | None = None,
     ) -> None:
         """Offer the actions for `request`'s task, or the project when it has none."""
         super().__init__()
@@ -424,6 +437,7 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         self._project_diagnostics_available = project_diagnostics_available
         self._extensions = extensions
         self._resolution_screen = resolution_screen
+        self._diff_screen = diff_screen
         self._expanded = False
         self._finishing = False
         self._confirmed: str | None = None
@@ -519,6 +533,7 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
             diagnostics=self._project_diagnostics_available,
             engine_up=engine_up,
             extensions=self._extensions,
+            diff_available=task_exists and self._diff_screen is not None,
         )
 
     def _refresh_engine_state(self) -> None:
@@ -704,6 +719,8 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
         if key == MORE_ROW:
             self._expanded = not self._expanded
             self._schedule_sync()
+        elif key == DIFF_ROW:
+            self._open_diff()
         elif key == SWITCH_ROW:
             self._push_over(
                 TaskPickerScreen(self._queries, self._request.task_id), self._task_chosen
@@ -793,6 +810,16 @@ class ActionsListScreen(Coverable, ModalScreen[PaletteReturn | None]):
     def _resolution_closed(self, sent: bool | None) -> None:
         if sent:
             self._finish(None)
+
+    def _open_diff(self) -> None:
+        task_id = self._request.task_id
+        if task_id is None or self._diff_screen is None:
+            return
+        self._push_over(self._diff_screen(task_id), self._diff_closed)
+
+    def _diff_closed(self, result: None) -> None:
+        del result
+        self._schedule_sync()
 
     async def _refresh_after_database_change(self) -> None:
         if self.is_attached:

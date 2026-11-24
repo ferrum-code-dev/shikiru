@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -41,8 +42,18 @@ _MERGE_BASE_IS_NOT_ANCESTOR = 1
 _NUMSTAT_BINARY_MARKER = "-"
 _NUMSTAT_RENAME_PATH_RECORDS = 2
 _NUMSTAT_SEPARATOR = "\t"
-_NUMSTAT_RECORD_SEPARATOR = "\0"
+_NUL_RECORD_SEPARATOR = "\0"
 _NUMSTAT_MALFORMED_RECORD = "git numstat returned a malformed record"
+_DISPLAY_DIFF_ARGS = (
+    "-c",
+    "core.quotePath=false",
+    "--literal-pathspecs",
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-textconv",
+)
+_NO_INDEX_DIFFERENCES = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,10 +213,7 @@ class Git:
         """
         tracked = await self._run(repo_dir, "diff", "--numstat", "-z", against)
         tracked_paths, added_lines, deleted_lines, binary_entries = _parse_numstat(tracked.stdout)
-        untracked = await self._run(repo_dir, "ls-files", "--others", "--exclude-standard", "-z")
-        untracked_paths = {
-            path for path in untracked.stdout.split(_NUMSTAT_RECORD_SEPARATOR) if path
-        }
+        untracked_paths = set(await self.untracked_paths(repo_dir))
         return LineChangeStats(
             changed_paths=len(tracked_paths | untracked_paths),
             added_lines=added_lines,
@@ -214,10 +222,50 @@ class Git:
             untracked_paths=len(untracked_paths),
         )
 
-    async def diff_name_only(self, repo_dir: Path, commit_range: str) -> list[str]:
-        """Return the full, unformatted path of every file changed in `commit_range`."""
-        result = await self._run(repo_dir, "diff", "--name-only", commit_range)
-        return [line for line in result.stdout.splitlines() if line]
+    async def diff_name_only(
+        self, repo_dir: Path, commit_range: str, *, detect_renames: bool = True
+    ) -> list[str]:
+        """Return the full, unformatted path of every file changed in `commit_range`.
+
+        A renamed file lists its new path only, or without `detect_renames` both paths.
+        """
+        options = () if detect_renames else ("--no-renames",)
+        result = await self._run(repo_dir, "diff", "--name-only", "-z", *options, commit_range)
+        return [path for path in result.stdout.split(_NUL_RECORD_SEPARATOR) if path]
+
+    async def untracked_paths(self, repo_dir: Path) -> list[str]:
+        """Return the paths of untracked files in `repo_dir`, excluding ignored ones."""
+        result = await self._run(repo_dir, "ls-files", "--others", "--exclude-standard", "-z")
+        return [path for path in result.stdout.split(_NUL_RECORD_SEPARATOR) if path]
+
+    async def file_patch(self, repo_dir: Path, revision: str, path: str) -> str:
+        """Return the readable patch of the literal `path` for `revision`, empty if unchanged.
+
+        `revision` is a commit range, a commit compared with the working tree, or a
+        `<commit>:<path>` blob compared with the file now at `path`, even an untracked one.
+        """
+        result = await self._run(repo_dir, *_DISPLAY_DIFF_ARGS, revision, "--", path)
+        return result.stdout
+
+    async def is_unchanged(self, repo_dir: Path, revision: str, path: str) -> bool:
+        """Return whether git shows the literal `path` unchanged for `revision`.
+
+        The file content is never decoded. A path git cannot compare is not unchanged, so its
+        `file_patch` reports why.
+        """
+        result = await self._run(
+            repo_dir, *_DISPLAY_DIFF_ARGS, "--numstat", revision, "--", path, check=False
+        )
+        return result.returncode == 0 and not result.stdout
+
+    async def new_file_patch(self, repo_dir: Path, path: str) -> str:
+        """Return the readable patch that adds the working file at `path` as a whole."""
+        result = await self._run(
+            repo_dir, *_DISPLAY_DIFF_ARGS, "--no-index", "--", os.devnull, path, check=False
+        )
+        if result.returncode != _NO_INDEX_DIFFERENCES or not result.stdout:
+            raise CommandFailed(result.argv, result.returncode, result.stderr)
+        return result.stdout
 
     async def diff_patch(self, repo_dir: Path, commit_range: str, paths: Sequence[str]) -> str:
         """Return the binary-safe patch of `paths` changed in `commit_range`, empty if none."""
@@ -575,7 +623,7 @@ def _parse_numstat(output: str) -> tuple[set[str], int, int, int]:
     added_lines = 0
     deleted_lines = 0
     binary_entries = 0
-    records = output.split(_NUMSTAT_RECORD_SEPARATOR)
+    records = output.split(_NUL_RECORD_SEPARATOR)
     index = 0
     while index < len(records):
         record = records[index]

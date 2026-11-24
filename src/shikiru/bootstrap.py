@@ -163,6 +163,42 @@ if TYPE_CHECKING:
 DASHBOARD_RESOURCES_WIDGET = "resources"
 
 
+def _resolution_screen_factory(
+    services: OperatorServices, clock: Clock
+) -> Callable[[str], ModalScreen[bool]]:
+    """Build the escalation screen factory for one dashboard or palette run."""
+    resolution_module = import_module("shikiru.dashboard.resolution")
+    drafts = resolution_module.ResolutionDrafts()
+
+    def resolution_screen(escalation_id: str) -> ModalScreen[bool]:
+        return resolution_module.ResolutionScreen(
+            services.commands,
+            services.queries,
+            clock=clock,
+            on_change=services.reader.watch,
+            drafts=drafts,
+            escalation_id=escalation_id,
+        )
+
+    return resolution_screen
+
+
+def _diff_screen_factory(
+    git: Git, services: OperatorServices, project_root: Path
+) -> Callable[[str], ModalScreen[None]]:
+    """Build the task Git diff popup factory over one project's evidence."""
+    diff_module = import_module("shikiru.dashboard.diff")
+    services_module = import_module("shikiru.dashboard.services")
+    diff_service = services_module.TaskDiffService(
+        git, services.queries, services.reader, project_root
+    )
+
+    def diff_screen(task_id: str) -> ModalScreen[None]:
+        return diff_module.DiffScreen(diff_service, task_id)
+
+    return diff_screen
+
+
 class _PaletteContext(Protocol):
     action: str | None
     task_id: str | None
@@ -359,7 +395,6 @@ async def run_dashboard(
     dashboard_palette_module = import_module("shikiru.dashboard.palette")
     dashboard_actions_module = import_module("shikiru.dashboard.actions_list")
     dashboard_contract_module = import_module("shikiru.dashboard.contract")
-    dashboard_resolution_module = import_module("shikiru.dashboard.resolution")
     dashboard_services_module = import_module("shikiru.dashboard.services")
     dashboard_views_module = import_module("shikiru.dashboard.views")
     dashboard_motion_module = import_module("shikiru.dashboard.motion")
@@ -452,17 +487,8 @@ async def run_dashboard(
         )
 
         app_instance = None
-        resolution_drafts = dashboard_resolution_module.ResolutionDrafts()
-
-        def resolution_screen(escalation_id: str) -> ModalScreen[bool]:
-            return dashboard_resolution_module.ResolutionScreen(
-                services.commands,
-                services.queries,
-                clock=clock,
-                on_change=services.reader.watch,
-                drafts=resolution_drafts,
-                escalation_id=escalation_id,
-            )
+        resolution_screen = _resolution_screen_factory(services, clock)
+        diff_screen = _diff_screen_factory(git, services, project_root)
 
         async def push_palette(request: _PaletteContext) -> None:
             if app_instance is None:
@@ -512,6 +538,7 @@ async def run_dashboard(
                 ),
                 extensions=dashboard.extension_entries(),
                 resolution_screen=resolution_screen,
+                diff_screen=diff_screen,
             )
             await dashboard.push_screen(actions, callback=dashboard.palette_return_callback())
 
@@ -529,6 +556,7 @@ async def run_dashboard(
             widget_names=settings.dashboard.widgets,
             open_palette_context=push_palette,
             resolution_screen=resolution_screen,
+            diff_screen=diff_screen,
             navigate_task_window=navigation.task_window,
             navigate_home=navigation.home,
             tmux_detach_hint=tmux_detach_hint,
@@ -545,7 +573,6 @@ async def run_palette(
 ) -> None:
     """Run the operator palette as a popup using project-local operator services."""
     palette_module = import_module("shikiru.dashboard.palette_app")
-    resolution_module = import_module("shikiru.dashboard.resolution")
     palette_request = import_module("shikiru.dashboard.contract").PaletteRequest
     clock = build_clock()
     settings = load_settings(project_root, overrides)
@@ -564,17 +591,9 @@ async def run_palette(
         if task_role is not None:
             task_id, role = task_role
             initial_context = palette_request(task_id=task_id, role=role.value)
-        resolution_drafts = resolution_module.ResolutionDrafts()
-
-        def resolution_screen(escalation_id: str) -> ModalScreen[bool]:
-            return resolution_module.ResolutionScreen(
-                services.commands,
-                services.queries,
-                clock=clock,
-                on_change=services.reader.watch,
-                drafts=resolution_drafts,
-                escalation_id=escalation_id,
-            )
+        resolution_screen = _resolution_screen_factory(services, clock)
+        git = Git(SubprocessRunner(), command_timeout=settings.orchestration.timeouts.git_command)
+        diff_screen = _diff_screen_factory(git, services, project_root)
 
         app_instance = palette_module.PaletteApp(
             services.commands,
@@ -587,6 +606,7 @@ async def run_palette(
             initial_context=initial_context,
             evidence_exporter=evidence_exporter,
             resolution_screen=resolution_screen,
+            diff_screen=diff_screen,
         )
         await app_instance.run_async()
     finally:

@@ -416,3 +416,15 @@ The Codex review rework associates each new token-count record with the most rec
 ## Muse API-equivalent cost after report handoff (T-183)
 
 The report handoff (T-179) SIGTERMs the agent process at the end of a turn, so the Muse session log read at `MuseTurn.finish` can hold more model calls than the last `run.usage` stream snapshot (T-181: 113 stream calls vs 120 logged). Pricing all logged calls then disagrees with the stream totals, and the strict `priced_usage` leaves the usage unpriced. `MuseTurn._cumulative_usage` keeps only the first N session-log completions, where N sums the `calls` counts in the last `run.usage` models entries, so the priced calls match the stream totals.
+
+## Task diff review rework (T-195)
+
+Compare recorded landing and pull-request branch IDs as resolved Git commit objects because integration evidence stores full hashes while result commits may be abbreviated. Read changed paths with NUL-delimited Git output so quoted Unicode and special-character filenames remain selectable. Cover both cases with real-Git dashboard integration tests.
+
+The review follow-up makes selected paths literal to Git and resolves staged-delete/recreated overlaps against the merge-base file contents. Identical replacements disappear from the net file list; changed replacements show their content diff.
+
+## Task diff popup completion (T-196)
+
+T-196 replaces T-195 and starts from its candidate. Git now writes every patch the popup shows: a tracked file through `git diff`, an untracked file through `git diff --no-index` against the null device, and a staged-delete/recreated file through `git diff <merge base>:<path> -- <path>`. This replaces the hand-built `difflib` and untracked patches, which joined the headers, hunk header and first removed line, followed untracked symlinks and lost lines containing form feeds. Display diffs drop `--binary`, so binary files show Git's notice, and renames list both paths. Only hunk lines are coloured as added or removed. The landed-evidence rules of T-195 are unchanged.
+
+The review follow-up reads a patch only for the selected file. Listing files asks Git through `--numstat` whether each staged-delete/recreated path is unchanged, which never decodes its content and does not depend on `diff.autoRefreshIndex`; only a path proven unchanged is hidden, so text that is not UTF-8 or an unreadable file reports its error when selected without blocking the file list.

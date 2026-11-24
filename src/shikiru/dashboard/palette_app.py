@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from textual.widgets import Static
 
 from shikiru.dashboard.actions_list import ActionsListScreen
-from shikiru.dashboard.contract import PaletteRequest
+from shikiru.dashboard.contract import DiffScreenFactory, PaletteRequest
 from shikiru.dashboard.covered import CoveredScreens
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.palette_drafts import PaletteDrafts
@@ -40,6 +40,7 @@ class PaletteApp(CoveredScreens):
         initial_context: PaletteRequest | None = None,
         evidence_exporter: TaskEvidenceExporter | None = None,
         resolution_screen: ResolutionScreenFactory | None = None,
+        diff_screen: DiffScreenFactory | None = None,
     ) -> None:
         """Retain the services used by the list and its popups."""
         super().__init__()
@@ -54,6 +55,7 @@ class PaletteApp(CoveredScreens):
         self._initial_context = initial_context or PaletteRequest()
         self._evidence_exporter = evidence_exporter
         self._resolution_screen = resolution_screen
+        self._diff_screen = diff_screen
         self._drafts = PaletteDrafts()
 
     def compose(self) -> ComposeResult:
@@ -71,6 +73,7 @@ class PaletteApp(CoveredScreens):
                 action_confirmation_seconds=self._action_confirmation_seconds,
                 engine_state_refresh_hz=self._engine_state_refresh_hz,
                 resolution_screen=self._resolution_screen,
+                diff_screen=self._diff_screen,
             ),
             lambda _: self.exit(),
         )

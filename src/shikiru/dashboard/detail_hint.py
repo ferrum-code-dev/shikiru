@@ -15,6 +15,7 @@ _BACK = ("Esc", "back")
 _SELECT = (_ARROWS, "select")
 _FOLLOW = ("End", "follow")
 _TASK_WINDOW = ("t", "task window")
+_VIEW_DIFF = ("d", "view diff")
 
 
 class HintTarget(StrEnum):
@@ -36,12 +37,16 @@ _HINTS: dict[HintTarget, tuple[tuple[str, str], ...]] = {
 }
 
 
-def hint_for(target: HintTarget, *, task_window: bool, keys_only: bool) -> Text:
+def hint_for(
+    target: HintTarget, *, task_window: bool, view_diff: bool = False, keys_only: bool
+) -> Text:
     """Return the hint for `target`: cyan bold keys, grey labels, only keys in tiny panes.
 
     Esc is named only inside a list, where it returns to the header.
     """
     entries = _HINTS[target] + ((_TASK_WINDOW,) if task_window else ())
+    if view_diff:
+        entries += (_VIEW_DIFF,)
     hint = Text()
     for index, (key, label) in enumerate(entries):
         if index:

@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.dashboard.contract import (
         NavigateHome,
+        OpenDiff,
         OpenPalette,
         OpenPaletteContext,
         OpenResolution,
@@ -381,6 +382,7 @@ def widget_context(
     services: StubServices | None = None,
     open_palette: OpenPalette | None = None,
     open_resolution: OpenResolution | None = None,
+    open_diff: OpenDiff | None = None,
     focus_task: str | None = None,
     settings: Settings | None = None,
 ) -> WidgetContext:
@@ -400,6 +402,7 @@ def widget_context(
         on_motion=lambda _: lambda: None,
         open_palette=open_palette or ignore_palette_action,
         open_resolution=open_resolution,
+        open_diff=open_diff,
     )
 
 

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from shikiru.config.settings import RepoConfig
+from shikiru.dashboard.contract import DIFF_ALL_COMMITS
 from shikiru.domain.events import EventKind
 from shikiru.domain.reports import (
     REPORT_FILENAME,
@@ -50,6 +51,7 @@ from shikiru.store.tasks import TaskStore
 from shikiru.workspace.base_refs import LocalBaseRefs
 from shikiru.workspace.git import Git
 from tests.support.clock import FakeClock
+from tests.support.diff import task_diff_service
 from tests.support.engine import engine_settings
 from tests.support.factories import TASK_CREATED_AT
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all, init_repo, run_git
@@ -62,6 +64,7 @@ if TYPE_CHECKING:
 
     from shikiru.domain.results import TaskResults
     from shikiru.domain.tasks import Task
+    from shikiru.store.reader import StateReader
     from tests.support.store import Connection
 
 _RUNNER = SubprocessRunner()
@@ -264,6 +267,29 @@ async def test_a_multi_commit_task_lands_as_one_commit_with_its_rebased_tree(
     assert commits[0].startswith(landed[:7])
     assert rig.done_data(task)["integration"] == "squash"
     assert not root.exists()
+
+
+@pytest.mark.parametrize("local", [LocalMerge, SquashMerge], ids=["merge", "squash"])
+async def test_the_task_diff_reads_the_recorded_landing_after_cleanup(
+    connection: Connection, reader: StateReader, tmp_path: Path, local: type[LocalMerge]
+) -> None:
+    rig = await _rig(connection, tmp_path, local=local)
+    task, root = await rig.start_task("show my diff")
+    await rig.commit(root, "a.txt", "a\n")
+    await rig.commit(root, "b.txt", "b\n")
+
+    await rig.integrate(task)
+
+    service = task_diff_service(reader, rig.project_root, rig.clock)
+    view = await service.load(task.id, DIFF_ALL_COMMITS, "b.txt")
+    assert view.error is None
+    assert not root.exists()
+    assert view.files == ("a.txt", "b.txt")
+    assert "+b" in view.patch.splitlines()
+    assert [f"{item.sha} {item.subject}" for item in view.commits] == rig.landed_lines(task)
+    newest = await service.load(task.id, view.commits[0].sha, None)
+    assert newest.error is None
+    assert "b.txt" in newest.files
 
 
 async def test_the_squash_commit_is_parented_by_the_previous_tip_and_keeps_the_complete_diff(

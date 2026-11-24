@@ -11,18 +11,28 @@ import os
 import shlex
 from collections import defaultdict
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from shikiru.config.settings import MERGE_INTEGRATION, PULL_REQUEST_INTEGRATION, SQUASH_INTEGRATION
 from shikiru.dashboard.contract import (
+    DIFF_ALL_COMMITS,
     ContainerProblemView,
     ContainerView,
     DiagnosticSampleState,
+    DiffDataView,
     DiskView,
     DockerSummaryView,
     DockerView,
     ElsewhereView,
     RepoStatus,
     ResourceView,
+)
+from shikiru.domain.events import EventKind
+from shikiru.domain.results import (
+    DONE_COMMITS_KEY,
+    DONE_INTEGRATION_KEY,
+    landed_changes,
+    parse_oneline,
 )
 from shikiru.domain.runs import RunStatus
 from shikiru.domain.tasks import Role, Status
@@ -57,7 +67,8 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import RepoConfig
     from shikiru.domain.docker import DockerSummary
-    from shikiru.domain.results import LiveWork
+    from shikiru.domain.events import Event
+    from shikiru.domain.results import LiveWork, ResultCommit
     from shikiru.domain.runs import Run
     from shikiru.domain.tasks import Task
     from shikiru.operator.queries import OperatorQueries
@@ -225,6 +236,27 @@ class GitRepoStatusService:
 
 
 TASK_WORKTREE_MISSING = "task worktree is missing"
+DIFF_TASK_MISSING = "task is missing"
+DIFF_NO_CHECKOUT = "task has no checkout recorded; diff is unavailable"
+DIFF_NO_LANDED_EVIDENCE = "Git evidence unavailable: no landed changes recorded for this task."
+DIFF_COMMIT_NOT_IN_TASK = "commit {commit} is not part of this task"
+DIFF_COMMIT_NO_PARENT = "commit {commit} has no parent; diff is unavailable"
+DIFF_COMMIT_MISSING = "Git evidence unavailable: {error}"
+DIFF_NOT_UTF8 = "Diff unavailable: Git output is not valid UTF-8."
+DIFF_NO_NET_BASE = "Git evidence unavailable: no base commit for this task's landed changes."
+DIFF_NO_PR_BASE = "Git evidence unavailable: no pull request base was recorded for this task."
+
+_BASE_SHA_KEY = "base_sha"
+_BRANCH_SHA_KEY = "branch_sha"
+_FEEDBACK_TIP_SHA_KEY = "sha"
+_LANDING_SHA_KEY = "landing_sha"
+_HEAD_REF = "HEAD"
+_LANDING_EVENTS = (
+    EventKind.INTEGRATION_APPLYING,
+    EventKind.PR_OPENED,
+    EventKind.FEEDBACK_PREPARED,
+    EventKind.FEEDBACK_PUBLISHED,
+)
 
 
 @dataclass(frozen=True)
@@ -283,6 +315,257 @@ class TaskWorkService:
         except (OSError, ShikiruError) as error:
             return TaskWorkSample(work=None, error=str(error))
         return TaskWorkSample(work=work, error=None)
+
+
+@dataclass(frozen=True)
+class _DiffScope:
+    repo_dir: Path
+    live: bool
+    integration: str | None = None
+    commits: tuple[ResultCommit, ...] = ()
+    net_range: str | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class _DiffSelection:
+    commit_range: str | None
+    untracked: tuple[str, ...] = ()
+
+
+class TaskDiffService:
+    """Report one task's Git diff from its landed evidence or its live worktree."""
+
+    def __init__(
+        self,
+        git: Git,
+        queries: OperatorQueries,
+        state: StateReader,
+        project_root: Path,
+    ) -> None:
+        """Read landed commits from `state` and live work from the worktree through `git`."""
+        self._git = git
+        self._queries = queries
+        self._state = state
+        self._project_root = project_root
+
+    async def load(self, task_id: str, commit: str, file: str | None) -> DiffDataView:
+        """Return the commits, files and patch of `task_id` for `commit` and `file`.
+
+        `commit` is `DIFF_ALL_COMMITS` for the net task diff or one commit's short hash.
+        `file` is the selected path; None or an unchanged path selects the first changed file.
+        Unavailable evidence and Git failures are returned as the view's error.
+        """
+        scope = await self._scope(task_id)
+        view = DiffDataView(
+            task_id=task_id,
+            live=scope.live,
+            includes_uncommitted=scope.live and commit == DIFF_ALL_COMMITS,
+            integration=scope.integration,
+            commits=scope.commits,
+            files=(),
+            patch="",
+            error=scope.error,
+        )
+        if scope.error is not None:
+            return view
+        try:
+            selection = await self._selection(scope, commit)
+            revisions = await self._file_revisions(scope.repo_dir, selection)
+            files = tuple(sorted(revisions))
+            view = replace(view, files=files)
+            selected = file if file in files else next(iter(files), None)
+            if selected is None:
+                return view
+            revision = revisions[selected]
+            patch = (
+                await self._git.new_file_patch(scope.repo_dir, selected)
+                if revision is None
+                else await self._git.file_patch(scope.repo_dir, revision, selected)
+            )
+        except UnicodeDecodeError:
+            return replace(view, error=DIFF_NOT_UTF8)
+        except (OSError, ShikiruError) as error:
+            return replace(view, error=str(error))
+        return replace(view, patch=patch)
+
+    async def _file_revisions(
+        self, repo_dir: Path, selection: _DiffSelection
+    ) -> dict[str, str | None]:
+        commit_range = selection.commit_range
+        if commit_range is None:
+            return {}
+        revisions: dict[str, str | None] = dict.fromkeys(selection.untracked)
+        for path in await self._git.diff_name_only(repo_dir, commit_range, detect_renames=False):
+            if path not in revisions:
+                revisions[path] = commit_range
+                continue
+            replaced = f"{commit_range}:{path}"
+            if await self._git.is_unchanged(repo_dir, replaced, path):
+                del revisions[path]
+            else:
+                revisions[path] = replaced
+        return revisions
+
+    async def _scope(self, task_id: str) -> _DiffScope:
+        task = self._queries.get_task_state(task_id)
+        if task is None:
+            return _DiffScope(self._project_root, True, error=DIFF_TASK_MISSING)
+        if task.repo is None:
+            return _DiffScope(
+                self._project_root, task.status is not Status.DONE, error=DIFF_NO_CHECKOUT
+            )
+        if task.status is Status.DONE:
+            return await self._landed_scope(task_id)
+        return await self._live_scope(task_id, task.repo.base_ref)
+
+    async def _landed_scope(self, task_id: str) -> _DiffScope:
+        events = self._state.events_since(
+            0, kinds=(EventKind.TASK_DONE, *_LANDING_EVENTS), task_id=task_id
+        )
+        done: dict[str, object] = {}
+        for event in events:
+            if event.kind is EventKind.TASK_DONE:
+                done = event.data
+        recorded = done.get(DONE_COMMITS_KEY)
+        if landed_changes(done) is None or not isinstance(recorded, list):
+            return _DiffScope(self._project_root, False, error=DIFF_NO_LANDED_EVIDENCE)
+        lines = [item for item in cast("list[object]", recorded) if isinstance(item, str)]
+        commits = tuple(parse_oneline(line) for line in lines)
+        label = done.get(DONE_INTEGRATION_KEY)
+        integration = label if isinstance(label, str) else None
+        scope = _DiffScope(self._project_root, False, integration, commits)
+        if not commits:
+            return scope
+        try:
+            net_range, shown = await self._landed_diff(commits, integration, lines, events)
+        except (OSError, ShikiruError) as error:
+            return replace(scope, error=DIFF_COMMIT_MISSING.format(error=error))
+        except ValueError as error:
+            return replace(scope, error=str(error))
+        return replace(scope, commits=shown, net_range=net_range)
+
+    async def _landed_diff(
+        self,
+        commits: tuple[ResultCommit, ...],
+        integration: str | None,
+        recorded: list[str],
+        events: list[Event],
+    ) -> tuple[str, tuple[ResultCommit, ...]]:
+        if integration in (MERGE_INTEGRATION, SQUASH_INTEGRATION):
+            return await self._local_landed_diff(commits, integration, recorded, events)
+        if integration != PULL_REQUEST_INTEGRATION:
+            raise ValueError(DIFF_NO_NET_BASE)
+        return await self._pull_request_landed_diff(commits, events)
+
+    async def _local_landed_diff(
+        self,
+        commits: tuple[ResultCommit, ...],
+        integration: str,
+        recorded: list[str],
+        events: list[Event],
+    ) -> tuple[str, tuple[ResultCommit, ...]]:
+        head = commits[0].sha
+        applying = next(
+            (
+                event.data
+                for event in reversed(events)
+                if event.kind is EventKind.INTEGRATION_APPLYING
+                and event.data.get(DONE_INTEGRATION_KEY) == integration
+                and event.data.get(DONE_COMMITS_KEY) == recorded
+            ),
+            None,
+        )
+        base = applying.get(_BASE_SHA_KEY) if applying is not None else None
+        landing_sha = applying.get(_LANDING_SHA_KEY) if applying is not None else None
+        if isinstance(base, str) and base and isinstance(landing_sha, str) and landing_sha:
+            resolved_head = await self._resolve_commit(head)
+            resolved_landing = await self._resolve_commit(landing_sha)
+            if resolved_head == resolved_landing:
+                return f"{base}..{resolved_head}", commits
+        raise ValueError(DIFF_NO_NET_BASE)
+
+    async def _pull_request_landed_diff(
+        self, commits: tuple[ResultCommit, ...], events: list[Event]
+    ) -> tuple[str, tuple[ResultCommit, ...]]:
+        head = commits[0].sha
+        parents = await self._git.commit_parents(self._project_root, head)
+        if not parents:
+            raise ValueError(DIFF_NO_NET_BASE)
+        parent = parents[0]
+        if len(parents) > 1:
+            branch = self._latest_pull_request_branch(events)
+            if branch is not None and isinstance(branch[0], str) and isinstance(branch[1], str):
+                resolved_head = await self._resolve_commit(head)
+                resolved_branch = await self._resolve_commit(branch[1])
+                if resolved_branch == resolved_head:
+                    return f"{branch[0]}..{resolved_head}", commits
+            return f"{parent}..{head}", commits[1:]
+        for base, tip in self._pull_request_base_candidates(events):
+            if (
+                isinstance(base, str)
+                and isinstance(tip, str)
+                and await self._git.merge_base_is_ancestor(self._project_root, tip, head)
+            ):
+                return f"{base}..{head}", commits
+        if len(commits) == 1:
+            return f"{parent}..{head}", commits
+        raise ValueError(DIFF_NO_PR_BASE)
+
+    async def _resolve_commit(self, commit: str) -> str:
+        return await self._git.rev_parse(self._project_root, f"{commit}^{{commit}}")
+
+    def _latest_pull_request_branch(self, events: list[Event]) -> tuple[object, object] | None:
+        event = next(
+            (
+                item
+                for item in reversed(events)
+                if item.kind in (EventKind.PR_OPENED, EventKind.FEEDBACK_PUBLISHED)
+            ),
+            None,
+        )
+        if event is None:
+            return None
+        tip_key = _BRANCH_SHA_KEY if event.kind is EventKind.PR_OPENED else _FEEDBACK_TIP_SHA_KEY
+        return event.data.get(_BASE_SHA_KEY), event.data.get(tip_key)
+
+    def _pull_request_base_candidates(
+        self, events: list[Event]
+    ) -> tuple[tuple[object, object], ...]:
+        prepared = tuple(
+            (event.data.get(_BASE_SHA_KEY), event.data.get(_FEEDBACK_TIP_SHA_KEY))
+            for event in reversed(events)
+            if event.kind is EventKind.FEEDBACK_PREPARED
+        )
+        published = self._latest_pull_request_branch(events)
+        return prepared + ((published,) if published is not None else ())
+
+    async def _live_scope(self, task_id: str, base_ref: str) -> _DiffScope:
+        repo_dir = self._queries.task_worktree_path(task_id)
+        try:
+            if not await asyncio.to_thread(repo_dir.is_dir) or not (
+                await self._git.is_repository_root(repo_dir)
+            ):
+                return _DiffScope(repo_dir, True, error=f"{TASK_WORKTREE_MISSING}: {repo_dir}")
+            lines = await self._git.log_oneline(repo_dir, f"{base_ref}..{_HEAD_REF}")
+            merge_base = await self._git.merge_base(repo_dir, base_ref, _HEAD_REF)
+        except UnicodeDecodeError:
+            return _DiffScope(repo_dir, True, error=DIFF_NOT_UTF8)
+        except (OSError, ShikiruError) as error:
+            return _DiffScope(repo_dir, True, error=str(error))
+        commits = tuple(parse_oneline(line) for line in lines)
+        return _DiffScope(repo_dir, True, commits=commits, net_range=merge_base)
+
+    async def _selection(self, scope: _DiffScope, commit: str) -> _DiffSelection:
+        if commit == DIFF_ALL_COMMITS:
+            untracked = await self._git.untracked_paths(scope.repo_dir) if scope.live else []
+            return _DiffSelection(scope.net_range, tuple(untracked))
+        if commit not in {item.sha for item in scope.commits}:
+            raise ShikiruError(DIFF_COMMIT_NOT_IN_TASK.format(commit=commit))
+        parents = await self._git.commit_parents(scope.repo_dir, commit)
+        if not parents:
+            raise ShikiruError(DIFF_COMMIT_NO_PARENT.format(commit=commit))
+        return _DiffSelection(f"{parents[0]}..{commit}")
 
 
 class DashboardServices:

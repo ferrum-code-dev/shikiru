@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from shikiru.dashboard.contract import DIFF_ALL_COMMITS
 from shikiru.domain.commands import ResolutionKind
 from shikiru.domain.escalation import transition_for_resolution
 from shikiru.domain.events import EventKind
@@ -28,6 +29,7 @@ from shikiru.workspace.github import GitHub, PullRequestState
 from shikiru.workspace.roots import task_root
 from tests.support import fake_gh
 from tests.support.clock import FakeClock
+from tests.support.diff import task_diff_service
 from tests.support.engine import build_fault_reporter, pr_poll_seconds, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
@@ -38,6 +40,7 @@ from tests.support.workspace import task_root_builder
 if TYPE_CHECKING:
     from shikiru.config.settings import Settings
     from shikiru.domain.tasks import Task
+    from shikiru.store.reader import StateReader
     from tests.support.engine import EngineEnv
     from tests.support.github import FakeGitHub
     from tests.support.tmux import TmuxServer
@@ -269,6 +272,7 @@ async def test_pull_request_records_the_verified_landing_after_update_and_restar
     engine_env: EngineEnv,
     fake_github: FakeGitHub,
     tmp_path_factory: pytest.TempPathFactory,
+    reader: StateReader,
 ) -> None:
     settings = flow_settings()
     clock = engine_env.clock
@@ -318,6 +322,11 @@ async def test_pull_request_records_the_verified_landing_after_update_and_restar
     assert done.data["changes"]["files"] == 2
     assert done.data["changes"]["insertions"] >= 2
     assert done.data["commits"] != opened.data["commits"]
+    view = await task_diff_service(reader, engine_env.project_root, clock).load(
+        task.id, DIFF_ALL_COMMITS, None
+    )
+    assert view.error is None
+    assert list(view.files) == sorted(await _changed_paths(remote_dir, before, landed))
 
 
 @pytest.mark.parametrize("case", _CASES.values(), ids=_CASES.keys())

@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     )
     from shikiru.domain.decisions import TaskDecisions
     from shikiru.domain.levels import UsageLevel
-    from shikiru.domain.results import TaskResults
+    from shikiru.domain.results import ResultCommit, TaskResults
     from shikiru.domain.tasks import EscalationReason, Role
     from shikiru.ui.strip import TaskStripData
 
@@ -47,6 +47,7 @@ from shikiru.domain.timeline import (
     TIMELINE_USAGE_CATEGORY,
 )
 
+DIFF_ALL_COMMITS = "all"
 WIDGET_ENTRY_POINT_GROUP = "shikiru.widgets"
 FOCUS_FAULTS_VIEW = "widget-faults"
 FOCUS_PROJECT_DIAGNOSTICS_VIEW = "project-diagnostics"
@@ -162,6 +163,7 @@ OpenPalette = Callable[[str], Awaitable[None]]
 OpenPaletteContext = Callable[[PaletteRequest], Awaitable[None]]
 OpenResolution = Callable[[str], Awaitable[None]]
 ResolutionScreenFactory = Callable[[str], "ModalScreen[bool]"]
+DiffScreenFactory = Callable[[str], "ModalScreen[None]"]
 SelectTaskContext = Callable[[str | None], None]
 OpenTaskDetail = Callable[[str], Awaitable[None]]
 OpenTaskDetailView = Callable[[str, str], Awaitable[None]]
@@ -169,6 +171,7 @@ NavigateTaskWindow = Callable[[str], Awaitable[str]]
 NavigateHome = Callable[[], Awaitable[str]]
 OpenContextualView = Callable[[str], Awaitable[None]]
 ActivateAttentionDecision = Callable[[], Awaitable[bool]]
+OpenDiff = Callable[[str], Awaitable[None]]
 
 
 class TaskBrowserFilter(StrEnum):
@@ -648,6 +651,20 @@ class TaskDetailView:
 
 
 @dataclass(frozen=True)
+class DiffDataView:
+    """One diff-popup read: scope labels, commit and file choices and the patch."""
+
+    task_id: str
+    live: bool
+    includes_uncommitted: bool
+    integration: str | None
+    commits: tuple[ResultCommit, ...]
+    files: tuple[str, ...]
+    patch: str
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class TaskFamilyOutcomeView:
     """The exact recorded count of family tasks in one lifecycle outcome."""
 
@@ -1123,3 +1140,4 @@ class WidgetContext:
     home_attention_present: bool = False
     open_contextual_view: OpenContextualView | None = None
     activate_attention_decision: ActivateAttentionDecision | None = None
+    open_diff: OpenDiff | None = None

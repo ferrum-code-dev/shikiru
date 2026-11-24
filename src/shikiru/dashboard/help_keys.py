@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from shikiru.dashboard.detail import TASK_DETAIL_VIEWS_KEY, TASK_WINDOW_KEY
+from shikiru.dashboard.detail import TASK_DETAIL_VIEWS_KEY, TASK_DIFF_KEY, TASK_WINDOW_KEY
 from shikiru.dashboard.resolution_view import EXTRA_DETAILS_KEY
 from shikiru.dashboard.timeline_filter import CLEAR_KEY, CYCLE_ROLE_KEY, CYCLE_TURN_KEY
 from shikiru.dashboard.timeline_section import FILTER_KEY
@@ -139,6 +139,10 @@ def _task_groups() -> tuple[HelpGroup, ...]:
         HelpGroup(
             "Workspace section",
             (HelpRow(TASK_WINDOW_KEY, "Open the task's tmux window while its section is focused"),),
+        ),
+        HelpGroup(
+            "Results section",
+            (HelpRow(TASK_DIFF_KEY, "View the task's Git diff while its section is focused"),),
         ),
     )
 
