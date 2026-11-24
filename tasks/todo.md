@@ -351,8 +351,3 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 - [x] Price Muse turns whose session log holds more completions than the stream's last `run.usage`
   - Acceptance: `MuseTurn._cumulative_usage` keeps only the first N session-log completions, where N is the sum of the `calls` counts in the last `run.usage` models entries, so the priced calls match the stream totals; `priced_usage` stays strict. Integration coverage in `tests/integration/test_muse_priced_turn.py` uses a fake Muse whose session log holds extra trailing completions beyond the stream's last `run.usage`. Replay of T-181 session `01a20a54-9b19-7661-9ef1-5db3cf6410d5` prices the first 113 calls at about 0.108 USD with `muse-ember-1.0`.
-
-### Stale quota-refresh faults (T-191)
-
-- [x] Record quota-refresh recovery only on verified reads
-  - Acceptance: a turn's quota reading never closes a probe failure's `quota refresh <agent>` fault; a verified read closes it at a mid-turn wait's block expiry or at engine start for every open refresh fault, including across restarts; a still-broken reader or a plugin without `read_quota` keeps the fault. Verification runs as supervised background work that engine start and the expiry never wait for, and shares each agent's single probe slot with the ordinary refresh: a concurrent refresh joins the running read, an active block's startup verification applies its reading, a requeue during it stays demanded, and a block created during block-free verification gets an immediate block-bound follow-up probe; an expiry without an open refresh fault reads nothing. Integration coverage in `tests/integration/test_quota_reconciler.py` and `tests/integration/test_reconcile_orphans.py` covers these lifecycles.

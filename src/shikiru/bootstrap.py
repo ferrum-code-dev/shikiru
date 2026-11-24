@@ -1100,7 +1100,6 @@ def build_engine(
             finish_task=task_finisher.finish_task,
             restore_escalation=escalation_raiser.ensure_actionable,
             restore_pull_request_closes=pull_request_closing.restore,
-            verify_quota_faults=reconciler.verify_open_faults,
             faults=fault_reporter,
             project_root=project_root,
         ),

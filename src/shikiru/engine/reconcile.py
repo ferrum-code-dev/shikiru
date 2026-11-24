@@ -34,16 +34,12 @@ class Reconciler:
         finish_task: Callable[[Task], Awaitable[Path | None]],
         restore_escalation: Callable[[Task], Awaitable[None]],
         restore_pull_request_closes: Callable[[], None],
-        verify_quota_faults: Callable[[], None],
         faults: FaultReporter,
         project_root: Path,
     ) -> None:
         """Resume in-flight tasks, finish terminal ones, restore escalations of escalated ones.
 
-        `verify_quota_faults` starts a supervised quota read per agent with an open refresh
-        fault, without waiting for it, so a fault left open when its block expired or cleared is
-        closed once the source works again. A fault in one step or task is recorded through
-        `faults`; the rest goes on.
+        A fault in one step or task is recorded through `faults`; the rest goes on.
         """
         self._tasks = tasks
         self._layout = layout
@@ -52,7 +48,6 @@ class Reconciler:
         self._finish_task = finish_task
         self._restore_escalation = restore_escalation
         self._restore_pull_request_closes = restore_pull_request_closes
-        self._verify_quota_faults = verify_quota_faults
         self._faults = faults
         self._project_root = project_root
         self._orphans_ended = False
@@ -87,8 +82,6 @@ class Reconciler:
             if task.status in _IN_FLIGHT and not task.held:
                 async with self._faults.isolate("reconcile resume", task_id=task.id):
                     await self._resume_task(task.id)
-        async with self._faults.isolate("reconcile quota refresh"):
-            self._verify_quota_faults()
 
     async def restore_escalations(self) -> None:
         """Give every escalated task an open escalation with its packet on disk."""

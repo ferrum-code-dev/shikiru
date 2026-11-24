@@ -9,11 +9,9 @@ from typing import TYPE_CHECKING
 
 from shikiru.agents.contracts import quota_probe_for
 from shikiru.domain.events import EventKind
-from shikiru.domain.faults import open_fault_streaks
 from shikiru.domain.quota_blocks import block_released
 from shikiru.domain.quota_waits import QuotaAction, ScheduledQuotaAction
 from shikiru.engine.quota_probe_threads import QuotaProbeThreads
-from shikiru.errors import ShikiruError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -34,11 +32,9 @@ QUOTA_RELEASE_REASON = "newer quota reading shows available quota"
 
 @dataclass(frozen=True, slots=True)
 class _Probe:
-    blocked_at: datetime | None
+    blocked_at: datetime
     task: asyncio.Task[None]
     demanded: bool
-    refresh_requested: bool = False
-    refresh_demanded: bool = False
 
 
 class QuotaReconciler:
@@ -100,45 +96,6 @@ class QuotaReconciler:
         for window in windows:
             self._quotas.record(agent, window)
 
-    def verify(self, agent: str) -> None:
-        """Start a supervised quota read of `agent` when its refresh fault is open.
-
-        Never waits for the read. A turn's quota reading proves that quota is available, not that
-        the plugin's quota reader works, so it never closes a refresh fault: only a successful read
-        does.
-        """
-        if agent in self._open_refresh_agents():
-            self._verify_agent(agent)
-
-    def verify_open_faults(self) -> None:
-        """Start a supervised quota read for every agent with an open refresh fault.
-
-        Probes run only while a block is in effect, so a fault left open when its block expired or
-        cleared is never re-probed: at engine start this records recovery where the source works
-        again and keeps the fault where it does not. Never waits for the reads.
-        """
-        for agent in self._open_refresh_agents():
-            self._verify_agent(agent)
-
-    def _open_refresh_agents(self) -> list[str]:
-        recorded = self._events.since(0, kinds=[EventKind.ENGINE_FAULT, EventKind.ENGINE_RECOVERED])
-        prefix = f"{QUOTA_REFRESH_SCOPE} "
-        return [
-            streak.scope.removeprefix(prefix)
-            for streak in open_fault_streaks(recorded)
-            if streak.task_id is None and streak.scope.startswith(prefix)
-        ]
-
-    def _verify_agent(self, agent: str) -> None:
-        now = self._clock.now()
-        block = self._quotas.block_for(agent)
-        if block is not None and block.until > now:
-            self.request_refresh(agent)
-            return
-        running = self._probes.get(agent)
-        if running is None or running.task.done():
-            self._start_probe(agent, blocked_at=None, demanded=False, now=now, next_check=now)
-
     def request_refresh(
         self, agent: str, *, demanded_at: datetime | None = None
     ) -> asyncio.Task[None] | None:
@@ -163,47 +120,13 @@ class QuotaReconciler:
                 if demanded and not running.demanded:
                     self._probes[agent] = _Probe(running.blocked_at, running.task, demanded=True)
                 return running.task
-            if running.blocked_at is None:
-                self._probes[agent] = _Probe(
-                    None,
-                    running.task,
-                    running.demanded,
-                    refresh_requested=True,
-                    refresh_demanded=running.refresh_demanded or demanded,
-                )
-                return running.task
             running.task.cancel()
         interval = timedelta(seconds=self._settings.interval_seconds)
         if last is not None and now - last < interval and not demanded:
             return None
-        return self._start_probe(
-            agent,
-            blocked_at=block.blocked_at,
-            demanded=demanded,
-            now=now,
-            next_check=now + interval,
-        )
-
-    def _start_probe(
-        self,
-        agent: str,
-        *,
-        blocked_at: datetime | None,
-        demanded: bool,
-        now: datetime,
-        next_check: datetime,
-    ) -> asyncio.Task[None] | None:
         self._probed_at[agent] = now
-        try:
-            probe = quota_probe_for(self._agents.get(agent))
-        except ShikiruError as error:
-            self._faults.report(error, scope=f"{QUOTA_REFRESH_SCOPE} {agent}")
-            return None
-        self.expect_check(agent, next_check)
-        if probe is None:
-            return None
-        task = asyncio.Task(self._probe(agent, probe, blocked_at), eager_start=True)
-        self._probes[agent] = _Probe(blocked_at, task, demanded=demanded)
+        task = asyncio.Task(self._probe(agent, block, now + interval), eager_start=True)
+        self._probes[agent] = _Probe(block.blocked_at, task, demanded=demanded)
         return task
 
     async def refresh(self, agent: str, *, demanded_at: datetime | None = None) -> None:
@@ -222,11 +145,9 @@ class QuotaReconciler:
         probe = self._probes.get(block.agent)
         return (
             probe is not None
+            and probe.demanded
+            and probe.blocked_at == block.blocked_at
             and not probe.task.done()
-            and (
-                (probe.demanded and probe.blocked_at == block.blocked_at)
-                or (probe.refresh_requested and probe.refresh_demanded and probe.blocked_at is None)
-            )
         )
 
     async def shutdown(self) -> None:
@@ -237,35 +158,20 @@ class QuotaReconciler:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _probe(self, agent: str, probe: QuotaProbe, blocked_at: datetime | None) -> None:
-        while True:
-            async with self._faults.isolate(f"{QUOTA_REFRESH_SCOPE} {agent}"):
-                reading = await self._read(agent, probe, blocked_at or self._clock.now())
-                current = self._quotas.block_for(agent)
-                if (
-                    blocked_at is not None
-                    and reading is not None
-                    and current is not None
-                    and current.blocked_at == blocked_at
-                ):
-                    self.observe(agent, reading.windows)
-            running = self._probes.get(agent)
-            if (
-                running is None
-                or running.task is not asyncio.current_task()
-                or (blocked_at is not None and not running.refresh_requested)
-            ):
+    async def _probe(self, agent: str, block: AgentBlock, next_check: datetime) -> None:
+        async with self._faults.isolate(f"{QUOTA_REFRESH_SCOPE} {agent}"):
+            self.expect_check(agent, next_check)
+            probe = quota_probe_for(self._agents.get(agent))
+            if probe is None:
                 return
-            now = self._clock.now()
+            reading = await self._read(agent, probe, block.blocked_at)
             current = self._quotas.block_for(agent)
-            if current is None or current.until <= now:
-                return
-            blocked_at = current.blocked_at
-            self._probed_at[agent] = now
-            self._probes[agent] = _Probe(
-                blocked_at, running.task, demanded=running.refresh_demanded
-            )
-            self.expect_check(agent, now + timedelta(seconds=self._settings.interval_seconds))
+            if (
+                reading is not None
+                and current is not None
+                and current.blocked_at == block.blocked_at
+            ):
+                self.observe(agent, reading.windows)
 
     async def _read(
         self, agent: str, probe: QuotaProbe, blocked_at: datetime

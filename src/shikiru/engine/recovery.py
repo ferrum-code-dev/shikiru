@@ -286,5 +286,4 @@ class TurnRecovery:
                 message=f"{agent} quota block cleared",
                 data={"agent": agent},
             )
-            self._reconciler.verify(agent)
             return None

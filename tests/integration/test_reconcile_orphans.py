@@ -9,22 +9,15 @@ import pytest
 
 from shikiru.agents.contracts import Rung
 from shikiru.config.settings import AgentConfig, ProjectConfig
-from shikiru.domain.events import EventKind
-from shikiru.domain.faults import open_fault_streaks
 from shikiru.domain.tasks import Role
-from shikiru.engine.agents import AgentPool
 from shikiru.engine.layout_guard import LayoutGuard
-from shikiru.engine.quota_reconciler import QUOTA_REFRESH_SCOPE, QuotaReconciler
-from shikiru.engine.quota_schedule import QuotaSchedule
 from shikiru.engine.reconcile import Reconciler
 from shikiru.engine.turn_processes import TurnProcesses
-from shikiru.errors import CommandFailed
 from shikiru.paths import run_dir
 from shikiru.process import SubprocessRunner
 from shikiru.store.commands import CommandQueue
 from shikiru.store.database import OperationalDatabaseError
 from shikiru.store.events import EventLog
-from shikiru.store.quotas import QuotaStore
 from shikiru.store.runs import RunStore
 from shikiru.store.tasks import TaskStore
 from shikiru.tmux.client import exact_target
@@ -32,12 +25,11 @@ from shikiru.tmux.decorator import PaneDecorator
 from shikiru.tmux.layout import LayoutBuilder
 from shikiru.tmux.session import SessionView, session_name
 from tests.support.clock import FakeClock
-from tests.support.engine import build_fault_reporter, build_registry, build_titles, build_tmux
+from tests.support.engine import build_fault_reporter, build_titles, build_tmux
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.waiting import wait_until
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
     from pathlib import Path
 
     from shikiru.clock import Clock
@@ -79,7 +71,6 @@ async def _reconciler(
     project: Path,
     *,
     fail_on_read: int,
-    verify_quota_faults: Callable[[], None] | None = None,
 ) -> Reconciler:
     settings = make_settings(
         leader_ladder=[_FAKE_RUNG],
@@ -122,9 +113,6 @@ async def _reconciler(
         finish_task=_noop,
         restore_escalation=_noop,
         restore_pull_request_closes=lambda: None,
-        verify_quota_faults=(
-            verify_quota_faults if verify_quota_faults is not None else lambda: None
-        ),
         faults=faults,
         project_root=project,
     )
@@ -158,45 +146,3 @@ async def test_a_reconcile_retried_after_a_late_fault_never_ends_a_turn_started_
 
     assert runner.is_running(descendant)
     await turn.stop(grace=_STOP_GRACE_SECONDS)
-
-
-async def test_reconcile_verifies_open_quota_refresh_faults(
-    connection: Connection,
-    tmux_server: TmuxServer,
-    tmp_path: Path,
-) -> None:
-    clock = FakeClock(TASK_CREATED_AT)
-    settings = make_settings(
-        leader_ladder=[_FAKE_RUNG],
-        implementer_ladder=[_FAKE_RUNG],
-        agents={"fake": AgentConfig()},
-    ).model_copy(update={"project": ProjectConfig(name="test", trackers=[])})
-    events = EventLog(connection, clock)
-    faults = build_fault_reporter(events, clock, settings)
-    faults.report(
-        CommandFailed(("fake",), 1, "unreadable"), scope=f"{QUOTA_REFRESH_SCOPE} {_FAKE_RUNG.agent}"
-    )
-    quota_reconciler = QuotaReconciler(
-        quotas=QuotaStore(connection),
-        agents=AgentPool(build_registry().create, SubprocessRunner(), settings, clock),
-        events=events,
-        clock=clock,
-        settings=settings.orchestration.quota_refresh,
-        faults=faults,
-        schedule=QuotaSchedule(),
-    )
-    reconciler = await _reconciler(
-        connection,
-        clock,
-        tmux_server,
-        tmp_path,
-        fail_on_read=0,
-        verify_quota_faults=quota_reconciler.verify_open_faults,
-    )
-
-    await _until_done(asyncio.create_task(reconciler.reconcile()))
-    await wait_until(lambda: not quota_reconciler.probing, _WAIT_SECONDS)
-
-    assert len(events.since(0, kinds=[EventKind.ENGINE_RECOVERED])) == 1
-    recorded = events.since(0, kinds=[EventKind.ENGINE_FAULT, EventKind.ENGINE_RECOVERED])
-    assert open_fault_streaks(recorded) == []
