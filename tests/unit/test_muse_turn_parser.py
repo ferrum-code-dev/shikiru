@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -30,6 +30,8 @@ from shikiru.agents.contracts import (
     UsageReported,
 )
 from shikiru.agents.sdk.reset_time import ResetTimeParser
+from shikiru.config.settings import TimeoutsConfig
+from shikiru.domain.activity import is_stalled
 from shikiru.domain.model_pricing import priced_usage
 from shikiru.domain.tasks import Role
 from shikiru.plugins.agents.muse.options import (
@@ -462,9 +464,8 @@ def test_tool_result_without_correlation_facts_ends_turn_with_terminal() -> None
 
 
 def test_tool_result_without_correlation_facts_leaves_pending_tool_to_finish() -> None:
-    signals = _signals(
-        [_bash_proposal_line(), _unknown_tool_line(), _terminal_completed_line()],
-    )
+    lines = _fixture_lines("tool_bash_detail")[:5]
+    signals = _signals([*lines, _unknown_tool_line(), _terminal_completed_line()])
 
     assert _of_type(signals, ToolStarted, ToolFinished) == [
         ToolStarted(_BASH, ""),
@@ -475,6 +476,42 @@ def test_tool_result_without_correlation_facts_leaves_pending_tool_to_finish() -
     ]
     assert _of_type(signals, TurnEnded) == [TurnEnded("OK")]
     assert _failures(signals) == []
+
+
+def test_stream_ending_after_proposed_tool_reports_no_running_tool_for_stall() -> None:
+    signals = _signals([_bash_proposal_line()])
+
+    assert _of_type(signals, ToolStarted, ToolFinished) == []
+    tool_running = False
+    for signal in signals:
+        if isinstance(signal, ToolStarted):
+            tool_running = True
+        elif isinstance(signal, ToolFinished):
+            tool_running = False
+    assert tool_running is False
+    timeouts = TimeoutsConfig(
+        stall=1200,
+        tool=7200,
+        max_quota_wait=28800,
+        integration_wait=1800,
+        pr_wait=604800,
+        helper=300,
+        cache_copy=600,
+        git_command=120,
+    )
+    assert (
+        is_stalled(_NOW - timedelta(seconds=timeouts.stall), tool_running, _NOW, timeouts) is True
+    )
+    assert is_stalled(_NOW - timedelta(seconds=timeouts.stall), True, _NOW, timeouts) is False
+
+
+def test_tool_result_without_prior_start_supplies_the_missing_start() -> None:
+    signals = _signals([_bash_proposal_line(), _tool_result_line('{"command": "ls"}', "success")])
+
+    assert _of_type(signals, ToolStarted, ToolFinished) == [
+        ToolStarted(_BASH, ""),
+        ToolFinished(_BASH, ToolOutcome.SUCCESS, None, "ls"),
+    ]
 
 
 def test_tool_result_with_null_correlation_facts_ends_turn_with_terminal() -> None:

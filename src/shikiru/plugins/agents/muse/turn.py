@@ -179,6 +179,7 @@ class _PendingTool:
     name: str
     detail: str = ""
     call_id: str | None = None
+    started: bool = False
 
 
 @dataclass(frozen=True)
@@ -271,7 +272,7 @@ class MuseTurnParser:
         self, exit_code: int, stderr: str, *, interrupted: bool = False
     ) -> list[AgentSignal]:
         unfinished: list[AgentSignal] = [
-            ToolFinished(tool.name, None, None) for tool in self._pending_tools
+            ToolFinished(tool.name, None, None) for tool in self._pending_tools if tool.started
         ]
         if self._malformed and not interrupted:
             return [*unfinished, _malformed_failure()]
@@ -303,7 +304,7 @@ class MuseTurnParser:
             return []
         name = task_kind.removeprefix(TOOL_TASK_KIND_PREFIX)
         self._pending_tools.append(_PendingTool(_text(payload, _TASK_ID_KEY), name))
-        return [ToolStarted(name, "")]
+        return []
 
     def _task_started(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         pending = next(
@@ -314,12 +315,14 @@ class MuseTurnParser:
             return []
         event = _mapping(payload.get(_EVENT_KEY))
         background_target = event.get(_BACKGROUND_TARGET_KEY)
-        if background_target is None:
+        if background_target is not None:
+            call_id = _optional_text(_mapping(background_target), _TOOL_CALL_ID_KEY)
+            if call_id and pending.call_id is None:
+                pending.call_id = call_id
+        if pending.started:
             return []
-        call_id = _optional_text(_mapping(background_target), _TOOL_CALL_ID_KEY)
-        if call_id and pending.call_id is None:
-            pending.call_id = call_id
-        return []
+        pending.started = True
+        return [ToolStarted(pending.name, "")]
 
     def _task_scheduled(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         pending = next(
@@ -371,6 +374,8 @@ class MuseTurnParser:
             signals.append(ToolStarted(name, ""))
             detail = _tool_detail(text)
         else:
+            if not pending.started:
+                signals.append(ToolStarted(name, ""))
             detail = "" if pending.detail else _tool_detail(text)
         signals.append(
             ToolFinished(
