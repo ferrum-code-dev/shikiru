@@ -8,6 +8,7 @@ from typing import NoReturn
 
 from shikiru.errors import UsageError
 from shikiru.process import SubprocessRunner
+from shikiru.ui.console import REMOTE_STDOUT_TERMINAL_ENV
 
 SSH_COMMAND = "ssh"
 SSH_TTY_OPTION = "-t"
@@ -18,12 +19,8 @@ HOST_OPTION_ASSIGNMENT_PREFIX = "--host="
 MCP_COMMAND = "mcp"
 JSON_OPTION = "--json"
 ATTACH_COMMAND = "attach"
-INIT_COMMAND = "init"
 START_COMMAND = "start"
-STATUS_COMMAND = "status"
-YES_OPTION = "--yes"
 ATTACH_OPTION = "--attach"
-WATCH_OPTION = "--watch"
 GLOBAL_VALUE_OPTIONS = ("--project", "--set")
 GLOBAL_VALUE_PREFIXES = ("--project=", "--set=")
 DASH = "-"
@@ -129,9 +126,8 @@ def _has_option(forwarded: list[str], flag: str) -> bool:
 def should_use_tty(forwarded: list[str]) -> bool:
     """Return whether the remote invocation needs a pseudo-terminal.
 
-    `attach` and `start --attach` always do. `init` and `status --watch` do only when both
-    local stdin and stdout are terminals, so redirected output and errors stay separate.
-    Everything else gets none.
+    `attach` and `start --attach` always do. Other human-facing commands do when both
+    local stdin, stdout and stderr are terminals. JSON and MCP keep separate streams.
     """
     command, _ = _command_at(forwarded)
     if command == MCP_COMMAND or _has_option(forwarded, JSON_OPTION):
@@ -140,30 +136,45 @@ def should_use_tty(forwarded: list[str]) -> bool:
         return True
     if command == START_COMMAND and _has_option(forwarded, ATTACH_OPTION):
         return True
-    if command == INIT_COMMAND and not _has_option(forwarded, YES_OPTION):
-        return sys.stdin.isatty() and sys.stdout.isatty()
-    if command == STATUS_COMMAND and _has_option(forwarded, WATCH_OPTION):
-        return sys.stdin.isatty() and sys.stdout.isatty()
-    return False
+    return sys.stdin.isatty() and sys.stdout.isatty() and sys.stderr.isatty()
 
 
-def remote_command(forwarded: list[str]) -> str:
+def remote_command(forwarded: list[str], *, force_stdout_terminal: bool = False) -> str:
     """Build the single shell-quoted remote command line."""
-    return shlex.join((SHIKIRU_COMMAND, *forwarded))
+    prefix = ("env", f"{REMOTE_STDOUT_TERMINAL_ENV}=1") if force_stdout_terminal else ()
+    return shlex.join((*prefix, SHIKIRU_COMMAND, *forwarded))
 
 
-def ssh_argv(host: str, forwarded: list[str], *, use_tty: bool) -> tuple[str, ...]:
+def ssh_argv(
+    host: str, forwarded: list[str], *, use_tty: bool, force_stdout_terminal: bool = False
+) -> tuple[str, ...]:
     """Build the `ssh` argv that runs the remote `shikiru` command."""
     validate_host(host)
     parts: list[str] = [SSH_COMMAND]
     if use_tty:
         parts.append(SSH_TTY_OPTION)
-    parts.extend((SSH_OPTION_TERMINATOR, host, remote_command(forwarded)))
+    parts.extend(
+        (
+            SSH_OPTION_TERMINATOR,
+            host,
+            remote_command(forwarded, force_stdout_terminal=force_stdout_terminal),
+        )
+    )
     return tuple(parts)
 
 
 def dispatch_to_host(host: str, argv: list[str]) -> NoReturn:
     """Forward `argv` without `--host` over ssh, replacing this process."""
     forwarded = strip_host_arguments(argv[1:] if argv else [])
-    command = ssh_argv(host, forwarded, use_tty=should_use_tty(forwarded))
+    use_tty = should_use_tty(forwarded)
+    name, _ = _command_at(forwarded)
+    force_stdout_terminal = (
+        not use_tty
+        and sys.stdout.isatty()
+        and name != MCP_COMMAND
+        and not _has_option(forwarded, JSON_OPTION)
+    )
+    command = ssh_argv(
+        host, forwarded, use_tty=use_tty, force_stdout_terminal=force_stdout_terminal
+    )
     SubprocessRunner().replace(command)

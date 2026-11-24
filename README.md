@@ -156,7 +156,7 @@ shikiru --host buildbox ls
 shikiru --host buildbox attach
 ```
 
-The dispatch happens before local project resolution: `--host` forwards all remaining arguments (without `--host`) to a remote `shikiru` over `ssh`, preserving output, errors, exit status and stdio. `--project` is treated as a remote path. Interactive use allocates a remote pseudo-terminal (`ssh -t`): `attach` and `start --attach` always, and the `init` wizard and `status --watch` when both local stdin and stdout are terminals. `init --yes`, detached `start`, every `--json` invocation and `mcp` run without one, so their streams stay separate and machine output is unchanged. Other commands also run without a pseudo-terminal, including redirected output and errors (`shikiru --host buildbox status >status.txt 2>errors.txt`).
+The dispatch happens before local project resolution: `--host` forwards all remaining arguments (without `--host`) to a remote `shikiru` over `ssh`, preserving exit status and stdio. `--project` is treated as a remote path. Human-facing commands allocate a remote pseudo-terminal (`ssh -t`) when local stdin, stdout and stderr are terminals; `attach` and `start --attach` always request one. SSH combines output and errors in a pseudo-terminal. Every `--json` invocation and `mcp` run without one, as do commands with redirected input or output (except attachment), so their streams stay separate (`shikiru --host buildbox status >status.txt 2>errors.txt`). When stdout is a terminal but stderr is redirected, stdout retains its colors while stderr stays separate.
 
 The command-specific `ls --host` and `attach --host` options are removed. Use the global form.
 

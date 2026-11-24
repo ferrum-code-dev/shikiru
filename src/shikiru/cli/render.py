@@ -1111,21 +1111,28 @@ def _token_total(usage: UsageView | None, *, input_tokens: bool) -> Text:
     if usage is None or usage.run_count == 0:
         return Text("unknown", style=SECONDARY_TEXT_COLOR)
     known_runs = usage.usage_reported_runs + usage.legacy_token_runs
-    if known_runs != usage.run_count:
+    if not known_runs:
         return Text("unknown", style=SECONDARY_TEXT_COLOR)
     tokens = usage.input_tokens if input_tokens else usage.output_tokens
-    return Text(compact_count(tokens), style=BOLD_STEEL)
+    result = Text(compact_count(tokens), style=BOLD_STEEL)
+    if known_runs < usage.run_count:
+        result.append(f" ({usage.run_count - known_runs} unknown)", style=SECONDARY_TEXT_COLOR)
+    return result
 
 
 def _cost_total(usage: UsageView | None) -> Text:
-    if (
-        usage is None
-        or usage.run_count == 0
-        or usage.billed_cost_runs != usage.run_count
-        or usage.billed_cost_usd is None
-    ):
+    if usage is None or usage.run_count == 0:
         return Text("unknown", style=SECONDARY_TEXT_COLOR)
-    return Text(f"${usage.billed_cost_usd:{STATUS_COST_FORMAT}}", style=SAGE)
+    parts: list[str] = []
+    if usage.billed_cost_usd is not None:
+        parts.append(f"${usage.billed_cost_usd:{STATUS_COST_FORMAT}} billed")
+    if usage.api_equivalent_cost_usd is not None:
+        parts.append(f"${usage.api_equivalent_cost_usd:{STATUS_COST_FORMAT}} estimated")
+    if usage.unknown_cost_runs:
+        parts.append(f"{usage.unknown_cost_runs} unknown")
+    return Text(
+        ", ".join(parts) if parts else "unknown", style=SAGE if parts else SECONDARY_TEXT_COLOR
+    )
 
 
 def _quota_cell(

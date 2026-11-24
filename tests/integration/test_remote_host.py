@@ -361,17 +361,17 @@ async def test_breaking_attach_host_option_removed() -> None:
         (["--project", "/srv/mcp", "status", "--watch"], True, True, True),
         (["init"], True, True, True),
         (["init"], True, False, False),
-        (["init", "--yes"], True, True, False),
+        (["init", "--yes"], True, True, True),
         (["init", "--json"], True, True, False),
         (["start", "--attach"], False, False, True),
-        (["start"], True, True, False),
+        (["start"], True, True, True),
         (["status", "--watch"], True, False, False),
         (["status", "--watch"], False, True, False),
         (["status", "--watch", "--json"], True, True, False),
         (["--json", "status", "--watch"], True, True, False),
-        (["status"], True, True, False),
-        (["ls"], True, True, False),
-        (["submit", "--", "--watch"], True, True, False),
+        (["status"], True, True, True),
+        (["ls"], True, True, True),
+        (["submit", "--", "--watch"], True, True, True),
         (["mcp"], True, True, False),
         (["--", "ls", "--json"], True, True, False),
     ],
@@ -385,7 +385,52 @@ def test_should_use_tty_by_command_and_terminals(
 ) -> None:
     monkeypatch.setattr(sys.stdin, "isatty", lambda: stdin_tty)
     monkeypatch.setattr(sys.stdout, "isatty", lambda: stdout_tty)
+    monkeypatch.setattr(sys.stderr, "isatty", lambda: stdout_tty)
     assert should_use_tty(forwarded) is expected
+
+
+@pytest.mark.asyncio
+async def test_remote_terminal_keeps_redirected_stderr_separate(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    capture = tmp_path / "capture.json"
+    _write_executable(
+        bin_dir,
+        "ssh",
+        """
+import os, sys
+assert '-t' not in sys.argv
+os.execvp('sh', ['sh', '-c', sys.argv[-1]])
+""",
+    )
+    _write_executable(
+        bin_dir,
+        "shikiru",
+        """
+from shikiru.ui.console import human_console
+human_console().print('[red]output[/red]', markup=True)
+human_console(stderr=True).print('[red]error[/red]', markup=True)
+""",
+    )
+    env = _test_env(bin_dir, capture)
+    env.pop("NO_COLOR")
+    env["TERM"] = "xterm"
+    errors = tmp_path / "errors.txt"
+    command = shlex.join([sys.executable, "-m", "shikiru", "--host", "buildbox", "status"])
+    process = await SubprocessRunner().spawn_terminal(
+        ["sh", "-c", f"exec {command} 2>{shlex.quote(str(errors))}"], env=env
+    )
+    try:
+        await wait_until(lambda: process.returncode is not None, timeout=MEDIUM_WAIT_SECONDS)
+        await wait_until(lambda: b"output" in process.output, timeout=MEDIUM_WAIT_SECONDS)
+        output = process.output
+    finally:
+        await process.stop()
+    stderr = errors.read_bytes()
+    assert process.returncode == 0
+    assert b"\x1b[" in output
+    assert b"output" in output
+    assert b"error" in stderr
+    assert b"\x1b[" not in stderr
 
 
 @pytest.mark.asyncio
@@ -488,13 +533,13 @@ sys.exit(0)
         (["--", "attach"], True),
         (["status", "--watch"], True),
         (["init"], True),
-        (["init", "--yes"], False),
+        (["init", "--yes"], True),
         (["start", "--attach"], True),
-        (["start"], False),
-        (["status"], False),
+        (["start"], True),
+        (["status"], True),
         (["--", "ls", "--json"], False),
-        (["submit", "--", "--json"], False),
-        (["submit", "--", "--watch"], False),
+        (["submit", "--", "--json"], True),
+        (["submit", "--", "--watch"], True),
     ],
 )
 @pytest.mark.asyncio

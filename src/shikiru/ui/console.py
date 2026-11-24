@@ -28,11 +28,20 @@ OSC8_TERMINAL_NAMES = frozenset(
     }
 )
 MIN_VTE_OSC8_VERSION = 5000
+REMOTE_STDOUT_TERMINAL_ENV = "SHIKIRU_REMOTE_STDOUT_TERMINAL"
 
 
 def human_console(*, stderr: bool = False) -> Console:
     """Return a Rich console that keeps human data literal and detects terminal output modes."""
-    return Console(stderr=stderr, soft_wrap=True, markup=False, highlight=False, emoji=False)
+    force_terminal = True if not stderr and os.environ.get(REMOTE_STDOUT_TERMINAL_ENV) else None
+    return Console(
+        stderr=stderr,
+        force_terminal=force_terminal,
+        soft_wrap=True,
+        markup=False,
+        highlight=False,
+        emoji=False,
+    )
 
 
 def supports_osc8(console: Console) -> bool:

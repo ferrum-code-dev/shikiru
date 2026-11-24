@@ -134,10 +134,11 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
                 cache_write_tokens=0,
                 cost_usd=0.42,
                 cost_basis="api_equivalent",
-                run_count=1,
+                run_count=2,
                 usage_reported_runs=1,
                 api_equivalent_cost_usd=0.42,
                 api_equivalent_cost_runs=1,
+                unknown_cost_runs=1,
             )
         ],
         faults=[],
@@ -193,7 +194,10 @@ def test_project_status_and_task_status_keep_their_own_scope() -> None:
     assert custom_headline in project_output
     assert "5h" in project_output
     assert "5.0 MiB" in project_output
-    assert all(fact in project_output for fact in ("100", "50", "unknown"))
+    assert all(
+        fact in project_output
+        for fact in ("100 (1 unknown)", "50 (1 unknown)", "$0.42 estimated", "1 unknown")
+    )
     assert "T-detail · Add retry to parser" in task_output
     assert "accept" in task_output
     assert "Reviewed" in task_output
