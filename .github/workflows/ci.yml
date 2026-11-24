@@ -56,15 +56,8 @@ jobs:
         with:
           host-tools: "true"
 
-      - name: Report disk use before the tests
-        run: bash .github/scripts/disk-usage.sh || true
-
       - name: Run tests
         run: uv run --locked poe test
-
-      - name: Report disk use after the tests
-        if: always()
-        run: bash .github/scripts/disk-usage.sh || true
 
   smoke:
     name: smoke (${{ matrix.os }})
@@ -88,7 +81,3 @@ jobs:
 
       - name: Build and exercise package distributions
         run: bash .github/scripts/release-readiness-smoke.sh
-
-      - name: Report disk use after the package smoke
-        if: always()
-        run: bash .github/scripts/disk-usage.sh || true
