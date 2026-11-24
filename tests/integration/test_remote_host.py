@@ -8,6 +8,7 @@ import sys
 from typing import TYPE_CHECKING
 
 import pytest
+from click import unstyle
 from typer.testing import CliRunner
 
 from shikiru.cli.app import app
@@ -338,7 +339,7 @@ async def test_breaking_ls_host_option_removed() -> None:
     runner = CliRunner()
     result = await asyncio.to_thread(runner.invoke, app, ["ls", "--host", "buildbox"])
     assert result.exit_code == EXIT_USAGE_ERROR
-    assert "No such option: --host" in result.output
+    assert "No such option: --host" in unstyle(result.output)
 
 
 @pytest.mark.asyncio
@@ -346,7 +347,7 @@ async def test_breaking_attach_host_option_removed() -> None:
     runner = CliRunner()
     result = await asyncio.to_thread(runner.invoke, app, ["attach", "myproj", "--host", "buildbox"])
     assert result.exit_code == EXIT_USAGE_ERROR
-    assert "No such option: --host" in result.output
+    assert "No such option: --host" in unstyle(result.output)
 
 
 @pytest.mark.parametrize(
