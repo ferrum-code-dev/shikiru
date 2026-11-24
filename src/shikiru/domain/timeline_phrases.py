@@ -231,10 +231,10 @@ def tool_target(detail: str) -> str:
 
 
 def _tool_verb(data: Mapping[str, object], name: str) -> str:
-    try:
-        kind = ToolKind(str(data.get(_KIND_FIELD)))
-    except ValueError:
+    raw = data.get(_KIND_FIELD)
+    if raw is None:
         return name
+    kind = ToolKind(str(raw))
     return _TOOL_KIND_VERBS[kind]
 
 

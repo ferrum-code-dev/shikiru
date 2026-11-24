@@ -14,7 +14,6 @@ from shikiru.agents.contracts import (
     QuotaReported,
     QuotaWindow,
     SessionStarted,
-    ToolFinished,
     ToolKind,
     ToolStarted,
     TurnEnded,
@@ -636,26 +635,6 @@ def _parser(tmp_path: Path) -> CodexTurnParser:
     )
 
 
-def test_web_search_completion_carries_the_search_kind_and_query(tmp_path: Path) -> None:
-    signals = _parser(tmp_path).feed(
-        json.dumps(
-            {
-                "type": "item.completed",
-                "item": {
-                    "id": "item_7",
-                    "type": "web_search",
-                    "query": "codex exec --json schema",
-                },
-            }
-        )
-    )
-
-    assert signals == [
-        ToolStarted("web_search", "codex exec --json schema", ToolKind.SEARCHED),
-        ToolFinished("web_search"),
-    ]
-
-
 def test_mcp_web_tools_carry_their_kinds(tmp_path: Path) -> None:
     parser = _parser(tmp_path)
 
@@ -691,7 +670,7 @@ def test_mcp_web_tools_carry_their_kinds(tmp_path: Path) -> None:
     )
 
     assert found == [ToolStarted("web_search", "", ToolKind.SEARCHED)]
-    assert fetched == [ToolStarted("web_fetch", "", ToolKind.READ)]
+    assert fetched == [ToolStarted("web_fetch", "")]
 
 
 def test_mcp_unknown_tool_keeps_its_raw_name_without_a_kind(tmp_path: Path) -> None:

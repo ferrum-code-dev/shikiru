@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.timeline_phrases import (
     GLYPH_ALARM,
@@ -125,3 +127,11 @@ SIGNAL_ROWS: list[tuple[str, str, dict[str, object], Phrase | None]] = [
 def test_agent_signals_read_as_one_human_phrase() -> None:
     for name, signal, data, expected in SIGNAL_ROWS:
         assert signal_phrase(signal, data) == expected, name
+
+
+def test_invalid_tool_kind_is_rejected() -> None:
+    with pytest.raises(ValueError, match="bogus"):
+        signal_phrase(
+            "ToolStarted",
+            {"name": "Bash", "kind": "bogus", "detail": '{"command":"pytest -q"}'},
+        )

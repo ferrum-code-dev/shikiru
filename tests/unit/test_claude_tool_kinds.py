@@ -15,9 +15,7 @@ TOOL_KIND_ROWS = (
     ("Grep", ToolKind.SEARCHED),
     ("Glob", ToolKind.SEARCHED),
     ("WebSearch", ToolKind.SEARCHED),
-    ("web_search", ToolKind.SEARCHED),
     ("WebFetch", ToolKind.READ),
-    ("web_fetch", ToolKind.READ),
 )
 
 UNKNOWN_TOOL = "shikiru report"

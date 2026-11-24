@@ -880,9 +880,7 @@ _TOOL_KINDS = {
     "edit_file": ToolKind.EDITED,
     "write_file": ToolKind.EDITED,
     "search": ToolKind.SEARCHED,
-    "WebSearch": ToolKind.SEARCHED,
     "web_search": ToolKind.SEARCHED,
-    "WebFetch": ToolKind.READ,
     "web_fetch": ToolKind.READ,
 }
 

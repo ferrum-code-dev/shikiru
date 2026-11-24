@@ -824,9 +824,7 @@ _TOOL_KINDS = {
     "Grep": ToolKind.SEARCHED,
     "Glob": ToolKind.SEARCHED,
     "WebSearch": ToolKind.SEARCHED,
-    "web_search": ToolKind.SEARCHED,
     "WebFetch": ToolKind.READ,
-    "web_fetch": ToolKind.READ,
 }
 
 

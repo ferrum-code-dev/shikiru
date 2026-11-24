@@ -344,10 +344,6 @@ class CodexTurnParser:
         item_id = item.get(_ITEM_ID_FIELD)
         if isinstance(item_id, str):
             name = self._tools.pop(item_id, None)
-            if name is None:
-                name = _tool_name(item)
-                if name is not None:
-                    signals.append(ToolStarted(name, _tool_detail(item), tool_kind(name)))
             if name is not None:
                 item_type = item.get(_ITEM_TYPE_FIELD)
                 exit_code = (
@@ -796,9 +792,6 @@ _TOOL_KINDS = {
     _COMMAND_TOOL_NAME: ToolKind.RAN,
     _FILE_CHANGE_TOOL_NAME: ToolKind.EDITED,
     _WEB_SEARCH_TOOL_NAME: ToolKind.SEARCHED,
-    "WebSearch": ToolKind.SEARCHED,
-    "WebFetch": ToolKind.READ,
-    "web_fetch": ToolKind.READ,
 }
 
 

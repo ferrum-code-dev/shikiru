@@ -8,10 +8,7 @@ from shikiru.plugins.agents.codex.turn import tool_kind
 TOOL_KIND_ROWS = (
     ("command", ToolKind.RAN),
     ("file_change", ToolKind.EDITED),
-    ("WebSearch", ToolKind.SEARCHED),
     ("web_search", ToolKind.SEARCHED),
-    ("WebFetch", ToolKind.READ),
-    ("web_fetch", ToolKind.READ),
 )
 
 UNKNOWN_TOOL = "mcp_tool"
