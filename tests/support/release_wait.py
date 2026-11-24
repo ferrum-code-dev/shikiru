@@ -247,50 +247,75 @@ async def click_button(tmux: str, socket: str, target: str, label: str, expected
     raise RuntimeError(message)
 
 
+def _ladder_is_set(capture: str, scope: str, value: str) -> bool:
+    expected = f"{scope} {value}"
+    return any(
+        " ".join(segment.split()) == expected
+        for line in capture.splitlines()
+        for segment in line.split(PANEL_VERTICAL_BORDER)
+    )
+
+
+def _ladder_field_position(capture: str, scope: str) -> tuple[int, int] | None:
+    if f"Edit {scope}" not in capture:
+        return None
+    rows = capture.splitlines()
+    row = next((index for index, line in enumerate(rows) if LADDER_FIELD_LABEL in line), None)
+    if row is None:
+        return None
+    line = rows[row]
+    outer_border = line.rfind(PANEL_VERTICAL_BORDER)
+    inner_border = line.rfind(PANEL_VERTICAL_BORDER, 0, outer_border)
+    if inner_border < 0:
+        return None
+    return (
+        cell_len(line[:inner_border]) - INPUT_CLICK_PADDING,
+        row + TERMINAL_COORDINATE_OFFSET,
+    )
+
+
+async def _replace_ladder_text(
+    tmux: str, socket: str, target: str, position: tuple[int, int], value: str
+) -> None:
+    await _click_at(tmux, socket, target, *position)
+    for arguments in (
+        ("send-keys", "-t", target, "C-a"),
+        ("send-keys", "-t", target, "C-k"),
+        ("send-keys", "-l", "-t", target, value),
+    ):
+        result = await RUNNER.run(_tmux_command(tmux, socket, *arguments), timeout=COMMAND_TIMEOUT)
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr)
+
+
 async def set_ladder(tmux: str, socket: str, target: str, scope: str, value: str) -> None:
-    capture = ""
+    async def screen() -> str:
+        return await capture_pane(tmux, socket, target)
 
-    async def entered() -> bool:
-        nonlocal capture
-        capture = await capture_pane(tmux, socket, target)
-        if f"Edit {scope}" not in capture:
-            return False
-        expected = f"{scope} {value}"
-        if any(
-            " ".join(segment.split()) == expected
-            for line in capture.splitlines()
-            for segment in line.split(PANEL_VERTICAL_BORDER)
-        ):
-            return True
-        rows = capture.splitlines()
-        row = next((index for index, line in enumerate(rows) if LADDER_FIELD_LABEL in line), None)
-        if row is None:
-            return False
-        line = rows[row]
-        outer_border = line.rfind(PANEL_VERTICAL_BORDER)
-        inner_border = line.rfind(PANEL_VERTICAL_BORDER, 0, outer_border)
-        if inner_border < 0:
-            return False
-        x = cell_len(line[:inner_border]) - INPUT_CLICK_PADDING
-        y = row + TERMINAL_COORDINATE_OFFSET
-        await _click_at(tmux, socket, target, x, y)
-        for arguments in (
-            ("send-keys", "-t", target, "C-a"),
-            ("send-keys", "-t", target, "C-k"),
-            ("send-keys", "-l", "-t", target, value),
-        ):
-            result = await RUNNER.run(
-                _tmux_command(tmux, socket, *arguments), timeout=COMMAND_TIMEOUT
+    for _ in range(CLICK_ATTEMPTS):
+        editor = await wait_for(
+            screen,
+            lambda capture: _ladder_field_position(capture, scope) is not None,
+            timeout=WAIT_TIMEOUT,
+        )
+        position = _ladder_field_position(editor, scope)
+        if position is None:
+            message = f"{scope} editor lost its field"
+            raise RuntimeError(message)
+        if _ladder_is_set(editor, scope, value):
+            return
+        await _replace_ladder_text(tmux, socket, target, position, value)
+        try:
+            await wait_for(
+                screen,
+                lambda capture: _ladder_is_set(capture, scope, value),
+                timeout=CLICK_CONFIRM_SECONDS,
             )
-            if result.returncode != 0:
-                raise RuntimeError(result.stderr)
-        return False
-
-    try:
-        await wait_until(entered, timeout=WAIT_TIMEOUT)
-    except WaitTimeoutError:
-        sys.stderr.write(capture + "\n")
-        raise
+        except WaitTimeoutError:
+            continue
+        return
+    message = f"{scope} did not take {value!r} after {CLICK_ATTEMPTS} attempts"
+    raise RuntimeError(message)
 
 
 MODES = {
