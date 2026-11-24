@@ -19,6 +19,7 @@ from shikiru.domain.faults import (
     SCOPE_KEY,
     STDERR_KEY,
     TRACEBACK_KEY,
+    open_fault_streaks,
 )
 from shikiru.errors import CommandFailed, CommandTimeoutError, InvariantError, ShikiruError
 from shikiru.store.database import OperationalDatabaseError
@@ -78,7 +79,7 @@ class FaultReporter:
         self._settings = settings
         self._logger = logger
         self._streaks: dict[tuple[str, str | None, str], _Streak] = {}
-        self._open: set[tuple[str, str | None]] = set()
+        self._open: set[tuple[str, str | None]] | None = None
 
     def report(self, error: Exception, *, scope: str, task_id: str | None = None) -> bool:
         """Record `error` raised in `scope` unless just recorded, and classify it.
@@ -113,14 +114,17 @@ class FaultReporter:
                 return recoverable
             streak.recorded_at = now
             streak.occurrences = 0
-            self._open.add((scope, task_id))
+            if self._open is not None:
+                self._open.add((scope, task_id))
         return recoverable
 
     def resolve(self, scope: str, *, task_id: str | None = None) -> None:
-        """Record an `engine_recovered` event when `scope` failed, was recorded, and now works."""
-        if (scope, task_id) not in self._open:
-            return
+        """Record an `engine_recovered` event when `scope` has an open recorded fault."""
         try:
+            if self._open is None:
+                self._open = self._recorded_open()
+            if (scope, task_id) not in self._open:
+                return
             self._events.append(
                 EventKind.ENGINE_RECOVERED,
                 task_id=task_id,
@@ -131,6 +135,10 @@ class FaultReporter:
             self._logger.exception("could not record the recovery of %s", scope)
             return
         self._open.remove((scope, task_id))
+
+    def _recorded_open(self) -> set[tuple[str, str | None]]:
+        recorded = self._events.since(0, kinds=[EventKind.ENGINE_FAULT, EventKind.ENGINE_RECOVERED])
+        return {(streak.scope, streak.task_id) for streak in open_fault_streaks(recorded)}
 
     @asynccontextmanager
     async def isolate(self, scope: str, *, task_id: str | None = None) -> AsyncGenerator[None]:
