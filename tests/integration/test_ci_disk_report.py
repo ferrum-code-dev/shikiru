@@ -1,4 +1,4 @@
-"""The CI disk report runs around the quality gate and the package smoke and never fails the job."""
+"""The CI disk report runs around the tests and the package smoke and never fails the job."""
 
 from __future__ import annotations
 
@@ -14,8 +14,9 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 SCRIPT = ROOT / ".github" / "scripts" / "disk-usage.sh"
 CHECK_JOB = "check"
+SMOKE_JOB = "smoke"
 DISK_REPORT_MARKER = "disk-usage.sh"
-QUALITY_GATE_MARKER = "poe check"
+TESTS_MARKER = "poe test"
 PACKAGE_SMOKE_MARKER = "release-readiness-smoke.sh"
 ALWAYS = "always()"
 NEVER_FAILS_SUFFIX = "|| true"
@@ -25,13 +26,13 @@ BYTES_PER_ENTRY = 4096
 SCRIPT_TIMEOUT_SECONDS = 60.0
 
 
-def check_job() -> dict[str, Any]:
+def job(name: str) -> dict[str, Any]:
     workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    return cast("dict[str, Any]", workflow["jobs"][CHECK_JOB])
+    return cast("dict[str, Any]", workflow["jobs"][name])
 
 
-def check_steps() -> list[dict[str, Any]]:
-    return cast("list[dict[str, Any]]", check_job()["steps"])
+def steps_of(name: str) -> list[dict[str, Any]]:
+    return cast("list[dict[str, Any]]", job(name)["steps"])
 
 
 def disk_report_positions(steps: list[dict[str, Any]]) -> list[int]:
@@ -64,35 +65,43 @@ async def run_report(environment: dict[str, str]) -> ProcessResult:
     )
 
 
-def test_the_disk_report_runs_before_the_gate_after_it_and_after_the_smoke() -> None:
-    steps = check_steps()
-    before_gate, after_gate, after_smoke = disk_report_positions(steps)
-    assert before_gate < position_of(steps, QUALITY_GATE_MARKER) < after_gate
-    assert after_gate < position_of(steps, PACKAGE_SMOKE_MARKER) < after_smoke
+def test_the_disk_report_runs_before_and_after_the_tests() -> None:
+    steps = steps_of(CHECK_JOB)
+    before_tests, after_tests = disk_report_positions(steps)
+    assert before_tests < position_of(steps, TESTS_MARKER) < after_tests
+
+
+def test_the_disk_report_runs_after_the_package_smoke() -> None:
+    steps = steps_of(SMOKE_JOB)
+    (after_smoke,) = disk_report_positions(steps)
+    assert position_of(steps, PACKAGE_SMOKE_MARKER) < after_smoke
 
 
 def test_the_disk_reports_run_on_ubuntu_and_macos() -> None:
-    operating_systems = check_job()["strategy"]["matrix"]["os"]
-    assert {"ubuntu-24.04", "macos-15"} <= set(operating_systems)
+    for name in (CHECK_JOB, SMOKE_JOB):
+        operating_systems = job(name)["strategy"]["matrix"]["os"]
+        assert {"ubuntu-24.04", "macos-15"} <= set(operating_systems)
 
 
-def test_the_reports_after_the_gate_and_the_smoke_run_even_when_those_failed() -> None:
-    steps = check_steps()
-    _, after_gate, after_smoke = disk_report_positions(steps)
-    assert steps[after_gate]["if"] == ALWAYS
-    assert steps[after_smoke]["if"] == ALWAYS
+def test_the_reports_after_the_tests_and_the_smoke_run_even_when_those_failed() -> None:
+    _, after_tests = disk_report_positions(steps_of(CHECK_JOB))
+    (after_smoke,) = disk_report_positions(steps_of(SMOKE_JOB))
+    assert steps_of(CHECK_JOB)[after_tests]["if"] == ALWAYS
+    assert steps_of(SMOKE_JOB)[after_smoke]["if"] == ALWAYS
 
 
 def test_no_disk_report_is_skipped_on_either_operating_system() -> None:
-    steps = check_steps()
-    conditions = {steps[position].get("if") for position in disk_report_positions(steps)}
-    assert conditions <= {None, ALWAYS}
+    for name in (CHECK_JOB, SMOKE_JOB):
+        steps = steps_of(name)
+        conditions = {steps[position].get("if") for position in disk_report_positions(steps)}
+        assert conditions <= {None, ALWAYS}
 
 
 def test_every_disk_report_step_is_guarded_so_it_cannot_fail_the_job() -> None:
-    steps = check_steps()
-    commands = [str(steps[position]["run"]) for position in disk_report_positions(steps)]
-    assert all(command.endswith(NEVER_FAILS_SUFFIX) for command in commands)
+    for name in (CHECK_JOB, SMOKE_JOB):
+        steps = steps_of(name)
+        commands = [str(steps[position]["run"]) for position in disk_report_positions(steps)]
+        assert all(command.endswith(NEVER_FAILS_SUFFIX) for command in commands)
 
 
 async def test_the_report_exits_successfully_when_its_folders_are_missing(tmp_path: Path) -> None:
