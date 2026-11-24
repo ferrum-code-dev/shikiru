@@ -145,7 +145,7 @@ class ResourceSampler:
             if identity not in agent_identities
         }
         all_processes = {**shikiru_processes, **agent_processes}
-        measurements = self._measure_processes(all_processes, now.timestamp())
+        measurements = self._measure_processes(all_processes)
         shikiru_measurements = [
             measurement
             for identity, measurement in measurements.items()
@@ -244,23 +244,20 @@ class ResourceSampler:
     def _measure_processes(
         self,
         processes: dict[tuple[int, float], psutil.Process],
-        now_timestamp: float,
     ) -> dict[tuple[int, float], tuple[float, int]]:
         measurements: dict[tuple[int, float], tuple[float, int]] = {}
         for identity, process in processes.items():
-            first_sight_at = None if identity in self._processes else now_timestamp
-            measurement = self._measure(process, first_sight_at)
+            measurement = self._measure(process, first_sight=identity not in self._processes)
             if measurement is not None:
                 measurements[identity] = measurement
         return measurements
 
-    @staticmethod
-    def _measure(process: psutil.Process, first_sight_at: float | None) -> tuple[float, int] | None:
+    def _measure(self, process: psutil.Process, *, first_sight: bool) -> tuple[float, int] | None:
         try:
             with process.oneshot():
                 cpu_pct = process.cpu_percent(interval=None)
-                if first_sight_at is not None:
-                    cpu_pct = _lifetime_cpu_pct(process, first_sight_at)
+                if first_sight:
+                    cpu_pct = _lifetime_cpu_pct(process, self._clock)
                 return cpu_pct, process.memory_info().rss
         except psutil.NoSuchProcess, psutil.ZombieProcess:
             return None
@@ -273,9 +270,9 @@ class ResourceSampler:
             self._host_cpu.popleft()
 
 
-def _lifetime_cpu_pct(process: psutil.Process, now_timestamp: float) -> float:
+def _lifetime_cpu_pct(process: psutil.Process, clock: Clock) -> float:
     times = process.cpu_times()
-    lifetime = max(now_timestamp - process.create_time(), _MIN_LIFETIME_SECONDS)
+    lifetime = max(clock.now().timestamp() - process.create_time(), _MIN_LIFETIME_SECONDS)
     return (times.user + times.system) * _PERCENT_PER_CORE / lifetime
 
 
