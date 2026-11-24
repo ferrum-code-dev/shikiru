@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
-
 from shikiru.domain.events import Event, EventKind
 from shikiru.domain.timeline_phrases import (
     GLYPH_ALARM,
@@ -121,17 +119,27 @@ SIGNAL_ROWS: list[tuple[str, str, dict[str, object], Phrase | None]] = [
         Phrase("quota: limit reached", GLYPH_FAIL, Tone.FAILURE),
     ),
     ("unknown-signal-is-visible", "FutureSignal", {}, Phrase("FutureSignal")),
+    (
+        "tool-without-kind-shows-its-name",
+        "ToolStarted",
+        {"name": "web_fetch", "detail": '{"url":"https://example.com"}'},
+        Phrase("web_fetch https://example.com"),
+    ),
+    (
+        "tool-kind-reads-as-verb",
+        "ToolStarted",
+        {"name": "bash", "kind": "ran", "detail": '{"command":"pytest -q"}'},
+        Phrase("ran pytest -q"),
+    ),
+    (
+        "unknown-tool-kind-is-flagged-not-fatal",
+        "ToolStarted",
+        {"name": "Bash", "kind": "bogus", "detail": '{"command":"pytest -q"}'},
+        Phrase("Bash has unknown tool kind bogus", GLYPH_ATTENTION, Tone.WARNING),
+    ),
 ]
 
 
 def test_agent_signals_read_as_one_human_phrase() -> None:
     for name, signal, data, expected in SIGNAL_ROWS:
         assert signal_phrase(signal, data) == expected, name
-
-
-def test_invalid_tool_kind_is_rejected() -> None:
-    with pytest.raises(ValueError, match="bogus"):
-        signal_phrase(
-            "ToolStarted",
-            {"name": "Bash", "kind": "bogus", "detail": '{"command":"pytest -q"}'},
-        )

@@ -62,13 +62,14 @@ _SUCCESS_EXIT_CODE = 0
 _TURN_ENDED_LABEL = "turn ended"
 _TASK_ID_SEPARATOR = " "
 _DETAIL_FIELDS = ("command", "file_path", "path", "pattern", "url", "query")
-_TOOL_KIND_VERBS = {
+_TOOL_KIND_VERBS: dict[str, str] = {
     ToolKind.RAN: "ran",
     ToolKind.EDITED: "edited",
     ToolKind.READ: "read",
     ToolKind.SEARCHED: "searched",
 }
 _KIND_FIELD = "kind"
+_UNKNOWN_KIND_LABEL = "has unknown tool kind"
 
 
 class Tone(StrEnum):
@@ -230,18 +231,13 @@ def tool_target(detail: str) -> str:
     return detail
 
 
-def _tool_verb(data: Mapping[str, object], name: str) -> str:
-    raw = data.get(_KIND_FIELD)
-    if raw is None:
-        return name
-    kind = ToolKind(str(raw))
-    return _TOOL_KIND_VERBS[kind]
-
-
 def _tool_started(data: Mapping[str, object]) -> Phrase:
     name = str(data.get("name", ""))
     target = tool_target(str(data.get("detail") or ""))
-    verb = _tool_verb(data, name)
+    kind = data.get(_KIND_FIELD)
+    verb = name if kind is None else _TOOL_KIND_VERBS.get(str(kind))
+    if verb is None:
+        return Phrase(f"{name} {_UNKNOWN_KIND_LABEL} {kind}", GLYPH_ATTENTION, Tone.WARNING)
     return Phrase(" ".join(part for part in (verb, target) if part))
 
 
