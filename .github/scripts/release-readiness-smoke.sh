@@ -612,8 +612,9 @@ printf 'small picker attached %s at %s\n' "$SMALL_CLIENT" "$SMALL_CLIENT_SIZE" |
 tmux_run detach-client -t "$SMALL_CLIENT"
 PICKER_CHECK="normal 120x38 displayed both rows and q cancelled; small 68x16 selected the numbered project and attached"
 
+SMOKE_STAGE="attach to the selected project"
 ATTACH_LOG="$RUN_ROOT/attach.log"
-ATTACH_COMMAND=("$TOOL_BIN" --project "$WORK_PROJECT" attach quickstart)
+ATTACH_COMMAND=("$TOOL_BIN" --project "$WORK_PROJECT" attach)
 if "$SCRIPT_BIN" --version > /dev/null 2>&1; then
     ATTACH_PTY=("$SCRIPT_BIN" -q -e -c "$(printf '%q ' "${ATTACH_COMMAND[@]}")" "$ATTACH_LOG")
 else
