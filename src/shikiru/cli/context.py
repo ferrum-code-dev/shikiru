@@ -20,6 +20,7 @@ class CliState:
     project: Path | None
     json_output: bool
     overrides: tuple[str, ...]
+    host: str | None = None
 
 
 def state_from(context: typer.Context) -> CliState:

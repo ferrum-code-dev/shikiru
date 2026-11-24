@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sys
 from importlib.metadata import version
 from itertools import chain
 from pathlib import Path
@@ -31,6 +32,7 @@ from shikiru.bootstrap import (
     run_palette,
 )
 from shikiru.cli.context import CliState, project_root, state_from
+from shikiru.cli.remote import dispatch_to_host
 from shikiru.cli.render import (
     ack_renderable,
     doctor_renderable,
@@ -54,6 +56,7 @@ from shikiru.errors import (
     EXIT_COMMAND_REJECTED,
     EXIT_GENERIC_ERROR,
     EXIT_USAGE_ERROR,
+    ProcessReplacementError,
     ShikiruError,
     UsageError,
 )
@@ -100,6 +103,10 @@ if TYPE_CHECKING:
 PROJECT_OPTION = typer.Option(
     "--project",
     help=("Select a project directory. [bold]Default:[/] the nearest initialized project."),
+)
+HOST_OPTION = typer.Option(
+    "--host",
+    help="Run the command on this SSH host instead. [bold]Default:[/] this host.",
 )
 JSON_OPTION = typer.Option(
     "--json", help="Print machine-readable JSON. [bold]Default:[/] human-readable output."
@@ -215,12 +222,22 @@ def main(
         ),
     ] = False,
     project: Annotated[Path | None, PROJECT_OPTION] = None,
+    host: Annotated[str | None, HOST_OPTION] = None,
     json_output: Annotated[bool, JSON_OPTION] = False,
     overrides: Annotated[list[str] | None, OVERRIDES_OPTION] = None,
 ) -> None:
     """Shikiru: run coding-agent tasks in tmux panes."""
     del _version_flag
-    context.obj = CliState(project, json_output, tuple(overrides or ()))
+    if host is not None:
+        try:
+            dispatch_to_host(host, sys.argv)
+        except UsageError as error:
+            human_console(stderr=True).print(error_renderable(error))
+            raise typer.Exit(code=EXIT_USAGE_ERROR) from error
+        except ProcessReplacementError as error:
+            human_console(stderr=True).print(error_renderable(error))
+            raise typer.Exit(code=EXIT_GENERIC_ERROR) from error
+    context.obj = CliState(project, json_output, tuple(overrides or ()), host=host)
 
 
 @app.command()
@@ -343,19 +360,13 @@ def restart(
 def list_sessions(
     context: typer.Context,
     *,
-    host: Annotated[
-        str | None,
-        typer.Option(
-            "--host", help="List sessions on this SSH host instead. [bold]Default:[/] this host."
-        ),
-    ] = None,
     json_output: Annotated[bool, JSON_OPTION] = False,
 ) -> None:
-    """List Shikiru project sessions visible on this host or an SSH host."""
+    """List Shikiru project sessions visible on this host."""
     try:
         state = state_from(context)
         lister, _ = build_session_tools(state.overrides)
-        listing = _run(lister.list_sessions(host))
+        listing = _run(lister.list_sessions())
     except ShikiruError as error:
         _fail(error)
     if state.json_output or json_output:
@@ -365,13 +376,13 @@ def list_sessions(
         console.print(
             session_rows_renderable(
                 list(listing.rows),
-                host=host,
+                host=None,
                 console=console,
-                unavailable=bool(listing.diagnostics or listing.remote_exit_code),
+                unavailable=bool(listing.diagnostics),
             )
         )
-    _print_session_diagnostics(listing, host)
-    if listing.diagnostics or listing.remote_exit_code:
+    _print_session_diagnostics(listing, None)
+    if listing.diagnostics:
         raise typer.Exit(code=EXIT_GENERIC_ERROR)
 
 
@@ -387,19 +398,12 @@ def attach(
             )
         ),
     ] = None,
-    *,
-    host: Annotated[
-        str | None,
-        typer.Option(
-            "--host", help="Attach over SSH to this host instead. [bold]Default:[/] this host."
-        ),
-    ] = None,
 ) -> None:
     """Attach to a project session or choose one from a numbered terminal list."""
     try:
         state = state_from(context)
         lister, attacher = build_session_tools(state.overrides)
-        _run(_attach_from_cli(lister, attacher, state, name=name, host=host))
+        _run(_attach_from_cli(lister, attacher, state, name=name, host=None))
     except ShikiruError as error:
         _fail(error)
 

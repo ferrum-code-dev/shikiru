@@ -124,7 +124,7 @@ explicitly. `--help` on each command lists its options.
 | `restart` | Stop and start the engine so it runs installed code. `--kill-session` also replaces the tmux session. |
 | `submit "REQUEST"` | Queue work and print its task ID. |
 | `status` | Engine, queue, tasks, escalations, usage. `status T-1` for one task; `--watch` for updates. |
-| `ls` | List project sessions. `--host HOST` queries over SSH. |
+| `ls` | List project sessions. |
 | `attach` | Attach to the current project, or pick a numbered session. |
 | `doctor` | Diagnose requirements, config, plugins and state. `--probe` adds live checks. |
 | `mcp` | Serve operator tools over stdio to an MCP client. |
@@ -145,6 +145,22 @@ shikiru --project /path/to/project --set orchestration.max_parallel=1 start
 - A task ID means the request was recorded, not finished. Check `status` or the dashboard.
 - Deleting `.shikiru/` loses its state. `init` creates new state; it does not recover old tasks.
 - One attached client per project session. Detach the first client before attaching from another terminal.
+
+### Remote hosts
+
+`--host HOST` is a global option like `--project`. It runs the command on an SSH host instead of locally:
+
+```sh
+shikiru --host buildbox --project /srv/app status
+shikiru --host buildbox ls
+shikiru --host buildbox attach
+```
+
+The dispatch happens before local project resolution: `--host` forwards all remaining arguments (without `--host`) to a remote `shikiru` over `ssh`, preserving output, errors, exit status and stdio. `--project` is treated as a remote path. Interactive use allocates a remote pseudo-terminal (`ssh -t`): `attach` and `start --attach` always, and the `init` wizard and `status --watch` when both local stdin and stdout are terminals. `init --yes`, detached `start`, every `--json` invocation and `mcp` run without one, so their streams stay separate and machine output is unchanged. Other commands also run without a pseudo-terminal, including redirected output and errors (`shikiru --host buildbox status >status.txt 2>errors.txt`).
+
+The command-specific `ls --host` and `attach --host` options are removed. Use the global form.
+
+Remote working-directory discovery is the same as local: the nearest `.shikiru/` above the remote current directory, or the path given by `--project` on the remote host. The remote host must have `shikiru` on its `PATH`, SSH access, tmux and the same interpreter dependencies as a local run.
 
 ## Dashboard
 

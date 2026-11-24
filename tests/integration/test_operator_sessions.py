@@ -860,7 +860,7 @@ async def test_turn_is_running_again_once_it_restarts_after_its_quota_failure(
 
 
 @pytest.mark.asyncio
-async def test_cli_local_and_remote_ls_work_without_an_initialized_current_project(
+async def test_cli_local_and_remote_ls_work_without_an_initialized_current_project(  # noqa: PLR0915
     tmp_path: Path,
     tmux_server: TmuxServer,
     monkeypatch: pytest.MonkeyPatch,
@@ -907,10 +907,9 @@ print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
 
     try:
         local_result = await asyncio.to_thread(runner.invoke, app, ["ls", "--json"], env=env)
-        remote_result = await asyncio.to_thread(
-            runner.invoke,
-            app,
-            ["ls", "--host", "remote.example", "--json"],
+        remote_result = await SubprocessRunner().run(
+            [sys.executable, "-m", "shikiru", "--host", "remote.example", "ls", "--json"],
+            timeout=MEDIUM_WAIT_SECONDS,
             env=env,
         )
         remote_argv = capture.read_text()
@@ -930,18 +929,25 @@ print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
         )
         for width in (80, 60, 40):
             for host, identity, project_dir, counts in listing_cases:
-                args = ["ls"] if host is None else ["ls", "--host", host]
-                result = await asyncio.to_thread(
-                    runner.invoke,
-                    app,
-                    args,
-                    env={**env, "COLUMNS": str(width)},
-                )
-                assert result.exit_code == 0
-                _assert_session_data(result.stdout, identity, project_dir, counts)
-                assert "waiting" in result.stdout.lower()
-                if host is not None:
-                    assert result.stdout.count(host) == 1
+                if host is None:
+                    result = await asyncio.to_thread(
+                        runner.invoke,
+                        app,
+                        ["ls"],
+                        env={**env, "COLUMNS": str(width)},
+                    )
+                    out = result.stdout
+                    code = result.exit_code
+                else:
+                    remote_run = await SubprocessRunner().run(
+                        [sys.executable, "-m", "shikiru", "--host", host, "ls"],
+                        timeout=MEDIUM_WAIT_SECONDS,
+                        env={**env, "COLUMNS": str(width)},
+                    )
+                    out = remote_run.stdout
+                    code = remote_run.returncode
+                assert code == 0
+                _assert_session_data(out, identity, project_dir, counts)
     finally:
         engine_lock.release()
 
@@ -959,30 +965,31 @@ print(os.environ["SHIKIRU_TEST_SESSION_ROWS"])
             ("queued", 1),
         )
     )
-    assert remote_result.exit_code == 0
+    assert remote_result.returncode == 0
     assert json.loads(remote_result.stdout) == [remote_row.model_dump(mode="json")]
-    assert json.loads(remote_argv) == ["--", "remote.example", "shikiru", "ls", "--json"]
+    assert json.loads(remote_argv) == ["--", "remote.example", "shikiru ls --json"]
     capture_before_invalid_host = capture.read_text()
-    invalid_timeout_result = await asyncio.to_thread(
-        runner.invoke,
-        app,
+    invalid_host_via_runner = await SubprocessRunner().run(
         [
-            "--set",
-            "sessions.ssh_timeout_seconds=0",
-            "ls",
+            sys.executable,
+            "-m",
+            "shikiru",
             "--host",
-            "remote.example",
+            "-oProxyCommand=touch /tmp/not-run",
+            "ls",
             "--json",
         ],
+        timeout=MEDIUM_WAIT_SECONDS,
         env=env,
+        check=False,
     )
-    assert invalid_timeout_result.exit_code == 1
-    assert "ssh_timeout_seconds" in invalid_timeout_result.stderr
+    assert invalid_host_via_runner.returncode == 2
+    assert "invalid SSH host" in invalid_host_via_runner.stderr
     assert capture.read_text() == capture_before_invalid_host
     invalid_host_result = await asyncio.to_thread(
         runner.invoke,
         app,
-        ["ls", "--host=-oProxyCommand=touch /tmp/not-run", "--json"],
+        ["--host=-oProxyCommand=touch /tmp/not-run", "ls", "--json"],
         env=env,
     )
     assert invalid_host_result.exit_code == 2
@@ -1094,23 +1101,25 @@ async def test_remote_ls_preserves_valid_partial_rows_and_scopes_raw_diagnostics
     env = _test_env(bin_dir, capture, tmux_server)
     env[JSON_ROWS_ENV] = json.dumps([row.model_dump(mode="json")])
     env["SHIKIRU_TEST_REMOTE_EXIT_CODE"] = str(remote_exit_code)
-    result = await asyncio.to_thread(
-        CliRunner().invoke,
-        app,
-        ["ls", "--host", "remote.example", "--json"],
+    result = await SubprocessRunner().run(
+        [sys.executable, "-m", "shikiru", "--host", "remote.example", "ls", "--json"],
+        timeout=MEDIUM_WAIT_SECONDS,
         env=env,
+        check=False,
     )
 
-    assert json.loads(capture.read_text()) == ["--", "remote.example", "shikiru", "ls", "--json"]
+    assert json.loads(capture.read_text()) == ["--", "remote.example", "shikiru ls --json"]
     if remote_exit_code in {0, 1}:
         expected_exit = EXIT_GENERIC_ERROR if remote_exit_code else 0
-        assert result.exit_code == expected_exit
+        assert result.returncode == expected_exit
         assert json.loads(result.stdout) == [row.model_dump(mode="json")]
-        assert "remote.example" in result.stderr
         assert "remote diagnostic with raw detail" in result.stderr
     else:
-        assert result.exit_code == EXIT_GENERIC_ERROR
-        assert result.stdout == ""
+        assert result.returncode == remote_exit_code
+        if remote_exit_code == 255:
+            assert result.stdout == ""
+        else:
+            assert json.loads(result.stdout) == [row.model_dump(mode="json")]
         assert "remote diagnostic with raw detail" in result.stderr
 
 
@@ -1454,7 +1463,7 @@ os.execv("/bin/sh", ["/bin/sh", "-c", arguments[-1]])
     async with attach_tmux_client(tmux_server, exact_target(session)) as first_client:
         original_state = await _client_state(tmux_server, session, first_client.process.pid)
         _, returncode = await _run_attach_cli(
-            ["attach", "remote project", "--host", "remote.example"], cwd=tmp_path, env=env
+            ["--host", "remote.example", "attach", "remote project"], cwd=tmp_path, env=env
         )
 
         assert returncode == EXIT_USAGE_ERROR
@@ -1469,10 +1478,10 @@ os.execv("/bin/sh", ["/bin/sh", "-c", arguments[-1]])
                 sys.executable,
                 "-m",
                 "shikiru",
-                "attach",
-                "remote project",
                 "--host",
                 "remote.example",
+                "attach",
+                "remote project",
             ],
             cwd=tmp_path,
             env=env,
@@ -1897,7 +1906,7 @@ os.execv("/bin/sh", ["/bin/sh", "-c", sys.argv[-1]])
     env.pop("TMUX_PANE", None)
 
     output, returncode = await _run_attach_cli(
-        ["attach", session, "--host", host],
+        ["--host", host, "attach", session],
         cwd=tmp_path,
         env=env,
     )
@@ -1907,7 +1916,6 @@ os.execv("/bin/sh", ["/bin/sh", "-c", sys.argv[-1]])
     assert str(project) in output
     assert "tmux kill-session" in output
     assert "shikiru --project" in output
-    assert host in output
     assert not marker.exists()
 
 
