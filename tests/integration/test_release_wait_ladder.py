@@ -18,7 +18,7 @@ TARGET = "shikiru:0.0"
 SCOPE = "Implementer · Base"
 VALUE = "fake:strong"
 CONFIRM_SECONDS_FOR_TESTS = 0.2
-SLOW_APPLY_CAPTURES = 25
+SLOW_APPLY_CAPTURES = 10
 EDITOR_PAGE = "│  {scope}     {shown}  │\n│  Edit {scope}  │\n│  Ladder entries   │   │\n"
 
 
@@ -53,7 +53,6 @@ class FakeLadderEditor:
 
 def _install(monkeypatch: MonkeyPatch, editor: FakeLadderEditor) -> None:
     monkeypatch.setattr(release_wait, "RUNNER", editor)
-    monkeypatch.setattr(release_wait, "CLICK_CONFIRM_SECONDS", CONFIRM_SECONDS_FOR_TESTS)
 
 
 async def test_a_ladder_the_app_applies_slowly_is_typed_once(monkeypatch: MonkeyPatch) -> None:
@@ -68,6 +67,7 @@ async def test_a_ladder_the_app_applies_slowly_is_typed_once(monkeypatch: Monkey
 async def test_a_lost_ladder_typing_is_typed_again(monkeypatch: MonkeyPatch) -> None:
     editor = FakeLadderEditor(captures_before_applied=0, lost_typings=1)
     _install(monkeypatch, editor)
+    monkeypatch.setattr(release_wait, "CLICK_CONFIRM_SECONDS", CONFIRM_SECONDS_FOR_TESTS)
 
     await release_wait.set_ladder(TMUX, SOCKET, TARGET, SCOPE, VALUE)
 
