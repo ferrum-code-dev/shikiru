@@ -1,0 +1,94 @@
+name: Set up the Shikiru environment
+description: Install uv, the locked environment and, when asked, the host tools the tests drive.
+
+inputs:
+  host-tools:
+    description: Install git and tmux and check their versions.
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+      with:
+        version: "0.12.5"
+        python-version: "3.14"
+        activate-environment: true
+        enable-cache: true
+
+    - name: Restore the tmux build
+      if: inputs.host-tools == 'true' && runner.os == 'Linux'
+      id: tmux
+      uses: actions/cache@2c8a9bd7457de244a408f35966fab2fb45fda9c8 # v6.0.0
+      with:
+        path: ~/tmux-3.5a
+        key: tmux-3.5a-${{ runner.os }}-${{ runner.arch }}
+
+    - name: Install host tools
+      if: inputs.host-tools == 'true'
+      shell: bash
+      env:
+        TMUX_CACHE_HIT: ${{ steps.tmux.outputs.cache-hit }}
+      run: |
+        if [[ "$RUNNER_OS" == Linux ]]; then
+          TMUX_VERSION=3.5a
+          TMUX_SHA256=16216bd0877170dfcc64157085ba9013610b12b082548c7c9542cc0103198951
+          TMUX_PREFIX="$HOME/tmux-$TMUX_VERSION"
+          sudo apt-get update
+          if [[ "$TMUX_CACHE_HIT" == true ]]; then
+            sudo apt-get install --yes git libevent-dev libncurses-dev
+          else
+            sudo apt-get install --yes \
+              bison build-essential ca-certificates curl git libevent-dev libncurses-dev pkg-config
+            TMUX_ARCHIVE="$RUNNER_TEMP/tmux-$TMUX_VERSION.tar.gz"
+            TMUX_SOURCE="$RUNNER_TEMP/tmux-$TMUX_VERSION"
+            curl --fail --location --silent --show-error \
+              "https://github.com/tmux/tmux/releases/download/$TMUX_VERSION/tmux-$TMUX_VERSION.tar.gz" \
+              --output "$TMUX_ARCHIVE"
+            printf '%s  %s\n' "$TMUX_SHA256" "$TMUX_ARCHIVE" | sha256sum --check
+            tar --extract --gzip --file "$TMUX_ARCHIVE" --directory "$RUNNER_TEMP"
+            cd "$TMUX_SOURCE"
+            ./configure --prefix="$TMUX_PREFIX"
+            make -j2
+            make install
+          fi
+          echo "$TMUX_PREFIX/bin" >> "$GITHUB_PATH"
+        else
+          brew install git tmux
+        fi
+
+    - name: Sync locked environment
+      shell: bash
+      run: uv sync --locked
+
+    - name: Check required host tool versions
+      if: inputs.host-tools == 'true'
+      shell: bash
+      run: |
+        uv run --locked python - <<'PY'
+        import asyncio
+
+        from shikiru.domain.versions import parse_version
+        from shikiru.operator.doctor import GIT_MINIMUM_VERSION, TMUX_MINIMUM_VERSION
+        from shikiru.process import SubprocessRunner
+
+        COMMAND_TIMEOUT = 5
+        REQUIREMENTS = (
+            ("git", "--version", GIT_MINIMUM_VERSION),
+            ("tmux", "-V", TMUX_MINIMUM_VERSION),
+        )
+
+        async def check_versions():
+            runner = SubprocessRunner()
+            for executable, flag, minimum in REQUIREMENTS:
+                result = await runner.run(
+                    (executable, flag), timeout=COMMAND_TIMEOUT, check=True
+                )
+                version = parse_version(result.stdout)
+                if version is None or version < minimum:
+                    raise SystemExit(f"{executable} must be at least {minimum}")
+                print(f"{executable}: {result.stdout.strip()}")
+
+        asyncio.run(check_versions())
+        PY
