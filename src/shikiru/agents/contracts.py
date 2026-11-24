@@ -248,12 +248,26 @@ class Message:
     text: str
 
 
+class ToolKind(StrEnum):
+    """What an agent tool does, classified by the plugin that owns its tool names."""
+
+    RAN = auto()
+    EDITED = auto()
+    READ = auto()
+    SEARCHED = auto()
+
+
 @dataclass(frozen=True)
 class ToolStarted:
-    """A named agent tool started with a short description."""
+    """A named agent tool started with a short description.
+
+    `kind` classifies the tool for timeline verbs; `None` means the tool has no
+    known verb and the timeline shows its raw name.
+    """
 
     name: str
     detail: str
+    kind: ToolKind | None = None
 
 
 @dataclass(frozen=True)

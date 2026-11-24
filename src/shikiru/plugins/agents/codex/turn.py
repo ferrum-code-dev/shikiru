@@ -18,6 +18,7 @@ from shikiru.agents.contracts import (
     SessionStarted,
     TokenCounts,
     ToolFinished,
+    ToolKind,
     ToolOutcome,
     ToolStarted,
     TurnEnded,
@@ -126,6 +127,10 @@ _MCP_TOOL_CALL_TYPE = "mcp_tool_call"
 _COMMAND_TOOL_NAME = "command"
 _FILE_CHANGE_TOOL_NAME = "file_change"
 _MCP_TOOL_NAME = "mcp_tool"
+_WEB_SEARCH_TYPE = "web_search"
+_WEB_SEARCH_TOOL_NAME = "web_search"
+_TOOL_FIELD = "tool"
+_QUERY_FIELD = "query"
 _ZERO_TOKENS = 0
 _ZERO_EXIT_CODE = 0
 _UNKNOWN_COST = "unknown"
@@ -323,14 +328,13 @@ class CodexTurnParser:
         if item is None:
             return []
         item_id = item.get(_ITEM_ID_FIELD)
-        item_type = item.get(_ITEM_TYPE_FIELD)
-        if not isinstance(item_id, str) or not isinstance(item_type, str):
+        if not isinstance(item_id, str):
             return []
-        name = _tool_name(item_type)
+        name = _tool_name(item)
         if name is None:
             return []
         self._tools[item_id] = name
-        return [ToolStarted(name, _tool_detail(item))]
+        return [ToolStarted(name, _tool_detail(item), tool_kind(name))]
 
     def _item_completed(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         item = _mapping(payload.get(_ITEM_FIELD))
@@ -340,6 +344,10 @@ class CodexTurnParser:
         item_id = item.get(_ITEM_ID_FIELD)
         if isinstance(item_id, str):
             name = self._tools.pop(item_id, None)
+            if name is None:
+                name = _tool_name(item)
+                if name is not None:
+                    signals.append(ToolStarted(name, _tool_detail(item), tool_kind(name)))
             if name is not None:
                 item_type = item.get(_ITEM_TYPE_FIELD)
                 exit_code = (
@@ -784,18 +792,40 @@ def _optional_integer(payload: Mapping[str, Any], key: str) -> int | None:
     return value if isinstance(value, int) else None
 
 
-def _tool_name(item_type: str) -> str | None:
-    return {
-        _COMMAND_EXECUTION_TYPE: _COMMAND_TOOL_NAME,
-        _FILE_CHANGE_TYPE: _FILE_CHANGE_TOOL_NAME,
-        _MCP_TOOL_CALL_TYPE: _MCP_TOOL_NAME,
-    }.get(item_type)
+_TOOL_KINDS = {
+    _COMMAND_TOOL_NAME: ToolKind.RAN,
+    _FILE_CHANGE_TOOL_NAME: ToolKind.EDITED,
+    _WEB_SEARCH_TOOL_NAME: ToolKind.SEARCHED,
+    "WebSearch": ToolKind.SEARCHED,
+    "WebFetch": ToolKind.READ,
+    "web_fetch": ToolKind.READ,
+}
+
+
+def tool_kind(name: str) -> ToolKind | None:
+    """Return the timeline kind of one of this plugin's tool names, or `None` if unknown."""
+    return _TOOL_KINDS.get(name)
+
+
+def _tool_name(item: Mapping[str, Any]) -> str | None:
+    item_type = item.get(_ITEM_TYPE_FIELD)
+    if item_type == _COMMAND_EXECUTION_TYPE:
+        return _COMMAND_TOOL_NAME
+    if item_type == _FILE_CHANGE_TYPE:
+        return _FILE_CHANGE_TOOL_NAME
+    if item_type == _WEB_SEARCH_TYPE:
+        return _WEB_SEARCH_TOOL_NAME
+    if item_type == _MCP_TOOL_CALL_TYPE:
+        tool = item.get(_TOOL_FIELD)
+        return tool if isinstance(tool, str) and tool else _MCP_TOOL_NAME
+    return None
 
 
 def _tool_detail(item: Mapping[str, Any]) -> str:
-    value = item.get("command")
-    if isinstance(value, str):
-        return value
+    for key in ("command", _QUERY_FIELD):
+        value = item.get(key)
+        if isinstance(value, str):
+            return value
     return ""
 
 

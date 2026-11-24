@@ -30,6 +30,7 @@ from shikiru.agents.contracts import (
     Rung,
     SessionStarted,
     ToolFinished,
+    ToolKind,
     ToolOutcome,
     ToolStarted,
     TurnEnded,
@@ -167,11 +168,11 @@ _OPENROUTER_LIVE_USAGE = Usage(
 _FIRST_SIGNALS = [
     SessionStarted(_SESSION_FIRST),
     Message("Working on the change."),
-    ToolStarted("command", ""),
+    ToolStarted("command", "", ToolKind.RAN),
     ToolFinished("command", ToolOutcome.SUCCESS, 0),
-    ToolStarted("file_change", ""),
+    ToolStarted("file_change", "", ToolKind.EDITED),
     ToolFinished("file_change"),
-    ToolStarted("command", ""),
+    ToolStarted("command", "", ToolKind.RAN),
     ToolFinished("command", ToolOutcome.SUCCESS, 0),
     Message("Change committed."),
     QuotaReported(
@@ -186,11 +187,11 @@ _FIRST_SIGNALS = [
 _RESUMED_SIGNALS = [
     SessionStarted(_SESSION_RESUMED),
     Message("Working on the change."),
-    ToolStarted("command", ""),
+    ToolStarted("command", "", ToolKind.RAN),
     ToolFinished("command", ToolOutcome.SUCCESS, 0),
-    ToolStarted("file_change", ""),
+    ToolStarted("file_change", "", ToolKind.EDITED),
     ToolFinished("file_change"),
-    ToolStarted("command", ""),
+    ToolStarted("command", "", ToolKind.RAN),
     ToolFinished("command", ToolOutcome.SUCCESS, 0),
     Message("Change committed."),
     QuotaReported(
@@ -216,7 +217,7 @@ _MIDTURN_SIGNALS = [
         signal
         for part in _MIDTURN_PARTS
         for signal in (
-            ToolStarted("command", f"cat [redacted]/part{part}.txt"),
+            ToolStarted("command", f"cat [redacted]/part{part}.txt", ToolKind.RAN),
             ToolFinished("command", ToolOutcome.SUCCESS, 0),
             Message(f"part{part}.txt ends at line 400."),
         )
@@ -338,15 +339,15 @@ class TestCodexHeadlessContract(AgentContractSuite):
                 session_id=_TOOL_OUTCOMES_SESSION_ID,
                 expected_signals=[
                     SessionStarted(_TOOL_OUTCOMES_SESSION_ID),
-                    ToolStarted("command", ""),
+                    ToolStarted("command", "", ToolKind.RAN),
                     ToolFinished("command", ToolOutcome.FAILURE, _FAILED_COMMAND_EXIT_CODE),
-                    ToolStarted("command", ""),
+                    ToolStarted("command", "", ToolKind.RAN),
                     ToolFinished(
                         "command", ToolOutcome.FAILURE, _COMPLETED_NONZERO_COMMAND_EXIT_CODE
                     ),
-                    ToolStarted("command", ""),
+                    ToolStarted("command", "", ToolKind.RAN),
                     ToolFinished("command"),
-                    ToolStarted("command", ""),
+                    ToolStarted("command", "", ToolKind.RAN),
                     ToolFinished("command", ToolOutcome.SUCCESS, 0),
                     TurnEnded(""),
                 ],

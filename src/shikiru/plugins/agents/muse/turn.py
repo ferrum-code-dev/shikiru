@@ -29,6 +29,7 @@ from shikiru.agents.contracts import (
     TokenCounts,
     ToolDetailReported,
     ToolFinished,
+    ToolKind,
     ToolOutcome,
     ToolStarted,
     TurnEnded,
@@ -322,7 +323,7 @@ class MuseTurnParser:
         if pending.started:
             return []
         pending.started = True
-        return [ToolStarted(pending.name, "")]
+        return [ToolStarted(pending.name, "", tool_kind(pending.name))]
 
     def _task_scheduled(self, payload: Mapping[str, Any]) -> list[AgentSignal]:
         pending = next(
@@ -371,11 +372,11 @@ class MuseTurnParser:
         pending = self._take_pending(name)
         signals: list[AgentSignal] = []
         if pending is None:
-            signals.append(ToolStarted(name, ""))
+            signals.append(ToolStarted(name, "", tool_kind(name)))
             detail = _tool_detail(text)
         else:
             if not pending.started:
-                signals.append(ToolStarted(name, ""))
+                signals.append(ToolStarted(name, "", tool_kind(name)))
             detail = "" if pending.detail else _tool_detail(text)
         signals.append(
             ToolFinished(
@@ -869,6 +870,26 @@ def _tool_exit_code(text: str) -> int | None:
         return None
     exit_code = details.get(_EXIT_CODE_KEY)
     return exit_code if type(exit_code) is int else None
+
+
+_TOOL_KINDS = {
+    "bash": ToolKind.RAN,
+    "bash_input": ToolKind.RAN,
+    "read_file": ToolKind.READ,
+    "read_skill": ToolKind.READ,
+    "edit_file": ToolKind.EDITED,
+    "write_file": ToolKind.EDITED,
+    "search": ToolKind.SEARCHED,
+    "WebSearch": ToolKind.SEARCHED,
+    "web_search": ToolKind.SEARCHED,
+    "WebFetch": ToolKind.READ,
+    "web_fetch": ToolKind.READ,
+}
+
+
+def tool_kind(name: str) -> ToolKind | None:
+    """Return the timeline kind of one of this plugin's tool names, or `None` if unknown."""
+    return _TOOL_KINDS.get(name)
 
 
 def _tool_detail(text: str) -> str:

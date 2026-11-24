@@ -921,7 +921,12 @@ async def test_rows_are_one_line_human_phrases_and_the_selected_row_wraps_to_fou
     long_text = " ".join(f"word{index}" for index in range(LONG_MESSAGE_WORDS))
     signals = (
         {"signal": "SessionStarted", "session_id": "s-1"},
-        {"signal": "ToolStarted", "name": "Bash", "detail": '{"command":"pytest -q"}'},
+        {
+            "signal": "ToolStarted",
+            "name": "Bash",
+            "kind": "ran",
+            "detail": '{"command":"pytest -q"}',
+        },
         {"signal": "ToolFinished", "name": "Bash", "outcome": "success", "exit_code": 0},
         {"signal": "UsageReported", "usage": {"input_tokens": 1, "output_tokens": 2}},
         {"signal": "Message", "text": long_text},

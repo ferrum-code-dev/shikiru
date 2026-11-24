@@ -29,6 +29,7 @@ from shikiru.agents.contracts import (
     QuotaWindow,
     SessionStarted,
     ToolFinished,
+    ToolKind,
     ToolOutcome,
     ToolStarted,
     TurnEnded,
@@ -460,7 +461,9 @@ class ClaudeTurnParser:
         name = item.get(_TOOL_NAME_FIELD)
         if not isinstance(name, str):
             return []
-        signals: list[AgentSignal] = [ToolStarted(name, _tool_detail(item.get(_TOOL_INPUT_FIELD)))]
+        signals: list[AgentSignal] = [
+            ToolStarted(name, _tool_detail(item.get(_TOOL_INPUT_FIELD)), tool_kind(name))
+        ]
         tool_id = item.get(_TOOL_ID_FIELD)
         if isinstance(tool_id, str):
             self._tool_names[tool_id] = name
@@ -809,6 +812,27 @@ def _optional_nonnegative_integer(payload: Mapping[str, Any] | None, key: str) -
 
 def _positive_integer(value: object) -> int | None:
     return value if type(value) is int and value > 0 else None
+
+
+_TOOL_KINDS = {
+    "Bash": ToolKind.RAN,
+    "Edit": ToolKind.EDITED,
+    "MultiEdit": ToolKind.EDITED,
+    "Write": ToolKind.EDITED,
+    "NotebookEdit": ToolKind.EDITED,
+    "Read": ToolKind.READ,
+    "Grep": ToolKind.SEARCHED,
+    "Glob": ToolKind.SEARCHED,
+    "WebSearch": ToolKind.SEARCHED,
+    "web_search": ToolKind.SEARCHED,
+    "WebFetch": ToolKind.READ,
+    "web_fetch": ToolKind.READ,
+}
+
+
+def tool_kind(name: str) -> ToolKind | None:
+    """Return the timeline kind of one of this plugin's tool names, or `None` if unknown."""
+    return _TOOL_KINDS.get(name)
 
 
 def _tool_detail(value: object) -> str:

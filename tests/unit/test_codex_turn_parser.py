@@ -14,6 +14,9 @@ from shikiru.agents.contracts import (
     QuotaReported,
     QuotaWindow,
     SessionStarted,
+    ToolFinished,
+    ToolKind,
+    ToolStarted,
     TurnEnded,
     TurnFailed,
     Usage,
@@ -620,3 +623,91 @@ def test_pricing_a_resumed_turn_uses_its_new_model(tmp_path: Path) -> None:
     usage = _priced_rollout_result(tmp_path, entries, previous=prior)
     assert usage.cost_usd == 110
     assert usage.cost_basis == "api_equivalent"
+
+
+def _parser(tmp_path: Path) -> CodexTurnParser:
+    clock = FakeClock(_SAMPLE_NOW)
+    return CodexTurnParser(
+        session_id=None,
+        initial_usage=None,
+        home=tmp_path / "codex-home",
+        clock=clock,
+        reset_time=ResetTimeParser(clock),
+    )
+
+
+def test_web_search_completion_carries_the_search_kind_and_query(tmp_path: Path) -> None:
+    signals = _parser(tmp_path).feed(
+        json.dumps(
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "item_7",
+                    "type": "web_search",
+                    "query": "codex exec --json schema",
+                },
+            }
+        )
+    )
+
+    assert signals == [
+        ToolStarted("web_search", "codex exec --json schema", ToolKind.SEARCHED),
+        ToolFinished("web_search"),
+    ]
+
+
+def test_mcp_web_tools_carry_their_kinds(tmp_path: Path) -> None:
+    parser = _parser(tmp_path)
+
+    found = parser.feed(
+        json.dumps(
+            {
+                "type": "item.started",
+                "item": {
+                    "id": "item_5",
+                    "type": "mcp_tool_call",
+                    "server": "docs",
+                    "tool": "web_search",
+                    "arguments": {"q": "exec --json"},
+                    "status": "in_progress",
+                },
+            }
+        )
+    )
+    fetched = parser.feed(
+        json.dumps(
+            {
+                "type": "item.started",
+                "item": {
+                    "id": "item_6",
+                    "type": "mcp_tool_call",
+                    "server": "docs",
+                    "tool": "web_fetch",
+                    "arguments": {"url": "https://example.com"},
+                    "status": "in_progress",
+                },
+            }
+        )
+    )
+
+    assert found == [ToolStarted("web_search", "", ToolKind.SEARCHED)]
+    assert fetched == [ToolStarted("web_fetch", "", ToolKind.READ)]
+
+
+def test_mcp_unknown_tool_keeps_its_raw_name_without_a_kind(tmp_path: Path) -> None:
+    signals = _parser(tmp_path).feed(
+        json.dumps(
+            {
+                "type": "item.started",
+                "item": {
+                    "id": "item_5",
+                    "type": "mcp_tool_call",
+                    "server": "docs",
+                    "tool": "search",
+                    "status": "in_progress",
+                },
+            }
+        )
+    )
+
+    assert signals == [ToolStarted("search", "")]

@@ -71,8 +71,32 @@ SIGNAL_ROWS: list[tuple[str, str, dict[str, object], Phrase | None]] = [
     (
         "shell-tool-shows-its-command",
         "ToolStarted",
-        {"name": "Bash", "detail": '{"command":"pytest -q"}'},
+        {"name": "Bash", "kind": "ran", "detail": '{"command":"pytest -q"}'},
         Phrase("ran pytest -q"),
+    ),
+    (
+        "edit-tool-shows-its-file",
+        "ToolStarted",
+        {"name": "Write", "kind": "edited", "detail": '{"file_path":"src/app.py"}'},
+        Phrase("edited src/app.py"),
+    ),
+    (
+        "read-tool-shows-its-file",
+        "ToolStarted",
+        {"name": "Read", "kind": "read", "detail": '{"file_path":"README.md"}'},
+        Phrase("read README.md"),
+    ),
+    (
+        "search-tool-shows-its-query",
+        "ToolStarted",
+        {"name": "Grep", "kind": "searched", "detail": '{"pattern":"TODO"}'},
+        Phrase("searched TODO"),
+    ),
+    (
+        "tool-without-a-kind-shows-its-raw-name",
+        "ToolStarted",
+        {"name": "Bash", "detail": '{"command":"pytest -q"}'},
+        Phrase("Bash pytest -q"),
     ),
     (
         "tool-detail-is-bookkeeping",

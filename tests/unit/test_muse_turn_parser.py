@@ -22,6 +22,7 @@ from shikiru.agents.contracts import (
     SessionStarted,
     ToolDetailReported,
     ToolFinished,
+    ToolKind,
     ToolOutcome,
     ToolStarted,
     TurnEnded,
@@ -244,7 +245,7 @@ def test_tool_proposal_starts_the_tool_and_result_finishes_it() -> None:
     tool_signals = _of_type(_signals(_fixture_lines("turn_tool")), ToolStarted, ToolFinished)
 
     assert tool_signals == [
-        ToolStarted(_BASH, ""),
+        ToolStarted(_BASH, "", ToolKind.RAN),
         ToolFinished(_BASH, ToolOutcome.SUCCESS, 0),
     ]
     assert _of_type(_signals(_fixture_lines("turn_tool")), ToolDetailReported) == [
@@ -258,7 +259,7 @@ def test_bash_call_reports_its_command_when_output_arrives_without_repeating_it_
     live_signals = [signal for line in lines[:6] for signal in parser.feed(line)]
 
     assert _of_type(live_signals, ToolStarted, ToolDetailReported) == [
-        ToolStarted(_BASH, ""),
+        ToolStarted(_BASH, "", ToolKind.RAN),
         ToolDetailReported(_BASH, _bash_command()[:TOOL_DETAIL_MAX_CHARS]),
     ]
 
@@ -286,7 +287,10 @@ def test_bash_command_is_known_from_its_output_record_and_survives_an_unfinished
     expected = (
         [ToolDetailReported(_BASH, _bash_command()[:TOOL_DETAIL_MAX_CHARS])] if has_detail else []
     )
-    assert _of_type(signals, ToolStarted, ToolDetailReported) == [ToolStarted(_BASH, ""), *expected]
+    assert _of_type(signals, ToolStarted, ToolDetailReported) == [
+        ToolStarted(_BASH, "", ToolKind.RAN),
+        *expected,
+    ]
     assert _of_type(finished, ToolFinished) == [ToolFinished(_BASH, None, None)]
 
 
@@ -296,7 +300,7 @@ def test_uncorrelated_result_closes_the_tool_with_its_command_once() -> None:
     signals = _signals([*lines, _unknown_tool_line(), _terminal_completed_line()])
 
     assert _of_type(signals, ToolStarted, ToolFinished) == [
-        ToolStarted(_BASH, ""),
+        ToolStarted(_BASH, "", ToolKind.RAN),
         ToolFinished(_BASH, None, None),
     ]
     assert _of_type(signals, ToolDetailReported) == [
@@ -317,7 +321,7 @@ def test_uncorrelated_result_for_the_same_call_does_not_repeat_its_detail() -> N
     signals = _signals(lines)
 
     assert _of_type(signals, ToolStarted, ToolFinished) == [
-        ToolStarted(_BASH, ""),
+        ToolStarted(_BASH, "", ToolKind.RAN),
         ToolFinished(_BASH, None, None),
     ]
     assert _of_type(signals, ToolDetailReported) == [
@@ -336,7 +340,7 @@ def test_uncorrelated_file_result_does_not_repeat_scheduled_call_detail() -> Non
     signals = _signals(lines)
 
     assert _of_type(signals, ToolStarted, ToolFinished) == [
-        ToolStarted("read_file", ""),
+        ToolStarted("read_file", "", ToolKind.READ),
         ToolFinished("read_file", None, None),
     ]
     assert _of_type(signals, ToolDetailReported) == [
@@ -385,7 +389,7 @@ def test_file_tool_call_reports_its_result_summary_line() -> None:
     tool_signals = _of_type(_signals(_fixture_lines("tool_file_detail")), ToolStarted, ToolFinished)
 
     assert tool_signals == [
-        ToolStarted("read_file", ""),
+        ToolStarted("read_file", "", ToolKind.READ),
         ToolFinished("read_file", ToolOutcome.SUCCESS),
     ]
     assert _of_type(_signals(_fixture_lines("tool_file_detail")), ToolDetailReported) == [
@@ -418,7 +422,7 @@ def test_tool_result_outcome_prefers_a_nonzero_exit_code(
 ) -> None:
     signals = _signals([_tool_result_line(text, outcome)])
 
-    assert _of_type(signals, ToolStarted) == [ToolStarted(_BASH, "")]
+    assert _of_type(signals, ToolStarted) == [ToolStarted(_BASH, "", ToolKind.RAN)]
     finished = _finished(signals)
     assert [(signal.outcome, signal.exit_code) for signal in finished] == [
         (expected_outcome, expected_exit_code)
@@ -468,7 +472,7 @@ def test_tool_result_without_correlation_facts_leaves_pending_tool_to_finish() -
     signals = _signals([*lines, _unknown_tool_line(), _terminal_completed_line()])
 
     assert _of_type(signals, ToolStarted, ToolFinished) == [
-        ToolStarted(_BASH, ""),
+        ToolStarted(_BASH, "", ToolKind.RAN),
         ToolFinished(_BASH, None, None),
     ]
     assert _of_type(signals, ToolDetailReported) == [
@@ -509,7 +513,7 @@ def test_tool_result_without_prior_start_supplies_the_missing_start() -> None:
     signals = _signals([_bash_proposal_line(), _tool_result_line('{"command": "ls"}', "success")])
 
     assert _of_type(signals, ToolStarted, ToolFinished) == [
-        ToolStarted(_BASH, ""),
+        ToolStarted(_BASH, "", ToolKind.RAN),
         ToolFinished(_BASH, ToolOutcome.SUCCESS, None, "ls"),
     ]
 
@@ -581,7 +585,7 @@ def test_running_tool_is_closed_without_outcome_when_the_turn_ends() -> None:
     signals = _signals(lines[:result_index], _EXIT_FAILED)
 
     assert _of_type(signals, ToolStarted, ToolFinished) == [
-        ToolStarted(_BASH, ""),
+        ToolStarted(_BASH, "", ToolKind.RAN),
         ToolFinished(_BASH, None, None),
     ]
     assert _of_type(signals, ToolDetailReported) == [

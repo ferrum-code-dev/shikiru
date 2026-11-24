@@ -96,7 +96,7 @@ def test_packet_reports_and_signals_read_as_toned_rows_and_structured_details() 
         "\n".join(
             (
                 _signal("Message", text="Thinking\nabout it"),
-                _signal("ToolStarted", name="Bash", detail='{"command": "pytest -x"}'),
+                _signal("ToolStarted", name="Bash", kind="ran", detail='{"command": "pytest -x"}'),
                 _signal("ToolFinished", name="Bash", outcome="failure", exit_code=1),
                 _signal("UsageReported", usage={"input_tokens": 1}),
                 _signal("TurnFailed", kind="quota", message="Rate limited", resets_at=None),

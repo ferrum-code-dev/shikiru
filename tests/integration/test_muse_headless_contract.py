@@ -28,6 +28,7 @@ from shikiru.agents.contracts import (
     SessionStarted,
     ToolDetailReported,
     ToolFinished,
+    ToolKind,
     ToolOutcome,
     ToolStarted,
     TurnEnded,
@@ -335,7 +336,7 @@ class TestMuseHeadlessContract(AgentContractSuite):
                 session_id=_SESSION_TOOL,
                 expected=[
                     SessionStarted(_SESSION_TOOL),
-                    ToolStarted(_TOOL_NAME, ""),
+                    ToolStarted(_TOOL_NAME, "", ToolKind.RAN),
                     ToolDetailReported(_TOOL_NAME, _TOOL_COMMAND),
                     ToolFinished(_TOOL_NAME, ToolOutcome.SUCCESS, _TOOL_EXIT_CODE),
                     Message(_TOOL_FIRST_DELTA),

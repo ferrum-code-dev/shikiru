@@ -18,6 +18,7 @@ from shikiru.agents.contracts import (
     SessionStarted,
     ToolDetailReported,
     ToolFinished,
+    ToolKind,
     ToolOutcome,
     ToolStarted,
     TurnEnded,
@@ -61,18 +62,13 @@ _SUCCESS_EXIT_CODE = 0
 _TURN_ENDED_LABEL = "turn ended"
 _TASK_ID_SEPARATOR = " "
 _DETAIL_FIELDS = ("command", "file_path", "path", "pattern", "url", "query")
-_TOOL_VERBS = {
-    "Bash": "ran",
-    "command": "ran",
-    "Edit": "edited",
-    "MultiEdit": "edited",
-    "Write": "edited",
-    "NotebookEdit": "edited",
-    "file_change": "edited",
-    "Read": "read",
-    "Grep": "searched",
-    "Glob": "searched",
+_TOOL_KIND_VERBS = {
+    ToolKind.RAN: "ran",
+    ToolKind.EDITED: "edited",
+    ToolKind.READ: "read",
+    ToolKind.SEARCHED: "searched",
 }
+_KIND_FIELD = "kind"
 
 
 class Tone(StrEnum):
@@ -234,10 +230,18 @@ def tool_target(detail: str) -> str:
     return detail
 
 
+def _tool_verb(data: Mapping[str, object], name: str) -> str:
+    try:
+        kind = ToolKind(str(data.get(_KIND_FIELD)))
+    except ValueError:
+        return name
+    return _TOOL_KIND_VERBS[kind]
+
+
 def _tool_started(data: Mapping[str, object]) -> Phrase:
     name = str(data.get("name", ""))
     target = tool_target(str(data.get("detail") or ""))
-    verb = _TOOL_VERBS.get(name, name)
+    verb = _tool_verb(data, name)
     return Phrase(" ".join(part for part in (verb, target) if part))
 
 
