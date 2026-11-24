@@ -59,6 +59,14 @@ def _test_env(directory: Path, capture: Path) -> dict[str, str]:
             ["--project", "/srv/app", "status"],
         ),
         (
+            ["--host", "buildbox", "--project", "app", "status"],
+            ["--project", "app", "status"],
+        ),
+        (
+            ["--host", "buildbox", "--project=app", "status"],
+            ["--project=app", "status"],
+        ),
+        (
             ["--host=buildbox", "--project", "/srv/app", "status"],
             ["--project", "/srv/app", "status"],
         ),
@@ -345,16 +353,24 @@ async def test_breaking_ls_host_option_removed() -> None:
 @pytest.mark.asyncio
 async def test_breaking_attach_host_option_removed() -> None:
     runner = CliRunner()
-    result = await asyncio.to_thread(runner.invoke, app, ["attach", "myproj", "--host", "buildbox"])
+    result = await asyncio.to_thread(runner.invoke, app, ["attach", "--host", "buildbox"])
     assert result.exit_code == EXIT_USAGE_ERROR
     assert "No such option: --host" in unstyle(result.output)
+
+
+@pytest.mark.asyncio
+async def test_breaking_attach_position_argument_removed() -> None:
+    runner = CliRunner()
+    result = await asyncio.to_thread(runner.invoke, app, ["attach", "myproj"])
+    assert result.exit_code == EXIT_USAGE_ERROR
+    assert "Got unexpected extra argument" in unstyle(result.output)
 
 
 @pytest.mark.parametrize(
     ("forwarded", "stdin_tty", "stdout_tty", "expected"),
     [
         (["attach"], False, False, True),
-        (["attach", "mcp"], False, False, True),
+        (["--project", "mcp", "attach"], False, False, True),
         (["--project", "/srv/mcp", "attach"], False, False, True),
         (["--", "attach"], False, False, True),
         (["status", "--watch"], True, True, True),
@@ -499,7 +515,7 @@ sys.exit(0)
 
 
 @pytest.mark.asyncio
-async def test_global_host_attach_mcp_uses_tty(tmp_path: Path) -> None:
+async def test_global_host_attach_forwards_project_name(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     capture = tmp_path / "capture.json"
     _write_executable(
@@ -515,7 +531,7 @@ sys.exit(0)
     )
     env = _test_env(bin_dir, capture)
     result = await SubprocessRunner().run(
-        [sys.executable, "-m", "shikiru", "--host", "buildbox", "attach", "mcp"],
+        [sys.executable, "-m", "shikiru", "--host", "buildbox", "--project", "mcp", "attach"],
         timeout=MEDIUM_WAIT_SECONDS,
         env=env,
         check=False,
@@ -523,7 +539,7 @@ sys.exit(0)
     assert result.returncode == 0
     argv = json.loads(capture.read_text())
     assert argv[0] == "-t"
-    assert shlex.split(argv[-1]) == ["shikiru", "attach", "mcp"]
+    assert shlex.split(argv[-1]) == ["shikiru", "--project", "mcp", "attach"]
 
 
 @pytest.mark.parametrize(

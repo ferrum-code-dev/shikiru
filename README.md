@@ -113,8 +113,7 @@ orchestration limits and integration mode, reviews each agent's options, then wr
 
 ## CLI
 
-Commands find the nearest `.shikiru/` above the current directory. Use `--project PATH` to choose one
-explicitly. `--help` on each command lists its options.
+Commands find the nearest `.shikiru/` above the current directory. Use `--project VALUE` to choose one explicitly: the exact `[project] name` of a live project, or a directory path. A value starting with `/`, `~`, `./` or `../` is always a path, so use one when a live project shares its name with a directory. `init` accepts an uninitialized repository the same way. `--help` on each command lists its options.
 
 | Command | Use |
 | --- | --- |
@@ -125,7 +124,7 @@ explicitly. `--help` on each command lists its options.
 | `submit "REQUEST"` | Queue work and print its task ID. |
 | `status` | Engine, queue, tasks, escalations, usage. `status T-1` for one task; `--watch` for updates. |
 | `ls` | List project sessions. |
-| `attach` | Attach to the current project, or pick a numbered session. |
+| `attach` | Attach to the selected project (default: current), or pick a numbered session. |
 | `doctor` | Diagnose requirements, config, plugins and state. `--probe` adds live checks. |
 | `mcp` | Serve operator tools over stdio to an MCP client. |
 
@@ -160,7 +159,7 @@ The dispatch happens before local project resolution: `--host` forwards all rema
 
 The command-specific `ls --host` and `attach --host` options are removed. Use the global form.
 
-Remote working-directory discovery is the same as local: the nearest `.shikiru/` above the remote current directory, or the path given by `--project` on the remote host. The remote host must have `shikiru` on its `PATH`, SSH access, tmux and the same interpreter dependencies as a local run.
+Remote working-directory discovery is the same as local: the nearest `.shikiru/` above the remote current directory, or the path or exact project name given by `--project`, resolved on the remote host. The remote host must have `shikiru` on its `PATH`, SSH access, tmux and the same interpreter dependencies as a local run.
 
 ## Dashboard
 

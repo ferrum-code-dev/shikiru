@@ -31,7 +31,7 @@ from shikiru.bootstrap import (
     run_init_wizard,
     run_palette,
 )
-from shikiru.cli.context import CliState, project_root, state_from
+from shikiru.cli.context import CliState, project_root, selected_project_dir, state_from
 from shikiru.cli.remote import dispatch_to_host
 from shikiru.cli.render import (
     ack_renderable,
@@ -102,7 +102,9 @@ if TYPE_CHECKING:
 
 PROJECT_OPTION = typer.Option(
     "--project",
-    help=("Select a project directory. [bold]Default:[/] the nearest initialized project."),
+    help=(
+        "Select a project by path or by name. [bold]Default:[/] the nearest initialized project."
+    ),
 )
 HOST_OPTION = typer.Option(
     "--host",
@@ -221,7 +223,7 @@ def main(
             help="Show the installed version and exit.",
         ),
     ] = False,
-    project: Annotated[Path | None, PROJECT_OPTION] = None,
+    project: Annotated[str | None, PROJECT_OPTION] = None,
     host: Annotated[str | None, HOST_OPTION] = None,
     json_output: Annotated[bool, JSON_OPTION] = False,
     overrides: Annotated[list[str] | None, OVERRIDES_OPTION] = None,
@@ -237,7 +239,8 @@ def main(
         except ProcessReplacementError as error:
             human_console(stderr=True).print(error_renderable(error))
             raise typer.Exit(code=EXIT_GENERIC_ERROR) from error
-    context.obj = CliState(project, json_output, tuple(overrides or ()), host=host)
+    overrides_tuple = tuple(overrides or ())
+    context.obj = CliState(project, json_output, overrides_tuple, host=host)
 
 
 @app.command()
@@ -257,9 +260,10 @@ def init(
 ) -> None:
     """Initialize a project from detected repositories, plugins and trackers."""
     state = state_from(context)
-    root = state.project.resolve() if state.project is not None else Path.cwd().resolve()
     wizard_result = None
     try:
+        selected = selected_project_dir(state)
+        root = selected if selected is not None else Path.cwd().resolve()
         if yes:
             config_path = _run(build_project_detectors(root).initialize())
         else:
@@ -389,21 +393,13 @@ def list_sessions(
 @app.command()
 def attach(
     context: typer.Context,
-    name: Annotated[
-        str | None,
-        typer.Argument(
-            help=(
-                "Project or full session name to attach to; omit to use the current project "
-                "or choose from a numbered list."
-            )
-        ),
-    ] = None,
 ) -> None:
-    """Attach to a project session or choose one from a numbered terminal list."""
+    """Attach to the selected project's session or choose one from a numbered terminal list."""
     try:
         state = state_from(context)
         lister, attacher = build_session_tools(state.overrides)
-        _run(_attach_from_cli(lister, attacher, state, name=name, host=None))
+        root = _attach_project_root(state)
+        _run(_attach_from_cli(lister, attacher, root))
     except ShikiruError as error:
         _fail(error)
 
@@ -423,62 +419,25 @@ def _attach_project_root(state: CliState) -> Path | None:
 async def _attach_from_cli(
     lister: SessionLister,
     attacher: SessionAttacher,
-    state: CliState,
-    *,
-    name: str | None,
-    host: str | None,
+    root: Path | None,
 ) -> None:
-    if host is not None and name is not None:
-        await attacher.attach(
-            (),
-            name=name,
-            host=host,
-            inside_tmux=bool(os.environ.get("TMUX")),
-            current_pane=os.environ.get("TMUX_PANE"),
-        )
-        return
-    listing, project_root = await _attach_listing(lister, state, name=name, host=host)
-    _print_session_diagnostics(listing, host)
+    listing = await lister.list_sessions(project_dir=root)
+    _print_session_diagnostics(listing, None)
     if not listing.rows:
         if listing.diagnostics:
             raise typer.Exit(code=EXIT_USAGE_ERROR)
-        if listing.remote_exit_code:
-            raise typer.Exit(code=listing.remote_exit_code)
-        if project_root is not None:
+        if root is not None:
             message = (
-                f"no Shikiru session exists for project {project_root}; "
+                f"no Shikiru session exists for project {root}; "
                 "run `shikiru --project PATH start --attach` to create and attach it"
             )
             raise UsageError(message)
-    if project_root is not None and len(listing.rows) > 1:
-        message = (
-            f"multiple Shikiru sessions belong to project {project_root}; "
-            "choose one with `shikiru attach NAME`"
-        )
-        raise UsageError(message)
     await attacher.attach(
         listing.rows,
-        name=name,
-        host=host,
+        host=None,
         inside_tmux=bool(os.environ.get("TMUX")),
         current_pane=os.environ.get("TMUX_PANE"),
     )
-
-
-async def _attach_listing(
-    lister: SessionLister,
-    state: CliState,
-    *,
-    name: str | None,
-    host: str | None,
-) -> tuple[SessionListing, Path | None]:
-    if host is not None or name is not None:
-        return await lister.list_sessions(host, session_name=name if host is None else None), None
-    root = _attach_project_root(state)
-    if root is None:
-        return await lister.list_sessions(), None
-    listing = await lister.list_sessions(project_dir=root)
-    return listing, root
 
 
 def _print_session_diagnostics(listing: SessionListing, host: str | None) -> None:
@@ -685,8 +644,7 @@ def palette(
         state = state_from(context)
         project = state.project
         if project is None:
-            session_project = os.environ.get(PROJECT_DIR_ENV_VAR)
-            project = Path(session_project) if session_project is not None else None
+            project = os.environ.get(PROJECT_DIR_ENV_VAR)
         root = project_root(CliState(project, state.json_output, state.overrides))
         _run(run_palette(root, state.overrides, origin_pane))
     except ShikiruError as error:

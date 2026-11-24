@@ -27,10 +27,11 @@ from shikiru.errors import (
     EXIT_NOT_INITIALISED,
     EXIT_USAGE_ERROR,
     CommandFailed,
+    ConfigError,
     UsageError,
 )
 from shikiru.operator.lifecycle import ProjectLifecycle, home_command
-from shikiru.operator.sessions import SessionAttacher, SessionLister, SessionRow
+from shikiru.operator.sessions import SessionLister, SessionRow
 from shikiru.paths import engine_lock_path, engine_output_path, project_config_path
 from shikiru.process import SpawnedTerminalProcess, SubprocessRunner
 from shikiru.store.database import Database
@@ -40,6 +41,7 @@ from shikiru.tmux.client import Tmux, exact_target
 from shikiru.tmux.session import PROJECT_DIR_ENV_VAR, SESSION_PREFIX, SessionView, session_name
 from tests.support.clock import FakeClock
 from tests.support.config import MINIMAL_PROJECT_CONFIG
+from tests.support.git_repo import commit_all, init_repo
 from tests.support.quota_waits import record_quota_wait, record_turn_start
 from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
@@ -1136,6 +1138,7 @@ async def test_cli_attach_uses_a_listed_exact_target_and_tmux_context(
 ) -> None:
     project = tmp_path / "project dir"
     _make_project(project, ())
+    _write_project_config(project)
     session = f"{SESSION_PREFIX}quoted ' project"
     await _add_session(tmux_server, session, project)
     bin_dir = tmp_path / "bin"
@@ -1147,7 +1150,7 @@ async def test_cli_attach_uses_a_listed_exact_target_and_tmux_context(
     else:
         env.pop("TMUX", None)
     result = await SubprocessRunner().run(
-        [sys.executable, "-m", "shikiru", "attach", session],
+        [sys.executable, "-m", "shikiru", "--project", str(project), "attach"],
         timeout=MEDIUM_WAIT_SECONDS,
         env=env,
         cwd=tmp_path,
@@ -1171,6 +1174,8 @@ async def test_managed_attach_preserves_the_live_client_and_allows_reattach_afte
     other_project = tmp_path / "other project"
     _make_project(project, ())
     _make_project(other_project, ())
+    _write_project_config(project)
+    _write_project_config(other_project)
     session = f"{SESSION_PREFIX}literal ' ; $ #{{client_pid}}"
     other_session = f"{SESSION_PREFIX}other project"
     await _add_session(tmux_server, session, project)
@@ -1184,14 +1189,16 @@ async def test_managed_attach_preserves_the_live_client_and_allows_reattach_afte
 
     async with attach_tmux_client(tmux_server, exact_target(session)) as first_client:
         original_state = await _client_state(tmux_server, session, first_client.process.pid)
-        _, returncode = await _run_attach_cli(["attach", session], cwd=tmp_path, env=env)
+        _, returncode = await _run_attach_cli(
+            ["--project", str(project), "attach"], cwd=tmp_path, env=env
+        )
 
         assert returncode == EXIT_USAGE_ERROR
         assert await _session_client_panes(tmux_server, session) == [original_state[1]]
         assert await _client_state(tmux_server, session, first_client.process.pid) == original_state
 
         other_client = await runner.spawn_terminal(
-            [sys.executable, "-m", "shikiru", "attach", other_session],
+            [sys.executable, "-m", "shikiru", "--project", str(other_project), "attach"],
             cwd=tmp_path,
             env=env,
         )
@@ -1213,7 +1220,7 @@ async def test_managed_attach_preserves_the_live_client_and_allows_reattach_afte
         assert await _session_client_panes(tmux_server, session) == []
 
         reattached = await runner.spawn_terminal(
-            [sys.executable, "-m", "shikiru", "attach", session],
+            [sys.executable, "-m", "shikiru", "--project", str(project), "attach"],
             cwd=tmp_path,
             env=env,
         )
@@ -1239,6 +1246,7 @@ async def test_attach_from_the_only_client_already_showing_target_is_a_noop(
 ) -> None:
     project = tmp_path / "same client project"
     _make_project(project, ())
+    _write_project_config(project)
     session = f"{SESSION_PREFIX}same client project"
     await _add_session(tmux_server, session, project)
     bin_dir = tmp_path / "bin"
@@ -1251,7 +1259,7 @@ async def test_attach_from_the_only_client_already_showing_target_is_a_noop(
         state = await _client_state(tmux_server, session, client.process.pid)
         env["TMUX_PANE"] = state[1]
         result = await SubprocessRunner().run(
-            [sys.executable, "-m", "shikiru", "attach", session],
+            [sys.executable, "-m", "shikiru", "--project", str(project), "attach"],
             timeout=MEDIUM_WAIT_SECONDS,
             cwd=tmp_path,
             env=env,
@@ -1418,6 +1426,7 @@ async def test_remote_attach_runs_the_remote_live_admission_policy(
 ) -> None:
     project = tmp_path / "remote project"
     _make_project(project, ())
+    (project / ".shikiru" / "config.toml").write_text('[project]\nname = "remote project"\n')
     session = f"{SESSION_PREFIX}remote project"
     await _add_session(tmux_server, session, project)
     bin_dir = tmp_path / "bin"
@@ -1459,11 +1468,15 @@ os.execv("/bin/sh", ["/bin/sh", "-c", arguments[-1]])
         ]
     )
     runner = SubprocessRunner()
+    outside = tmp_path / "outside"
+    outside.mkdir()
 
     async with attach_tmux_client(tmux_server, exact_target(session)) as first_client:
         original_state = await _client_state(tmux_server, session, first_client.process.pid)
         _, returncode = await _run_attach_cli(
-            ["--host", "remote.example", "attach", "remote project"], cwd=tmp_path, env=env
+            ["--host", "remote.example", "--project", "remote project", "attach"],
+            cwd=outside,
+            env=env,
         )
 
         assert returncode == EXIT_USAGE_ERROR
@@ -1480,10 +1493,11 @@ os.execv("/bin/sh", ["/bin/sh", "-c", arguments[-1]])
                 "shikiru",
                 "--host",
                 "remote.example",
-                "attach",
+                "--project",
                 "remote project",
+                "attach",
             ],
-            cwd=tmp_path,
+            cwd=outside,
             env=env,
         )
         try:
@@ -1595,7 +1609,7 @@ async def test_explicit_project_without_config_rejects_attach_without_selecting_
 
 
 @pytest.mark.asyncio
-async def test_attach_gives_focused_repair_for_unavailable_current_and_named_sessions(
+async def test_attach_gives_focused_repair_for_unavailable_current_and_selected_projects(
     tmp_path: Path,
     tmux_server: TmuxServer,
     monkeypatch: pytest.MonkeyPatch,
@@ -1615,7 +1629,9 @@ async def test_attach_gives_focused_repair_for_unavailable_current_and_named_ses
     runner = CliRunner()
 
     current = await asyncio.to_thread(runner.invoke, app, ["attach"], env=env)
-    named = await asyncio.to_thread(runner.invoke, app, ["attach", session], env=env)
+    named = await asyncio.to_thread(
+        runner.invoke, app, ["--project", str(project), "attach"], env=env
+    )
 
     for result in (current, named):
         assert result.exit_code == EXIT_USAGE_ERROR
@@ -1652,15 +1668,16 @@ async def test_attach_reports_all_unavailable_sessions_once(
 
 
 @pytest.mark.asyncio
-async def test_explicit_attach_name_remains_authoritative_with_project_option(
+async def test_project_name_selects_a_different_project(
     tmp_path: Path, tmux_server: TmuxServer
 ) -> None:
     current_project = tmp_path / "current project"
     target_project = tmp_path / "named project"
     _make_project(current_project, ())
     _make_project(target_project, ())
+    _write_project_config(target_project)
     (current_project / ".shikiru" / "config.toml").write_text('[project]\nname = "current"\n')
-    named_session = f"{SESSION_PREFIX}named project"
+    named_session = f"{SESSION_PREFIX}demo"
     await _add_session(tmux_server, f"{SESSION_PREFIX}current", current_project)
     await _add_session(tmux_server, named_session, target_project)
     bin_dir = tmp_path / "bin"
@@ -1668,10 +1685,12 @@ async def test_explicit_attach_name_remains_authoritative_with_project_option(
     capture = tmp_path / "tmux-argv.json"
     env = _test_env(bin_dir, capture, tmux_server)
     env.pop("TMUX", None)
+    outside = tmp_path / "outside"
+    outside.mkdir()
 
     _, returncode = await _run_attach_cli(
-        ["--project", str(current_project), "attach", "named project"],
-        cwd=tmp_path,
+        ["--project", "demo", "attach"],
+        cwd=outside,
         env=env,
     )
 
@@ -1823,7 +1842,6 @@ attacher = SessionAttacher(runner, Tmux(runner), pick)
 async def attach():
     await attacher.attach(
         rows,
-        name=None,
         host="remote.example",
         inside_tmux=True,
     )
@@ -1865,14 +1883,14 @@ asyncio.run(attach())
         "TMUX=",
         "TMUX_PANE=",
         "shikiru",
+        "--project",
+        selected.project_dir,
         "attach",
-        "--",
-        selected.session,
     ]
 
 
 @pytest.mark.asyncio
-async def test_remote_unavailable_named_attach_scopes_repairs_to_ssh_host(
+async def test_remote_unavailable_attach_scopes_repairs_to_ssh_host(
     tmp_path: Path,
     tmux_server: TmuxServer,
 ) -> None:
@@ -1906,7 +1924,7 @@ os.execv("/bin/sh", ["/bin/sh", "-c", sys.argv[-1]])
     env.pop("TMUX_PANE", None)
 
     output, returncode = await _run_attach_cli(
-        ["--host", host, "attach", session],
+        ["--host", host, "attach"],
         cwd=tmp_path,
         env=env,
     )
@@ -1920,27 +1938,241 @@ os.execv("/bin/sh", ["/bin/sh", "-c", sys.argv[-1]])
 
 
 @pytest.mark.asyncio
-async def test_attach_rejects_an_option_like_name_without_using_it_as_a_target() -> None:
-    row = SessionRow(
-        session=f"{SESSION_PREFIX}valid",
-        project_dir="/projects/valid",
-        engine_state="down",
-        running=0,
-        waiting=0,
-        queued=0,
-        escalated=0,
+async def test_option_like_project_name_never_reaches_tmux(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    project = tmp_path / "valid project"
+    _make_project(project, ())
+    await _add_session(tmux_server, f"{SESSION_PREFIX}valid project", project)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    env.pop("TMUX", None)
+
+    output, returncode = await _run_attach_cli(["--project=-t", "status"], cwd=tmp_path, env=env)
+
+    assert returncode == EXIT_USAGE_ERROR
+    assert "no Shikiru project named" in output
+    assert not capture.exists()
+
+
+@pytest.mark.asyncio
+async def test_resolve_project_requires_the_exact_configured_name(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    dotted = tmp_path / "dotted project"
+    _make_project(dotted, ())
+    (dotted / ".shikiru" / "config.toml").write_text('[project]\nname = "foo.bar"\n')
+    await _add_session(tmux_server, f"{SESSION_PREFIX}foo_bar", dotted)
+    deleted = tmp_path / "deleted project"
+    await _add_session(tmux_server, f"{SESSION_PREFIX}deleted", deleted)
+    lister = _lister(tmux_server)
+
+    assert await lister.resolve_project("foo.bar") == dotted
+    assert await lister.resolve_project("foo_bar") is None
+    assert await lister.resolve_project("foo:bar") is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_project_returns_none_when_missing_and_rejects_ambiguity(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    first_project = tmp_path / "first project"
+    second_project = tmp_path / "second project"
+    _make_project(first_project, ())
+    _make_project(second_project, ())
+    (first_project / ".shikiru" / "config.toml").write_text('[project]\nname = "shared"\n')
+    (second_project / ".shikiru" / "config.toml").write_text('[project]\nname = "shared"\n')
+    await _add_session(tmux_server, f"{SESSION_PREFIX}shared", first_project)
+    await _add_session(tmux_server, f"{SESSION_PREFIX}[shikiru] shared", second_project)
+    lister = _lister(tmux_server)
+
+    with pytest.raises(UsageError, match="multiple"):
+        await lister.resolve_project("shared")
+    assert await lister.resolve_project("absent") is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_project_deduplicates_sessions_of_one_project(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    project = tmp_path / "renamed project"
+    _make_project(project, ())
+    (project / ".shikiru" / "config.toml").write_text('[project]\nname = "shared"\n')
+    await _add_session(tmux_server, f"{SESSION_PREFIX}shared", project)
+    await _add_session(tmux_server, f"{SESSION_PREFIX}renamed", project)
+
+    assert await _lister(tmux_server).resolve_project("shared") == project
+
+
+@pytest.mark.asyncio
+async def test_slashed_project_name_selects_status_without_a_relative_directory(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    project = tmp_path / "first project"
+    _make_project(project, ())
+    (project / ".shikiru" / "config.toml").write_text(
+        MINIMAL_PROJECT_CONFIG.replace('name = "demo"', 'name = "group/demo"')
+    )
+    await _add_session(tmux_server, f"{SESSION_PREFIX}group/demo", project)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    env.pop("TMUX", None)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    output, returncode = await _run_attach_cli(
+        ["--project", "group/demo", "status"], cwd=outside, env=env
     )
 
-    def prompt(rows: Sequence[SessionRow], host: str | None) -> SessionRow:
-        assert host is None
-        return rows[0]
+    assert returncode == 0
+    assert "group/demo" in output
 
-    runner = SubprocessRunner()
-    attacher = SessionAttacher(runner, Tmux(runner), prompt)
-    with pytest.raises(UsageError):
-        await attacher.attach(
-            [row],
-            name="-t",
-            host=None,
-            inside_tmux=False,
-        )
+
+@pytest.mark.asyncio
+async def test_project_name_ignores_an_unrelated_same_named_directory(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    project = tmp_path / "remote project"
+    _make_project(project, ())
+    (project / ".shikiru" / "config.toml").write_text('[project]\nname = "alpha"\n')
+    await _add_session(tmux_server, f"{SESSION_PREFIX}alpha", project)
+    unrelated = tmp_path / "alpha"
+    unrelated.mkdir()
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    env.pop("TMUX", None)
+
+    _, returncode = await _run_attach_cli(["--project", "alpha", "attach"], cwd=tmp_path, env=env)
+
+    assert returncode == 0
+    assert shlex.split(json.loads(capture.read_text())[6]) == [
+        "attach-session",
+        "-t",
+        exact_target(f"{SESSION_PREFIX}alpha"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_project_name_colliding_with_a_relative_project_path_fails(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    path_project = tmp_path / "alpha"
+    _make_project(path_project, ())
+    named_project = tmp_path / "remote project"
+    _make_project(named_project, ())
+    (named_project / ".shikiru" / "config.toml").write_text('[project]\nname = "alpha"\n')
+    await _add_session(tmux_server, f"{SESSION_PREFIX}alpha", named_project)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    capture = tmp_path / "tmux-argv.json"
+    env = _test_env(bin_dir, capture, tmux_server)
+    env.pop("TMUX", None)
+
+    output, returncode = await _run_attach_cli(
+        ["--project", "alpha", "status"], cwd=tmp_path, env=env
+    )
+
+    assert returncode == EXIT_USAGE_ERROR
+    assert "matches both" in output
+    assert not capture.exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "broken_config",
+    [b'[project]\nname = "\xff"\n', b"invalid config remains unparsed"],
+    ids=["non_utf8", "malformed"],
+)
+async def test_name_lookup_fails_when_a_live_config_cannot_be_verified(
+    tmp_path: Path, tmux_server: TmuxServer, broken_config: bytes
+) -> None:
+    healthy = tmp_path / "healthy project"
+    _make_project(healthy, ())
+    (healthy / ".shikiru" / "config.toml").write_text('[project]\nname = "alpha"\n')
+    await _add_session(tmux_server, f"{SESSION_PREFIX}alpha", healthy)
+    broken = tmp_path / "broken project"
+    _make_project(broken, ())
+    project_config_path(broken).write_bytes(broken_config)
+    await _add_session(tmux_server, f"{SESSION_PREFIX}broken", broken)
+    lister = _lister(tmux_server)
+
+    with pytest.raises(ConfigError, match="broken"):
+        await lister.resolve_project("alpha")
+    with pytest.raises(ConfigError, match="broken"):
+        await lister.resolve_project("absent")
+
+
+@pytest.mark.asyncio
+async def test_cli_reports_an_unverifiable_session_while_explicit_paths_still_work(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    healthy = tmp_path / "healthy project"
+    _make_project(healthy, ())
+    project_config_path(healthy).write_text(
+        MINIMAL_PROJECT_CONFIG.replace('name = "demo"', 'name = "alpha"')
+    )
+    await _add_session(tmux_server, f"{SESSION_PREFIX}alpha", healthy)
+    broken = tmp_path / "broken project"
+    _make_project(broken, ())
+    project_config_path(broken).write_bytes(b'[project]\nname = "\xff"\n')
+    await _add_session(tmux_server, f"{SESSION_PREFIX}broken", broken)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    env = _test_env(bin_dir, tmp_path / "tmux-argv.json", tmux_server)
+    env.pop("TMUX", None)
+
+    output, returncode = await _run_attach_cli(
+        ["--project", "alpha", "status"], cwd=tmp_path, env=env
+    )
+
+    assert returncode == EXIT_GENERIC_ERROR
+    assert "broken" in output
+    assert "no Shikiru project named" not in output
+    _, returncode = await _run_attach_cli(
+        ["--project", str(healthy), "status"], cwd=tmp_path, env=env
+    )
+    assert returncode == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("selection", ["./new project", "new project"], ids=["explicit", "bare"])
+async def test_init_selects_an_uninitialized_directory_by_path(
+    tmp_path: Path, tmux_server: TmuxServer, selection: str
+) -> None:
+    repo = tmp_path / "new project"
+    await init_repo(SubprocessRunner(), repo)
+    await commit_all(SubprocessRunner(), repo, "initial commit", allow_empty=True)
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    env = _test_env(bin_dir, tmp_path / "tmux-argv.json", tmux_server)
+    env.pop("TMUX", None)
+
+    _, returncode = await _run_attach_cli(
+        ["--project", selection, "init", "--yes"], cwd=tmp_path, env=env
+    )
+
+    assert returncode == 0
+    assert project_config_path(repo).is_file()
+
+
+@pytest.mark.asyncio
+async def test_help_does_not_resolve_the_project_selection(
+    tmp_path: Path, tmux_server: TmuxServer
+) -> None:
+    bin_dir = tmp_path / "bin"
+    _fake_tmux(bin_dir)
+    env = _test_env(bin_dir, tmp_path / "tmux-argv.json", tmux_server)
+    env.pop("TMUX", None)
+
+    output, returncode = await _run_attach_cli(
+        ["--project", "absent project", "init", "--help"], cwd=tmp_path, env=env
+    )
+
+    assert returncode == 0
+    assert "Usage" in output

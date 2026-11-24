@@ -280,7 +280,7 @@ async def test_status_watch_redraws_when_a_quota_reset_passes_without_a_state_ch
     watcher = asyncio.create_task(
         status_loop(
             services,
-            CliState(project=tmp_path, json_output=False, overrides=()),
+            CliState(project=str(tmp_path), json_output=False, overrides=()),
             None,
             True,
             project_root_path=tmp_path,

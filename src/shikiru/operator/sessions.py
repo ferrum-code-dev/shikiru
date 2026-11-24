@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import shlex
+import tomllib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
@@ -40,7 +41,7 @@ SHIKIRU_COMMAND = "shikiru"
 LS_COMMAND = "ls"
 JSON_OPTION = "--json"
 ATTACH_COMMAND = "attach"
-ATTACH_OPTION_TERMINATOR = "--"
+PROJECT_OPTION = "--project"
 TMUX_ENV_ASSIGNMENT = "TMUX="
 TMUX_PANE_ENV_ASSIGNMENT = "TMUX_PANE="
 ENV_COMMAND = "env"
@@ -130,24 +131,66 @@ class SessionLister:
         host: str | None = None,
         *,
         project_dir: Path | None = None,
-        session_name: str | None = None,
     ) -> SessionListing:
         """Return visible sessions and any per-project discovery failures."""
         if host is not None:
             return await self._list_remote(host)
-        return await self._list_local(project_dir=project_dir, session_name=session_name)
+        return await self._list_local(project_dir=project_dir)
 
-    async def _list_local(
-        self, *, project_dir: Path | None, session_name: str | None
-    ) -> SessionListing:
+    async def resolve_project(self, name: str) -> Path | None:
+        """Resolve an exact project name to its directory among live Shikiru sessions.
+
+        The name is compared with each live project's configured `[project] name`. A session
+        whose project cannot be verified raises `ConfigError`, because the name could belong to
+        it: no match or uniqueness is claimed while any session is unverified. Returns `None`
+        only when every session was verified and none carries the name.
+        """
+        if not name:
+            message = "project name cannot be empty"
+            raise UsageError(message)
+        try:
+            names = await self._tmux.list_sessions()
+        except OSError as error:
+            message = f"could not inspect local tmux sessions: {error}"
+            raise ConfigError(message) from error
+        matches: list[Path] = []
+        unverified: list[str] = []
+        for session in names:
+            if not session.startswith(SESSION_PREFIX):
+                continue
+            try:
+                project_dir = _session_project_dir(
+                    session,
+                    await self._tmux.show_session_environment(
+                        exact_target(session), PROJECT_DIR_ENV_VAR
+                    ),
+                )
+                configured = _configured_project_name(project_dir)
+            except ConfigError as error:
+                unverified.append(str(error))
+                continue
+            if configured == name:
+                matches.append(project_dir)
+        if unverified:
+            details = "; ".join(unverified)
+            message = f"cannot establish whether project {name!r} is live: {details}"
+            raise ConfigError(message)
+        unique = list(dict.fromkeys(matches))
+        if len(unique) > 1:
+            message = (
+                f"multiple Shikiru projects are named {name!r}; "
+                "use --project PATH to select one by path"
+            )
+            raise UsageError(message)
+        return unique[0] if unique else None
+
+    async def _list_local(self, *, project_dir: Path | None) -> SessionListing:
         try:
             names = await self._tmux.list_sessions()
             rows: list[SessionRow] = []
             diagnostics: list[SessionDiagnostic] = []
             for name in names:
                 if not name.startswith(SESSION_PREFIX):
-                    continue
-                if session_name is not None and not _session_matches_name(name, session_name):
                     continue
                 session_project_dir: str | None = None
                 try:
@@ -264,32 +307,22 @@ class SessionAttacher:
         self,
         rows: Sequence[SessionRow],
         *,
-        name: str | None,
         host: str | None,
         inside_tmux: bool,
         current_pane: str | None = None,
     ) -> None:
         """Replace this process with tmux or ssh for one listed session."""
-        if host is not None and name is not None:
-            self._runner.replace(_remote_attach_argv(host, name))
-            return
-        row = self._select(rows, name, host)
+        row = self._select(rows, host)
         if host is None:
             same_client = await admit_attachment(self._tmux, row.session, current_pane)
             if same_client:
                 return
             command = self._tmux.guarded_client_argv(row.session, switch=inside_tmux)
         else:
-            command = _remote_attach_argv(host, row.session)
+            command = _remote_attach_argv(host, row.project_dir)
         self._runner.replace(command)
 
-    def _select(self, rows: Sequence[SessionRow], name: str | None, host: str | None) -> SessionRow:
-        if name is not None:
-            matches = [row for row in rows if _session_matches_name(row.session, name)]
-            if len(matches) == 1:
-                return matches[0]
-            message = f"no unique Shikiru session named {name!r}"
-            raise UsageError(message)
+    def _select(self, rows: Sequence[SessionRow], host: str | None) -> SessionRow:
         if len(rows) == 1:
             return rows[0]
         if not rows:
@@ -297,8 +330,40 @@ class SessionAttacher:
         return self._prompt(rows, host)
 
 
-def _session_matches_name(session: str, name: str) -> bool:
-    return session == name or session.removeprefix(SESSION_PREFIX) == name
+def _session_project_dir(session: str, project_dir: str | None) -> Path:
+    if project_dir is None:
+        message = f"tmux session {session!r} has no {PROJECT_DIR_ENV_VAR}"
+        raise ConfigError(message)
+    if not Path(project_dir).is_absolute():
+        message = f"tmux session {session!r} has an invalid project directory: {project_dir!r}"
+        raise ConfigError(message)
+    return Path(project_dir)
+
+
+def _configured_project_name(root: Path) -> str | None:
+    """Read the `[project] name` configured for `root`.
+
+    Returns `None` when the project has no config file or no name. A config that exists but
+    cannot be read or parsed raises `ConfigError`, since the project's name is then unknown.
+    """
+    path = project_config_path(root)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError) as error:
+        message = f"could not read {path}: {error}"
+        raise ConfigError(message) from error
+    try:
+        data: dict[str, Any] = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as error:
+        message = f"could not parse {path}: {error}"
+        raise ConfigError(message) from error
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return None
+    name = cast("dict[str, Any]", project).get("name")
+    return name if isinstance(name, str) else None
 
 
 def _turn_is_waiting(task: Task, reader: StateReader, now: datetime) -> bool:
@@ -321,10 +386,10 @@ def _validate_host(host: str) -> None:
         raise UsageError(message)
 
 
-def _remote_attach_argv(host: str, name: str) -> tuple[str, ...]:
+def _remote_attach_argv(host: str, project_dir: str) -> tuple[str, ...]:
     _validate_host(host)
-    if not name:
-        message = "session name cannot be empty"
+    if not project_dir:
+        message = "project directory cannot be empty"
         raise UsageError(message)
     remote_command = shlex.join(
         (
@@ -333,9 +398,9 @@ def _remote_attach_argv(host: str, name: str) -> tuple[str, ...]:
             TMUX_ENV_ASSIGNMENT,
             TMUX_PANE_ENV_ASSIGNMENT,
             SHIKIRU_COMMAND,
+            PROJECT_OPTION,
+            project_dir,
             ATTACH_COMMAND,
-            ATTACH_OPTION_TERMINATOR,
-            name,
         )
     )
     return SSH_COMMAND, SSH_TTY_OPTION, SSH_OPTION_TERMINATOR, host, remote_command

@@ -459,10 +459,10 @@ const EXAMPLES = [
   {id: "stop", command: "shikiru stop", scenarios: ["Stopped", "Already stopped", "Pending acknowledgement", "Rejected"]},
   {id: "stop_kill", command: "shikiru stop --kill-session", scenarios: ["Stopped", "Already stopped"]},
   {id: "ls", command: "shikiru ls", scenarios: ["Sessions · wide", "Partial discovery", "No sessions", "All unavailable"]},
-  {id: "ls_host", command: "shikiru ls --host buildbox", scenarios: ["Remote sessions", "Remote partial failure", "Remote empty", "Remote all unavailable"]},
+  {id: "ls_host", command: "shikiru --host buildbox ls", scenarios: ["Remote sessions", "Remote partial failure", "Remote empty", "Remote all unavailable"]},
   {id: "attach", command: "shikiru attach", scenarios: ["Current project", "Numbered selection", "Session busy", "Missing project state"]},
-  {id: "attach_named", command: "shikiru attach '[shikiru] demo'", scenarios: ["Named local session", "Missing named session"]},
-  {id: "attach_remote", command: "shikiru attach '[shikiru] demo' --host buildbox", scenarios: ["Named remote session", "Remote session unavailable"]},
+  {id: "attach_named", command: "shikiru --project demo attach", scenarios: ["Named local session", "Missing named session"]},
+  {id: "attach_remote", command: "shikiru --host buildbox --project demo attach", scenarios: ["Named remote session", "Remote session unavailable"]},
   {id: "submit", command: "shikiru submit \"Add retry handling\" --mode implement --complexity normal --priority 2 --after T-18 --leader codex:gpt-6-luna:high --implementer claude:claude-sonnet-4-5:high", scenarios: ["Applied", "Pending", "Rejected"]},
   {id: "usage_error", command: "shikiru submit", scenarios: ["Missing request"]},
   {id: "status", command: "shikiru status", scenarios: ["Project status", "Empty project"]},
@@ -1197,7 +1197,7 @@ function renderCommand(id, scenario, view) {
     if (scenario === "Session busy") {
       appendOutcome(view, "error", "The session is already attached to another terminal");
       appendDetails(view, [["Session", "[shikiru] demo"], ["Cause", "A different terminal owns the live client."]]);
-      appendActions(view, "Repair", [{label: "Session", instruction: "Detach the other terminal or choose another session.", command: "shikiru attach '[shikiru] docs'"}]);
+      appendActions(view, "Repair", [{label: "Session", instruction: "Detach the other terminal or choose another session.", command: "shikiru --project docs attach"}]);
       return;
     }
     if (scenario === "Missing project state") {
