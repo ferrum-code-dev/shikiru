@@ -489,10 +489,11 @@ Deleting `.shikiru/` destroys its local state; initialization cannot reconstruct
 
 Agents run with the Operator's privileges and environment. Claude Code defaults to
 `bypassPermissions`; Codex uses `workspace-write` with the run directory and task/shared Git metadata
-writable. Muse defaults to `--trust-workspace --disable-sandbox`, so it can write outside the task
-worktree with the Operator's privileges. Worktree separation is a convention, not enforced host
-isolation. Owner-only state files protect against other local users, not an agent running as the
-Operator. Project instructions, provider tools and notification commands can execute with those
+writable. Muse defaults to `--trust-workspace --disable-sandbox --disable-approval`, so it can write
+outside the task worktree with the Operator's privileges. Approval prompts are off because an
+unattended turn has no one to answer an escalation. Worktree separation is a convention, not
+enforced host isolation. Owner-only state files protect against other local users, not an agent
+running as the Operator. Project instructions, provider tools and notification commands can execute with those
 privileges; reports/exports may contain sensitive project data. Agent review is assistance, not a
 correctness or security proof.
 

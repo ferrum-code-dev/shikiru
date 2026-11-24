@@ -26,6 +26,7 @@ from shikiru.agents.settings import AgentOptionsError
 from shikiru.plugins.agents.muse.agent import create
 from shikiru.plugins.agents.muse.options import (
     DEFAULT_ARGS,
+    DISABLE_APPROVAL_FLAG,
     EXEC_SUBCOMMAND,
     JSON_FLAG,
     MODEL_FLAG,
@@ -155,6 +156,22 @@ async def test_started_turn_runs_muse_with_the_configured_arguments_and_compacti
     )
     assert argv[-1] == str(tmp_path / "turn" / PROMPT_FILENAME)
     assert any(isinstance(signal, TurnEnded) for signal in signals)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("options", "expected_present"),
+    [
+        ({}, True),
+        ({"args": list(_CUSTOM_ARGS)}, False),
+    ],
+)
+async def test_default_turn_arguments_disable_approval(
+    tmp_path: Path, options: dict[str, Any], expected_present: bool
+) -> None:
+    argv, _signals = await _run_turn(tmp_path, options)
+
+    assert (DISABLE_APPROVAL_FLAG in argv) is expected_present
 
 
 @pytest.mark.parametrize(

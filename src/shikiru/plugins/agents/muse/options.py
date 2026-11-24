@@ -36,12 +36,13 @@ SOFT_THRESHOLD_FLAG = "--context-compaction-soft-threshold"
 HARD_THRESHOLD_FLAG = "--context-compaction-hard-threshold"
 TRUST_WORKSPACE_FLAG = "--trust-workspace"
 DISABLE_SANDBOX_FLAG = "--disable-sandbox"
+DISABLE_APPROVAL_FLAG = "--disable-approval"
 DISABLE_SHELL_FLAG = "--disable-shell"
 DISABLE_WRITE_FLAG = "--disable-write"
 DISABLE_WEB_TOOLS_FLAG = "--disable-web-tools"
 DISABLE_REMINDERS_FLAG = "--disable-reminders"
 NO_SESSION_LOG_FLAG = "--no-session-log"
-DEFAULT_ARGS = (TRUST_WORKSPACE_FLAG, DISABLE_SANDBOX_FLAG)
+DEFAULT_ARGS = (TRUST_WORKSPACE_FLAG, DISABLE_SANDBOX_FLAG, DISABLE_APPROVAL_FLAG)
 HEADLESS_FLAGS = (
     DISABLE_SHELL_FLAG,
     NO_SESSION_LOG_FLAG,
