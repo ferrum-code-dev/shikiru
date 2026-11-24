@@ -102,8 +102,11 @@ sequence = [
   { cmd = "ruff check --fix ." },
 ]
 
+[tool.poe.tasks.static]
+sequence = ["format-check", "lint", "comments", "literals", "imports", "types", "dead-code"]
+
 [tool.poe.tasks.check]
-sequence = ["format-check", "lint", "comments", "literals", "imports", "types", "dead-code", "test"]
+sequence = ["static", "test"]
 
 [tool.ruff]
 line-length = 100
