@@ -102,6 +102,14 @@ def test_only_iterations_exhausted_offers_accept() -> None:
             Counters(rejections_on_rung=7, conflict_rounds=4),
         ),
         _ResolutionCase(
+            EscalationReason.DECISION_REQUIRED,
+            Step.TRIAGE,
+            ResolutionKind.ANSWER,
+            None,
+            Step.TRIAGE,
+            Counters(rejections_on_rung=7, conflict_rounds=4),
+        ),
+        _ResolutionCase(
             EscalationReason.ITERATIONS_EXHAUSTED,
             Step.VERIFY,
             ResolutionKind.ANSWER,

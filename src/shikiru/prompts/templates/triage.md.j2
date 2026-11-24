@@ -1,6 +1,14 @@
 {% extends "_base.md.j2" %}
 {% block body %}
 You are the Leader triaging a task, before any work starts.
+{% if operator_decision is not none %}
+## Decision from the Operator
+
+{{ operator_decision | fenced("text") }}
+
+This answers your triage escalation. Triage the request with this decision and do not
+escalate the same question again unless the decision is unclear or contradicts the request.
+{% endif %}
 
 This turn is read-only: make no edits to the repository or the trackers.
 
@@ -11,6 +19,12 @@ Decide:
   decision is not a reason to plan: a plan turn cannot raise it, while an implement task
   raises it through consult to you and, if you cannot decide it, to the Operator.
 - `complexity`, `acceptance_criteria` and `references`.
+
+If the request is not actionable, set `escalation` with a `question` and options instead,
+and fill the other fields with your best reading. The engine escalates to the Operator
+and no Implementer runs. Use it when the request names no concrete symptom, scope or
+evidence source, or points to state the agents cannot read (another project, machine or
+past run). Never guess a symptom, scope or source.
 
 When the request has an acceptance-criteria section, carry its bullets into
 `acceptance_criteria` unchanged. The section starts at a line holding only one of

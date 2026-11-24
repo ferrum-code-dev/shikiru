@@ -150,7 +150,11 @@ class TurnContextPreparer:
             or handoff
         )
         facts_text = await self._facts.text(task) if needs_facts else ""
-        if handoff and template not in (*FEEDBACK_TEMPLATES, PromptName.PULL_REQUEST_DESCRIPTION):
+        if handoff and template not in (
+            *FEEDBACK_TEMPLATES,
+            PromptName.PULL_REQUEST_DESCRIPTION,
+            PromptName.TRIAGE,
+        ):
             template = PromptName.HANDOFF
         if needs_facts:
             context[ContextKey.FACTS] = facts_text
@@ -188,6 +192,10 @@ class TurnContextPreparer:
         if template is PromptName.FEEDBACK_ANALYSIS:
             return {
                 ContextKey.OPERATOR_DECISION: self._escalation_store.latest_feedback_answer(task.id)
+            }
+        if template is PromptName.TRIAGE:
+            return {
+                ContextKey.OPERATOR_DECISION: self._escalation_store.latest_triage_answer(task.id)
             }
         return {}
 

@@ -154,9 +154,12 @@ def transition_for_resolution(
     target_step = step or task.step
     status = Status.QUEUED
     if resolution is ResolutionKind.ANSWER:
-        target_step = (
-            Step.INTEGRATE if reason is EscalationReason.FEEDBACK_NEEDS_OPERATOR else Step.CONSULT
-        )
+        if reason is EscalationReason.FEEDBACK_NEEDS_OPERATOR:
+            target_step = Step.INTEGRATE
+        elif target_step is Step.TRIAGE:
+            target_step = Step.TRIAGE
+        else:
+            target_step = Step.CONSULT
     elif resolution is ResolutionKind.ACCEPT:
         target_step = Step.INTEGRATE
         counters = reset_for_integration_attempt(counters)

@@ -234,6 +234,7 @@ def _triage(report: TriageReport) -> tuple[Part, list[DetailRow]]:
         *_row("Complexity", report.complexity),
         *_plain_items("Acceptance criteria", report.acceptance_criteria),
         *_plain_items("References", report.references),
+        *_escalation(report.escalation),
     ]
 
 

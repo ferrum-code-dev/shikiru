@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from shikiru.domain.recovery import Failed, ProtocolError, Stalled
-from shikiru.domain.reports import ConsultAnswer, ImplementationReport, Verdict
+from shikiru.domain.reports import ConsultAnswer, ImplementationReport, TriageReport, Verdict
 from shikiru.domain.tasks import EscalationReason, Status
 from shikiru.errors import InvariantError
 
@@ -19,6 +19,17 @@ if TYPE_CHECKING:
     from shikiru.store.tasks import TaskStore
 
 
+def _agent_escalation(outcome: Outcome | None) -> tuple[str, str] | None:
+    """Return the question and attempted text of an escalation a report carries."""
+    if isinstance(outcome, TriageReport) and outcome.escalation is not None:
+        return outcome.escalation.question, "The request was not actionable at triage."
+    if isinstance(outcome, ConsultAnswer) and outcome.escalation is not None:
+        return outcome.escalation.question, "The Leader escalated during a consult turn."
+    if isinstance(outcome, Verdict) and outcome.escalation is not None:
+        return outcome.escalation.question, "The Leader escalated during verification."
+    return None
+
+
 def escalation_narrative(
     reason: EscalationReason,
     outcome: Outcome | None,
@@ -27,6 +38,7 @@ def escalation_narrative(
     """Return the default question and the attempted-recovery text of an escalation."""
     question = "An Operator decision is needed to continue."
     attempted = "Automatic recovery has no option left"
+    agent_escalation = _agent_escalation(outcome)
     if reason is EscalationReason.ITERATIONS_EXHAUSTED:
         question = (
             "The final round still requested changes; give final-round guidance, accept or cancel."
@@ -34,12 +46,8 @@ def escalation_narrative(
         attempted = "Implement and verify cycled to the configured iteration limit."
     elif reason is EscalationReason.ENGINE_ERROR:
         attempted = "The engine raised an error no automatic recovery covers."
-    elif isinstance(outcome, ConsultAnswer) and outcome.escalation is not None:
-        question = outcome.escalation.question
-        attempted = "The Leader escalated during a consult turn."
-    elif isinstance(outcome, Verdict) and outcome.escalation is not None:
-        question = outcome.escalation.question
-        attempted = "The Leader escalated during verification."
+    elif agent_escalation is not None:
+        question, attempted = agent_escalation
     elif isinstance(outcome, ImplementationReport):
         question = outcome.question
         attempted = "The Implementer's question exceeded the consult limit."
@@ -93,7 +101,9 @@ class EscalationFiler:
         narrative_question, attempted = escalation_narrative(reason, outcome, result)
         evidence = await self._evidence.collect(task, transition.step, role)
         agent_request = (
-            outcome.escalation if isinstance(outcome, (ConsultAnswer, Verdict)) else None
+            outcome.escalation
+            if isinstance(outcome, (ConsultAnswer, TriageReport, Verdict))
+            else None
         )
         await self._raiser.raise_escalation(
             task,

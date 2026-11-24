@@ -196,6 +196,37 @@ class EscalationStore:
                 return None
         return None
 
+    def latest_triage_answer(self, task_id: str) -> str | None:
+        """Return the Operator answer to the latest triage question until a triage turn reads it.
+
+        Retries of a triage turn that the answer started are skipped, so the answer survives them.
+        """
+        rows = self._connection.execute(
+            """
+            SELECT id, step, reason, resolution FROM escalations
+            WHERE task_id = ? AND status = ?
+            ORDER BY resolved_at DESC, CAST(substr(id, 3) AS INTEGER) DESC
+            """,
+            (
+                task_id,
+                EscalationStatus.RESOLVED.value,
+            ),
+        )
+        for row in rows:
+            if row["step"] != Step.TRIAGE.value:
+                return None
+            resolution = row["resolution"]
+            if resolution is not None and resolution.startswith(ANSWER_RESOLUTION_PREFIX):
+                if self._answer_was_consumed(
+                    task_id,
+                    row["id"],
+                    turn_path=TURN_STEP_JSON_PATH,
+                    turn_value=Step.TRIAGE.value,
+                ):
+                    return None
+                return resolution[len(ANSWER_RESOLUTION_PREFIX) :]
+        return None
+
     def latest_feedback_answer(self, task_id: str) -> str | None:
         """Return the Operator answer to the latest feedback question until its round reads it."""
         row = self._connection.execute(

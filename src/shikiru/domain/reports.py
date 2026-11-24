@@ -167,6 +167,10 @@ class TriageReport(DomainModel):
     complexity: ComplexityName
     acceptance_criteria: list[str]
     references: list[str]
+    escalation: EscalationRequest | None = Field(
+        default=None,
+        description="Required when the request is not actionable; otherwise unset.",
+    )
 
 
 class ImplementationReport(DomainModel):

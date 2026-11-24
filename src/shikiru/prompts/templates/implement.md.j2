@@ -6,6 +6,10 @@ You are the Implementer, starting this task's first implementation turn.
 current.{% endif %} Report `completed` only when nothing remains; report `needs_decision` or `blocked`
 with a concrete `question` otherwise.
 
+For a bug report, locate or reproduce the reported symptom first. If it cannot be observed
+in the workspace or the readable state, report `blocked` with a `question` stating what
+was checked and what is needed. Never fix a hypothesis.
+
 Before committing, check the target project's instructions and documentation for its commit-message
 convention. Follow that convention when one is documented; use Conventional Commits if none is
 documented. Keep each subject concise and summarizing its commit. End every commit message with the

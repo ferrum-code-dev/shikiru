@@ -60,6 +60,10 @@ agent statements about Git are not accepted as a substitute for observed reposit
 
 1. **Triage:** Leader selects an implementation or planning route and task complexity. Explicit
    submission mode skips triage; supplied complexity or role overrides take precedence.
+   When the request names no concrete symptom, scope or evidence source, or points to state
+   the agents cannot read, the Leader escalates with a question instead; the engine resolves
+   it as an Operator decision before any Implementer runs. Answering it re-runs triage
+   with the decision in context.
 2. **Plan route:** Leader commits planning/tracker changes. A request to execute the plan can emit
    follow-up tasks with dependencies; a planning-only request need not emit work. The plan task
    integrates its changes. Follow-up tasks are scheduled when their dependencies are satisfied.

@@ -194,6 +194,8 @@ def _triaged_complexity(task: Task, outcome: TriageReport) -> ComplexityName | N
 
 
 def _from_triage(task: Task, outcome: TriageReport, settings: Settings) -> Transition:
+    if outcome.escalation is not None:
+        return Transition.escalate(task, EscalationReason.DECISION_REQUIRED, step=Step.TRIAGE)
     if outcome.mode is Mode.IMPLEMENT:
         base = dataclasses.replace(Transition.stay(task, step=Step.IMPLEMENT), iteration=1)
     else:

@@ -6,6 +6,7 @@ import asyncio
 import dataclasses
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -53,6 +54,40 @@ def _consult_prompt_text(env: EngineEnv, task_id: str) -> str:
         (run_dir(env.project_root, task_id) / "turns").glob("*-consult-*/prompt.md")
     )
     return consult_prompts[-1].read_text()
+
+
+def _triage_prompt_text(env: EngineEnv, task_id: str) -> str:
+    triage_prompts = sorted(
+        (run_dir(env.project_root, task_id) / "turns").glob("*-triage-*/prompt.md")
+    )
+    return triage_prompts[-1].read_text()
+
+
+def _clarification_report(question: str) -> dict[str, object]:
+    return {
+        "title": "Fix engine faults",
+        "mode": "implement",
+        "complexity": "normal",
+        "acceptance_criteria": [],
+        "references": [],
+        "escalation": {
+            "question": question,
+            "options": [
+                {
+                    "label": "Name the project and fault",
+                    "consequences": "Triage restarts with the evidence.",
+                    "recommended": True,
+                }
+            ],
+        },
+    }
+
+
+_TRIAGE_ACCEPT: dict[str, object] = {
+    "kind": "accept",
+    "triage_title": "Fix quota fault",
+    "triage_complexity": "normal",
+}
 
 
 def _section(prompt_text: str, heading: str) -> str:
@@ -647,3 +682,115 @@ async def test_triage_persists_title_and_complexity_for_the_next_turn(
     assert "Conventional Commits" in implementer_prompt
     assert f"Task: {task.id}" in implementer_prompt
     assert "every implementation and rework report" in " ".join(implementer_prompt.split())
+
+
+async def test_triage_clarification_escalates_before_implementer(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env)
+    question = "Which project's engine and which fault are meant?"
+    answer = "Project shikiru; the quota refresh fault after restart."
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [
+            {"kind": "report", "report": _clarification_report(question)},
+            {"kind": "accept", "triage_title": "Fix quota fault", "triage_complexity": "normal"},
+        ],
+    )
+
+    flow_env = await _run_flow(engine_env, task.id, settings)
+
+    final = engine_env.tasks.get(task.id)
+    assert final is not None
+    assert final.status is Status.ESCALATED
+    assert final.step is Step.TRIAGE
+    (escalation,) = fetch_open_escalations(engine_env.connection)
+    assert escalation.reason is EscalationReason.DECISION_REQUIRED
+    packet_text = await asyncio.to_thread(Path(escalation.packet_path).read_text)
+    assert question in packet_text
+    turns = flow_env.events.since(0, kinds=[EventKind.TURN_STARTED], task_id=task.id)
+    assert [event.data["step"] for event in turns] == ["triage"]
+
+    _answer_escalation(flow_env, escalation, answer)
+    resumed = await _run_flow(engine_env, task.id, settings)
+
+    final = resumed.env.tasks.get(task.id)
+    assert final is not None
+    assert final.title == "Fix quota fault"
+    assert final.step is Step.INTEGRATE
+    assert final.status is Status.INTEGRATING
+    triage_prompts = sorted(
+        (run_dir(engine_env.project_root, task.id) / "turns").glob("*-triage-*/prompt.md")
+    )
+    assert len(triage_prompts) == 2
+    assert answer in triage_prompts[-1].read_text()
+    steps = resumed.events.since(0, kinds=[EventKind.TURN_STARTED], task_id=task.id)
+    assert [event.data["step"] for event in steps] == [
+        "triage",
+        "triage",
+        "implement",
+        "verify",
+    ]
+
+
+async def test_fresh_session_triage_keeps_the_operator_decision(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env)
+    question = "Which project's engine and which fault are meant?"
+    await set_role_script(
+        tmux_server, Role.LEADER, [{"kind": "report", "report": _clarification_report(question)}]
+    )
+    escalated = await _run_flow(engine_env, task.id, settings)
+    [escalation] = escalated.escalations.list_open()
+    leader_run = engine_env.runs.get_live(task.id, Role.LEADER)
+    assert leader_run is not None
+    engine_env.runs.close(leader_run.id)
+    answer = "Project shikiru; the quota refresh fault after restart."
+    _answer_escalation(escalated, escalation, answer)
+    await set_role_script(tmux_server, Role.LEADER, [_TRIAGE_ACCEPT])
+
+    resumed = await _run_flow(engine_env, task.id, settings)
+
+    final = resumed.env.tasks.get(task.id)
+    assert final is not None
+    assert final.step is Step.INTEGRATE
+    assert answer in _triage_prompt_text(engine_env, task.id)
+
+
+async def test_retried_triage_keeps_the_operator_decision(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = flow_settings()
+    await init_project_repo(engine_env.project_root)
+    task = await build_flow_task(engine_env)
+    question = "Which project's engine and which fault are meant?"
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [
+            {"kind": "report", "report": _clarification_report(question)},
+            {"kind": "fail", "failure_kind": "auth"},
+            _TRIAGE_ACCEPT,
+        ],
+    )
+    escalated = await _run_flow(engine_env, task.id, settings)
+    [escalation] = escalated.escalations.list_open()
+    answer = "Project shikiru; the quota refresh fault after restart."
+    _answer_escalation(escalated, escalation, answer)
+    failed = await _run_flow(engine_env, task.id, settings)
+    [auth_escalation] = failed.escalations.list_open()
+    assert auth_escalation.reason is EscalationReason.AGENT_AUTH
+    _retry_escalation(failed, auth_escalation)
+
+    resumed = await _run_flow(engine_env, task.id, settings)
+
+    final = resumed.env.tasks.get(task.id)
+    assert final is not None
+    assert final.step is Step.INTEGRATE
+    assert answer in _triage_prompt_text(engine_env, task.id)

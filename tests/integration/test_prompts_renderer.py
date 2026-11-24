@@ -40,6 +40,8 @@ def _full_context(name: PromptName) -> dict[str, Any]:
     if name is PromptName.CONSULT:
         context["question"] = "Which retry library should I use?"
         context["operator_decision"] = None
+    if name is PromptName.TRIAGE:
+        context["operator_decision"] = None
     if name in (PromptName.VERIFY, PromptName.PULL_REQUEST_DESCRIPTION):
         context["facts"] = "git log --oneline base..HEAD"
         context["base"] = _BASE
