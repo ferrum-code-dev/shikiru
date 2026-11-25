@@ -971,7 +971,7 @@ async def test_fullscreen_preserves_selections_and_scroll_and_restores(
         await pilot.press("f")
         await pilot.pause()
         assert frame.region.size == APP_SIZE
-        assert _button_label(screen) == "f Restore"
+        assert _button_label(screen) == "f restore"
         assert _select(screen, DIFF_COMMIT_SELECT).value == commit_value
         assert _select(screen, DIFF_FILE_SELECT).value == file_value
         assert (scroll.scroll_x, scroll.scroll_y) == (2, 3)
@@ -982,7 +982,7 @@ async def test_fullscreen_preserves_selections_and_scroll_and_restores(
 
         await pilot.press("f")
         await pilot.pause()
-        assert _button_label(screen) == "f Fullscreen"
+        assert _button_label(screen) == "f fullscreen"
         assert frame.region == restored
         assert restored.width < APP_SIZE[0]
         assert restored.bottom < APP_SIZE[1]

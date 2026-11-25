@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar, cast
 
+from rich.segment import Segment, Segments
+from rich.style import Style
 from rich.text import Text
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
 from textual.screen import ModalScreen
+from textual.scrollbar import ScrollBarRender
 from textual.widgets import Button, Label, Rule, Select, Static
 
 from shikiru.dashboard.contract import DIFF_ALL_COMMITS
 from shikiru.domain.diff import DiffLineKind, classify_diff_lines
-from shikiru.ui.keys import key_hint
 from shikiru.ui.popup import (
     POPUP_CLOSE_CLASS,
     POPUP_COMPACT_CONTROL_CSS,
@@ -26,9 +28,18 @@ from shikiru.ui.popup import (
     popup_close_label,
     prepare_popup,
 )
-from shikiru.ui.tokens import DUSTY_ROSE, PRIMARY_TEXT_COLOR, SAGE, STEEL_BLUE, STYLE_BOLD
+from shikiru.ui.section import key_label
+from shikiru.ui.tokens import (
+    DUSTY_ROSE,
+    PRIMARY_TEXT_COLOR,
+    SAGE,
+    STEEL_BLUE,
+    STYLE_BOLD,
+    SURFACE_COLOR,
+)
 
 if TYPE_CHECKING:
+    from rich.console import Console, ConsoleOptions, RenderResult
     from textual.app import ComposeResult
     from textual.binding import BindingType
 
@@ -52,8 +63,8 @@ DIFF_LOADING = "Loading diff…"
 DIFF_NO_FILES = "No files"
 DIFF_NO_CHANGES = "No changes in this view."
 DIFF_NO_TEXTUAL = "No textual diff for {path}."
-DIFF_FULLSCREEN_LABEL = "f Fullscreen"
-DIFF_RESTORE_LABEL = "f Restore"
+DIFF_FULLSCREEN_LABEL = "fullscreen"
+DIFF_RESTORE_LABEL = "restore"
 DIFF_ESCAPE = "escape"
 DIFF_FULLSCREEN_KEY = "f"
 DIFF_CLOSE_ACTION = "close"
@@ -74,12 +85,34 @@ _INTEGRATION_LABELS = {
 _LINE_BREAK = "\n"
 _ESCAPE_CHARACTER = "\x1b"
 _VISIBLE_ESCAPE = "\N{SYMBOL FOR ESCAPE}"
+_SCROLLBAR_MOUSE_DOWN = "@mouse.down"
+_SCROLLBAR_GRAB = "grab"
+_SCROLLBAR_THUMB = "■"
 _LINE_STYLES = {
     DiffLineKind.ADDED: SAGE,
     DiffLineKind.REMOVED: DUSTY_ROSE,
     DiffLineKind.HUNK: f"{STYLE_BOLD} {STEEL_BLUE}",
     DiffLineKind.CONTEXT: PRIMARY_TEXT_COLOR,
 }
+
+
+class DiffScrollbarRender(ScrollBarRender):
+    def __rich_console__(self, console: Console, options: ConsoleOptions) -> RenderResult:
+        bar = cast("Segments", next(iter(super().__rich_console__(console, options))))
+        segments: list[Segment] = []
+        for segment in bar.segments:
+            style = segment.style
+            if style is not None and _SCROLLBAR_MOUSE_DOWN in style.meta:
+                color = (
+                    style.color
+                    if style.meta[_SCROLLBAR_MOUSE_DOWN] == _SCROLLBAR_GRAB
+                    else style.bgcolor
+                )
+                style = Style(color=color, bgcolor=SURFACE_COLOR, meta=style.meta)
+                segments.append(Segment(_SCROLLBAR_THUMB, style))
+            else:
+                segments.append(segment)
+        yield Segments(segments)
 
 
 def render_patch(patch: str) -> Text:
@@ -122,7 +155,7 @@ class DiffScreen(ModalScreen[None]):
     #diff-scope { width: 100%; height: auto; }
     #diff-scroll { height: 1fr; overflow: auto auto;
         scrollbar-size-vertical: $scrollbar-width;
-        scrollbar-size-horizontal: $scrollbar-width; }
+        scrollbar-size-horizontal: $scrollbar-width; scrollbar-corner-color: $surface; }
     #diff-text { width: auto; height: auto; text-wrap: nowrap; }
     #diff-text.message { width: 100%; text-wrap: wrap; }
     #diff-footer { width: 100%; height: 1; }
@@ -169,9 +202,13 @@ class DiffScreen(ModalScreen[None]):
                 yield Static(DIFF_LOADING, id=DIFF_TEXT, classes=DIFF_MESSAGE_CLASS, markup=False)
             yield Rule(classes=POPUP_RULE_CLASS)
             with Horizontal(id=DIFF_FOOTER):
-                yield Button(key_hint(DIFF_FULLSCREEN_LABEL), id=DIFF_FULLSCREEN)
+                yield Button(
+                    key_label(DIFF_FULLSCREEN_KEY, DIFF_FULLSCREEN_LABEL), id=DIFF_FULLSCREEN
+                )
 
     def on_mount(self) -> None:
+        scrollbar = self.query_one(f"#{DIFF_SCROLL}", ScrollableContainer).horizontal_scrollbar
+        scrollbar.renderer = DiffScrollbarRender  # pyright: ignore[reportAttributeAccessIssue]
         self.query_one(f"#{DIFF_COMMIT_SELECT}").focus()
         self._reload()
 
@@ -208,7 +245,7 @@ class DiffScreen(ModalScreen[None]):
         frame.toggle_class(DIFF_FRAME_FULLSCREEN_CLASS)
         expanded = frame.has_class(DIFF_FRAME_FULLSCREEN_CLASS)
         label = DIFF_RESTORE_LABEL if expanded else DIFF_FULLSCREEN_LABEL
-        self.query_one(f"#{DIFF_FULLSCREEN}", Button).label = key_hint(label)
+        self.query_one(f"#{DIFF_FULLSCREEN}", Button).label = key_label(DIFF_FULLSCREEN_KEY, label)
 
     def _reload(self) -> None:
         self._generation += 1
