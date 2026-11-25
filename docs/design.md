@@ -460,6 +460,11 @@ only a path; evidence an older event lacks reads `not recorded`. Repeated failur
 and scope update one card, unrelated faults stay separate, and cards needing the Operator come
 before those that retry on their own, each group in order of first occurrence. Cards are keyed by
 task and scope, so a refresh keeps each card's disclosure state, focus and scroll position.
+Each card has a `Dismiss fault` action in its main area, outside Details and with no help text below
+it. The action queues a command for that card's latest event id; if the event is stale, the engine
+rejects the command. Dismissal records `engine_fault_dismissed`, closing the open card without
+writing `engine_recovered`. The event stays in history, and a later failure of the same task and
+scope opens a new streak.
 
 Codex and Muse may record API-equivalent estimates using OpenRouter’s public model list, refreshed daily and retained locally for outages. Exact vendor-prefixed IDs are used; after a Muse exact miss, `-1.0` is removed in full, or otherwise a trailing `.0` is removed. Missing model or cache prices leave the cost unknown. New calls are priced individually at their prompt-length tier, while previously recorded usage is not re-priced. Claude retains its provider-reported cost.
 

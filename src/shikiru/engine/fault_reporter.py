@@ -8,12 +8,15 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from shikiru.domain.commands import COMMAND_ID_KEY
 from shikiru.domain.events import EventKind
 from shikiru.domain.faults import (
     COMMAND_KEY,
     DETAIL_KEY,
     ERROR_KEY,
     EXIT_CODE_KEY,
+    FAULT_EVENT_ID_KEY,
+    FAULT_EVENT_KINDS,
     RECOVERABLE_KEY,
     REPEAT_KEY,
     SCOPE_KEY,
@@ -21,7 +24,13 @@ from shikiru.domain.faults import (
     TRACEBACK_KEY,
     open_fault_streaks,
 )
-from shikiru.errors import CommandFailed, CommandTimeoutError, InvariantError, ShikiruError
+from shikiru.errors import (
+    CommandFailed,
+    CommandRejectedError,
+    CommandTimeoutError,
+    InvariantError,
+    ShikiruError,
+)
 from shikiru.store.database import OperationalDatabaseError
 
 if TYPE_CHECKING:
@@ -31,6 +40,7 @@ if TYPE_CHECKING:
 
     from shikiru.clock import Clock
     from shikiru.config.settings import FaultsConfig
+    from shikiru.domain.faults import FaultStreak
     from shikiru.store.events import EventLog
 
 RECOVERABLE_FAULTS = (ShikiruError, OSError, OperationalDatabaseError)
@@ -136,8 +146,54 @@ class FaultReporter:
             return
         self._open.remove((scope, task_id))
 
+    def dismiss(
+        self,
+        scope: str,
+        *,
+        task_id: str | None,
+        fault_event_id: int,
+        command_id: int,
+    ) -> None:
+        """Close the named open fault as dismissed and clear its repeat-notification window."""
+        if self._events.command_applied(EventKind.ENGINE_FAULT_DISMISSED, command_id):
+            if self._current(scope, task_id) is None:
+                self._forget(scope, task_id)
+            return
+        current = self._current(scope, task_id)
+        if current is None or current.event_id != fault_event_id:
+            message = "fault is no longer open; refresh the dashboard and try again"
+            raise CommandRejectedError(message)
+        self._events.append(
+            EventKind.ENGINE_FAULT_DISMISSED,
+            task_id=task_id,
+            message=f"{scope} dismissed",
+            data={
+                SCOPE_KEY: scope,
+                FAULT_EVENT_ID_KEY: fault_event_id,
+                COMMAND_ID_KEY: command_id,
+            },
+        )
+        self._forget(scope, task_id)
+
+    def _current(self, scope: str, task_id: str | None) -> FaultStreak | None:
+        return next(
+            (
+                fault
+                for fault in open_fault_streaks(self._events.since(0, kinds=FAULT_EVENT_KINDS))
+                if (fault.scope, fault.task_id) == (scope, task_id)
+            ),
+            None,
+        )
+
+    def _forget(self, scope: str, task_id: str | None) -> None:
+        if self._open is not None:
+            self._open.discard((scope, task_id))
+        for key in tuple(self._streaks):
+            if key[0] == scope and key[1] == task_id:
+                self._streaks.pop(key)
+
     def _recorded_open(self) -> set[tuple[str, str | None]]:
-        recorded = self._events.since(0, kinds=[EventKind.ENGINE_FAULT, EventKind.ENGINE_RECOVERED])
+        recorded = self._events.since(0, kinds=FAULT_EVENT_KINDS)
         return {(streak.scope, streak.task_id) for streak in open_fault_streaks(recorded)}
 
     @asynccontextmanager

@@ -23,6 +23,7 @@ from shikiru.dashboard.contract import (
     CommandFeedbackStatus,
     CommandHistoryView,
     ExtensionEntry,
+    FaultDismissal,
     PaletteDraft,
     PaletteRequest,
     PaletteReturn,
@@ -966,6 +967,7 @@ class DashboardApp(CoveredScreens):
         settings: SettingsSource,
         open_palette: OpenPalette,
         widget_names: Sequence[str],
+        dismiss_fault: FaultDismissal | None = None,
         open_palette_context: OpenPaletteContext | None = None,
         resolution_screen: ResolutionScreenFactory | None = None,
         navigate_task_window: NavigateTaskWindow | None = None,
@@ -984,6 +986,7 @@ class DashboardApp(CoveredScreens):
         self._motion_interval_seconds = motion_interval_seconds
         self._settings = settings
         self._open_palette = open_palette
+        self._dismiss_fault = dismiss_fault
         self._open_palette_context = open_palette_context
         self._resolution_screen = resolution_screen
         self._diff_screen = diff_screen
@@ -1116,6 +1119,7 @@ class DashboardApp(CoveredScreens):
             on_change=self._on_change,
             on_motion=self.register_motion_callback,
             open_palette=self._open_palette,
+            dismiss_fault=self._dismiss_fault,
             open_palette_context=self._open_contextual_palette,
             open_resolution=self.open_resolution,
             open_task_detail=open_task_detail,

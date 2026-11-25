@@ -202,6 +202,7 @@ def engine_fault_view(
     return EngineFaultView(
         key=f"{fault.task_id or ''}{_KEY_SEPARATOR}{fault.scope}",
         task_id=fault.task_id,
+        fault_event_id=fault.event_id,
         scope=fault.scope,
         status=(
             _UNEXPECTED_BACKOFF_STATUS

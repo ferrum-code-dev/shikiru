@@ -32,6 +32,7 @@ from shikiru.domain.check_repair import (
 from shikiru.domain.commands import (
     Command,
     CommandStatus,
+    DismissFault,
     HandBack,
     ResolutionKind,
     Resolve,
@@ -45,7 +46,7 @@ from shikiru.domain.engine_uptime import project_engine_uptime
 from shikiru.domain.escalation import EscalationStatus
 from shikiru.domain.escalation_evidence import parse_escalation_packet
 from shikiru.domain.events import Event, EventKind
-from shikiru.domain.faults import FaultStreak, open_fault_streaks
+from shikiru.domain.faults import FAULT_EVENT_KINDS, FaultStreak, open_fault_streaks
 from shikiru.domain.reports import (
     FACTS_FILENAME,
     HELPER_REPORT_FILENAME,
@@ -692,9 +693,7 @@ class OperatorQueries:
 
     def open_faults(self) -> list[FaultStreak]:
         """Return the engine fault streaks recorded and not yet recovered."""
-        return open_fault_streaks(
-            self._reader.events_since(0, kinds=[EventKind.ENGINE_FAULT, EventKind.ENGINE_RECOVERED])
-        )
+        return open_fault_streaks(self._reader.events_since(0, kinds=FAULT_EVENT_KINDS))
 
     def engine_log_location(self) -> str:
         """Return the path of the engine log, which holds the traceback of each logged fault."""
@@ -1607,6 +1606,8 @@ def _command_target(command: Command, project: str) -> str:
         return command.task_id
     if isinstance(command, Resolve):
         return command.escalation_id
+    if isinstance(command, DismissFault):
+        return command.task_id or project
     if isinstance(command, Stop):
         return project
     if isinstance(command, (Say, SetRung, TakeOver, HandBack)):

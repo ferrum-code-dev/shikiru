@@ -15,6 +15,7 @@ from shikiru.domain.commands import (
     AnswerResolution,
     Cancel,
     CancelResolution,
+    DismissFault,
     HandBack,
     Pause,
     Prioritize,
@@ -137,6 +138,12 @@ class OperatorCommands:
             if self._clock.now() >= deadline:
                 return _queued_ack(queued.id, queued.command, ACK_TIMEOUT_MESSAGE)
             await self._clock.sleep(COMMAND_POLL_SECONDS)
+
+    async def dismiss_fault(self, scope: str, task_id: str | None, fault_event_id: int) -> Ack:
+        """Queue dismissal of the exact fault occurrence shown in a dashboard card."""
+        return await self.send(
+            DismissFault(scope=scope, task_id=task_id, fault_event_id=fault_event_id)
+        )
 
     async def submit_task(
         self,

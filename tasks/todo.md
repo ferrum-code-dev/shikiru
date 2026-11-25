@@ -371,3 +371,8 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
   - Acceptance: headers, hunk header, removed and added lines render as separate, coloured lines; identical replacements stay out of the file list; literal and Unicode paths keep working.
 - [x] Keep other files selectable when one staged-deletion replacement cannot be shown
   - Acceptance: real-Git tests cover an invalid UTF-8 and an unreadable replacement beside a valid changed file; the error is confined to the affected file and identical replacements stay out of the list.
+
+### Dismiss dashboard faults (T-197)
+
+- [x] Add a direct `Dismiss fault` action to each open fault card, outside Details and without help text beneath it.
+  - Acceptance: dismissal removes the card and updates the open count; a durable dismissed event preserves history without marking recovery; after restart, a new occurrence of the same scope/task opens a fresh card. Cover event folding, stale commands, the dashboard action and persistence with domain and SQLite-backed integration tests.

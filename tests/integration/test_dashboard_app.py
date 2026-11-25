@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+import logging
 import os
 import re
 from datetime import UTC, datetime
@@ -17,6 +18,7 @@ from textual.events import MouseScrollDown
 from textual.geometry import Region
 from textual.widgets import (
     Button,
+    Collapsible,
     Input,
     Label,
     ListItem,
@@ -53,6 +55,7 @@ from shikiru.dashboard.contract import (
     CommandFeedbackStatus,
     DiagnosticSampleState,
     ExtensionEntry,
+    FaultDismissal,
     PaletteRequest,
     ResourceView,
     TaskPaletteRoute,
@@ -81,6 +84,7 @@ from shikiru.dashboard.help_keys import HelpAvailability, HelpTab, help_groups
 from shikiru.dashboard.palette import PaletteScreen
 from shikiru.dashboard.timeline_filter import TimelineFilterBar
 from shikiru.domain.commands import (
+    DismissFault,
     Prioritize,
     ResolutionKind,
     Say,
@@ -97,10 +101,14 @@ from shikiru.domain.scheduling import WaitReason
 from shikiru.domain.steps import Step, Transition, first_step
 from shikiru.domain.tasks import EscalationReason, Hold, Mode, Role, Status, Task
 from shikiru.engine.daemon import EngineLock, engine_is_running
-from shikiru.operator.commands import OperatorCommands
+from shikiru.engine.fault_reporter import FaultReporter
+from shikiru.engine.handlers import DismissFaultHandler, HandlerRegistry
+from shikiru.errors import CommandFailed
+from shikiru.operator.commands import AckStatus, OperatorCommands
 from shikiru.operator.queries import OperatorQueries
 from shikiru.paths import engine_lock_path, turns_dir
 from shikiru.plugins.widgets.escalations import EscalationsPanel
+from shikiru.plugins.widgets.faults import FaultCard, FaultsPanel
 from shikiru.plugins.widgets.queue import TASK_MARKER_CURRENT
 from shikiru.process import (
     SpawnedTerminalProcess,
@@ -521,6 +529,7 @@ def _app(
     widget_names: list[str],
     services: StubServices | None = None,
     open_palette: OpenPalette = ignore_palette_action,
+    dismiss_fault: FaultDismissal | None = None,
     open_palette_context: OpenPaletteContext | None = None,
     resolution_screen: ResolutionScreenFactory | None = None,
     focus_task: str | None = None,
@@ -548,6 +557,7 @@ def _app(
         settings=fixed_settings(reader, settings),
         open_palette=open_palette,
         widget_names=widget_names,
+        dismiss_fault=dismiss_fault,
         open_palette_context=open_palette_context,
         resolution_screen=resolution_screen,
         tmux_detach_hint=tmux_detach_hint,
@@ -682,6 +692,64 @@ async def test_dashboard_mounts_the_default_widgets_and_fits_the_pane(
             )
             await pilot.press("escape")
             await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
+    finally:
+        reader.close()
+
+
+async def test_fault_card_dismissal_queues_the_fault_event_and_updates_the_open_count(
+    connection: Connection,
+    reader: StateReader,
+    tmp_path: Path,
+) -> None:
+    project_dir = write_minimal_project(tmp_path)
+    clock = FakeClock(_TEST_START)
+    events = EventLog(connection, clock)
+    reporter = FaultReporter(
+        events=events,
+        clock=clock,
+        settings=load_settings(project_dir).orchestration.faults,
+        logger=logging.getLogger("dashboard-fault-dismissal-test"),
+    )
+    reporter.report(
+        CommandFailed(("tmux",), 1, "session disappeared"), scope="layout", task_id=None
+    )
+    (fault,) = events.since(0, kinds=[EventKind.ENGINE_FAULT])
+    queue = CommandQueue(connection, clock)
+    commands = OperatorCommands(queue, clock, engine_up=lambda: False)
+
+    async def dismiss_fault(scope: str, task_id: str | None, fault_event_id: int) -> None:
+        ack = await commands.dismiss_fault(scope, task_id, fault_event_id)
+        assert ack.status is AckStatus.QUEUED
+
+    app = _app(
+        reader,
+        project_dir,
+        widget_names=["resources", "faults"],
+        clock=clock,
+        dismiss_fault=dismiss_fault,
+    )
+    try:
+        async with app.run_test(size=_STANDARD_HOME_SIZE) as pilot:
+            await open_project_diagnostics(pilot)
+            faults = app.screen.query_one("#faults", FaultsPanel)
+            await wait_until(lambda: faults.display, timeout=UI_WAIT_SECONDS)
+            card = faults.query_one(FaultCard)
+            button = card.query_one(Button)
+            details = card.query_one(Collapsible)
+            children = list(card.children)
+            assert _rendered_text(button) == "Dismiss fault"
+            assert children.index(button) + 1 == children.index(details)
+
+            await pilot.click(button)
+            await wait_until(lambda: bool(queue.pending()), timeout=UI_WAIT_SECONDS)
+            (queued,) = queue.pending()
+            assert isinstance(queued.command, DismissFault)
+            assert queued.command.fault_event_id == fault.id
+            result = await HandlerRegistry([DismissFaultHandler(reporter)]).handle(queued.command)
+            queue.mark_done(queued.id, result)
+
+            await wait_until(lambda: not faults.display, timeout=UI_WAIT_SECONDS)
+            assert "Faults · 0" in _rendered_text(faults.query_one(Static))
     finally:
         reader.close()
 

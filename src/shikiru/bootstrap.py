@@ -37,6 +37,7 @@ from shikiru.engine.feedback_intake import FeedbackIntake
 from shikiru.engine.flow import TaskFlow
 from shikiru.engine.handlers import (
     CancelHandler,
+    DismissFaultHandler,
     HandBackHandler,
     HandlerContext,
     HandlerRegistry,
@@ -91,9 +92,9 @@ from shikiru.engine.turn_context import TurnContextPreparer
 from shikiru.engine.turn_loop import TurnLoop
 from shikiru.engine.turn_processes import TurnProcesses
 from shikiru.engine.turns import TurnRunner
-from shikiru.errors import ConfigError
+from shikiru.errors import ConfigError, DatabaseError
 from shikiru.helper.helper import Helper, HelperEntry
-from shikiru.operator.commands import OperatorCommands
+from shikiru.operator.commands import AckStatus, OperatorCommands
 from shikiru.operator.detectors import InitWizardResult, ProjectDetectors
 from shikiru.operator.doctor import Doctor
 from shikiru.operator.events import EventFeed
@@ -143,6 +144,20 @@ from shikiru.workspace.messages import OperatorMessages
 from shikiru.workspace.roots import TaskRootBuilder
 
 _TMUX_PANE_ENVIRONMENT_VARIABLE = "TMUX_PANE"
+
+
+def _fault_dismissal(
+    commands: OperatorCommands,
+) -> Callable[[str, str | None, int], Awaitable[str | None]]:
+    async def dismiss(scope: str, task_id: str | None, fault_event_id: int) -> str | None:
+        try:
+            ack = await commands.dismiss_fault(scope, task_id, fault_event_id)
+        except DatabaseError as error:
+            return str(error)
+        return ack.message if ack.status is AckStatus.REJECTED else None
+
+    return dismiss
+
 
 if TYPE_CHECKING:
     import sqlite3  # noqa: TID251
@@ -554,6 +569,7 @@ async def run_dashboard(
             settings=live_settings,
             open_palette=open_palette,
             widget_names=settings.dashboard.widgets,
+            dismiss_fault=_fault_dismissal(services.commands),
             open_palette_context=push_palette,
             resolution_screen=resolution_screen,
             diff_screen=diff_screen,
@@ -1049,6 +1065,7 @@ def build_engine(
             TakeOverHandler(handler_context, takeover),
             HandBackHandler(handler_context, takeover),
             ResolveHandler(handler_context),
+            DismissFaultHandler(fault_reporter),
             StopHandler(handler_context),
         ]
     )

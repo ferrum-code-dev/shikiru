@@ -40,6 +40,7 @@ class CommandKind(StrEnum):
     TAKE_OVER = auto()
     HAND_BACK = auto()
     RESOLVE = auto()
+    DISMISS_FAULT = auto()
     STOP = auto()
 
 
@@ -190,6 +191,15 @@ class Resolve(IdentifiedCommand):
     resolution: Resolution
 
 
+class DismissFault(IdentifiedCommand):
+    """Dismiss one recorded engine fault occurrence from the open dashboard list."""
+
+    kind: Literal[CommandKind.DISMISS_FAULT] = CommandKind.DISMISS_FAULT
+    scope: str
+    task_id: str | None = None
+    fault_event_id: int
+
+
 class Stop(DomainModel):
     """`stop`: stops the engine; panes and their turns keep running."""
 
@@ -208,6 +218,7 @@ Command = Annotated[
     | TakeOver
     | HandBack
     | Resolve
+    | DismissFault
     | Stop,
     Field(discriminator="kind"),
 ]

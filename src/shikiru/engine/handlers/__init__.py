@@ -3,6 +3,7 @@
 from shikiru.engine.handlers.base import CommandHandler, HandlerContext, HandlerRegistry
 from shikiru.engine.handlers.engine import StopHandler
 from shikiru.engine.handlers.escalations import ResolveHandler
+from shikiru.engine.handlers.faults import DismissFaultHandler
 from shikiru.engine.handlers.operator import HandBackHandler, SayHandler, TakeOverHandler
 from shikiru.engine.handlers.tasks import (
     CancelHandler,
@@ -17,6 +18,7 @@ from shikiru.engine.handlers.tasks import (
 __all__ = [
     "CancelHandler",
     "CommandHandler",
+    "DismissFaultHandler",
     "HandBackHandler",
     "HandlerContext",
     "HandlerRegistry",

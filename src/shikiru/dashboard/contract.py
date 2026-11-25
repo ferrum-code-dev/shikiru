@@ -80,6 +80,7 @@ class TaskTimelineSource(StrEnum):
 OnChange = Callable[[], Awaitable[None]]
 OnChangeRegistration = Callable[[OnChange], Awaitable[None]]
 MotionRegistration = Callable[[OnChange], Callable[[], None]]
+FaultDismissal = Callable[[str, str | None, int], Awaitable[str | None]]
 
 
 @dataclass(frozen=True)
@@ -944,6 +945,7 @@ class EngineFaultView:
 
     key: str
     task_id: str | None
+    fault_event_id: int
     scope: str
     status: str
     impact: str
@@ -1128,6 +1130,7 @@ class WidgetContext:
     on_change: OnChangeRegistration
     on_motion: MotionRegistration
     open_palette: OpenPalette
+    dismiss_fault: FaultDismissal | None = None
     open_palette_context: OpenPaletteContext | None = None
     open_resolution: OpenResolution | None = None
     open_task_detail: OpenTaskDetail | None = None

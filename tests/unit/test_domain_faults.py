@@ -28,6 +28,17 @@ def _event(
     )
 
 
+def _dismissal(number: int, fault_event_id: int, task_id: str | None = None) -> Event:
+    return Event(
+        id=number,
+        ts=START + timedelta(minutes=number),
+        task_id=task_id,
+        kind=EventKind.ENGINE_FAULT_DISMISSED,
+        message="dismissed",
+        data={"scope": "tick", "fault_event_id": fault_event_id},
+    )
+
+
 @pytest.mark.parametrize(
     ("events", "open_keys"),
     [
@@ -50,9 +61,25 @@ def _event(
             ],
             [("tick", "T-2")],
         ),
+        (
+            [
+                _event(1, EventKind.ENGINE_FAULT),
+                _dismissal(2, fault_event_id=1),
+                _event(3, EventKind.ENGINE_FAULT),
+            ],
+            [("tick", None)],
+        ),
         ([_event(1, EventKind.ENGINE_FAULT, scope=None)], []),
     ],
-    ids=["none", "open", "recovered", "reopened", "per task", "one-off fault without scope"],
+    ids=[
+        "none",
+        "open",
+        "recovered",
+        "reopened",
+        "per task",
+        "new fault after dismissal",
+        "one-off fault without scope",
+    ],
 )
 def test_a_streak_is_open_from_its_fault_until_its_recovery(
     events: list[Event], open_keys: list[tuple[str, str | None]]
@@ -82,6 +109,18 @@ def test_a_streak_keeps_the_evidence_of_its_latest_record_only() -> None:
 
     assert (streak.event_id, streak.detail, streak.traceback) == (2, "new", "Traceback...")
     assert (streak.command, streak.exit_code, streak.stderr) == (None, None, None)
+
+
+def test_a_stale_dismissal_does_not_close_a_later_fault_occurrence() -> None:
+    faults = open_fault_streaks(
+        [
+            _event(1, EventKind.ENGINE_FAULT),
+            _event(2, EventKind.ENGINE_FAULT),
+            _dismissal(3, fault_event_id=1),
+        ]
+    )
+
+    assert [(fault.event_id, fault.repeat) for fault in faults] == [(2, 4)]
 
 
 @pytest.mark.parametrize(

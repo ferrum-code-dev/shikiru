@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from rich.console import Group
 from rich.text import Text
 from textual.containers import ScrollableContainer, Vertical
-from textual.widgets import Collapsible, Static
+from textual.widgets import Button, Collapsible, Static
 
 from shikiru.dashboard.contract import WidgetPlacement
 from shikiru.ui.gated_static import GatedStatic
@@ -20,7 +20,12 @@ if TYPE_CHECKING:
     from textual.app import ComposeResult
     from textual.widget import Widget
 
-    from shikiru.dashboard.contract import EngineFaultView, FaultDetailRow, WidgetContext
+    from shikiru.dashboard.contract import (
+        EngineFaultView,
+        FaultDetailRow,
+        FaultDismissal,
+        WidgetContext,
+    )
 
 SECTION_TITLE = "Faults"
 TITLE_SEPARATOR = " \N{MIDDLE DOT} "
@@ -32,6 +37,7 @@ IMPACT_LABEL = "Impact:"
 CAUSE_LABEL = "Cause:"
 NEXT_LABEL = "Next:"
 DETAIL_INDENT = "  "
+DISMISS_FAULT_LABEL = "Dismiss fault"
 
 
 def _summary(fault: EngineFaultView) -> Group:
@@ -70,18 +76,27 @@ class FaultCard(Vertical):
     FaultCard { height: auto; margin-bottom: 1; }
     FaultCard Collapsible { padding: 0; border-top: none; }
     FaultCard Collapsible > Contents { padding: 0 0 0 2; }
+    FaultCard Button {
+        width: auto; height: 1; min-height: 1; margin: 0; padding: 0;
+        border: none; background: $background; color: $secondary-text; text-style: none;
+    }
+    FaultCard Button:hover { color: $steel-blue; text-style: none; }
+    FaultCard Button:focus { color: $primary-text; text-style: reverse; }
     """
 
-    def __init__(self, fault: EngineFaultView) -> None:
+    def __init__(self, fault: EngineFaultView, dismiss_fault: FaultDismissal | None) -> None:
         """Show `fault`; later `show` calls update it in place, keeping the disclosure state."""
         super().__init__()
         self._summary = GatedStatic(_summary(fault))
+        self._dismiss = Button(DISMISS_FAULT_LABEL, disabled=dismiss_fault is None)
         self._details = Static(_details(fault))
         self._fault = fault
+        self._dismiss_fault = dismiss_fault
 
     def compose(self) -> ComposeResult:
-        """Lay out the summary above the collapsed Details disclosure."""
+        """Lay out the fault summary and action above its collapsed Details disclosure."""
         yield self._summary
+        yield self._dismiss
         yield Collapsible(
             self._details,
             title=DETAILS_TITLE,
@@ -89,6 +104,23 @@ class FaultCard(Vertical):
             collapsed_symbol=COLLAPSED_MARK,
             expanded_symbol=EXPANDED_MARK,
         )
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button is not self._dismiss or self._dismiss_fault is None:
+            return
+        event.stop()
+        self._dismiss.disabled = True
+        try:
+            message = await self._dismiss_fault(
+                self._fault.scope,
+                self._fault.task_id,
+                self._fault.fault_event_id,
+            )
+            if message is not None:
+                self.notify(message, severity="error")
+        finally:
+            if self._dismiss.is_attached:
+                self._dismiss.disabled = False
 
     def show(self, fault: EngineFaultView) -> None:
         """Repaint from `fault`, the latest view of the same fault identity."""
@@ -176,7 +208,7 @@ class FaultsPanel(Vertical):
     def _card(self, fault: EngineFaultView) -> FaultCard:
         card = self._cards.get(fault.key)
         if card is None:
-            card = self._cards[fault.key] = FaultCard(fault)
+            card = self._cards[fault.key] = FaultCard(fault, self._widget_context.dismiss_fault)
         else:
             card.show(fault)
         return card

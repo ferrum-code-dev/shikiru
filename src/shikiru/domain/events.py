@@ -58,6 +58,7 @@ class EventKind(StrEnum):
     ENGINE_STOPPED = auto()
     ENGINE_FAULT = auto()
     ENGINE_RECOVERED = auto()
+    ENGINE_FAULT_DISMISSED = auto()
 
 
 class Event(DomainModel):

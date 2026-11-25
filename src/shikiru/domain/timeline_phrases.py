@@ -183,6 +183,7 @@ _EVENTS: dict[str, _EventSpec] = {
     EventKind.TASK_CANCELLED: _EventSpec("task cancelled", GLYPH_FAIL, Tone.FAILURE),
     EventKind.PANE_RESTORED: _EventSpec("pane restored", detail=_field("pane")),
     EventKind.ENGINE_FAULT: _EventSpec("engine fault", GLYPH_FAIL, Tone.FAILURE, _message),
+    EventKind.ENGINE_FAULT_DISMISSED: _EventSpec("fault dismissed", detail=_field("scope")),
 }
 
 

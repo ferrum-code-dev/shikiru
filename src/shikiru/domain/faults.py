@@ -1,4 +1,4 @@
-"""Open engine fault streaks derived from `engine_fault` and `engine_recovered` events."""
+"""Open engine fault streaks derived from fault, recovery and dismissal events."""
 
 from __future__ import annotations
 
@@ -20,7 +20,13 @@ COMMAND_KEY = "command"
 EXIT_CODE_KEY = "exit_code"
 STDERR_KEY = "stderr"
 TRACEBACK_KEY = "traceback"
+FAULT_EVENT_ID_KEY = "fault_event_id"
 _BACKOFF_FACTOR = 2
+FAULT_EVENT_KINDS = (
+    EventKind.ENGINE_FAULT,
+    EventKind.ENGINE_RECOVERED,
+    EventKind.ENGINE_FAULT_DISMISSED,
+)
 
 
 class FaultStreak(DomainModel):
@@ -43,10 +49,11 @@ class FaultStreak(DomainModel):
 
 
 def open_fault_streaks(events: Iterable[Event]) -> list[FaultStreak]:
-    """Fold chronological fault and recovery `events` into the streaks that were never recovered.
+    """Fold fault, recovery and dismissal `events` into the still-open streaks.
 
     A fault without a `scope` is a one-off record, not a streak, and is ignored. A streak keeps
-    the evidence of its latest record; evidence that record did not carry stays `None`.
+    the evidence of its latest record; evidence that record did not carry stays `None`. A dismissal
+    closes only the exact fault occurrence it names, preserving later occurrences of that streak.
     """
     open_streaks: dict[tuple[str, str | None], FaultStreak] = {}
     for event in events:
@@ -56,6 +63,10 @@ def open_fault_streaks(events: Iterable[Event]) -> list[FaultStreak]:
         key = (scope, event.task_id)
         if event.kind is EventKind.ENGINE_RECOVERED:
             open_streaks.pop(key, None)
+        elif event.kind is EventKind.ENGINE_FAULT_DISMISSED:
+            previous = open_streaks.get(key)
+            if previous is not None and event.data.get(FAULT_EVENT_ID_KEY) == previous.event_id:
+                open_streaks.pop(key)
         elif event.kind is EventKind.ENGINE_FAULT:
             previous = open_streaks.get(key)
             open_streaks[key] = FaultStreak(

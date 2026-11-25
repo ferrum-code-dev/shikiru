@@ -16,7 +16,11 @@ if TYPE_CHECKING:
     from datetime import datetime
 
 _FINISHED = (Status.DONE.value, Status.CANCELLED.value)
-_FAULT_KINDS = (EventKind.ENGINE_FAULT.value, EventKind.ENGINE_RECOVERED.value)
+_FAULT_KINDS = (
+    EventKind.ENGINE_FAULT.value,
+    EventKind.ENGINE_RECOVERED.value,
+    EventKind.ENGINE_FAULT_DISMISSED.value,
+)
 _NEWEST_EVENT = "id < (SELECT MAX(id) FROM events)"
 
 

@@ -428,3 +428,12 @@ The review follow-up makes selected paths literal to Git and resolves staged-del
 T-196 replaces T-195 and starts from its candidate. Git now writes every patch the popup shows: a tracked file through `git diff`, an untracked file through `git diff --no-index` against the null device, and a staged-delete/recreated file through `git diff <merge base>:<path> -- <path>`. This replaces the hand-built `difflib` and untracked patches, which joined the headers, hunk header and first removed line, followed untracked symlinks and lost lines containing form feeds. Display diffs drop `--binary`, so binary files show Git's notice, and renames list both paths. Only hunk lines are coloured as added or removed. The landed-evidence rules of T-195 are unchanged.
 
 The review follow-up reads a patch only for the selected file. Listing files asks Git through `--numstat` whether each staged-delete/recreated path is unchanged, which never decodes its content and does not depend on `diff.autoRefreshIndex`; only a path proven unchanged is hidden, so text that is not UTF-8 or an unreadable file reports its error when selected without blocking the file list.
+
+## Dismiss dashboard faults (T-197)
+
+Add a `Dismiss fault` button to each open fault card, outside its Details disclosure. Queue a typed
+engine command that targets the card's latest fault event id; reject stale commands if that
+scope/task now points at a different occurrence. Record dismissal as its own durable event, fold it
+as a closed streak without writing `engine_recovered`, and reset the reporter's repeat window so a
+later occurrence opens a fresh card. Keep dismissal events with the other fault history during
+retention and show them in task timelines.

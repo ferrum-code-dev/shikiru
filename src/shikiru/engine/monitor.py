@@ -32,6 +32,7 @@ from shikiru.domain.events import EventKind
 from shikiru.domain.faults import (
     DETAIL_KEY,
     ERROR_KEY,
+    FAULT_EVENT_KINDS,
     RECOVERABLE_KEY,
     REPEAT_KEY,
     SCOPE_KEY,
@@ -404,7 +405,7 @@ class TurnMonitor:
             open_faults = open_fault_streaks(
                 self._events.since(
                     0,
-                    kinds=[EventKind.ENGINE_FAULT, EventKind.ENGINE_RECOVERED],
+                    kinds=FAULT_EVENT_KINDS,
                     task_id=task.id,
                 )
             )
