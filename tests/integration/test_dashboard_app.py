@@ -147,6 +147,7 @@ from tests.support.dashboard import (
     focus_inspector_details,
     fold_headline,
     ignore_palette_action,
+    is_hit_at_center,
     list_rows,
     open_command_history,
     open_project_diagnostics,
@@ -1865,8 +1866,9 @@ async def _assert_compact_home_selection_and_clear(
     await wait_until(lambda: panel.display and panel.region.width > 0, timeout=UI_WAIT_SECONDS)
     main = app.query_one("#focus-main", Horizontal)
     main.scroll_to_widget(panel, animate=False, immediate=True)
-    await pilot.pause()
-    assert panel.region.overlaps(main.scrollable_content_region)
+    await wait_until(
+        lambda: panel.region.overlaps(main.scrollable_content_region), timeout=UI_WAIT_SECONDS
+    )
     assert list_view.index is None
     assert first.id not in _rendered_text(identity)
     assert second.id not in _rendered_text(identity)
@@ -2837,8 +2839,9 @@ async def _assert_command_history_last_page_and_refresh(
     )
     _assert_last_command_history_page(page)
     history_scroll.scroll_to(y=history_scroll.max_scroll_y, animate=False)
-    await pilot.pause()
-    assert history_scroll.scroll_y == history_scroll.max_scroll_y > 0
+    await wait_until(
+        lambda: history_scroll.scroll_y == history_scroll.max_scroll_y > 0, timeout=UI_WAIT_SECONDS
+    )
     focus_before_refresh = app.focused
     await wait_until(reader_clock.has_pending_sleep, timeout=UI_WAIT_SECONDS)
     engine = database.connect()
@@ -2855,10 +2858,12 @@ async def _assert_command_history_last_page_and_refresh(
         timeout=UI_WAIT_SECONDS,
     )
     await pilot.pause()
+    await wait_until(
+        lambda: history_scroll.scroll_y == history_scroll.max_scroll_y, timeout=UI_WAIT_SECONDS
+    )
     assert app.focused is focus_before_refresh
     assert history_frame.region == preferred_region
     assert history_controls.region.y == controls_y
-    assert history_scroll.scroll_y == history_scroll.max_scroll_y
     await _resize_command_history_to_compact_and_close(
         app,
         pilot,
@@ -5313,8 +5318,9 @@ async def test_configured_usage_and_resources_widgets_open_their_panels(
             await pilot.click("#context-widget-close")
             await wait_until(lambda: app.screen is home_screen, timeout=UI_WAIT_SECONDS)
 
-            app.query_one("#resources", Static).scroll_visible(animate=False, force=True)
-            await pilot.pause()
+            resources = app.query_one("#resources", Static)
+            resources.scroll_visible(animate=False, force=True, immediate=True)
+            await wait_until(lambda: is_hit_at_center(app, resources), timeout=UI_WAIT_SECONDS)
             assert await pilot.click("#resources")
             await wait_until(lambda: app.screen is not home_screen, timeout=UI_WAIT_SECONDS)
             assert home_screen.is_mounted
@@ -5452,12 +5458,15 @@ async def test_dashboard_palette_lists_and_opens_external_widgets_under_extensio
             await wait_until(lambda: app.screen is workspace_screen, timeout=UI_WAIT_SECONDS)
 
             await pilot.press("?")
-            await pilot.pause()
-            assert app.screen is not workspace_screen
-            assert app.screen.query_one("#workspace-help-copy", Static).region.height > 0
+            await wait_until(
+                lambda: (
+                    app.screen is not workspace_screen
+                    and app.screen.query_one("#workspace-help-copy", Static).region.height > 0
+                ),
+                timeout=UI_WAIT_SECONDS,
+            )
             assert await pilot.click("#workspace-help-close")
-            await pilot.pause()
-            assert app.screen is workspace_screen
+            await wait_until(lambda: app.screen is workspace_screen, timeout=UI_WAIT_SECONDS)
             await leave_app(app)
     finally:
         reader.close()
@@ -5621,10 +5630,10 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
         )
         async with app_instance.run_test(size=(72, 32)) as pilot:
             await pilot.press("ctrl+p")
-            await pilot.pause()
-
-            assert isinstance(app_instance.screen, PaletteScreen)
-            assert opened == [""]
+            await wait_until(
+                lambda: isinstance(app_instance.screen, PaletteScreen) and opened == [""],
+                timeout=UI_WAIT_SECONDS,
+            )
             palette = cast("PaletteScreen", app_instance.screen)
             palette.query_one("#request", TextArea).text = "keep the dashboard available"
             await pilot.click("#palette-submit")
@@ -5633,12 +5642,14 @@ async def test_ctrl_p_pushes_the_shared_operator_palette(
             assert len(queued) == 1
 
             await pilot.press("escape")
-            await pilot.pause()
-            assert not isinstance(app_instance.screen, PaletteScreen)
+            await wait_until(
+                lambda: not isinstance(app_instance.screen, PaletteScreen), timeout=UI_WAIT_SECONDS
+            )
             await pilot.press("ctrl+p")
-            await pilot.pause()
-            assert isinstance(app_instance.screen, PaletteScreen)
-            assert opened == ["", ""]
+            await wait_until(
+                lambda: isinstance(app_instance.screen, PaletteScreen) and opened == ["", ""],
+                timeout=UI_WAIT_SECONDS,
+            )
             queue.mark_done(queued[0].id, {"task_id": "T-2"})
             clock.advance(0.25)
             await leave_app(app_instance)
@@ -5671,9 +5682,7 @@ async def test_ctrl_p_carries_the_selected_browser_task(
         async with app.run_test(size=(72, 32)) as pilot:
             await pilot.pause()
             await pilot.press("ctrl+p")
-            await pilot.pause()
-
-            assert len(opened) == 1
+            await wait_until(lambda: len(opened) == 1, timeout=UI_WAIT_SECONDS)
             assert opened[0].task_id == task.id
     finally:
         reader.close()

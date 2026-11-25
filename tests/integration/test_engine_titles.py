@@ -38,6 +38,7 @@ from shikiru.ui.tokens import (
 )
 from tests.support.engine import FAKE_RUNG, build_titles, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
+from tests.support.waiting import finish_within
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -195,7 +196,7 @@ async def test_stale_title_publication_keeps_the_rung_saved_in_sqlite(
     try:
         current_refresh = asyncio.create_task(titles.refresh(current_snapshot))
         refreshes.append(current_refresh)
-        await asyncio.wait_for(runner.title_written.wait(), timeout=_TIMEOUT_SECONDS)
+        await finish_within(runner.title_written.wait(), timeout=_TIMEOUT_SECONDS)
         assert runner.written_title is not None
         assert _SELECTED_RUNG_MODEL in runner.written_title
         current_title = await engine_env.tmux.display(pane_id, "#{pane_title}")
@@ -203,7 +204,7 @@ async def test_stale_title_publication_keeps_the_rung_saved_in_sqlite(
 
         stale_refresh = asyncio.create_task(publish_stale_snapshot())
         refreshes.append(stale_refresh)
-        await asyncio.wait_for(stale_refresh_started.wait(), timeout=_TIMEOUT_SECONDS)
+        await finish_within(stale_refresh_started.wait(), timeout=_TIMEOUT_SECONDS)
         assert not runner.overlapping_publication_io.is_set()
         runner.release.set()
         await asyncio.gather(*refreshes)
@@ -226,7 +227,7 @@ async def test_a_task_reaching_integrate_shows_the_implementer_stage_on_its_wind
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     flow_env = build_flow(engine_env, settings)
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -250,7 +251,7 @@ async def test_an_escalated_task_shows_the_escalated_window_state_and_flag(
     await set_role_script(tmux_server, Role.LEADER, [{"kind": "changes_requested"}])
     flow_env = build_flow(engine_env, settings)
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -297,7 +298,7 @@ async def test_hold_and_rung_changes_update_titles_on_the_isolated_tmux_server(
     )
     flow_env = build_flow(engine_env, settings)
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -329,7 +330,7 @@ async def test_a_taken_over_pane_shows_the_operator_with_the_runs_usage(
     await init_project_repo(engine_env.project_root)
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     flow_env = build_flow(engine_env, settings)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
     final = engine_env.tasks.get(task.id)
     assert final is not None
     run = engine_env.runs.get_live(final.id, Role.IMPLEMENTER)
@@ -357,7 +358,7 @@ async def test_packaged_agent_titles_keep_role_and_ownership_words_without_glyph
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     flow_env = build_flow(engine_env, settings)
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None

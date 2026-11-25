@@ -44,7 +44,7 @@ from shikiru.engine.agents import AgentPool
 from shikiru.engine.dependency import DependencyEscalator
 from shikiru.engine.escalations import DispatchFailureEscalator, EscalationRaiser
 from shikiru.engine.layout_guard import LayoutGuard
-from shikiru.engine.quota_probe_threads import THREAD_NAME_PREFIX
+from shikiru.engine.quota_probe_threads import THREAD_NAME_PREFIX, QuotaProbeThreads
 from shikiru.engine.quota_reconciler import QUOTA_REFRESH_SCOPE
 from shikiru.engine.root_preparation import RootPreparation
 from shikiru.engine.scheduler import FETCH_FAULT_SCOPE, MAX_DISPATCH_FAILURES, Scheduler
@@ -94,7 +94,13 @@ from tests.support.permissions import EXECUTABLE_MODE
 from tests.support.quota_waits import record_quota_wait
 from tests.support.store import seed_task
 from tests.support.tmux import attach_tmux_client
-from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until, wait_until_advancing
+from tests.support.waiting import (
+    LONG_WAIT_SECONDS,
+    MEDIUM_WAIT_SECONDS,
+    finish_within,
+    wait_until,
+    wait_until_advancing,
+)
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -847,7 +853,7 @@ async def test_scheduled_quota_fallback_survives_triage_and_authentication_failu
         [{"kind": "fail", "failure_kind": "auth"}, {"kind": "accept"}],
     )
     flow = build_flow(engine_env, settings, clock=clock, registry=registry)
-    await asyncio.wait_for(flow.flow.run(task.id), timeout=MEDIUM_WAIT_SECONDS)
+    await finish_within(flow.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = scheduler_env.tasks.require(task.id)
     assert final.complexity == "low"
@@ -1235,8 +1241,8 @@ async def test_a_hung_remote_cannot_hold_the_tick_for_every_ready_task(
         writer = await fifo_writer(remote.release, _REAL_SECONDS)
         await wait_until(clock.has_pending_sleep, _REAL_SECONDS)
         clock.advance(remote.settings.orchestration.dispatch_budget_seconds)
-        assert (await asyncio.wait_for(first, _REAL_SECONDS)).dispatches == ()
-        assert (await asyncio.wait_for(scheduler.run_once(), _REAL_SECONDS)).dispatches == ()
+        assert (await finish_within(first, _REAL_SECONDS)).dispatches == ()
+        assert (await finish_within(scheduler.run_once(), _REAL_SECONDS)).dispatches == ()
         await wait_until(remote.calls.exists, _REAL_SECONDS)
         assert remote.fetches() == 1
         assert [_status(scheduler_env, task) for task in tasks] == [Status.QUEUED] * len(tasks)
@@ -1269,7 +1275,7 @@ async def test_the_build_of_a_task_cancelled_meanwhile_does_not_hold_up_the_next
         writer = await fifo_writer(remote.release, _REAL_SECONDS)
         await wait_until(clock.has_pending_sleep, _REAL_SECONDS)
         clock.advance(remote.settings.orchestration.dispatch_budget_seconds)
-        await asyncio.wait_for(initial_tick, _REAL_SECONDS)
+        await finish_within(initial_tick, _REAL_SECONDS)
         await wait_until(lambda: remote.fetches() == 1, _REAL_SECONDS)
         cancelled = scheduler_env.tasks.require(first.id)
         scheduler_env.tasks.apply_transition(
@@ -1332,7 +1338,7 @@ async def test_a_slow_cache_copy_runs_beside_the_tick_and_completes_the_dispatch
         writer = await fifo_writer(release, _REAL_SECONDS)
         await wait_until(clock.has_pending_sleep, _REAL_SECONDS)
         clock.advance(settings.orchestration.dispatch_budget_seconds)
-        assert (await asyncio.wait_for(first, _REAL_SECONDS)).dispatches == ()
+        assert (await finish_within(first, _REAL_SECONDS)).dispatches == ()
         assert _status(scheduler_env, task) is Status.QUEUED
 
         release_fifo(writer, release)
@@ -1750,7 +1756,7 @@ async def test_a_pending_probe_holds_back_neither_the_tick_nor_an_independent_di
     scheduler = quota_probe.restart()
     writer = None
     try:
-        schedule = await asyncio.wait_for(scheduler.run_once(), _REAL_SECONDS)
+        schedule = await finish_within(scheduler.run_once(), _REAL_SECONDS)
         writer = await quota_probe.reader_waiting()
 
         assert [dispatch.task_id for dispatch in schedule.dispatches] == [independent.id]
@@ -1857,7 +1863,7 @@ async def test_a_source_that_stays_pending_never_gains_a_second_reader_and_shutd
         assert quota_probe.reading_threads() == 1
         assert env.events.since(0, kinds=[EventKind.ENGINE_FAULT])
 
-        await asyncio.wait_for(scheduler.shutdown(), _REAL_SECONDS)
+        await finish_within(scheduler.shutdown(), _REAL_SECONDS)
 
         assert quota_probe.reading_threads() == 1
         assert env.quotas.block_for("fake") is not None
@@ -1867,6 +1873,28 @@ async def test_a_source_that_stays_pending_never_gains_a_second_reader_and_shutd
         quota_probe.free_blocked_readers()
         await quota_probe.source_drained()
         await scheduler.shutdown()
+
+
+async def test_a_read_that_returned_never_refuses_the_next_one_while_its_thread_exits() -> None:
+    exit_allowed = threading.Event()
+    held_by_thread = threading.local()
+
+    class HoldsThreadExit:
+        def __del__(self) -> None:
+            exit_allowed.wait(_REAL_SECONDS)
+
+    def read(since: datetime) -> None:
+        del since
+        held_by_thread.value = HoldsThreadExit()
+
+    threads = QuotaProbeThreads()
+    try:
+        await finish_within(threads.start(_RESTART_AGENT, read, TASK_CREATED_AT), _REAL_SECONDS)
+
+        assert not threads.busy(_RESTART_AGENT)
+        await finish_within(threads.start(_RESTART_AGENT, read, TASK_CREATED_AT), _REAL_SECONDS)
+    finally:
+        exit_allowed.set()
 
 
 async def test_a_probe_of_a_block_since_replaced_cannot_release_the_newer_block(
@@ -1912,7 +1940,7 @@ async def test_shutdown_ends_a_probe_that_is_still_waiting(
         await scheduler.run_once()
         writer = await quota_probe.reader_waiting()
 
-        await asyncio.wait_for(scheduler.shutdown(), _REAL_SECONDS)
+        await finish_within(scheduler.shutdown(), _REAL_SECONDS)
 
         assert quota_probe.reconciler is not None
         assert not quota_probe.reconciler.probing

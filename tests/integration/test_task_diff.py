@@ -912,8 +912,9 @@ async def test_file_and_commit_names_with_markup_characters_are_shown_literally(
         commit_select = _select(screen, DIFF_COMMIT_SELECT)
         await pilot.press("enter")
         await wait_until(lambda: commit_select.expanded, timeout=UI_WAIT_SECONDS)
-        await pilot.pause()
-        assert "add [/red] file" in _screen_text(pilot.app)
+        await wait_until(
+            lambda: "add [/red] file" in _screen_text(pilot.app), timeout=UI_WAIT_SECONDS
+        )
 
 
 async def test_selected_commit_that_disappears_stays_selected_with_a_visible_error(
@@ -970,9 +971,10 @@ async def test_fullscreen_preserves_selections_and_scroll_and_restores(
         restored = frame.region
 
         await pilot.press("f")
-        await pilot.pause()
-        assert frame.region.size == APP_SIZE
-        assert _button_label(screen) == "f restore"
+        await wait_until(
+            lambda: frame.region.size == APP_SIZE and _button_label(screen) == "f restore",
+            timeout=UI_WAIT_SECONDS,
+        )
         assert _select(screen, DIFF_COMMIT_SELECT).value == commit_value
         assert _select(screen, DIFF_FILE_SELECT).value == file_value
         assert (scroll.scroll_x, scroll.scroll_y) == (2, 3)
@@ -982,12 +984,15 @@ async def test_fullscreen_preserves_selections_and_scroll_and_restores(
         await wait_until(lambda: frame.region.size == APP_SIZE, timeout=UI_WAIT_SECONDS)
 
         await pilot.press("f")
-        await pilot.pause()
-        assert _button_label(screen) == "f fullscreen"
-        assert frame.region == restored
+        await wait_until(
+            lambda: frame.region == restored and _button_label(screen) == "f fullscreen",
+            timeout=UI_WAIT_SECONDS,
+        )
         assert restored.width < APP_SIZE[0]
         assert restored.bottom < APP_SIZE[1]
-        assert (scroll.scroll_x, scroll.scroll_y) == (2, 3)
+        await wait_until(
+            lambda: (scroll.scroll_x, scroll.scroll_y) == (2, 3), timeout=UI_WAIT_SECONDS
+        )
 
 
 async def test_expanded_dropdown_does_not_trigger_fullscreen_and_escape_closes(
@@ -1030,8 +1035,7 @@ async def test_empty_diff_is_visible_in_the_popup(
     async with ScreenHost(screen).run_test(size=APP_SIZE) as pilot:
         await _wait_for_scope(screen, "Changes so far")
         assert "No changes in this view." in _text(screen, DIFF_TEXT)
-        await pilot.pause()
-        assert "No files" in _screen_text(pilot.app)
+        await wait_until(lambda: "No files" in _screen_text(pilot.app), timeout=UI_WAIT_SECONDS)
         assert _select(screen, DIFF_FILE_SELECT).disabled is True
 
 

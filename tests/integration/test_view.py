@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import TYPE_CHECKING
 
@@ -11,7 +10,7 @@ from shikiru.paths import run_dir, task_root
 from shikiru.view_log import view_argv, view_log_path
 from tests.support.engine import set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
-from tests.support.waiting import wait_until
+from tests.support.waiting import finish_within, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -33,7 +32,7 @@ async def test_view_pane_shows_a_turns_messages_and_tool_calls(
     task = await build_flow_task(engine_env, mode=Mode.IMPLEMENT)
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
     flow_env = build_flow(engine_env, flow_settings())
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
     log = view_log_path(run_dir(engine_env.project_root, task.id), Role.IMPLEMENTER.value)
     rows = [json.loads(line) for line in log.read_text().splitlines()]
     message = next(row["text"] for row in rows if row["signal"] == "Message")

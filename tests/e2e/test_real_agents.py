@@ -60,7 +60,7 @@ from tests.e2e.watchdog import guarded
 from tests.support.e2e_attempts import ATTEMPT_FAILED, ATTEMPT_PASSED, AttemptRecord
 from tests.support.factories import CPU_UNCAPPED_PCT
 from tests.support.git_repo import commit_all, init_repo
-from tests.support.waiting import wait_until
+from tests.support.waiting import finish_within, wait_until
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
@@ -873,7 +873,7 @@ async def _cleanup_attempt(
     if not state.lifecycle_started:
         return
     try:
-        await asyncio.wait_for(_stop(project, environment), timeout=CLEANUP_TIMEOUT_SECONDS)
+        await finish_within(_stop(project, environment), timeout=CLEANUP_TIMEOUT_SECONDS)
     except TimeoutError as error:
         _require_shikiru(False, "real-agent cleanup timed out")
         raise AssertionError from error

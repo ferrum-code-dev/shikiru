@@ -12,7 +12,13 @@ import pytest
 
 from shikiru.errors import CommandFailed, CommandTimeoutError
 from shikiru.process import STDERR_KEPT_BYTES, STDOUT_DRAIN_TIMEOUT, SubprocessRunner
-from tests.support.waiting import SHORT_WAIT_SECONDS, UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import (
+    SHORT_WAIT_SECONDS,
+    UI_WAIT_SECONDS,
+    finish_within,
+    time_limit,
+    wait_until,
+)
 
 if TYPE_CHECKING:
     from shikiru.process import LineChannel, ProcessIdentity
@@ -296,7 +302,7 @@ async def test_stop_returns_within_a_bound_and_ends_a_descendant_holding_the_pip
     descendant = runner.identify(await process_tree.descendant_started())
     assert descendant is not None
 
-    await asyncio.wait_for(process.stop(grace=0.5), timeout=_STOP_BOUND_SECONDS)
+    await finish_within(process.stop(grace=0.5), timeout=_STOP_BOUND_SECONDS)
 
     assert [line async for line in process.stdout_lines()] == []
     await wait_until(lambda: not runner.is_running(descendant), _STOP_BOUND_SECONDS)
@@ -312,7 +318,7 @@ async def test_an_exited_leader_ends_the_output_stream_and_its_descendant_within
     pid_file = tmp_path / "descendant.pid"
     process = await runner.spawn(["/bin/sh", "-c", _LEADER_EXITS_PROGRAM, "sh", str(pid_file)])
 
-    async with asyncio.timeout(STDOUT_DRAIN_TIMEOUT + _STOP_BOUND_SECONDS):
+    async with time_limit(STDOUT_DRAIN_TIMEOUT + _STOP_BOUND_SECONDS):
         lines = [line async for line in process.stdout_lines()]
         returncode = await process.wait()
         assert (lines, returncode) == ([b"done\n"], 0)

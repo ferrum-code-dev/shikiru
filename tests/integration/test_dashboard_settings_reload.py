@@ -132,9 +132,8 @@ async def test_header_applies_edited_max_parallel_when_the_engine_starts_again(
     clock = FakeClock(START)
     context = widget_context(reader, project_dir, clock, services=StubServices(engine_running=True))
     widget = cast("HeaderPanel", HeaderWidget().create(context))
-    async with WidgetHostApp(widget).run_test() as pilot:
-        await pilot.pause()
-        assert "Slots 0/1" in _plain(widget.content)
+    async with WidgetHostApp(widget).run_test():
+        await wait_until(lambda: "Slots 0/1" in _plain(widget.content), timeout=SHORT_WAIT_SECONDS)
 
         _write_max_parallel(project_dir, "2")
         _start_engine(connection, clock)

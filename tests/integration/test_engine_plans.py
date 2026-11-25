@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import stat
 from typing import TYPE_CHECKING
 
@@ -17,7 +16,7 @@ from shikiru.workspace.git import Git
 from tests.support.engine import FAKE_AGENT_NAME, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
-from tests.support.waiting import LONG_WAIT_SECONDS
+from tests.support.waiting import LONG_WAIT_SECONDS, finish_within
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -107,7 +106,7 @@ async def test_a_plan_without_trackers_writes_the_untracked_plan_and_finishes_do
         local_integration=True,
         registry=_recording_registry(recorded),
     )
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -150,7 +149,7 @@ async def test_a_plan_with_trackers_commits_to_them_as_before(
         local_integration=True,
         registry=_recording_registry(recorded),
     )
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None

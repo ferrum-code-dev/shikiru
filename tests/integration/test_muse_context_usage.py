@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -41,6 +40,7 @@ from shikiru.plugins.agents.muse.options import (
 from shikiru.process import SubprocessRunner
 from tests.integration.fake_muse import install_fake_exec, install_fake_muse
 from tests.support.clock import LONG_AGO, FakeClock
+from tests.support.waiting import time_limit
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -124,7 +124,7 @@ async def _run_turn(
         options=options or {}, runner=SubprocessRunner(), clock=FakeClock(LONG_AGO)
     )
     turn = await create(context).start_turn(spec)
-    async with asyncio.timeout(_TURN_TIMEOUT_SECONDS):
+    async with time_limit(_TURN_TIMEOUT_SECONDS):
         return [signal async for signal in turn.signals()]
 
 

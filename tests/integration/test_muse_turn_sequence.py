@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
@@ -68,6 +67,7 @@ from shikiru.plugins.agents.muse.turn import ContextWindow, MuseTurnSequence
 from shikiru.private import PRIVATE_FILE_MODE, write_private_text
 from shikiru.process import SubprocessRunner
 from tests.support.clock import FakeClock
+from tests.support.waiting import time_limit
 
 _FIXTURES = Path(__file__).parents[1] / "fixtures" / "agents" / "muse"
 _TEST_NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -283,7 +283,7 @@ async def _run_turn(
         compact_at_pct=compact_at_pct,
     )
     turn = await StreamingTurn.start(spec, SubprocessRunner(), sequence)
-    async with asyncio.timeout(_TURN_TIMEOUT_SECONDS):
+    async with time_limit(_TURN_TIMEOUT_SECONDS):
         signals = [signal async for signal in turn.signals()]
     recorded = [json.loads(line) for line in calls.read_text(encoding="utf-8").splitlines()]
     return recorded, signals

@@ -9,6 +9,7 @@ from pathlib import Path
 from shikiru.clock import SystemClock
 from shikiru.store.database import Database
 from shikiru.store.reader import StateReader
+from tests.support.waiting import finish_within
 
 _WATCH_TIMEOUT_SECONDS = 30.0
 
@@ -22,7 +23,7 @@ async def _wait_for_one_change(reader: StateReader, ready_path: Path) -> None:
     watcher = asyncio.ensure_future(reader.watch(on_change))
     asyncio.get_running_loop().call_soon(ready_path.write_text, "ready")
     try:
-        await asyncio.wait_for(changed.wait(), timeout=_WATCH_TIMEOUT_SECONDS)
+        await finish_within(changed.wait(), timeout=_WATCH_TIMEOUT_SECONDS)
     finally:
         watcher.cancel()
 

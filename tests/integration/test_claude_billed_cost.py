@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import sys
 from pathlib import Path
@@ -36,7 +35,7 @@ from tests.support.engine import FAKE_AGENT_NAME, FAKE_RUNG, build_registry
 from tests.support.factories import TASK_CREATED_AT, make_settings
 from tests.support.flow import build_flow, build_flow_task, init_project_repo
 from tests.support.store import seed_task
-from tests.support.waiting import wait_until
+from tests.support.waiting import finish_within, wait_until
 
 if TYPE_CHECKING:
     from shikiru.config.settings import Settings
@@ -219,7 +218,7 @@ async def test_mixed_task_shows_api_billed_and_subscription_estimated_costs_sepa
     settings = _mixed_task_settings()
     flow = build_flow(engine_env, settings, registry=_mixed_task_registry())
 
-    await asyncio.wait_for(flow.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     runs = {run.role: run for run in engine_env.runs.for_task(task.id)}
     assert runs[Role.IMPLEMENTER].billing_mode == BILLING_MODE_API

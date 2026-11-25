@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import TYPE_CHECKING, Any
 
 from shikiru.domain.events import EventKind
@@ -29,6 +28,7 @@ from shikiru.prompts.renderer import PromptName
 from shikiru.workspace.roots import run_dir
 from tests.support.engine import set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
+from tests.support.waiting import finish_within
 
 if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
@@ -146,7 +146,7 @@ async def _run(
     kind: ReportKind,
     feedback: FeedbackInput,
 ) -> Any:
-    _, report = await asyncio.wait_for(
+    _, report = await finish_within(
         flow_env.steps.run_report_turn(
             task, role=role, template=_TEMPLATES[kind], kind=kind, feedback=feedback
         ),

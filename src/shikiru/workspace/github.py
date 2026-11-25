@@ -502,6 +502,35 @@ def _combined_error(check_error: str | None, head_error: str | None) -> str | No
     return f"{check_error}; {head_error}"
 
 
+def parse_pull_request_status(text: str) -> PullRequestStatus:
+    """Return the status that `gh pr view --json` printed as `text`.
+
+    Check or head evidence that is missing or malformed is reported in `evidence_error` and forces
+    `checks_failing`; any other unreadable field raises `ShikiruError`.
+    """
+    view = _object(_json(text))
+    raw_state = _field(view, _Key.STATE)
+    raw_mergeable = _field(view, _Key.MERGEABLE)
+    if not isinstance(raw_state, str):
+        raise _malformed(_Key.STATE)
+    if not isinstance(raw_mergeable, str):
+        raise _malformed(_Key.MERGEABLE)
+    merge_commit = _merge_commit(_field(view, _Key.MERGE_COMMIT))
+    head_sha, head_error = _head_sha(view.get(_Key.HEAD_SHA))
+    checks_failing, checks_pending, failing_checks, check_error = _rollup(view.get(_Key.CHECKS))
+    evidence_error = _combined_error(check_error, head_error)
+    return PullRequestStatus(
+        state=PullRequestState(raw_state),
+        merge_commit=merge_commit,
+        conflicting=raw_mergeable == _CONFLICTING,
+        checks_failing=checks_failing or evidence_error is not None,
+        checks_pending=checks_pending,
+        head_sha=head_sha,
+        failing_checks=failing_checks,
+        evidence_error=evidence_error,
+    )
+
+
 def _malformed(key: _Key) -> ShikiruError:
     return ShikiruError(f"{_MALFORMED_RESPONSE}: {key.value}")
 
@@ -764,27 +793,7 @@ class GitHub:
         """
         fields = (_Key.STATE, _Key.MERGE_COMMIT, _Key.MERGEABLE, _Key.CHECKS, _Key.HEAD_SHA)
         result = await self._run(repo_dir, "pr", "view", url, "--json", ",".join(fields))
-        view = _object(_json(result.stdout))
-        raw_state = _field(view, _Key.STATE)
-        raw_mergeable = _field(view, _Key.MERGEABLE)
-        if not isinstance(raw_state, str):
-            raise _malformed(_Key.STATE)
-        if not isinstance(raw_mergeable, str):
-            raise _malformed(_Key.MERGEABLE)
-        merge_commit = _merge_commit(_field(view, _Key.MERGE_COMMIT))
-        head_sha, head_error = _head_sha(view.get(_Key.HEAD_SHA))
-        checks_failing, checks_pending, failing_checks, check_error = _rollup(view.get(_Key.CHECKS))
-        evidence_error = _combined_error(check_error, head_error)
-        return PullRequestStatus(
-            state=PullRequestState(raw_state),
-            merge_commit=merge_commit,
-            conflicting=raw_mergeable == _CONFLICTING,
-            checks_failing=checks_failing or evidence_error is not None,
-            checks_pending=checks_pending,
-            head_sha=head_sha,
-            failing_checks=failing_checks,
-            evidence_error=evidence_error,
-        )
+        return parse_pull_request_status(result.stdout)
 
     async def close_pull_request(self, repo_dir: Path, url: str) -> None:
         """Close the open pull request at `url` without merging it."""

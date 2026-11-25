@@ -91,6 +91,19 @@ async def yield_control() -> None:
     await asyncio.sleep(0)
 
 
+async def finish_within[T](awaitable: Awaitable[T], timeout: float) -> T:
+    """Return the result of `awaitable`, or cancel it and raise `TimeoutError`.
+
+    `timeout` is scaled by `time_scale()`.
+    """
+    return await asyncio.wait_for(awaitable, scaled(timeout))
+
+
+def time_limit(timeout: float) -> asyncio.Timeout:
+    """Bound an `async with` block by `timeout` seconds, scaled by `time_scale()`."""
+    return asyncio.timeout(scaled(timeout))
+
+
 async def wait_until(predicate: _Predicate, timeout: float) -> None:
     """Poll `predicate` (sync or async) until it is true, or raise `WaitTimeoutError`.
 
@@ -167,7 +180,7 @@ async def leave_app[T](app: App[T]) -> None:
     """
     app.workers.cancel_all()
     with suppress(WorkerCancelled):
-        async with asyncio.timeout(scaled(LEAVE_APP_SECONDS)):
+        async with time_limit(LEAVE_APP_SECONDS):
             await app.workers.wait_for_complete()  # pyright: ignore[reportUnknownMemberType]
     await wait_until(lambda: not app.workers, timeout=LEAVE_APP_SECONDS)
 

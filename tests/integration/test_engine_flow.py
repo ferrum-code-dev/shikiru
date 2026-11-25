@@ -31,6 +31,7 @@ from tests.support.flow import (
     init_project_repo,
 )
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT
+from tests.support.waiting import finish_within
 
 if TYPE_CHECKING:
     from shikiru.config.settings import ComplexityName, Settings
@@ -45,7 +46,7 @@ _IMPLEMENTER_QUESTION_HEADING = "## Implementer's question"
 
 async def _run_flow(env: EngineEnv, task_id: str, settings: Settings) -> FlowEnv:
     flow_env = build_flow(env, settings)
-    await asyncio.wait_for(flow_env.flow.run(task_id), timeout=_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task_id), timeout=_TIMEOUT_SECONDS)
     return flow_env
 
 
@@ -218,7 +219,7 @@ async def test_consult_reads_operator_answer_after_flow_restarts(
     )
     after_restart = build_flow(engine_env, settings)
 
-    await asyncio.wait_for(after_restart.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
+    await finish_within(after_restart.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
 
     prompt_text = _consult_prompt_text(engine_env, task.id)
     assert answer in _section(prompt_text, _OPERATOR_DECISION_HEADING)
@@ -276,7 +277,7 @@ async def test_later_consult_uses_implementer_question_after_flow_restarts(
     )
     after_restart = build_flow(engine_env, settings)
 
-    await asyncio.wait_for(after_restart.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
+    await finish_within(after_restart.flow.run(task.id), timeout=_TIMEOUT_SECONDS)
 
     consult_prompt = next(
         (run_dir(engine_env.project_root, task.id) / "turns").glob("*-consult-*/prompt.md")

@@ -79,7 +79,7 @@ from shikiru.process import SubprocessRunner
 from tests.e2e.diagnostics import SANDBOX_DENIAL_MARKERS
 from tests.support.clock import FakeClock
 from tests.support.factories import make_settings
-from tests.support.waiting import UI_WAIT_SECONDS
+from tests.support.waiting import UI_WAIT_SECONDS, time_limit
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -260,7 +260,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
         timeout: float | None = None,
     ) -> list[AgentSignal]:
         turn = await self._build_agent(options).start_turn(spec)
-        async with asyncio.timeout(timeout or self._live_turn_timeout_seconds):
+        async with time_limit(timeout or self._live_turn_timeout_seconds):
             return [signal async for signal in turn.signals()]
 
     def agent_factory(self) -> AgentFactory:
@@ -1210,7 +1210,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
         await _init_live_repo(spec.cwd)
         turn = await self._build_agent().start_turn(_with_prompt(spec, _LIVE_STOP_PROMPT))
         signals = turn.signals()
-        async with asyncio.timeout(_TURN_TIMEOUT_SECONDS):
+        async with time_limit(_TURN_TIMEOUT_SECONDS):
             started = await signals.__anext__()
             assert isinstance(started, SessionStarted), "live turn omitted SessionStarted"
             assert started.session_id is not None, "live turn omitted its resumable session id"

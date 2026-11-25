@@ -304,7 +304,7 @@ class TurnMonitor:
         tool_running: bool,
     ) -> _Drained:
         try:
-            async with asyncio.timeout(self._settings.orchestration.shutdown_seconds):
+            async with asyncio.timeout(self._settings.orchestration.shutdown_seconds):  # noqa: TID251 # keep: product deadline
                 while True:
                     try:
                         signal = await pending_signal

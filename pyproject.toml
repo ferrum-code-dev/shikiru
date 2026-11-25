@@ -141,6 +141,9 @@ ignore = [
 "asyncio.create_subprocess_shell" = { msg = "Subprocesses only via shikiru.process.SubprocessRunner" }
 "time.sleep" = { msg = "Time only via shikiru.clock.Clock" }
 "asyncio.sleep" = { msg = "Time only via shikiru.clock.Clock" }
+"asyncio.wait_for" = { msg = "Unscaled deadline; tests use tests.support.waiting.finish_within" }
+"asyncio.timeout" = { msg = "Unscaled deadline; tests use tests.support.waiting.time_limit" }
+"asyncio.timeout_at" = { msg = "Unscaled deadline; tests use tests.support.waiting.time_limit" }
 "time.time" = { msg = "Time only via shikiru.clock.Clock" }
 "time.time_ns" = { msg = "Time only via shikiru.clock.Clock" }
 "time.monotonic" = { msg = "Time only via shikiru.clock.Clock" }

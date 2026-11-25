@@ -2102,14 +2102,16 @@ async def test_detail_ctrl_p_carries_the_task_and_its_current_role(
             )
             await pilot.press("ctrl+p")
             await wait_until(lambda: bool(opened), timeout=UI_WAIT_SECONDS)
-            app.query_one(
-                f"#{TASK_DETAIL_ACTION_PREFIX}{BriefingAction.PAUSE.value}", Button
-            ).focus()
+            await focus(
+                pilot,
+                app.query_one(f"#{TASK_DETAIL_ACTION_PREFIX}{BriefingAction.PAUSE.value}", Button),
+            )
             await pilot.press("enter")
             await wait_until(lambda: len(opened) == 2, timeout=UI_WAIT_SECONDS)
-            app.query_one(
-                f"#{TASK_DETAIL_ACTION_PREFIX}{BriefingAction.CANCEL.value}", Button
-            ).focus()
+            await focus(
+                pilot,
+                app.query_one(f"#{TASK_DETAIL_ACTION_PREFIX}{BriefingAction.CANCEL.value}", Button),
+            )
             await pilot.press("enter")
             await wait_until(lambda: len(opened) == 3, timeout=UI_WAIT_SECONDS)
             await focus_inspector_details(pilot)
@@ -2142,19 +2144,22 @@ async def _assert_responsive_task_sections(
     assert task.id in _text(identity)
     assert task.title in _text(identity)
     body.scroll_to_widget(identity, animate=False)
-    await pilot.pause()
-    assert identity.region.overlaps(body.scrollable_content_region)
+    await wait_until(
+        lambda: identity.region.overlaps(body.scrollable_content_region), timeout=UI_WAIT_SECONDS
+    )
 
     body.scroll_to_widget(ownership, animate=False)
-    await pilot.pause()
+    await wait_until(
+        lambda: ownership.region.overlaps(body.scrollable_content_region), timeout=UI_WAIT_SECONDS
+    )
     assert Hold.PAUSED.value in _text(ownership)
     assert Hold.INTERVENTION.value in _text(ownership)
-    assert ownership.region.overlaps(body.scrollable_content_region)
 
     body.scroll_to_widget(briefing, animate=False)
-    await pilot.pause()
+    await wait_until(
+        lambda: briefing.region.overlaps(body.scrollable_content_region), timeout=UI_WAIT_SECONDS
+    )
     assert "Escalation open" in plain_text(briefing.content)
-    assert briefing.region.overlaps(body.scrollable_content_region)
 
     await _open_task_view(app, pilot, TASK_VIEW_USAGE)
     detail_panel = app.screen.query_one("#task-detail-panel", TaskDetailPanel)
@@ -2165,8 +2170,10 @@ async def _assert_responsive_task_sections(
         timeout=UI_WAIT_SECONDS,
     )
     detail_body.scroll_to_widget(detailed_sessions, animate=False)
-    await pilot.pause()
-    assert detailed_sessions.region.overlaps(detail_body.scrollable_content_region)
+    await wait_until(
+        lambda: detailed_sessions.region.overlaps(detail_body.scrollable_content_region),
+        timeout=UI_WAIT_SECONDS,
+    )
     await pilot.press("escape")
 
 
@@ -2278,8 +2285,9 @@ async def test_compact_palette_form_keeps_visible_text_cursor_and_run_after_resi
             await focus(pilot, request)
             await enter_text(pilot, "visible request text")
             await pilot.press("end", "enter", *"second line")
-            await pilot.pause()
-            assert request.text == "visible request text\nsecond line"
+            await wait_until(
+                lambda: request.text == "visible request text\nsecond line", timeout=UI_WAIT_SECONDS
+            )
             _assert_text_area_cursor_is_visible(request)
             assert "second line" in _visible_text_area_text(request)
             submit = palette.query_one("#palette-submit", Button)
@@ -2413,11 +2421,12 @@ async def test_task_detail_refreshes_durable_ownership_after_palette_closes(
             body = detail_screen.query_one(f"#{TASK_DETAIL_BODY}", VerticalScroll)
             briefing = detail_screen.query_one(f"#{TASK_DETAIL_BRIEFING}", GatedStatic)
             body.scroll_to_widget(briefing, animate=False)
-            await pilot.pause()
-            assert briefing.display
+            await wait_until(
+                lambda: briefing.display and briefing.region.y >= body.region.y,
+                timeout=UI_WAIT_SECONDS,
+            )
             assert "Paused by operator" in _text(briefing)
             assert "Pause hold" in _text(briefing)
-            assert briefing.region.y >= body.region.y
             await leave_app(app)
     finally:
         reader.close()

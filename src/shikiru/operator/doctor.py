@@ -22,7 +22,7 @@ from shikiru.domain.caches import (
     ineffective_cache_entry,
     uncached_detections,
 )
-from shikiru.domain.versions import Version, parse_version
+from shikiru.domain.versions import Version, version_shortfall
 from shikiru.errors import ConfigError, ShikiruError
 from shikiru.operator.detectors import not_repository_root
 from shikiru.paths import engine_output_path, project_config_path, state_db_path
@@ -371,12 +371,7 @@ def _version_problem(result: ProcessResult, minimum: Version) -> str | None:
     detail = _process_detail(result)
     if result.returncode != 0:
         return detail
-    found = parse_version(detail)
-    if found is None:
-        return f"{detail}: no version found"
-    if found < minimum:
-        return f"{detail}: {minimum[0]}.{minimum[1]} or newer is required"
-    return None
+    return version_shortfall(detail, minimum)
 
 
 def _error_detail(error: BaseException) -> str:

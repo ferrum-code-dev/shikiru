@@ -176,7 +176,7 @@ class AgentProbe:
 
 
 async def _collect(turn: Turn, timeout: float) -> list[AgentSignal]:
-    async with asyncio.timeout(timeout):
+    async with asyncio.timeout(timeout):  # noqa: TID251 # keep: product deadline
         return [signal async for signal in turn.signals()]
 
 

@@ -951,10 +951,10 @@ async def test_dashboard_slash_and_m_keys_act_on_home_and_are_text_inside_search
         )
         assert not search.display
         await pilot.press("slash")
-        await pilot.pause()
-        assert search.display
-        assert search.has_focus
-        assert search.is_on_screen
+        await wait_until(
+            lambda: search.display and search.has_focus and search.is_on_screen,
+            timeout=TASK_BROWSER_WAIT_TIMEOUT_SECONDS,
+        )
         assert search.value == ""
         await pilot.press("slash")
 
@@ -976,8 +976,10 @@ async def test_dashboard_slash_and_m_keys_act_on_home_and_are_text_inside_search
         )
         assert task_list.has_focus
         await pilot.press("?")
-        await pilot.pause()
-        assert app.screen.query_one("#workspace-help-frame")
+        await wait_until(
+            lambda: bool(app.screen.query_one("#workspace-help-frame")),
+            timeout=TASK_BROWSER_WAIT_TIMEOUT_SECONDS,
+        )
 
 
 @pytest.mark.parametrize("size", [(100, 35), (48, 20), (20, 8)])

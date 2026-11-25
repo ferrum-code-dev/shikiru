@@ -89,9 +89,10 @@ async def test_header_labels_the_squash_integration_mode(
         reader, project_dir, FakeClock(START), services=StubServices(engine_running=True)
     )
     widget = cast("HeaderPanel", HeaderWidget().create(context))
-    async with WidgetHostApp(widget).run_test() as pilot:
-        await pilot.pause()
-        assert "Local squash and merge" in _plain(widget.content)
+    async with WidgetHostApp(widget).run_test():
+        await wait_until(
+            lambda: "Local squash and merge" in _plain(widget.content), timeout=SHORT_WAIT_SECONDS
+        )
 
 
 async def test_header_shows_project_name_engine_state_and_slots(
@@ -254,10 +255,8 @@ async def test_header_does_not_count_an_escalated_slot_as_occupied(
 
     context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("HeaderPanel", HeaderWidget().create(context))
-    async with WidgetHostApp(widget).run_test() as pilot:
-        await pilot.pause()
-
-        assert "Slots 0/2" in _plain(widget.content)
+    async with WidgetHostApp(widget).run_test():
+        await wait_until(lambda: "Slots 0/2" in _plain(widget.content), timeout=SHORT_WAIT_SECONDS)
 
 
 async def test_home_summary_separates_paused_and_external_waits_from_slot_occupancy(
@@ -371,9 +370,11 @@ async def test_header_marks_previously_sampled_publication_counts(
         services=StubServices(repo_status_value=checkout),
     )
     widget = cast("HeaderPanel", HeaderWidget().create(context))
-    async with WidgetHostApp(widget).run_test() as pilot:
-        await pilot.pause()
-        assert "3 behind origin (previously)" in _plain(widget.content)
+    async with WidgetHostApp(widget).run_test():
+        await wait_until(
+            lambda: "3 behind origin (previously)" in _plain(widget.content),
+            timeout=SHORT_WAIT_SECONDS,
+        )
 
 
 @pytest.mark.usefixtures("colour_terminal")
@@ -485,9 +486,8 @@ async def test_header_refreshes_when_the_writer_commits(
 
     context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("HeaderPanel", HeaderWidget().create(context))
-    async with WidgetHostApp(widget).run_test() as pilot:
-        await pilot.pause()
-        assert "Slots 0/2" in _plain(widget.content)
+    async with WidgetHostApp(widget).run_test():
+        await wait_until(lambda: "Slots 0/2" in _plain(widget.content), timeout=SHORT_WAIT_SECONDS)
 
         _submit_task(connection, clock)
 
@@ -555,9 +555,8 @@ async def test_strips_shows_a_paused_stamp_for_a_held_task(
 
     context = widget_context(reader, project_dir, FakeClock(START))
     widget = cast("StripsPanel", StripsWidget().create(context))
-    async with WidgetHostApp(widget).run_test() as pilot:
-        await pilot.pause()
-        assert "PAUSED" in _plain(widget.content)
+    async with WidgetHostApp(widget).run_test():
+        await wait_until(lambda: "PAUSED" in _plain(widget.content), timeout=SHORT_WAIT_SECONDS)
 
 
 async def test_queue_lists_a_queued_task_with_its_wait_reason(

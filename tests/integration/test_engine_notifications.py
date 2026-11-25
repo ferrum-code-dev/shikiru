@@ -149,7 +149,7 @@ async def test_hook_descendants_die_with_the_hook(
     pid_file = tmp_path / "descendant.pid"
     script = f"sleep 1000 & echo $! > {pid_file}; wait"
     release_timeout = asyncio.Event()
-    wait_for = asyncio.wait_for
+    wait_for = asyncio.wait_for  # noqa: TID251 # keep: this test intercepts the product's own deadline
 
     async def wait_after_start(awaitable: Awaitable[object], timeout: float | None) -> object:
         if timeout == _QUICK_HOOK_TIMEOUT_SECONDS:

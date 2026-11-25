@@ -405,7 +405,7 @@ class AgentContractSuite:
         agent = self._build_agent()
         turn = await agent.start_turn(_with_prompt(spec, "wait for the next instruction"))
         signals = turn.signals()
-        started = await asyncio.wait_for(signals.__anext__(), _TURN_TIMEOUT_SECONDS)
+        started = await asyncio.wait_for(signals.__anext__(), _TURN_TIMEOUT_SECONDS)  # noqa: TID251 # keep: shipped test kit, no test time scale
         if not isinstance(started, SessionStarted):
             message = "live turn did not report a resumable session id"
             raise TypeError(message)
@@ -488,7 +488,7 @@ class AgentContractSuite:
         timeout: float = _TURN_TIMEOUT_SECONDS,
     ) -> list[AgentSignal]:
         turn = await self._build_agent(options).start_turn(spec)
-        async with asyncio.timeout(timeout):
+        async with asyncio.timeout(timeout):  # noqa: TID251 # keep: shipped test kit, no test time scale
             return [signal async for signal in turn.signals()]
 
 

@@ -25,7 +25,7 @@ from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, build_tmux, engine_settings, wait_for_command
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT
 from tests.support.flow import init_project_repo
-from tests.support.waiting import wait_until_advancing
+from tests.support.waiting import finish_within, wait_until_advancing
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable
@@ -98,7 +98,7 @@ async def _engine(
             engine.request_stop()
             clock.advance(1)
             with suppress(Exception):
-                await asyncio.wait_for(harness.engine_task, _WAIT_SECONDS)
+                await finish_within(harness.engine_task, _WAIT_SECONDS)
         harness.connection.close()
 
 
@@ -137,7 +137,7 @@ async def test_a_hook_blocked_on_a_fifo_does_not_hold_up_commands_or_scheduling(
             assert await env.acknowledged(Pause(task_id=task_id)) is CommandStatus.DONE
             assert await env.acknowledged(Stop()) is CommandStatus.DONE
 
-            await asyncio.wait_for(env.engine_task, _WAIT_SECONDS)
+            await finish_within(env.engine_task, _WAIT_SECONDS)
             assert not psutil.pid_exists(int(pid_file.read_text()))
     finally:
         _kill(pid_file)
@@ -193,7 +193,7 @@ def _delivered_messages(received: Path) -> list[str]:
 
 async def _stop(env: _Harness) -> None:
     assert await env.acknowledged(Stop()) is CommandStatus.DONE
-    await asyncio.wait_for(env.engine_task, _WAIT_SECONDS)
+    await finish_within(env.engine_task, _WAIT_SECONDS)
 
 
 def _append_while_down(tmp_path: Path, *events: tuple[EventKind, str]) -> None:

@@ -59,6 +59,7 @@ from tests.support.waiting import (
     LONG_WAIT_SECONDS,
     MEDIUM_WAIT_SECONDS,
     PROCESS_WAIT_SECONDS,
+    finish_within,
     wait_until,
 )
 from tests.support.workspace import task_root_builder
@@ -659,7 +660,7 @@ async def test_a_task_whose_agent_left_its_branch_never_reaches_done_and_keeps_i
     )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -713,7 +714,7 @@ async def test_a_plan_task_with_uncommitted_output_escalates_and_keeps_the_workt
     )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -747,7 +748,7 @@ async def test_post_rebase_acceptance_with_uncommitted_changes_gets_rework_not_a
     )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -787,7 +788,7 @@ async def test_taskflow_fake_agent_resolves_conflict_and_repeats_changes_request
     )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -881,7 +882,7 @@ async def test_rebase_uses_fresh_fake_turns_for_each_unmerged_commit(
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}, {"kind": "accept"}])
     await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -946,7 +947,7 @@ async def test_noncontent_continue_failure_keeps_rebase_and_retry_finishes_after
     await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     [blocked] = fetch_open_escalations(engine_env.connection)
     assert blocked.reason is EscalationReason.INTEGRATION_BLOCKED
@@ -995,7 +996,7 @@ async def test_noncontent_continue_failure_keeps_rebase_and_retry_finishes_after
         Transition.stay(retried, step=Step.INTEGRATE, status=Status.INTEGRATING),
     )
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.require(task.id)
     assert final.status is Status.DONE
@@ -1058,7 +1059,7 @@ async def test_completed_conflict_reports_cannot_hide_unmerged_paths_beyond_the_
     )
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.require(task.id)
     assert final.status is Status.ESCALATED
@@ -1094,7 +1095,7 @@ async def test_uncommitted_changes_at_integration_send_the_task_back_to_implemen
     )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -1136,7 +1137,7 @@ async def test_a_pending_conflict_report_is_reviewed_after_a_clean_rebase_onto_a
     )
     await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.require(task.id)
     assert final.status is Status.DONE
@@ -1233,7 +1234,7 @@ async def test_a_new_integration_attempt_does_not_reuse_a_report_authorized_by_a
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
     await set_role_script(tmux_server, Role.LEADER, [{"kind": "accept"}])
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.require(task.id)
     assert final.status is Status.DONE
@@ -1269,7 +1270,7 @@ async def test_taskflow_conflict_round_limit_escalates_after_two_changes_request
     )
 
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=LONG_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None

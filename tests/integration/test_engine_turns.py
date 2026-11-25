@@ -24,7 +24,7 @@ from shikiru.workspace.roots import run_dir
 from tests.support.engine import FAKE_AGENT_NAME, set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.permissions import requires_enforced_permissions
-from tests.support.waiting import wait_until
+from tests.support.waiting import finish_within, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -46,7 +46,7 @@ async def test_fake_cli_accept_writes_the_report_and_turn_files(
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
     flow_env = build_flow(engine_env, flow_settings())
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -74,7 +74,7 @@ async def test_reportless_fake_turn_is_nudged_and_resumed_on_its_session(
     )
     flow_env = build_flow(engine_env, flow_settings())
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     events = flow_env.events.since(0, task_id=task.id)
     nudges = [event for event in events if event.kind is EventKind.NUDGE]
@@ -132,7 +132,7 @@ async def test_invalid_fake_report_is_logged_and_nudged(
     )
     flow_env = build_flow(engine_env, flow_settings())
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     events = flow_env.events.since(0, task_id=task.id)
     assert len([event for event in events if event.kind is EventKind.NUDGE]) == 1
@@ -171,7 +171,7 @@ async def test_helper_rebuilds_after_both_report_nudges(
     )
     flow_env = build_flow(engine_env, settings)
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     events = flow_env.events.since(0, task_id=task.id)
     assert len([event for event in events if event.kind is EventKind.NUDGE]) == NUDGE_LIMIT
@@ -192,7 +192,7 @@ async def test_queued_operator_message_reaches_only_its_roles_next_prompt(
     for_leader = messages.queue(task.id, Role.LEADER, "keep scope small", "c2")
     flow_env = build_flow(engine_env, flow_settings())
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     turns = run_dir(engine_env.project_root, task.id) / "turns"
     for role_message, text, step in (
@@ -222,7 +222,7 @@ async def test_operator_message_is_redelivered_when_its_turn_fails(
     )
     flow_env = build_flow(engine_env, flow_settings())
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     turns = run_dir(engine_env.project_root, task.id) / "turns"
     failed, retried = sorted(
@@ -290,7 +290,7 @@ async def test_messages_delivered_to_a_killed_turn_lead_the_replacement_prompt(
 
     messages.queue(task.id, Role.IMPLEMENTER, "newer guidance", "c2")
     os.kill(read_turn_pid(role_path / TURN_PID_NAME).pid, signal.SIGKILL)
-    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
     turns = run_dir(engine_env.project_root, task.id) / "turns"
     *_, replacement = sorted(path for path in turns.iterdir() if "-implement-i1" in path.name)
@@ -337,14 +337,14 @@ async def test_messages_delivered_before_a_failed_prompt_render_reach_the_next_t
     override.parent.mkdir(parents=True)
     override.write_text("{{ undefined_variable }}")
     flow_env = build_flow(engine_env, flow_settings())
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
     override.unlink()
     failed = engine_env.tasks.require(task.id)
     engine_env.tasks.apply_transition(
         task.id, Transition.stay(failed, step=Step.IMPLEMENT, status=Status.RUNNING)
     )
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     turns = run_dir(engine_env.project_root, task.id) / "turns"
     *_, replacement = sorted(path for path in turns.iterdir() if "-implement-i1" in path.name)

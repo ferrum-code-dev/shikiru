@@ -24,7 +24,7 @@ from tests.support.flow import (
     flow_settings,
     init_project_repo,
 )
-from tests.support.waiting import UI_WAIT_SECONDS, wait_until
+from tests.support.waiting import UI_WAIT_SECONDS, finish_within, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -74,7 +74,7 @@ async def test_a_rung_set_during_a_turn_is_kept_and_used_by_the_next_turn(
         SetRung(task_id=task.id, role=Role.IMPLEMENTER, rung=_PINNED_RUNG),
     )
     await asyncio.to_thread(release.write_text, "go")
-    await asyncio.wait_for(flow_task, timeout=_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_TIMEOUT_SECONDS)
 
     assert _implementer_models(flow_env, task.id) == ["fake-1", "fake-pinned"]
     final = engine_env.tasks.get(task.id)
@@ -112,7 +112,7 @@ async def test_a_rung_set_during_verify_survives_the_rejection_that_moves_the_la
         engine_env, flow_env, SetRung(task_id=task.id, role=pinned_role, rung=_PINNED_RUNG)
     )
     await asyncio.to_thread(release.write_text, "go")
-    await asyncio.wait_for(flow_task, timeout=_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.require(task.id)
     assert final.overrides == {pinned_role: _PINNED_RUNG}
@@ -215,7 +215,7 @@ async def test_a_rung_set_during_a_turn_is_never_undone_by_the_turn_completing(
         engine_env, flow_env, SetRung(task_id=task.id, role=Role.IMPLEMENTER, rung=_PINNED_RUNG)
     )
     await asyncio.to_thread(release.write_text, "go")
-    await asyncio.wait_for(flow_task, timeout=_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.require(task.id)
     assert final.overrides == {Role.IMPLEMENTER: _PINNED_RUNG}

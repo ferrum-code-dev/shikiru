@@ -207,14 +207,17 @@ async def test_tab_visits_only_visible_stops_and_highlights_the_readouts(
         for stop in stops:
             if isinstance(stop, _READOUTS):
                 await focus(pilot, stop)
-                await pilot.pause()
-                assert {_SELECTED_SURFACE} == set().union(*_surface_rows(stop))
+                await wait_until(
+                    lambda shown=stop: {_SELECTED_SURFACE} == set().union(*_surface_rows(shown)),
+                    timeout=UI_WAIT_SECONDS,
+                )
         resources = decision_home.query_one("#resources", ResourcesPanel)
         rule = decision_home.query_one("#resources-rule")
         await focus(pilot, resources)
-        await pilot.pause()
-        assert resources.gutter.top == 0
-        assert rule.region.bottom == resources.region.y
+        await wait_until(
+            lambda: resources.gutter.top == 0 and rule.region.bottom == resources.region.y,
+            timeout=UI_WAIT_SECONDS,
+        )
         assert _SELECTED_SURFACE not in set().union(*_surface_rows(rule))
 
 

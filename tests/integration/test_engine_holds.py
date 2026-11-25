@@ -29,7 +29,7 @@ from tests.support.flow import (
     init_project_repo,
 )
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
-from tests.support.waiting import MEDIUM_WAIT_SECONDS, wait_until
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, finish_within, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -84,7 +84,7 @@ async def test_a_held_integrating_task_integrates_nothing_until_it_is_resumed(
     branch_sha = await _GIT.rev_parse(_worktree(engine_env, task), "HEAD")
     flow_env = build_flow(engine_env, flow_settings(), local_integration=True)
 
-    await asyncio.wait_for(flow_env.flow.run(task.id, resumed=True), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id, resumed=True), timeout=_FLOW_TIMEOUT_SECONDS)
 
     held = engine_env.tasks.get(task.id)
     assert held is not None
@@ -94,7 +94,7 @@ async def test_a_held_integrating_task_integrates_nothing_until_it_is_resumed(
     assert await _GIT.rev_parse(_worktree(engine_env, task), "HEAD") == branch_sha
 
     engine_env.tasks.set_holds(task.id, frozenset())
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     done = engine_env.tasks.get(task.id)
     assert done is not None
@@ -121,7 +121,7 @@ async def test_a_hold_set_while_integration_waits_for_access_is_honoured_before_
         check=True,
     )
     clock.advance(_RETRY_ADVANCE_SECONDS)
-    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
     held = engine_env.tasks.get(task.id)
     assert held is not None
@@ -129,7 +129,7 @@ async def test_a_hold_set_while_integration_waits_for_access_is_honoured_before_
     assert await _main_sha(engine_env) == main_sha
 
     engine_env.tasks.set_holds(task.id, frozenset())
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     done = engine_env.tasks.get(task.id)
     assert done is not None
@@ -159,7 +159,7 @@ async def test_a_pause_during_verify_stops_the_task_before_it_integrates(
     await wait_until(verifying, timeout=_WAIT_SECONDS)
     engine_env.tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
     await asyncio.to_thread(release.write_text, "go")
-    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
     held = engine_env.tasks.get(task.id)
     assert held is not None
@@ -191,7 +191,7 @@ async def test_a_pause_during_a_turn_without_a_valid_report_starts_no_nudge(
 
     engine_env.tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
     await asyncio.to_thread(release.write_text, "go")
-    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
     assert flow_env.events.since(0, kinds=[EventKind.NUDGE], task_id=task.id) == []
     held = engine_env.tasks.get(task.id)
@@ -255,7 +255,7 @@ async def test_a_pause_during_a_conflict_turn_leaves_the_rebase_unfinished(
 
     engine_env.tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
     await asyncio.to_thread(release.write_text, "go")
-    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
     assert await _GIT.is_rebase_in_progress(_worktree(engine_env, task))
     assert len(_turn_started(flow_env, task, Step.INTEGRATE)) == 1
@@ -275,7 +275,7 @@ async def test_a_task_paused_while_waiting_for_the_integration_lock_emits_no_int
 
     engine_env.tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
     lock.release()
-    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
     assert _integration_started(flow_env, task) == 0
     assert await _main_sha(engine_env) == main_sha
@@ -294,7 +294,7 @@ async def test_a_paused_task_never_escalates_when_the_base_access_wait_budget_ru
 
     engine_env.tasks.set_holds(task.id, frozenset({Hold.PAUSED}))
     clock.advance(settings.orchestration.timeouts.integration_wait + _RETRY_ADVANCE_SECONDS)
-    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
     held = engine_env.tasks.get(task.id)
     assert held is not None

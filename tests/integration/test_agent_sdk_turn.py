@@ -35,7 +35,7 @@ from shikiru.plugins.agents.claude.turn import CONTINUE_PROMPT, ClaudeTurnParser
 from shikiru.plugins.agents.codex.turn import CodexTurnParser, CodexTurnSequence
 from shikiru.process import SubprocessRunner
 from tests.support.clock import FakeClock
-from tests.support.waiting import wait_until
+from tests.support.waiting import finish_within, time_limit, wait_until
 
 _CODEX_FIXTURES = Path(__file__).parents[1] / "fixtures" / "agents" / "codex"
 _CLAUDE_FIXTURES = Path(__file__).parents[1] / "fixtures" / "agents" / "claude"
@@ -1056,7 +1056,7 @@ async def test_stopping_a_context_failure_does_not_start_its_retry(tmp_path: Pat
     async def next_signal() -> AgentSignal:
         return await anext(signals)
 
-    first = await asyncio.wait_for(anext(signals), timeout=_TURN_STOP_TIMEOUT_SECONDS)
+    first = await finish_within(anext(signals), timeout=_TURN_STOP_TIMEOUT_SECONDS)
     pending = asyncio.create_task(next_signal())
     await wait_until(
         lambda: (
@@ -1068,7 +1068,7 @@ async def test_stopping_a_context_failure_does_not_start_its_retry(tmp_path: Pat
     )
     await turn.stop()
     remaining: list[AgentSignal] = [first]
-    async with asyncio.timeout(_TURN_STOP_TIMEOUT_SECONDS):
+    async with time_limit(_TURN_STOP_TIMEOUT_SECONDS):
         while True:
             try:
                 remaining.append(await pending)

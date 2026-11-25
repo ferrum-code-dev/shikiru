@@ -96,7 +96,7 @@ if TYPE_CHECKING:
     from textual import events
     from textual.app import ComposeResult
     from textual.binding import BindingType
-    from textual.messages import Layout
+    from textual.geometry import Size
     from textual.screen import Screen
     from textual.worker import Worker
 
@@ -117,7 +117,6 @@ if TYPE_CHECKING:
     )
 
 _WIDGET_PLUGIN_KIND = "dashboard widget plugin"
-_CONTEXT_SCROLL_ANCHOR_RETRIES = 2
 _WIDGET_DIALOGUE = "dialogue"
 _WIDGET_ESCALATIONS = "escalations"
 _WIDGET_QUEUE = "queue"
@@ -308,6 +307,15 @@ class _ContextChoice:
     command_history: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class _FocusAnchor:
+    widget: Widget
+    scroller: VerticalScroll
+    content_offset: int
+    viewport: Size
+    visible: bool
+
+
 class _ContextWidgetScreen(ModalScreen[None]):
     BINDINGS: ClassVar[list[BindingType]] = [("escape", "close", "Back")]
     DEFAULT_CSS = (
@@ -323,8 +331,7 @@ class _ContextWidgetScreen(ModalScreen[None]):
         prepare_popup(self)
         self._label = label
         self._widget = widget
-        self._user_scroll_anchor: tuple[Widget, VerticalScroll, int] | None = None
-        self._pending_scroll_anchor: tuple[Widget, VerticalScroll, int] | None = None
+        self._focus_anchor: _FocusAnchor | None = None
 
     def compose(self) -> ComposeResult:
         with PopupFrame(widget_id="context-widget-frame", classes=POPUP_FRAME_CLASS):
@@ -340,7 +347,7 @@ class _ContextWidgetScreen(ModalScreen[None]):
     def on_mount(self) -> None:
         self._apply_compact_layout(self.size.width, self.size.height)
         scroller = self.query_one("#context-widget-content", VerticalScroll)
-        self.watch(scroller, "scroll_y", self._scroll_y_changed, init=False)
+        self.screen_layout_refresh_signal.subscribe(self, self._keep_focus_in_place)  # pyright: ignore[reportUnknownMemberType]
         self.set_focus(scroller)
         self.call_after_refresh(self.query_one("#context-widget-frame", PopupFrame).content_ready)
 
@@ -350,59 +357,42 @@ class _ContextWidgetScreen(ModalScreen[None]):
             self.query_one("#context-widget-frame", PopupFrame).update_preferred_size
         )
 
-    def on_layout(self, event: Layout) -> None:
-        del event
-        if self._pending_scroll_anchor is not None:
-            return
-        anchor = self._user_scroll_anchor
-        if anchor is None or anchor[0] is not self.focused:
-            anchor = self._focused_scroll_anchor()
-        if anchor is None:
-            return
-        self._pending_scroll_anchor = anchor
-        self.call_after_refresh(self._restore_scroll_anchor)
-
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         del event
-        self._user_scroll_anchor = self._focused_scroll_anchor()
+        self._focus_anchor = self._current_focus_anchor()
 
-    def _scroll_y_changed(self, old_value: float, new_value: float) -> None:
-        del old_value
-        scroller = self.query_one("#context-widget-content", VerticalScroll)
-        if round(new_value) != round(scroller.scroll_target_y):
+    def _keep_focus_in_place(self, screen: Screen[object]) -> None:
+        del screen
+        previous, current = self._focus_anchor, self._current_focus_anchor()
+        self._focus_anchor = current
+        if previous is None or current is None or previous.widget is not current.widget:
             return
-        self._user_scroll_anchor = self._focused_scroll_anchor()
+        scroller = current.scroller
+        shift = current.content_offset - previous.content_offset
+        if shift:
+            scroller.scroll_to(
+                y=scroller.scroll_y + shift, animate=False, force=True, immediate=True
+            )
+        elif current.viewport != previous.viewport and previous.visible and not current.visible:
+            scroller.scroll_to_widget(current.widget, animate=False, force=True, immediate=True)
 
-    def _focused_scroll_anchor(self) -> tuple[Widget, VerticalScroll, int] | None:
+    def _current_focus_anchor(self) -> _FocusAnchor | None:
         focused = self.focused
         if focused is None:
             return None
-        scroller = next(
-            (node for node in focused.ancestors if isinstance(node, VerticalScroll)), None
-        )
-        if scroller is None:
-            return None
-        return focused, scroller, focused.region.y
-
-    def _restore_scroll_anchor(self, retries: int = _CONTEXT_SCROLL_ANCHOR_RETRIES) -> None:
-        anchor = self._pending_scroll_anchor
-        if anchor is None:
-            return
-        focused, scroller, old_y = anchor
-        if not focused.is_attached or self.focused is not focused:
-            self._pending_scroll_anchor = None
-            return
-        shift = focused.region.y - old_y
-        if shift:
-            target_y = scroller.scroll_y + shift
-            scroller.scroll_to(y=target_y, animate=False, force=True, immediate=True)
-            if scroller.scroll_y != target_y and retries > 0:
-                self.call_after_refresh(self._restore_scroll_anchor, retries - 1)
-                return
-        if not scroller.region.contains_region(focused.region):
-            scroller.scroll_to_widget(focused, animate=False, force=True, immediate=True)
-        self._user_scroll_anchor = (focused, scroller, focused.region.y)
-        self._pending_scroll_anchor = None
+        offset = focused.virtual_region.y
+        for node in focused.ancestors:
+            if isinstance(node, VerticalScroll):
+                return _FocusAnchor(
+                    focused,
+                    node,
+                    offset,
+                    node.region.size,
+                    node.region.contains_region(focused.region),
+                )
+            if isinstance(node, Widget):
+                offset += node.virtual_region.y
+        return None
 
     def _apply_compact_layout(self, width: int, height: int) -> None:
         frame = self.query_one("#context-widget-frame")

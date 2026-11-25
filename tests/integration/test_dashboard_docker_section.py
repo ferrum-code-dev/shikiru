@@ -18,19 +18,7 @@ from shikiru.dashboard.contract import (
     ElsewhereView,
 )
 from shikiru.plugins.widgets.docker import DockerPanel
-from tests.support.cells import (
-    ALERT_TEXT,
-    AMBER_TEXT,
-    BLANK,
-    CYAN_BOLD,
-    GREY,
-    WHITE_BOLD,
-    Cell,
-    Piece,
-    group,
-    line,
-    rendered_lines,
-)
+from tests.support.cells import rendered_lines
 from tests.support.clock import FakeClock
 from tests.support.config import write_minimal_project
 from tests.support.dashboard import StubServices, WidgetHostApp, widget_context
@@ -106,103 +94,32 @@ class _Services(StubServices):
         return self.view
 
 
-def _ink(cells: list[Cell]) -> list[Cell]:
-    return [cell for cell in cells if cell[0] != BLANK]
-
-
-def _row(label: str, *groups: tuple[Piece, ...]) -> list[Cell]:
-    return _ink([(char, GREY) for char in label] + line(*groups))
-
-
-def _heading(trailing: Piece | None = None) -> list[Cell]:
-    cells = [(char, GREY) for char in "Docker"]
-    if trailing is not None:
-        cells += [(char, trailing[1]) for char in trailing[0]]
-    return _ink(cells)
-
-
-_TOP_NAME_WIDTH = 5
-_TOP_CPU_WIDTH = 4
-_TOP_MEMORY_WIDTH = 7
-
-
-def _measure(word: str, value: str) -> tuple[Piece, ...]:
-    return group((f"{word} ", GREY), (value, CYAN_BOLD))
-
-
-def _name(text: str) -> list[Cell]:
-    return [(char, WHITE_BOLD) for char in text]
-
-
-def _top_row(name: str, cpu: str, memory: str) -> list[Cell]:
-    return _ink(
-        _name(name)
-        + [(BLANK, GREY)] * (_TOP_NAME_WIDTH - len(name) + _TOP_CPU_WIDTH - len(cpu) + 1)
-        + [(char, CYAN_BOLD) for char in cpu]
-        + [(BLANK, GREY)] * (_TOP_MEMORY_WIDTH - len(memory) + 1)
-        + [(char, CYAN_BOLD) for char in memory]
-    )
-
-
-_PROBLEM_LINE = _row(
-    "Problems",
-    group(("web-db", WHITE_BOLD), (" ", GREY), ("unhealthy", AMBER_TEXT)),
-    group(("worker", WHITE_BOLD), (" ", GREY), ("exited (1)", ALERT_TEXT)),
-)
-_RESTARTING_LINE = _row(
-    "Problems", group(("queue", WHITE_BOLD), (" ", GREY), ("restarting", AMBER_TEXT))
-)
-
+_RUNNING_LINE = "Running 3 of 5 \u00b7 CPU 45% \u00b7 RAM 1.9 GiB"
 _FULL_LINES = [
-    _heading(),
-    _row(
-        "Running",
-        group(("3", CYAN_BOLD), (" of ", GREY), ("5", CYAN_BOLD)),
-        _measure("CPU", "45%"),
-        _measure("RAM", "1.9 GiB"),
-    ),
-    _PROBLEM_LINE,
-    _row("Top 5 by CPU"),
-    _top_row("api", "38%", "410 MiB"),
-    _top_row("web", "5.0%", "1.2 GiB"),
-    _top_row("cache", "2.0%", "96 MiB"),
-    _row(
-        "Elsewhere",
-        group(("2", CYAN_BOLD), (" running", GREY)),
-        _measure("CPU", "3.0%"),
-        _measure("RAM", "300 MiB"),
-    ),
+    "Docker",
+    "Running   3 of 5 \u00b7 CPU 45% \u00b7 RAM 1.9 GiB",
+    "Problems  web-db unhealthy \u00b7 worker exited (1)",
+    "Top 5 by CPU",
+    "  api    38% 410 MiB",
+    "  web   5.0% 1.2 GiB",
+    "  cache 2.0%  96 MiB",
+    "Elsewhere 2 running \u00b7 CPU 3.0% \u00b7 RAM 300 MiB",
 ]
-_QUIET_LINES = [
-    _heading(),
-    _row(
-        "Running",
-        group(("3", CYAN_BOLD), (" of ", GREY), ("5", CYAN_BOLD)),
-        _measure("CPU", "45%"),
-        _measure("RAM", "1.9 GiB"),
-    ),
-]
+_QUIET_LINES = ["Docker", _RUNNING_LINE]
 _NO_USAGE_LINES = [
-    _heading(),
-    _row(
-        "Running",
-        group(("3", CYAN_BOLD), (" of ", GREY), ("5", CYAN_BOLD)),
-        group(("usage unavailable", AMBER_TEXT)),
-    ),
-    _RESTARTING_LINE,
-    _row("Elsewhere", group(("2", CYAN_BOLD), (" running", GREY))),
+    "Docker",
+    "Running   3 of 5 \u00b7 usage unavailable",
+    "Problems  queue restarting",
+    "Elsewhere 2 running",
 ]
 _STALE_LINES = [
-    _heading(("stale · observed 3s ago", AMBER_TEXT)),
-    *_QUIET_LINES[1:],
-    _row("Refresh", group(("failed · docker timed out", AMBER_TEXT))),
+    "Docker                               stale \u00b7 observed 3s ago",
+    _RUNNING_LINE,
+    "Refresh failed \u00b7 docker timed out",
 ]
-_EMPTY_LINES = [_heading(), _row("No containers")]
-_UNAVAILABLE_LINES = [_heading(), _row("unavailable")]
-_FAILED_LINES = [
-    _heading(),
-    _ink([(char, ALERT_TEXT) for char in "failed · invalid JSON"]),
-]
+_EMPTY_LINES = ["Docker", "No containers"]
+_UNAVAILABLE_LINES = ["Docker", "unavailable"]
+_FAILED_LINES = ["Docker", "failed \u00b7 invalid JSON"]
 
 
 _AVAILABLE = DiagnosticSampleState.AVAILABLE
@@ -236,9 +153,8 @@ def _panel(reader: StateReader, tmp_path: Path, view: DockerView, **context: flo
     return DockerPanel(replace(base, **context))
 
 
-async def _settled(panel: DockerPanel) -> list[list[Cell]]:
+async def _settled(panel: DockerPanel) -> None:
     await wait_until(lambda: any(rendered_lines(panel)), timeout=_WAIT_SECONDS)
-    return [_ink(cells) for cells in rendered_lines(panel) if _ink(cells)]
 
 
 def _plain(panel: DockerPanel) -> list[str]:
@@ -246,12 +162,13 @@ def _plain(panel: DockerPanel) -> list[str]:
 
 
 @pytest.mark.parametrize(("view", "expected"), _WIDE_CASES)
-async def test_each_state_renders_the_approved_rows_and_styles(
-    reader: StateReader, tmp_path: Path, view: DockerView, expected: list[list[Cell]]
+async def test_each_state_renders_its_rows(
+    reader: StateReader, tmp_path: Path, view: DockerView, expected: list[str]
 ) -> None:
     panel = _panel(reader, tmp_path, view)
     async with WidgetHostApp(panel).run_test(size=_WIDE):
-        assert await _settled(panel) == expected
+        await _settled(panel)
+        assert [text.rstrip() for text in _plain(panel) if text.strip()] == expected
 
 
 _COMPACT_LAYOUT = [

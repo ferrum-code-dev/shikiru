@@ -24,7 +24,7 @@ from tests.support.clock import FakeClock
 from tests.support.engine import build_registry, set_role_script
 from tests.support.factories import TASK_CREATED_AT
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
-from tests.support.waiting import MEDIUM_WAIT_SECONDS, stop_engine, wait_until
+from tests.support.waiting import MEDIUM_WAIT_SECONDS, finish_within, stop_engine, wait_until
 
 _TIMEOUT_20_SECONDS = 20
 _SESSION_LOG_FAULT = "Muse session log is missing"
@@ -67,7 +67,7 @@ async def test_monitor_records_quota_compaction_usage_and_turn_view(
     )
     flow_env = build_flow(engine_env, flow_settings())
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     [quota] = fetch_quotas(engine_env.connection, "fake")
     assert quota.name == "weekly"
@@ -101,7 +101,7 @@ async def test_monitor_records_unreadable_session_evidence_as_an_engine_fault(
     )
     flow_env = build_flow(engine_env, flow_settings())
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     faults = flow_env.events.since(0, kinds=[EventKind.ENGINE_FAULT], task_id=task.id)
     assert [event.data[DETAIL_KEY] for event in faults] == [_SESSION_LOG_FAULT]
@@ -142,7 +142,7 @@ async def test_stalled_turn_is_stopped_then_resumed_with_continue(
 
     await wait_until(first_session_started, timeout=MEDIUM_WAIT_SECONDS)
     turn_clock.advance(_SHORT_STALL_SECONDS + 1)
-    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -257,7 +257,7 @@ async def test_monitor_observes_activity_after_a_background_wait_before_stall(
         await _wait_for_background_activity(
             flow_task, turn_clock, view_path, release_background, release_report
         )
-        await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+        await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
     finally:
         if not flow_task.done():
             await stop_engine(flow_task, turn_clock)

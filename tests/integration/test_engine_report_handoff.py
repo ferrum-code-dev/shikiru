@@ -20,7 +20,7 @@ from shikiru.workspace.roots import run_dir
 from tests.support.engine import set_role_script
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT
-from tests.support.waiting import wait_until
+from tests.support.waiting import finish_within, wait_until
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -80,7 +80,7 @@ async def test_a_report_ends_a_turn_whose_agent_process_stays_alive(
     flow_task = asyncio.create_task(flow_env.flow.run(task.id))
     pid = await _live_pid(engine_env, task, Role.IMPLEMENTER)
 
-    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -100,7 +100,7 @@ async def test_a_needs_decision_report_ends_a_lingering_turn_and_is_consulted(
     flow_task = asyncio.create_task(flow_env.flow.run(task.id))
     pid = await _live_pid(engine_env, task, Role.IMPLEMENTER)
 
-    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
     assert _turns_started(flow_env, task, Step.CONSULT) >= 1
     assert flow_env.events.since(0, kinds=[EventKind.NUDGE], task_id=task.id) == []
@@ -119,7 +119,7 @@ async def test_a_report_corrupted_after_the_handoff_is_nudged_not_consumed(
     )
     flow_env = build_flow(engine_env, _settings())
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -170,7 +170,7 @@ async def test_a_dirty_worktree_is_still_refused_after_the_handoff(
     )
     flow_env = build_flow(engine_env, _settings())
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     verdicts = flow_env.events.since(0, kinds=[EventKind.VERDICT], task_id=task.id)
     assert [event.data["decision"] for event in verdicts] == [
@@ -201,7 +201,7 @@ async def test_a_failure_arriving_with_the_report_is_not_masked_by_the_handoff(
     )
     flow_env = build_flow(engine_env, _settings())
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -222,7 +222,7 @@ async def test_a_report_ends_a_turn_whose_agent_keeps_emitting_signals(
     flow_task = asyncio.create_task(flow_env.flow.run(task.id))
     pid = await _live_pid(engine_env, task, Role.IMPLEMENTER)
 
-    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -244,7 +244,7 @@ async def test_an_agent_ignoring_the_stop_is_killed_and_its_report_still_consume
     flow_task = asyncio.create_task(flow_env.flow.run(task.id))
     pid = await _live_pid(engine_env, task, Role.IMPLEMENTER)
 
-    await asyncio.wait_for(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_task, timeout=_FLOW_TIMEOUT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None
@@ -288,7 +288,7 @@ async def test_a_turn_ending_on_its_own_after_submitting_keeps_its_usage_and_mes
     await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}])
     flow_env = build_flow(engine_env, _settings(grace=_GRACE_SECONDS))
 
-    await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+    await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
 
     [run] = [run for run in engine_env.runs.for_task(task.id) if run.role is Role.IMPLEMENTER]
     assert run.usage.input_tokens > 0
@@ -314,7 +314,7 @@ async def test_a_stream_that_stays_open_after_the_stop_does_not_advance_on_the_r
     )
     flow_env = build_flow(engine_env, _settings(shutdown=1))
     try:
-        await asyncio.wait_for(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
+        await finish_within(flow_env.flow.run(task.id), timeout=_FLOW_TIMEOUT_SECONDS)
     finally:
         os.kill(int(holder_pid_file.read_text()), signal.SIGKILL)
 

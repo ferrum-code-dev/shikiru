@@ -22,14 +22,21 @@ affected. Calls through `SubprocessRunner` are always tracked for `processes_in_
 ## Deadlines and the time scale
 
 Every test deadline is written for an unloaded machine and multiplied by one factor from
-`tests/support/waiting.py`: `wait_until` and `wait_until_advancing`, the tmux command limit, the CLI
-limit, the engine start override and each test's pytest-timeout. `SHIKIRU_TEST_TIME_SCALE=<factor>`
+`tests/support/waiting.py`: `wait_until`, `wait_until_advancing`, `finish_within`, `time_limit`, the
+tmux command limit, the CLI limit, the engine start override and each test's pytest-timeout. Ruff
+rejects `asyncio.wait_for` and `asyncio.timeout`, which would skip the factor. `SHIKIRU_TEST_TIME_SCALE=<factor>`
 sets the factor. Unset, the test process measures it once from a batch of 20 no-op spawns against
 their unloaded time, never below 1 and capped at `MAXIMUM_TIME_SCALE`. Those calibration spawns
 bypass `SubprocessRunner`, so they are neither delayed nor counted. Run a file on a slow machine
 with a fixed factor:
 
     SHIKIRU_TEST_TIME_SCALE=3 uv run pytest tests/integration/test_tmux_palette_binding.py -q
+
+## Textual waits
+
+Wait with `wait_until` for the state a test expects, and focus a widget with
+`tests.support.dashboard.focus` before pressing keys. `pilot.pause()` drains the message queue but
+does not wait for workers, so use it only to assert that nothing changed.
 
 ## Fake clocks and teardown
 

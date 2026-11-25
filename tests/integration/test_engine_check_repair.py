@@ -171,48 +171,6 @@ async def test_external_failure_escalates_with_reason_and_evidence(
     assert "https://checks.test/1" in question
 
 
-async def test_repeated_failures_exhaust_only_after_checks_on_each_published_head(
-    engine_env: EngineEnv,
-    fake_github: FakeGitHub,
-    tmux_server: TmuxServer,
-    tmp_path_factory: pytest.TempPathFactory,
-) -> None:
-    pull = await open_pull(engine_env, fake_github, tmp_path_factory)
-    limit = pull.settings.orchestration.pr_check_max_attempts
-    leader_steps: list[dict[str, Any]] = []
-    for _ in range(limit):
-        leader_steps.extend(
-            [feedback_analysis(decision("check-0", "address")), verdict("accept", "check-0")]
-        )
-    await set_role_script(tmux_server, Role.LEADER, leader_steps)
-    await set_role_script(tmux_server, Role.IMPLEMENTER, [{"kind": "accept"}] * limit)
-    await _fail(pull, fake_github)
-    url = f"{URL_PREFIX}1"
-    for attempt in range(limit):
-        await pull.until(pull.flow.done)
-        assert len(pull.store.check_rounds(pull.task.id, url)) == attempt + 1
-        await pull.dispatch()
-        await wait_until(
-            lambda expected=attempt + 1: (
-                pull.waiting()
-                and len(pull.store.check_rounds(pull.task.id, url)) == expected
-                and pull.store.check_rounds(pull.task.id, url)[-1].published_sha is not None
-            ),
-            WAIT_SECONDS,
-        )
-        await pull.poll_again()
-        assert len(pull.store.check_rounds(pull.task.id, url)) == attempt + 1
-        fixed = await pull.remote_branch()
-        fake_github.set_fields(1, headRefOid=fixed, statusCheckRollup=[_FAIL])
-    await pull.until(pull.flow.done)
-    assert pull.escalated()
-    question = pull.escalation_question()
-    assert "exhausted" in question
-    assert str(limit) in question
-    assert "unit tests" in question
-    assert "https://checks.test/1" in question
-
-
 async def test_reconciles_pushed_fix_after_publication_checkpoint_is_lost(
     engine_env: EngineEnv,
     fake_github: FakeGitHub,
@@ -563,7 +521,7 @@ async def test_operator_and_dashboard_views_show_active_check_repair(
     await pull.stop()
 
 
-async def test_operator_and_dashboard_views_show_exhausted_check_repair(
+async def test_repeated_failures_exhaust_repair_on_published_heads_and_views_show_it(
     engine_env: EngineEnv,
     database: Database,
     fake_github: FakeGitHub,
@@ -601,6 +559,11 @@ async def test_operator_and_dashboard_views_show_exhausted_check_repair(
     fake_github.set_fields(1, headRefOid=final_head, statusCheckRollup=_FINAL_FAILS)
     await pull.until(pull.flow.done)
     assert pull.escalated()
+    question = pull.escalation_question()
+    assert "exhausted" in question
+    assert str(limit) in question
+    assert "integration tests" in question
+    assert "https://checks.test/2" in question
     await _assert_exhausted_views(engine_env, database, pull, head=final_head)
     await pull.restart()
     await _assert_exhausted_views(engine_env, database, pull, head=final_head)

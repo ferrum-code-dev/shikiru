@@ -34,7 +34,13 @@ from tests.support.engine import build_fault_reporter, pr_poll_seconds, set_role
 from tests.support.flow import build_flow, build_flow_task, flow_settings, init_project_repo
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import MergeStyle, add_bare_remote, merge_on_remote
-from tests.support.waiting import MEDIUM_WAIT_SECONDS, stop_engine, wait_until, wait_until_advancing
+from tests.support.waiting import (
+    MEDIUM_WAIT_SECONDS,
+    finish_within,
+    stop_engine,
+    wait_until,
+    wait_until_advancing,
+)
 from tests.support.workspace import task_root_builder
 
 if TYPE_CHECKING:
@@ -465,7 +471,7 @@ async def test_an_agent_that_left_its_task_branch_opens_no_pull_request(
     )
     run = _Run(engine_env, settings, task.id)
 
-    await asyncio.wait_for(run.flow, timeout=_WAIT_SECONDS)
+    await finish_within(run.flow, timeout=_WAIT_SECONDS)
 
     final = engine_env.tasks.get(task.id)
     assert final is not None

@@ -357,12 +357,15 @@ async def test_overflowing_task_detail_has_a_one_column_scrollbar(
         clock,
         focus_task=task_id if standalone else None,
     )
-    async with app.run_test(size=size) as pilot:
+    async with app.run_test(size=size):
         body = app.query_one(f"#{TASK_DETAIL_BODY}", TaskDetailBody)
         await wait_until(lambda: body.max_scroll_y > 0, timeout=UI_WAIT_SECONDS)
-        await pilot.pause()
-        assert body.scrollable_content_region.width == (
-            body.region.width - body.styles.gutter.width - SCROLLBAR_WIDTH
+        await wait_until(
+            lambda: (
+                body.scrollable_content_region.width
+                == body.region.width - body.styles.gutter.width - SCROLLBAR_WIDTH
+            ),
+            timeout=UI_WAIT_SECONDS,
         )
         assert _scrollbar_width(body) == SCROLLBAR_WIDTH
 

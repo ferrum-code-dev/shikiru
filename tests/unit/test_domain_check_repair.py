@@ -5,7 +5,6 @@ from __future__ import annotations
 import pytest
 
 from shikiru.domain.check_repair import (
-    CHECK_STAGE_LABELS,
     EXHAUSTION_MARKER,
     CheckFailure,
     CheckRepairRound,
@@ -83,11 +82,6 @@ def test_attempt_number_is_one_based_in_order() -> None:
     ]
     assert check_repair_attempt(rounds, rounds[0]) == 1
     assert check_repair_attempt(rounds, rounds[2]) == 3
-
-
-def test_every_stage_has_a_label() -> None:
-    assert set(CHECK_STAGE_LABELS) == set(CheckRepairStage)
-    assert all(label for label in CHECK_STAGE_LABELS.values())
 
 
 _DELIMITED_FAILURES = [

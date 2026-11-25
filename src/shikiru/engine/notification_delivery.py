@@ -91,7 +91,7 @@ class NotificationDelivery:
     async def deliver_final(self, event: Event, timeout_seconds: float) -> None:
         """Deliver `event` directly once the loop is over, giving up after `timeout_seconds`."""
         try:
-            await asyncio.wait_for(self._notifier.notify(event), timeout_seconds)
+            await asyncio.wait_for(self._notifier.notify(event), timeout_seconds)  # noqa: TID251 # keep: product deadline
         except TimeoutError:
             self._logger.warning("final notification for event %s timed out", event.id)
 

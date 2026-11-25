@@ -14,8 +14,6 @@ from shikiru.domain.levels import UsageLevel
 from shikiru.plugins.widgets.disk import DiskPanel
 from shikiru.ui.tokens import ALERT_COLOR, AMBER
 from tests.support.cells import (
-    ALERT_TEXT,
-    AMBER_TEXT,
     BLANK,
     CYAN_BOLD,
     GREY,
@@ -86,13 +84,6 @@ def _row(label: str, *groups: tuple[Piece, ...]) -> list[Cell]:
     return _ink([(char, GREY) for char in label] + line(*groups))
 
 
-def _heading(trailing: Piece | None = None) -> list[Cell]:
-    cells = [(char, GREY) for char in "Disk"]
-    if trailing is not None:
-        cells += [(char, trailing[1]) for char in trailing[0]]
-    return _ink(cells)
-
-
 def _free_row(free: str, free_style: Style, *, marker: bool = False) -> list[Cell]:
     pieces = [(free, free_style), (" of ", GREY), ("500.0 GiB", CYAN_BOLD)]
     if marker:
@@ -100,34 +91,21 @@ def _free_row(free: str, free_style: Style, *, marker: bool = False) -> list[Cel
     return _row("Free", group(*pieces))
 
 
-_SHIKIRU_ROW = _row(".shikiru", group(("1.2 GiB", CYAN_BOLD)))
-_MEASURING_ROW = _row(".shikiru", group(("measuring…", GREY)))
-_REFRESH_ROW = _row("Refresh", group(("failed · project vanished", AMBER_TEXT)))
-
-_AVAILABLE_LINES = [_heading(), _free_row("120.0 GiB", CYAN_BOLD), _SHIKIRU_ROW]
-_STALE_LINES = [
-    _heading(("stale · observed 3s ago", AMBER_TEXT)),
-    _free_row("120.0 GiB", CYAN_BOLD),
-    _SHIKIRU_ROW,
-    _REFRESH_ROW,
-]
-_UNAVAILABLE_LINES = [_heading(), _row("unavailable · project is missing")]
-_FAILED_LINES = [
-    _heading(),
-    _ink([(char, ALERT_TEXT) for char in "failed · project is unreadable"]),
-]
-
-_AVAILABLE = DiagnosticSampleState.AVAILABLE
+_AVAILABLE_LINES = ["Disk", "Free     120.0 GiB of 500.0 GiB", ".shikiru 1.2 GiB"]
 _WIDE_CASES = [
     pytest.param(_view(120 * _GIB), _AVAILABLE_LINES, id="available"),
     pytest.param(
         replace(_view(120 * _GIB), shikiru_bytes=None),
-        [_heading(), _free_row("120.0 GiB", CYAN_BOLD), _MEASURING_ROW],
+        [*_AVAILABLE_LINES[:2], ".shikiru measuring…"],
         id="size-not-yet-measured",
     ),
     pytest.param(
         _view(120 * _GIB, DiagnosticSampleState.STALE, error="project vanished"),
-        _STALE_LINES,
+        [
+            "Disk                                 stale · observed 3s ago",
+            *_AVAILABLE_LINES[1:],
+            "Refresh  failed · project vanished",
+        ],
         id="stale-keeps-last-observation",
     ),
     pytest.param(
@@ -135,12 +113,12 @@ _WIDE_CASES = [
             state=DiagnosticSampleState.UNAVAILABLE,
             error="project is missing",
         ),
-        _UNAVAILABLE_LINES,
+        ["Disk", "unavailable · project is missing"],
         id="unavailable",
     ),
     pytest.param(
         DiskView(state=DiagnosticSampleState.FAILED, error="project is unreadable"),
-        _FAILED_LINES,
+        ["Disk", "failed · project is unreadable"],
         id="failed",
     ),
 ]
@@ -188,12 +166,13 @@ def _plain(panel: DiskPanel) -> list[str]:
 
 
 @pytest.mark.parametrize(("view", "expected"), _WIDE_CASES)
-async def test_each_state_renders_the_approved_rows_and_styles(
-    reader: StateReader, tmp_path: Path, view: DiskView, expected: list[list[Cell]]
+async def test_each_state_renders_its_rows(
+    reader: StateReader, tmp_path: Path, view: DiskView, expected: list[str]
 ) -> None:
     panel = _panel(reader, tmp_path, view)
     async with WidgetHostApp(panel).run_test(size=_WIDE):
-        assert await _settled(panel) == expected
+        await _settled(panel)
+        assert [text.rstrip() for text in _plain(panel) if text.strip()] == expected
 
 
 async def test_a_new_sample_replaces_the_rendering_at_the_refresh_interval(

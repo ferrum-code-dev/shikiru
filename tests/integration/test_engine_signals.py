@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 import signal
 import sys
@@ -19,6 +18,7 @@ from tests.support.engine_project import (
     engine_project,
     start_with_running_turn,
 )
+from tests.support.waiting import finish_within
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -81,7 +81,7 @@ async def test_a_second_signal_ends_the_engine_by_force_and_a_restart_resumes(
             os.kill(engine.pid, signal.SIGTERM)
             os.kill(engine.pid, signal.SIGINT)
             os.kill(engine.pid, signal.SIGCONT)
-            returncode = await asyncio.wait_for(engine.wait(), timeout=WAIT_SECONDS)
+            returncode = await finish_within(engine.wait(), timeout=WAIT_SECONDS)
         finally:
             await engine.stop(grace=0)
 

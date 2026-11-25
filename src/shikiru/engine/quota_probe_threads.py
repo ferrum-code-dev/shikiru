@@ -31,21 +31,21 @@ def _deliver(
 
 
 class QuotaProbeThreads:
-    """Runs blocking quota reads, each agent's on at most one daemon thread at a time.
+    """Runs blocking quota reads on daemon threads, at most one unfinished read per agent.
 
     A blocked read cannot be interrupted, so it is never abandoned and replaced: while an
-    agent's thread has not returned, a new read of that agent is refused. The threads are
+    agent's read has not returned, a new read of that agent is refused. The threads are
     daemons, so a read that never returns delays neither shutdown nor process exit.
     """
 
     def __init__(self) -> None:
-        """Start with no thread running."""
-        self._threads: dict[str, threading.Thread] = {}
+        """Start with no read running."""
+        self._returned: dict[str, threading.Event] = {}
 
     def busy(self, agent: str) -> bool:
         """Return whether `agent`'s previous read is still running."""
-        thread = self._threads.get(agent)
-        return thread is not None and thread.is_alive()
+        returned = self._returned.get(agent)
+        return returned is not None and not returned.is_set()
 
     def start(
         self,
@@ -62,6 +62,7 @@ class QuotaProbeThreads:
             raise ShikiruError(message)
         loop = asyncio.get_running_loop()
         future: asyncio.Future[QuotaReading | None] = loop.create_future()
+        returned = threading.Event()
 
         def run() -> None:
             reading: QuotaReading | None = None
@@ -70,10 +71,12 @@ class QuotaProbeThreads:
                 reading = read(since)
             except Exception as error:  # noqa: BLE001
                 failure = error
+            finally:
+                returned.set()
             if not loop.is_closed():
                 loop.call_soon_threadsafe(_deliver, future, reading, failure)
 
         thread = threading.Thread(target=run, name=f"{THREAD_NAME_PREFIX}{agent}", daemon=True)
-        self._threads[agent] = thread
         thread.start()
+        self._returned[agent] = returned
         return future

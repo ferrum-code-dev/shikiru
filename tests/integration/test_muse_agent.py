@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
@@ -40,6 +39,7 @@ from shikiru.plugins.agents.muse.options import (
 )
 from shikiru.process import SubprocessRunner
 from tests.support.clock import LONG_AGO, FakeClock
+from tests.support.waiting import time_limit
 
 _FIXTURE = Path(__file__).parents[1] / "fixtures" / "agents" / "muse" / "turn_first.jsonl"
 _FAKE_MUSE_ARGV_ENV = "FAKE_MUSE_ARGV"
@@ -99,7 +99,7 @@ async def _run_turn(tmp_path: Path, options: dict[str, Any]) -> tuple[list[str],
         usage=None,
     )
     turn = await create(_context(options)).start_turn(spec)
-    async with asyncio.timeout(_TURN_TIMEOUT_SECONDS):
+    async with time_limit(_TURN_TIMEOUT_SECONDS):
         signals = [signal async for signal in turn.signals()]
     argv: list[str] = json.loads(argv_record.read_text(encoding="utf-8"))
     return argv, signals

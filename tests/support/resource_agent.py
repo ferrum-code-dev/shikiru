@@ -5,9 +5,9 @@ from __future__ import annotations
 import os
 import shlex
 import sys
-from typing import TYPE_CHECKING
+from contextlib import aclosing
+from typing import TYPE_CHECKING, cast
 
-import psutil
 from fake_agent.turns import FAKE_COMPACT_AT_PCT_ENV_VAR
 
 from shikiru.agents.contracts import (
@@ -29,9 +29,10 @@ from shikiru.telemetry.docker import DockerSampler
 from shikiru.tmux.client import Tmux
 from shikiru.workspace.git import Git
 from tests.support.git_repo import GIT_COMMAND_TIMEOUT
-from tests.support.waiting import wait_until
+from tests.support.waiting import PROCESS_WAIT_SECONDS, finish_within
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
     from pathlib import Path
 
     from shikiru.config.settings import Settings
@@ -109,16 +110,19 @@ async def start_resource_agent(
         turn_processes.record(task_run_dir, Role.IMPLEMENTER, process.pid)
         recorded_identity = read_turn_pid(turn_pid_path(task_run_dir, Role.IMPLEMENTER))
         assert recorded_identity.matches(process_identity)
-        await wait_until(
-            lambda: bool(psutil.Process(process.pid).children(recursive=True)),
-            timeout=RESOURCE_AGENT_WAIT_SECONDS,
-        )
+        await _wait_until_the_agent_idles(process)
         started = True
         return runner, process, turn_processes, task_run_dir, recorded_identity
     finally:
         if not started:
             await process.stop()
             turn_processes.clear(task_run_dir, Role.IMPLEMENTER)
+
+
+async def _wait_until_the_agent_idles(process: SpawnedProcess) -> None:
+    output = cast("AsyncGenerator[bytes]", process.stdout_lines())
+    async with aclosing(output):
+        await finish_within(anext(output), PROCESS_WAIT_SECONDS)
 
 
 def resource_services(

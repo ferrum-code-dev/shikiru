@@ -16,3 +16,13 @@ def parse_version(text: str) -> Version | None:
         return None
     major, minor = found.groups()
     return int(major), int(minor)
+
+
+def version_shortfall(text: str, minimum: Version) -> str | None:
+    """Return why the version `text` reports does not meet `minimum`, or None when it does."""
+    found = parse_version(text)
+    if found is None:
+        return f"{text}: no version found"
+    if found < minimum:
+        return f"{text}: {minimum[0]}.{minimum[1]} or newer is required"
+    return None

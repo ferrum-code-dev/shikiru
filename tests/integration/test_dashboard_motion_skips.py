@@ -115,9 +115,10 @@ async def test_header_motion_tick_shows_a_time_only_change(
     )
     context = _context(reader, write_minimal_project(tmp_path), clock, ticks)
     header = cast("HeaderPanel", HeaderWidget().create(context))
-    async with WidgetHostApp(header).run_test() as pilot:
-        await pilot.pause()
-        assert "oldest escalation 0:00:00" in plain_text(header.content)
+    async with WidgetHostApp(header).run_test():
+        await wait_until(
+            lambda: "oldest escalation 0:00:00" in plain_text(header.content), timeout=WAIT_SECONDS
+        )
 
         clock.advance(LATER.total_seconds())
         await ticks.tick()

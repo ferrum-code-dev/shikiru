@@ -17,7 +17,12 @@ TIMEOUT_ROOTS = ("tests",)
 PLAIN_NUMBERS = frozenset({0, 1, -1})
 TIMEOUT_KEYWORD = "timeout"
 TIMEOUT_MARK = "timeout"
-WAIT_TIMEOUT_POSITIONS = {"wait_until": 1, "wait_until_advancing": 2}
+WAIT_TIMEOUT_POSITIONS = {
+    "wait_until": 1,
+    "wait_until_advancing": 2,
+    "finish_within": 1,
+    "time_limit": 0,
+}
 ARGV_CALLS = frozenset({"run", "spawn", "spawn_detached", "replace"})
 NAME_KEYWORDS = frozenset({"kind", "event", "type"})
 ARGV_KEYWORD = "argv"

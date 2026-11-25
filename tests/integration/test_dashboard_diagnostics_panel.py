@@ -530,8 +530,7 @@ async def test_the_popup_is_usable_at_the_smallest_terminal_size(
     async with app.run_test(size=_TINY) as pilot:
         await _open_popup(app, pilot)
         content = app.screen.query_one("#context-widget-content", VerticalScroll)
-        await pilot.pause()
-        assert content.max_scroll_y > 0
+        await wait_until(lambda: content.max_scroll_y > 0, timeout=_WAIT_SECONDS)
         seen: list[str] = []
         for offset in range(int(content.max_scroll_y) + 1):
             content.scroll_to(y=offset, animate=False, immediate=True)
@@ -582,6 +581,13 @@ def _scope_order(app: DashboardApp, *scopes: str) -> list[str]:
         scope: next(i for i, line in enumerate(lines) if scope in line) for scope in scopes
     }
     return sorted(scopes, key=first_row.__getitem__)
+
+
+async def _wait_for_settled_cards(app: DashboardApp, pilot: Pilot[None], count: int) -> None:
+    await wait_until(
+        lambda: len(app.screen.query("FaultCard Collapsible")) == count, timeout=_WAIT_SECONDS
+    )
+    await pilot.wait_for_scheduled_animations()
 
 
 async def _toggle_details(app: DashboardApp, pilot: Pilot[None], card: int) -> None:
@@ -644,10 +650,10 @@ async def test_a_refresh_keeps_a_scrolled_cards_state_focus_and_visibility(
         focused = focused_card.query_one("CollapsibleTitle")
         assert app.focused is focused
         scroller = app.screen.query_one("#context-widget-content")
+        await pilot.wait_for_scheduled_animations()
         scroller.scroll_to_widget(focused, center=True, animate=False, immediate=True)
-        await wait_until(
-            lambda: scroller.region.contains_region(focused.region), timeout=_WAIT_SECONDS
-        )
+        await pilot.wait_for_scheduled_animations()
+        assert scroller.region.contains_region(focused.region)
         anchor_y = focused.region.y
         clock.advance(1)
         _record_fault(
@@ -659,16 +665,9 @@ async def test_a_refresh_keeps_a_scrolled_cards_state_focus_and_visibility(
             recoverable=False,
         )
         await views.resources()
-        await wait_until(
-            lambda: len(app.screen.query(FaultCard)) == _MANY_FAULTS + 1,
-            timeout=_WAIT_SECONDS,
-        )
-        await wait_until(
-            lambda: (
-                focused.region.y == anchor_y and scroller.region.contains_region(focused.region)
-            ),
-            timeout=_WAIT_SECONDS,
-        )
+        await _wait_for_settled_cards(app, pilot, _MANY_FAULTS + 1)
+        assert focused.region.y == anchor_y
+        assert scroller.region.contains_region(focused.region)
         clock.advance(1)
         for index in range(1, _URGENT_FAULTS):
             _record_fault(
@@ -680,12 +679,7 @@ async def test_a_refresh_keeps_a_scrolled_cards_state_focus_and_visibility(
                 recoverable=False,
             )
         await views.resources()
-        await wait_until(
-            lambda: len(app.screen.query(FaultCard)) == _MANY_FAULTS + _URGENT_FAULTS,
-            timeout=_WAIT_SECONDS,
-        )
-        await pilot.pause()
-        await pilot.pause()
+        await _wait_for_settled_cards(app, pilot, _MANY_FAULTS + _URGENT_FAULTS)
         cards = list(app.screen.query(FaultCard))
         assert [card.query_one(Collapsible).collapsed for card in cards[:_URGENT_FAULTS]] == [
             True
@@ -693,6 +687,5 @@ async def test_a_refresh_keeps_a_scrolled_cards_state_focus_and_visibility(
         assert cards[_URGENT_FAULTS + _FOCUSED_CARD] is focused_card
         assert focused_card.query_one(Collapsible).collapsed is False
         assert app.focused is focused
-        await wait_until(
-            lambda: scroller.region.contains_region(focused.region), timeout=_WAIT_SECONDS
-        )
+        assert focused.region.y == anchor_y
+        assert scroller.region.contains_region(focused.region)

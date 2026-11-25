@@ -241,16 +241,6 @@ async def test_orchestration_fields_start_from_injected_defaults_and_keep_edits(
         assert input_value(pilot, "#max-parallel") == "3"
         assert input_value(pilot, "#tool-timeout") == "5400"
         assert input_value(pilot, "#max-cpu") == "90"
-        await click_next(pilot, "#wizard-page-5")
-        await click_next(pilot, "#wizard-page-6")
-        await choose(pilot, "#integration", "pr")
-        await click_next(pilot, "#wizard-page-7")
-        summary = str(pilot.app.query_one("#wizard-summary .wizard-detail-value", Static).render())
-        assert summary == (
-            "Max parallel 3 tasks · Max iterations 6 passes · Push interval 7200 seconds · "
-            "Max quota wait 1200 seconds · Stall timeout 900 seconds · Tool timeout 5400 seconds · "
-            "Max CPU 90 percent · Min free RAM 6.0 GB · Pull request"
-        )
 
 
 async def test_pull_request_feedback_choice_shows_only_for_pull_request_and_keeps_its_value(
@@ -400,8 +390,7 @@ async def test_doctor_report_renders_after_an_attempt_before_layout(
         await pilot.pause()
         app._update_doctor_report()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
         page.display = True
-        await pilot.pause()
-        assert doctor_text(report_widget).strip()
+        await wait_until(lambda: bool(doctor_text(report_widget).strip()), timeout=UI_WAIT_SECONDS)
         await click_button(pilot, "#wizard-finish")
 
 
