@@ -376,3 +376,13 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 - [x] Add a direct `Dismiss fault` action to each open fault card, outside Details and without help text beneath it.
   - Acceptance: dismissal removes the card and updates the open count; a durable dismissed event preserves history without marking recovery; after restart, a new occurrence of the same scope/task opens a fresh card. Cover event folding, stale commands, the dashboard action and persistence with domain and SQLite-backed integration tests.
+
+### Authentication fallback across the configured order (T-199 follow-up)
+
+- [ ] Allow authentication recovery to select eligible earlier agents without retry loops.
+
+## Acceptance criteria
+- An authentication failure selects an eligible different agent from the effective configured order, including earlier rungs, and skips blocked or unavailable agents.
+- Repeated authentication failures cannot cycle between agents and escalate with the authentication reason when no eligible alternative remains.
+- Regression coverage reproduces the Muse quota fallback, low-complexity triage retaining Claude, and Claude authentication failure sequence with an eligible earlier Codex, and covers exhausted alternatives.
+- Documentation describes the resulting authentication recovery behavior, and the full project check passes.

@@ -437,3 +437,18 @@ scope/task now points at a different occurrence. Record dismissal as its own dur
 as a closed streak without writing `engine_recovered`, and reset the reporter's repeat window so a
 later occurrence opens a fresh card. Keep dismissal events with the other fault history during
 retention and show them in task timelines.
+
+## Authentication fallback across the configured order (T-199)
+
+Authentication recovery must consider eligible different agents throughout the task's effective
+role ladder, preferring later rungs before earlier ones. Respect quota blocks and other established
+availability constraints, and prevent failed agents from cycling back into the same recovery chain.
+The T-198 sequence establishes the ordering failure, not Codex's actual availability at that time.
+Keep the recovery and rung-selection decisions consistent, preserve provider-change handoff, and
+update the documented authentication behavior. One follow-up task owns the behavior and its tests.
+
+## Acceptance criteria
+- An authentication failure selects an eligible different agent from the effective configured order, including earlier rungs, and skips blocked or unavailable agents.
+- Repeated authentication failures cannot cycle between agents and escalate with the authentication reason when no eligible alternative remains.
+- Regression coverage reproduces the Muse quota fallback, low-complexity triage retaining Claude, and Claude authentication failure sequence with an eligible earlier Codex, and covers exhausted alternatives.
+- Documentation describes the resulting authentication recovery behavior, and the full project check passes.
