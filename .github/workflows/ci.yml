@@ -15,6 +15,7 @@ concurrency:
 env:
   PYTEST_ADDOPTS: --dist=loadfile --durations=15
   SHIKIRU_TEST_CPUS_PER_WORKER: "1"
+  TEST_SHARDS: "3"
   UV_NO_PROGRESS: "true"
   NODE_OPTIONS: --max-old-space-size=1536
   TERM: xterm-256color
@@ -36,15 +37,15 @@ jobs:
       - name: Run static checks
         run: uv run --locked poe static
 
-  check:
-    name: ${{ matrix.os }}
+  tests:
+    name: tests (${{ matrix.os }}, shard ${{ matrix.shard }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 2
       matrix:
         os: [ubuntu-24.04, macos-15]
+        shard: [1, 2, 3]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -57,7 +58,63 @@ jobs:
           host-tools: "true"
 
       - name: Run tests
-        run: uv run --locked poe test
+        run: >-
+          uv run --locked poe test
+          --shard=${{ matrix.shard }}/${{ env.TEST_SHARDS }}
+          --cov-fail-under=0
+
+      - name: Name the coverage data after the shard
+        run: mv .coverage "coverage-data.${{ matrix.shard }}"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-${{ matrix.os }}-${{ matrix.shard }}
+          path: coverage-data.${{ matrix.shard }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
+  check:
+    name: ${{ matrix.os }}
+    needs: tests
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+
+    steps:
+      - name: Require every test shard to pass
+        if: needs.tests.result != 'success'
+        run: |
+          echo "::error::test shards ended with: ${{ needs.tests.result }}" >&2
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-${{ matrix.os }}-*
+          path: coverage-data
+          merge-multiple: true
+
+      - name: Check coverage across all shards
+        run: |
+          shopt -s nullglob
+          data=(coverage-data/coverage-data.*)
+          if (( ${#data[@]} != TEST_SHARDS )); then
+            echo "::error::expected $TEST_SHARDS coverage files, found ${#data[@]}" >&2
+            exit 1
+          fi
+          uv run --locked coverage combine "${data[@]}"
+          uv run --locked coverage report --show-missing
 
   smoke:
     name: smoke (${{ matrix.os }})
