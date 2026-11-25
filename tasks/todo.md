@@ -391,3 +391,8 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 - [x] Make the `Dismiss fault` label readable on each open fault card
   - Acceptance: the button renders its label on its own row instead of a blank line, and the dashboard fault-dismissal integration test asserts the label is on screen while dismissal still queues the fault event.
+
+### Latest CI refresh failures (T-201)
+
+- [x] Preserve a focused fault's screen position after refresh and wait for scroller focus before keyboard input.
+  - Acceptance: the context popup preserves the focused widget's screen row across layout updates and restores visibility if that row cannot be retained. The diff test waits for deferred focus, then verifies arrow-key scrolling and fullscreen preservation.

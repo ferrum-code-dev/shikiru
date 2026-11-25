@@ -959,6 +959,7 @@ async def test_fullscreen_preserves_selections_and_scroll_and_restores(
         await _wait_for_scope(screen, "Changes so far")
         scroll = screen.query_one("#diff-scroll", ScrollableContainer)
         scroll.focus()
+        await wait_until(lambda: pilot.app.focused is scroll, timeout=UI_WAIT_SECONDS)
         await pilot.press("down", "down", "down", "right", "right")
         await wait_until(
             lambda: scroll.scroll_y == 3 and scroll.scroll_x == 2, timeout=UI_WAIT_SECONDS

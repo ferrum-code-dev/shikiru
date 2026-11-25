@@ -644,12 +644,33 @@ async def test_a_refresh_keeps_a_scrolled_cards_state_focus_and_visibility(
         focused = focused_card.query_one("CollapsibleTitle")
         assert app.focused is focused
         scroller = app.screen.query_one("#context-widget-content")
-        scroller.scroll_to_widget(focused, animate=False)
+        scroller.scroll_to_widget(focused, center=True, animate=False, immediate=True)
         await wait_until(
             lambda: scroller.region.contains_region(focused.region), timeout=_WAIT_SECONDS
         )
+        anchor_y = focused.region.y
         clock.advance(1)
-        for index in range(_URGENT_FAULTS):
+        _record_fault(
+            connection,
+            clock,
+            None,
+            scope="merge m0",
+            error="ValueError",
+            recoverable=False,
+        )
+        await views.resources()
+        await wait_until(
+            lambda: len(app.screen.query(FaultCard)) == _MANY_FAULTS + 1,
+            timeout=_WAIT_SECONDS,
+        )
+        await wait_until(
+            lambda: (
+                focused.region.y == anchor_y and scroller.region.contains_region(focused.region)
+            ),
+            timeout=_WAIT_SECONDS,
+        )
+        clock.advance(1)
+        for index in range(1, _URGENT_FAULTS):
             _record_fault(
                 connection,
                 clock,
@@ -658,7 +679,6 @@ async def test_a_refresh_keeps_a_scrolled_cards_state_focus_and_visibility(
                 error="ValueError",
                 recoverable=False,
             )
-        await views.resources()
         await views.resources()
         await wait_until(
             lambda: len(app.screen.query(FaultCard)) == _MANY_FAULTS + _URGENT_FAULTS,
