@@ -75,7 +75,7 @@ def move_up(
     For the Implementer, `rejections_on_rung` also resets, since it counts rework at one rung.
     Agents in `blocked_agents` are skipped when selecting the destination rung.
 
-    With `different_agent=True` the move is a quota fallback: rungs above the current one come
+    With `different_agent=True` rungs above the current one come
     first, then the rungs from the bottom of the ladder up, so a role parked on the last rung can
     return to an earlier agent that is no longer blocked. `allow_earlier=False` drops that second
     leg, so the move only ever goes up.

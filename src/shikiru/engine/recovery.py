@@ -94,6 +94,19 @@ class TurnRecovery:
         """Apply the recovery `domain.recovery.decide` chooses for `execution`'s failed result."""
         execution = self._with_known_reset(execution)
         result = execution.result
+        if isinstance(result, Failed) and result.kind is FailureKind.AUTH:
+            counters = dataclasses.replace(
+                counters, auth_failed_agents=counters.auth_failed_agents | {execution.rung.agent}
+            )
+        if (
+            isinstance(result, Failed)
+            and result.kind is FailureKind.UNAVAILABLE
+            and counters.unavailable_retries
+            >= self._settings.orchestration.retries.unavailable_max_retries
+        ):
+            counters = dataclasses.replace(
+                counters, unavailable_agents=counters.unavailable_agents | {execution.rung.agent}
+            )
         emit_turn_failed(
             self._events,
             task,
@@ -107,7 +120,7 @@ class TurnRecovery:
         action = decide(
             result,
             counters,
-            self._policy(task, role, quota_wait_exhausted=execution.quota_wait_exhausted),
+            self._policy(task, role, counters, quota_wait_exhausted=execution.quota_wait_exhausted),
         )
         if isinstance(result, Failed) and result.kind is FailureKind.QUOTA:
             self._block_quota(task, role, result.resets_at)
@@ -120,18 +133,24 @@ class TurnRecovery:
         result = with_known_quota_reset(execution.result, windows, self._clock.now())
         return dataclasses.replace(execution, result=result)
 
-    def _policy(self, task: Task, role: Role, *, quota_wait_exhausted: bool) -> RecoveryPolicy:
-        current = move_up(task, role, self._settings)
+    def _policy(
+        self,
+        task: Task,
+        role: Role,
+        counters: TurnCounters,
+        *,
+        quota_wait_exhausted: bool,
+    ) -> RecoveryPolicy:
+        current = move_up(task, role, self._settings, blocked_agents=counters.auth_failed_agents)
+        blocked = self._blocked_agents() | counters.auth_failed_agents
+        if counters.auth_failed_agents:
+            blocked |= counters.unavailable_agents
         different = move_up(
-            task, role, self._settings, different_agent=True, blocked_agents=self._blocked_agents()
-        )
-        later_different = move_up(
             task,
             role,
             self._settings,
             different_agent=True,
-            blocked_agents=self._blocked_agents(),
-            allow_earlier=False,
+            blocked_agents=blocked,
         )
         retries = self._settings.orchestration.retries
         return RecoveryPolicy(
@@ -139,7 +158,6 @@ class TurnRecovery:
             max_quota_wait=timedelta(seconds=self._settings.orchestration.timeouts.max_quota_wait),
             has_next_rung=current is not None,
             has_next_rung_different_agent=different is not None,
-            has_later_rung_different_agent=later_different is not None,
             unavailable_initial_seconds=retries.unavailable_initial_seconds,
             unavailable_multiplier=retries.unavailable_multiplier,
             unavailable_max_seconds=retries.unavailable_max_seconds,
@@ -158,7 +176,9 @@ class TurnRecovery:
         action: Action,
     ) -> RecoveryStep:
         if isinstance(action, NextRung):
-            return await self._next_rung(task, step, role, execution.result, action)
+            return await self._next_rung(
+                task, step, role, execution.result, action=action, counters=counters
+            )
         if isinstance(action, Escalate):
             return RecoveryStep(task, TurnCounters(), escalation=action.reason)
         return await self._retry(task, role, execution, counters, action)
@@ -191,15 +211,36 @@ class TurnRecovery:
         return RecoveryStep(self._tasks.require(task.id), counters, execution=exhausted)
 
     async def _next_rung(
-        self, task: Task, step: Step, role: Role, result: TurnResult, action: NextRung
+        self,
+        task: Task,
+        step: Step,
+        role: Role,
+        result: TurnResult,
+        *,
+        action: NextRung,
+        counters: TurnCounters,
     ) -> RecoveryStep:
-        updated = await self._move_rung(task, step, role, action.different_agent, result)
+        blocked = counters.auth_failed_agents
+        if action.different_agent:
+            blocked |= self._blocked_agents()
+            if counters.auth_failed_agents:
+                blocked |= counters.unavailable_agents
+        updated = await self._move_rung(
+            task, step, role, action.different_agent, result=result, blocked_agents=blocked
+        )
         if updated is not None:
             return RecoveryStep(
-                updated, TurnCounters(), next_turn=NextTurn(handoff=action.different_agent)
+                updated,
+                TurnCounters(
+                    auth_failed_agents=counters.auth_failed_agents,
+                    unavailable_agents=counters.unavailable_agents,
+                ),
+                next_turn=NextTurn(handoff=action.different_agent),
             )
         reason = (
-            EscalationReason.QUOTA_EXHAUSTED
+            EscalationReason.AGENT_AUTH
+            if isinstance(result, Failed) and result.kind is FailureKind.AUTH
+            else EscalationReason.QUOTA_EXHAUSTED
             if action.different_agent
             else EscalationReason.LADDER_EXHAUSTED
         )
@@ -211,14 +252,16 @@ class TurnRecovery:
         step: Step,
         role: Role,
         different_agent: bool,
+        *,
         result: TurnResult,
+        blocked_agents: frozenset[str],
     ) -> Task | None:
         move = move_up(
             task,
             role,
             self._settings,
             different_agent=different_agent,
-            blocked_agents=self._blocked_agents() if different_agent else frozenset(),
+            blocked_agents=blocked_agents,
         )
         if move is None:
             return None

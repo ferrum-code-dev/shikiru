@@ -379,7 +379,7 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 ### Authentication fallback across the configured order (T-199 follow-up)
 
-- [ ] Allow authentication recovery to select eligible earlier agents without retry loops.
+- [x] Allow authentication recovery to select eligible earlier agents without retry loops.
 
 ## Acceptance criteria
 - An authentication failure selects an eligible different agent from the effective configured order, including earlier rungs, and skips blocked or unavailable agents.

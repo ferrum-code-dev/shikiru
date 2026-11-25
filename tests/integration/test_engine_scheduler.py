@@ -15,9 +15,17 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
+from fake_agent.agent import create as create_fake_agent
 
-from shikiru.agents.contracts import QuotaWindow, Rung
-from shikiru.config.settings import AgentConfig, LayoutSplit, PaneLeaf, ProjectConfig
+from shikiru.agents.contracts import QuotaWindow, Rung, role_dir
+from shikiru.agents.registry import AgentRegistry
+from shikiru.config.settings import (
+    AgentConfig,
+    ComplexityLadder,
+    LayoutSplit,
+    PaneLeaf,
+    ProjectConfig,
+)
 from shikiru.domain.commands import Submit
 from shikiru.domain.events import EventKind
 from shikiru.domain.ladder import pick_rung
@@ -75,9 +83,10 @@ from tests.support.engine import (
     build_titles,
     build_tmux,
     build_writer,
+    set_role_script,
 )
 from tests.support.factories import CPU_UNCAPPED_PCT, TASK_CREATED_AT, make_settings
-from tests.support.flow import init_project_repo
+from tests.support.flow import build_flow, init_project_repo
 from tests.support.git_repo import CACHE_COPY_TIMEOUT, GIT_COMMAND_TIMEOUT, commit_all
 from tests.support.github import add_bare_remote
 from tests.support.handshake import fifo_writer, release_fifo
@@ -99,6 +108,7 @@ if TYPE_CHECKING:
     from shikiru.domain.tasks import Task
     from shikiru.engine.quota_reconciler import QuotaReconciler
     from shikiru.engine.titles import TaskTitles
+    from tests.support.engine import EngineEnv
     from tests.support.store import Connection
     from tests.support.tmux import TmuxServer
 
@@ -774,6 +784,89 @@ async def test_queued_quota_fallback_skips_other_blocked_agents(
         assert [dispatch.task_id for dispatch in schedule.dispatches] == [queued.id]
         assert pick_rung(updated, role, settings) == _FALLBACK_RUNG
         assert updated.rung_index[role] == 2
+
+
+_MUSE = Rung(agent="muse", model="muse", effort=None)
+_CLAUDE = Rung(agent="claude", model="claude", effort=None)
+_CODEX = Rung(agent="codex", model="codex", effort=None)
+
+
+def _triage_fallback_settings() -> Settings:
+    base = _settings()
+    implementer = base.roles.implementer.model_copy(
+        update={
+            "ladder": [_MUSE, _CLAUDE],
+            "complexity": {"low": ComplexityLadder(ladder=[_CODEX, _CLAUDE, _MUSE])},
+        }
+    )
+    return base.model_copy(
+        update={
+            "roles": base.roles.model_copy(update={"implementer": implementer}),
+            "agents": {
+                **base.agents,
+                **{rung.agent: AgentConfig() for rung in (_MUSE, _CLAUDE, _CODEX)},
+            },
+        }
+    )
+
+
+@pytest.mark.parametrize("scheduler_env", [_triage_fallback_settings()], indirect=True)
+async def test_scheduled_quota_fallback_survives_triage_and_authentication_failure(
+    scheduler_env: SchedulerFixture, engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    settings = scheduler_env.settings
+    registry = AgentRegistry()
+    for agent in (_FAKE_RUNG.agent, _MUSE.agent, _CLAUDE.agent, _CODEX.agent):
+        registry.register(agent, create_fake_agent)
+    clock = scheduler_env.clock
+    reconciler = build_reconciler(
+        quotas=scheduler_env.quotas,
+        agents=AgentPool(registry.create, SubprocessRunner(), settings, clock),
+        events=scheduler_env.events,
+        clock=clock,
+        settings=settings,
+    )
+    scheduler = _scheduler(dataclasses.replace(scheduler_env, reconciler=reconciler), settings)
+    task = _submit(engine_env.connection, clock, title="quota then auth")
+    scheduler_env.quotas.block(_MUSE.agent, clock.now() + timedelta(days=2), "quota", LONG_AGO)
+    try:
+        schedule = await scheduler.run_once()
+        assert [dispatch.task_id for dispatch in schedule.dispatches] == [task.id]
+        dispatched = scheduler_env.tasks.require(task.id)
+        assert pick_rung(dispatched, Role.IMPLEMENTER, settings) == _CLAUDE
+    finally:
+        await scheduler.shutdown()
+    await set_role_script(
+        tmux_server,
+        Role.LEADER,
+        [{"kind": "accept", "triage_complexity": "low"}, {"kind": "accept"}],
+    )
+    await set_role_script(
+        tmux_server,
+        Role.IMPLEMENTER,
+        [{"kind": "fail", "failure_kind": "auth"}, {"kind": "accept"}],
+    )
+    flow = build_flow(engine_env, settings, clock=clock, registry=registry)
+    await asyncio.wait_for(flow.flow.run(task.id), timeout=MEDIUM_WAIT_SECONDS)
+
+    final = scheduler_env.tasks.require(task.id)
+    assert final.complexity == "low"
+    assert final.status is Status.INTEGRATING
+    starts = scheduler_env.events.since(0, task_id=task.id, kinds=[EventKind.TURN_STARTED])
+    assert [
+        event.data["agent"] for event in starts if event.data["role"] == Role.IMPLEMENTER.value
+    ] == [_CLAUDE.agent, _CODEX.agent]
+    changes = scheduler_env.events.since(0, task_id=task.id, kinds=[EventKind.RUNG_CHANGED])
+    assert [(change.data["from"], change.data["to"]) for change in changes] == [
+        (_MUSE.model, _CLAUDE.model),
+        (_CLAUDE.model, _CODEX.model),
+    ]
+    assert changes[0].data["reason"] == "quota"
+    runs = [run for run in engine_env.runs.for_task(task.id) if run.role is Role.IMPLEMENTER]
+    assert len(runs) == 2
+    assert runs[0].session_id != runs[1].session_id
+    current = role_dir(run_dir(engine_env.project_root, task.id), Role.IMPLEMENTER.value)
+    assert "fresh session" in (current / "current_turn").resolve().joinpath("prompt.md").read_text()
 
 
 @pytest.mark.parametrize("first_reset", [_FAKE_RUNG, _FALLBACK_RUNG], ids=["original", "later"])

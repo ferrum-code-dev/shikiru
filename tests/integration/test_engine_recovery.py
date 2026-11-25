@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from fake_agent.agent import create as create_fake_agent
 from fake_agent.scripted import FAKE_CHANGE_FILENAME
 
 from shikiru.agents.contracts import QuotaWindow, Rung, role_dir
+from shikiru.agents.registry import AgentRegistry
 from shikiru.config.settings import AgentConfig
 from shikiru.dashboard.contract import TaskBrowserFilter
 from shikiru.domain.commands import SetRung
@@ -131,6 +133,7 @@ async def _start_flow(
     clock: FakeClock,
     mode: Mode = Mode.IMPLEMENT,
     implementer_rung: int = 0,
+    registry: AgentRegistry | None = None,
 ) -> tuple[asyncio.Task[None], str]:
     await init_project_repo(engine_env.project_root)
     task = await build_flow_task(engine_env, mode=mode)
@@ -149,6 +152,7 @@ async def _start_flow(
         settings,
         clock=clock,
         turn_clock=FakeClock(TASK_CREATED_AT),
+        registry=registry,
     )
     flow_task = asyncio.create_task(flow_env.flow.run(task.id))
 
@@ -823,6 +827,147 @@ async def test_auth_failure_moves_to_a_later_different_agent_rung(
     runs = [run for run in engine_env.runs.for_task(task_id) if run.role is Role.IMPLEMENTER]
     assert [run.agent for run in runs] == [FAKE_AGENT_ALIAS, FAKE_AGENT_NAME]
     assert not fetch_open_escalations(engine_env.connection)
+
+
+async def test_auth_failures_do_not_cycle_between_agents(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _rung_settings(Rung(agent=FAKE_AGENT_ALIAS, model="fake-2", effort=None))
+    failure: dict[str, object] = {"kind": "fail", "failure_kind": "auth"}
+    flow_task, task_id = await _start_flow(
+        engine_env, tmux_server, settings=settings, clock=clock, script=[failure, failure]
+    )
+
+    await _drive(flow_task, clock, engine_env)
+
+    events = EventLog(engine_env.connection, clock)
+    started = events.since(0, task_id=task_id, kinds=[EventKind.TURN_STARTED])
+    assert [event.data["agent"] for event in started] == [FAKE_AGENT_NAME, FAKE_AGENT_ALIAS]
+    [escalation] = fetch_open_escalations(engine_env.connection)
+    assert escalation.reason is EscalationReason.AGENT_AUTH
+
+
+@pytest.mark.parametrize("unavailable", [False, True], ids=["quota-blocked", "unavailable"])
+async def test_auth_failure_skips_an_ineligible_earlier_agent(
+    engine_env: EngineEnv, tmux_server: TmuxServer, *, unavailable: bool
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _rung_settings(Rung(agent=FAKE_AGENT_ALIAS, model="fake-2", effort=None))
+    retries = settings.orchestration.retries.model_copy(update={"unavailable_max_retries": 0})
+    settings = settings.model_copy(
+        update={"orchestration": settings.orchestration.model_copy(update={"retries": retries})}
+    )
+    if not unavailable:
+        QuotaStore(engine_env.connection).block(
+            FAKE_AGENT_NAME, clock.now() + timedelta(hours=5), "quota", LONG_AGO
+        )
+    failures: list[dict[str, object]] = []
+    if unavailable:
+        failures.append({"kind": "fail", "failure_kind": "unavailable"})
+    failures.append({"kind": "fail", "failure_kind": "auth"})
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=failures,
+        implementer_rung=0 if unavailable else 1,
+    )
+
+    await _drive(flow_task, clock, engine_env)
+
+    events = EventLog(engine_env.connection, clock)
+    started = events.since(0, task_id=task_id, kinds=[EventKind.TURN_STARTED])
+    assert [event.data["agent"] for event in started] == (
+        [FAKE_AGENT_NAME, FAKE_AGENT_ALIAS] if unavailable else [FAKE_AGENT_ALIAS]
+    )
+    [escalation] = fetch_open_escalations(engine_env.connection)
+    assert escalation.reason is EscalationReason.AGENT_AUTH
+
+
+async def test_mixed_authentication_unavailable_and_quota_failures_do_not_cycle(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    second = Rung(agent=FAKE_AGENT_ALIAS, model="fake-2", effort=None)
+    third = Rung(agent="fake3", model="fake-3", effort=None)
+    settings = flow_settings()
+    implementer = settings.roles.implementer.model_copy(
+        update={"ladder": [FAKE_RUNG, second, third]}
+    )
+    retries = settings.orchestration.retries.model_copy(update={"unavailable_max_retries": 0})
+    settings = settings.model_copy(
+        update={
+            "roles": settings.roles.model_copy(update={"implementer": implementer}),
+            "orchestration": settings.orchestration.model_copy(update={"retries": retries}),
+            "agents": {**settings.agents, second.agent: AgentConfig(), third.agent: AgentConfig()},
+        }
+    )
+    registry = AgentRegistry()
+    for agent in (FAKE_AGENT_NAME, second.agent, third.agent):
+        registry.register(agent, create_fake_agent)
+    quota: dict[str, object] = {
+        "kind": "fail",
+        "failure_kind": "quota",
+        "resets_at": (clock.now() + timedelta(days=2)).isoformat(),
+    }
+    unavailable: dict[str, object] = {"kind": "fail", "failure_kind": "unavailable"}
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        registry=registry,
+        script=[{"kind": "fail", "failure_kind": "auth"}, unavailable, quota, unavailable, quota],
+    )
+
+    await _drive(flow_task, clock, engine_env)
+
+    events = EventLog(engine_env.connection, clock)
+    starts = events.since(0, task_id=task_id, kinds=[EventKind.TURN_STARTED])
+    assert [event.data["agent"] for event in starts] == [FAKE_AGENT_NAME, second.agent, third.agent]
+    [escalation] = fetch_open_escalations(engine_env.connection)
+    assert escalation.reason is EscalationReason.QUOTA_EXHAUSTED
+
+
+async def test_quota_fallback_can_revisit_an_unavailable_agent_without_authentication_failure(
+    engine_env: EngineEnv, tmux_server: TmuxServer
+) -> None:
+    clock = FakeClock(TASK_CREATED_AT)
+    settings = _rung_settings(Rung(agent=FAKE_AGENT_ALIAS, model="fake-2", effort=None))
+    retries = settings.orchestration.retries.model_copy(update={"unavailable_max_retries": 0})
+    settings = settings.model_copy(
+        update={"orchestration": settings.orchestration.model_copy(update={"retries": retries})}
+    )
+    flow_task, task_id = await _start_flow(
+        engine_env,
+        tmux_server,
+        settings=settings,
+        clock=clock,
+        script=[
+            {"kind": "fail", "failure_kind": "unavailable"},
+            {
+                "kind": "fail",
+                "failure_kind": "quota",
+                "resets_at": (clock.now() + timedelta(days=2)).isoformat(),
+            },
+            {"kind": "accept"},
+        ],
+    )
+
+    await _drive(flow_task, clock, engine_env)
+
+    events = EventLog(engine_env.connection, clock)
+    starts = events.since(0, task_id=task_id, kinds=[EventKind.TURN_STARTED])
+    assert [
+        event.data["agent"] for event in starts if event.data["role"] == Role.IMPLEMENTER.value
+    ] == [
+        FAKE_AGENT_NAME,
+        FAKE_AGENT_ALIAS,
+        FAKE_AGENT_NAME,
+    ]
+    assert engine_env.tasks.require(task_id).status is Status.INTEGRATING
 
 
 async def test_other_failure_retries_once_on_the_same_session(

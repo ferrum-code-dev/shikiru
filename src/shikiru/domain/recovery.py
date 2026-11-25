@@ -59,6 +59,8 @@ class TurnCounters:
     stall_recoveries: int = 0
     unavailable_retries: int = 0
     other_retries: int = 0
+    auth_failed_agents: frozenset[str] = frozenset()
+    unavailable_agents: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -74,7 +76,6 @@ class RecoveryPolicy:
     unavailable_max_seconds: float
     unavailable_max_retries: int
     quota_wait_exhausted: bool = False
-    has_later_rung_different_agent: bool = False
 
 
 @dataclass(frozen=True)
@@ -175,7 +176,7 @@ def _decide_failure(result: Failed, counters: TurnCounters, policy: RecoveryPoli
     elif result.kind is FailureKind.AUTH:
         action = (
             NextRung(different_agent=True)
-            if policy.has_later_rung_different_agent
+            if policy.has_next_rung_different_agent
             else Escalate(EscalationReason.AGENT_AUTH)
         )
     elif result.kind is FailureKind.OTHER and counters.other_retries < OTHER_RETRIES_PER_TURN:

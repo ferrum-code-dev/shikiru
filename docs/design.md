@@ -181,8 +181,14 @@ The retry count can be set to zero for immediate ladder fallback and is capped a
 are loaded when the engine starts; stop and restart it to apply changes. A later rung may use another
 model on the same agent. Engine tick retries remain configured separately under
 `[orchestration.faults]`.
-An authentication error moves to the next later rung on an unblocked different agent, never back
-to an earlier one, and escalates only when none exists. Unsupported/unclassified failures, missing
+An authentication error moves to an eligible different agent, preferring later rungs and then
+earlier ones in the effective role ladder. Quota-blocked agents and agents whose authentication
+or availability failed in the current recovery chain are skipped; failed authentication agents
+cannot be revisited in that chain. If no eligible alternative remains, the engine escalates with
+the authentication reason. After an authentication failure, later quota fallbacks in the same
+chain also skip agents whose availability retries were exhausted, so mixed failures cannot cycle.
+Recovery-chain memory resets after the turn or an engine restart.
+Unsupported/unclassified failures, missing
 reports and exhausted limits produce visible decisions.
 Helper can rebuild a missing report or classify an otherwise unknown failure, trying its own
 ladder after call failures or unusable answers within one shared timeout. Its output is validated
