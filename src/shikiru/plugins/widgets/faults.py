@@ -78,7 +78,7 @@ class FaultCard(Vertical):
     FaultCard Collapsible > Contents { padding: 0 0 0 2; }
     FaultCard Button {
         width: auto; height: 1; min-height: 1; margin: 0; padding: 0;
-        border: none; background: $background; color: $secondary-text; text-style: none;
+        background: $background; color: $secondary-text; text-style: none;
     }
     FaultCard Button:hover { color: $steel-blue; text-style: none; }
     FaultCard Button:focus { color: $primary-text; text-style: reverse; }
@@ -88,7 +88,7 @@ class FaultCard(Vertical):
         """Show `fault`; later `show` calls update it in place, keeping the disclosure state."""
         super().__init__()
         self._summary = GatedStatic(_summary(fault))
-        self._dismiss = Button(DISMISS_FAULT_LABEL, disabled=dismiss_fault is None)
+        self._dismiss = Button(DISMISS_FAULT_LABEL, compact=True, disabled=dismiss_fault is None)
         self._details = Static(_details(fault))
         self._fault = fault
         self._dismiss_fault = dismiss_fault

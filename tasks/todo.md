@@ -386,3 +386,8 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - Repeated authentication failures cannot cycle between agents and escalate with the authentication reason when no eligible alternative remains.
 - Regression coverage reproduces the Muse quota fallback, low-complexity triage retaining Claude, and Claude authentication failure sequence with an eligible earlier Codex, and covers exhausted alternatives.
 - Documentation describes the resulting authentication recovery behavior, and the full project check passes.
+
+### Visible fault dismissal label (T-198)
+
+- [x] Make the `Dismiss fault` label readable on each open fault card
+  - Acceptance: the button renders its label on its own row instead of a blank line, and the dashboard fault-dismissal integration test asserts the label is on screen while dismissal still queues the fault event.

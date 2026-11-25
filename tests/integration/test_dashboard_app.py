@@ -738,6 +738,7 @@ async def test_fault_card_dismissal_queues_the_fault_event_and_updates_the_open_
             details = card.query_one(Collapsible)
             children = list(card.children)
             assert _rendered_text(button) == "Dismiss fault"
+            assert "Dismiss fault" in button.render_line(0).text
             assert children.index(button) + 1 == children.index(details)
 
             await pilot.click(button)

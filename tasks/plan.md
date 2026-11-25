@@ -452,3 +452,7 @@ update the documented authentication behavior. One follow-up task owns the behav
 - Repeated authentication failures cannot cycle between agents and escalate with the authentication reason when no eligible alternative remains.
 - Regression coverage reproduces the Muse quota fallback, low-complexity triage retaining Claude, and Claude authentication failure sequence with an eligible earlier Codex, and covers exhausted alternatives.
 - Documentation describes the resulting authentication recovery behavior, and the full project check passes.
+
+## Visible fault dismissal label (T-198)
+
+The T-197 `Dismiss fault` button kept Textual's tall top border (`Button.-style-default` outranks the card's type-selector rule), so a one-row button had no content row and its label was blank. The button now uses Textual's compact style, which removes the borders in every state, and the dismissal integration test checks the rendered label row.
