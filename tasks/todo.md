@@ -396,3 +396,12 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 - [x] Preserve a focused fault's screen position after refresh and wait for scroller focus before keyboard input.
   - Acceptance: the context popup preserves the focused widget's screen row across layout updates and restores visibility if that row cannot be retained. The diff test waits for deferred focus, then verifies arrow-key scrolling and fullscreen preservation.
+
+### Codex turn permissions (T-202)
+
+- [x] Default new and resumed Codex turns to unsandboxed permissions, preserve explicit arguments, update Doctor and document filesystem and network access.
+- [x] Cover command construction and explicit arguments; extend the opt-in live worktree/resume test to check writes outside the worktree.
+- [x] Verify authenticated live first and resumed turns can write outside the worktree, and that the workspace-write sandbox denies the same location.
+- [x] Remove the obsolete Codex sandbox check from the Doctor reference.
+
+- [x] Synchronize release smoke ladder navigation with each visible scope before opening Helper.

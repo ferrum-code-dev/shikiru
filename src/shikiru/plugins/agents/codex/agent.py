@@ -39,8 +39,6 @@ from shikiru.plugins.agents.codex.options import (
     CONFIG_FLAG,
     CONFIG_LONG_FLAG,
     EFFORT_LONG_FLAG,
-    GIT_DIRS_ARGV,
-    GIT_DIRS_TIMEOUT_SECONDS,
     LOGIN_STATUS_ARGV,
     MODEL_CATALOG_ARGS_DETAIL,
     MODEL_CONFIG_OVERRIDE,
@@ -56,7 +54,6 @@ from shikiru.plugins.agents.codex.options import (
     CodexOptions,
 )
 from shikiru.plugins.agents.codex.quota import CodexQuotaProbe
-from shikiru.plugins.agents.codex.sandbox_probe import CodexSandboxProbe
 from shikiru.plugins.agents.codex.turn import CodexTurnSequence, context_window
 from shikiru.plugins.agents.shared_settings import options_error
 
@@ -86,7 +83,7 @@ _PROFILES_FIELD = "profiles"
 _PROFILE_FIELD = "profile"
 _PARTITION_VALUE_INDEX = 2
 _CONTEXT_WINDOW_CHECK = "context_window"
-_UNTESTED_VERSION_DETAIL = "{version} (warning: verified with {tested}; re-check the sandbox probe)"
+_UNTESTED_VERSION_DETAIL = "{version} (warning: verified with {tested})"
 _UNKNOWN_WINDOW_DETAIL = (
     "no positive context window for {models} in models_cache.json or Codex CLI's bundled "
     "model catalog; compaction at compact_at_pct cannot be applied"
@@ -123,7 +120,6 @@ class CodexAgent:
         )
         self._codex_home = codex_home()
         self._quota_probe = CodexQuotaProbe(self._codex_home, clock, self._reset_time)
-        self._sandbox_probe = CodexSandboxProbe(runner)
         self._catalog_context_windows: dict[str, int] = {}
         self._bundled_context_windows: dict[str, int] = {}
         self._cached_model_catalog: ModelCatalog | None = None
@@ -146,14 +142,13 @@ class CodexAgent:
     async def start_turn(self, spec: TurnSpec) -> Turn:
         """Start one Codex process-per-turn exchange."""
         model_context_windows = await self._context_windows_for_turn(spec)
-        git_dirs = await self._git_dirs_for_turn(spec)
         prices = (
             await model_prices(spec.run_dir.parent.parent, self._clock.now())
             if self._pricer is not None
             else {}
         )
         sequence = self.process_sequence(
-            spec, git_dirs=git_dirs, model_context_windows=model_context_windows, prices=prices
+            spec, model_context_windows=model_context_windows, prices=prices
         )
         return await StreamingTurn.start(spec, self._runner, sequence)
 
@@ -161,7 +156,6 @@ class CodexAgent:
         self,
         spec: TurnSpec,
         *,
-        git_dirs: Sequence[Path],
         model_context_windows: Mapping[str, int] | None = None,
         prices: Mapping[str, object] | None = None,
     ) -> CodexTurnSequence:
@@ -174,7 +168,6 @@ class CodexAgent:
             clock=self._clock,
             reset_time=self._reset_time,
             home=home,
-            git_dirs=git_dirs,
             compact_at_pct=self._options.compact_at_pct,
             prices=prices,
             pricer=self._pricer,
@@ -215,7 +208,6 @@ class CodexAgent:
             binary,
             await self._check_version(),
             await self._check_login(),
-            await self._sandbox_probe.check(),
         ]
         if models:
             checks.append(await self._check_context_windows(models))
@@ -359,21 +351,6 @@ class CodexAgent:
         environment = dict(os.environ)
         environment.update(spec.env)
         return environment
-
-    async def _git_dirs_for_turn(self, spec: TurnSpec) -> tuple[Path, ...]:
-        result = await self._runner.run(
-            GIT_DIRS_ARGV,
-            timeout=GIT_DIRS_TIMEOUT_SECONDS,
-            cwd=spec.cwd,
-            check=False,
-        )
-        values = result.stdout.split()
-        if result.returncode != 0 or not values:
-            message = (
-                f"could not resolve the Codex workspace git directories: {result.stderr.strip()}"
-            )
-            raise ConfigError(message)
-        return tuple(Path(value) for value in values)
 
     async def _check_binary(self) -> CheckResult:
         try:

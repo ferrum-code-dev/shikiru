@@ -377,12 +377,11 @@ tmux_run send-keys -t "$WIZARD_WINDOW" Enter
 wait_for_text "$WIZARD_WINDOW" 'Edit Implementer · Base'
 run_waiter ladder "$TMUX_BIN" "$SOCKET_NAME" "$WIZARD_PANE" 'Implementer · Base' 'fake:strong' >> "$LOG" 2>&1
 tmux_run send-keys -t "$WIZARD_WINDOW" BTab
-tmux_run send-keys -t "$WIZARD_WINDOW" Down
-tmux_run send-keys -t "$WIZARD_WINDOW" Down
-tmux_run send-keys -t "$WIZARD_WINDOW" Down
-tmux_run send-keys -t "$WIZARD_WINDOW" Down
+for scope in 'Implementer · Low' 'Implementer · Normal' 'Implementer · High' 'Helper'; do
+    tmux_run send-keys -t "$WIZARD_WINDOW" Down
+    wait_for_text "$WIZARD_WINDOW" "Edit $scope"
+done
 tmux_run send-keys -t "$WIZARD_WINDOW" Enter
-wait_for_text "$WIZARD_WINDOW" 'Edit Helper'
 run_waiter ladder "$TMUX_BIN" "$SOCKET_NAME" "$WIZARD_PANE" 'Helper' 'fake:smoke' >> "$LOG" 2>&1
 tmux_run capture-pane -p -t "$WIZARD_WINDOW" -S - > "$RUN_ROOT/wizard-agents.txt"
 click_wizard_button 'Next' 'SHIKIRU · Trackers'

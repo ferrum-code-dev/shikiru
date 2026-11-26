@@ -1047,7 +1047,6 @@ async def test_stopping_a_context_failure_does_not_start_its_retry(tmp_path: Pat
         clock=clock,
         reset_time=ResetTimeParser(clock),
         home=home,
-        git_dirs=(),
         compact_at_pct=80,
     )
     turn = await StreamingTurn.start(spec, SubprocessRunner(), sequence)

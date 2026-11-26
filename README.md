@@ -318,8 +318,10 @@ Shikiru orchestrates agents; it does not sandbox them.
 
 - Agents run as your user, with your environment and credentials. Use only repositories and hosts you trust.
 - Claude Code defaults to `--permission-mode bypassPermissions`.
-- Codex uses `workspace-write`, which includes the shared repository `.git`. Agents can change Git
-  refs, hooks and configuration.
+- Codex turns use `--dangerously-bypass-approvals-and-sandbox`. Agents have your filesystem and
+  network access, including Git refs, hooks and configuration. Setting `agents.codex.options.args`
+  replaces this default; include the flag explicitly to retain it.
+- Muse defaults to `--trust-workspace --disable-sandbox --disable-approval`.
 - Worktrees separate task files but do not isolate tasks from the main checkout or each other.
 - Project instructions and notification commands run with your privileges.
 - Prompts, reports and exports can contain sensitive content. Review them before sharing.
