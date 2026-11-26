@@ -420,3 +420,5 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
   - Acceptance: when a hold arrives during `gh pr merge --auto`, the accepted request is withdrawn before the task lock is released; with no local request event, first-poll feedback still withdraws the PR's existing GitHub request.
 - [x] Rework after third review: accept a null GitHub commit headline as a valid nonmatch and prove restart withdrawal after remote acceptance but before the `gh` call completes.
   - Acceptance: parser tests accept `commitHeadline: null`; the fake `gh` test interrupts after recording auto-merge, restarts with the task held, and observes the request withdrawn.
+- [x] Rework after integration review: throttle unchanged non-final reconciliation and retry auto-merge GitHub reads, enables and withdrawals with bounded backoff and fault reporting.
+  - Acceptance: repeated held sweeps make no GitHub reads before `network.pr_poll_seconds`; each affected read and operation recovers after one transient failure; exhausted attempts surface as `IntegrationBlocked` with the cause; enable retries confirm remote state before resending.

@@ -5,15 +5,29 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+import pytest
+
+from shikiru.domain.events import EventKind
 from shikiru.domain.reports import ReportKind
 from shikiru.domain.tasks import EscalationReason, Hold, Role, Status
 from shikiru.engine.integration import PullRequestCloser
+from shikiru.engine.pull_request_auto_merge import (
+    AutoMergeReadFailed,
+    AutoMergeReconciler,
+    PullRequestAutoMerge,
+)
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.workspace.github import GitHub
-from tests.support.engine import set_role_script
-from tests.support.fake_gh import ACCEPTED_AUTO_MERGE_HOLD, URL_PREFIX
+from tests.support.engine import build_fault_reporter, set_role_script
+from tests.support.fake_gh import (
+    ACCEPTED_AUTO_MERGE_HOLD,
+    AUTO_MERGE_READ_BUDGET,
+    AUTO_MERGE_REQUEST_FIELD,
+    STATUS_READ_BUDGET,
+    URL_PREFIX,
+)
 from tests.support.feedback_rounds import (
     REVIEW,
     THREAD,
@@ -24,11 +38,10 @@ from tests.support.feedback_rounds import (
     open_pull,
     verdict,
 )
-from tests.support.waiting import wait_until
+from tests.support.spawn_hook import processes_in_flight
+from tests.support.waiting import wait_until, wait_until_advancing
 
 if TYPE_CHECKING:
-    import pytest
-
     from tests.support.engine import EngineEnv
     from tests.support.feedback_rounds import FeedbackPull
     from tests.support.github import FakeGitHub
@@ -48,6 +61,40 @@ def _enable_requests(github: FakeGitHub) -> list[list[str]]:
 
 def _disable_requests(github: FakeGitHub) -> list[list[str]]:
     return [argv for argv in github.argv("merge") if _DISABLE_AUTO_FLAG in argv]
+
+
+def _auto_merge_service(pull: FeedbackPull) -> PullRequestAutoMerge:
+    assert pull.auto_merge is not None
+    return pull.auto_merge
+
+
+def _auto_merge_reads(github: FakeGitHub) -> list[list[str]]:
+    return [argv for argv in github.argv("view") if AUTO_MERGE_REQUEST_FIELD in argv]
+
+
+def _status_reads(github: FakeGitHub) -> list[list[str]]:
+    return [argv for argv in github.argv("view") if AUTO_MERGE_REQUEST_FIELD not in argv]
+
+
+async def _advance_retry_task(pull: FeedbackPull, operation: asyncio.Task[None]) -> None:
+    await wait_until_advancing(
+        pull.clock,
+        operation.done,
+        WAIT_SECONDS,
+        jump_while=pull.clock.has_pending_sleep,
+    )
+    await operation
+
+
+def _fault_kinds(pull: FeedbackPull) -> list[EventKind]:
+    return [
+        event.kind
+        for event in pull.events.since(
+            0,
+            kinds=(EventKind.ENGINE_FAULT, EventKind.ENGINE_RECOVERED),
+            task_id=pull.task.id,
+        )
+    ]
 
 
 async def _publish_requested_changes(pull: FeedbackPull, tmux_server: TmuxServer) -> None:
@@ -163,6 +210,200 @@ async def test_a_hold_withdraws_the_request_and_resuming_requests_it_again(
     await pull.stop()
 
 
+async def test_unchanged_held_tasks_are_reconciled_at_the_pull_request_poll_interval(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(engine_env, fake_github, tmp_path_factory, auto_merge=True)
+    engine_env.tasks.set_holds(pull.task.id, frozenset({Hold.PAUSED}))
+    await pull.stop()
+
+    await pull.sweep_auto_merge()
+    auto_merge_reads = len(_auto_merge_reads(fake_github))
+    assert fake_github.auto_merge(_PULL_NUMBER) is None
+
+    for _ in range(5):
+        await pull.sweep_auto_merge()
+
+    assert len(_auto_merge_reads(fake_github)) == auto_merge_reads
+
+    interval = pull.settings.orchestration.network.pr_poll_seconds
+    pull.clock.advance(interval - 1)
+    await pull.sweep_auto_merge()
+    assert len(_auto_merge_reads(fake_github)) == auto_merge_reads
+
+    pull.clock.advance(1)
+    await pull.sweep_auto_merge()
+    assert len(_auto_merge_reads(fake_github)) == auto_merge_reads + 1
+
+    reconciler = AutoMergeReconciler(
+        auto_merge=_auto_merge_service(pull),
+        tasks=engine_env.tasks,
+        faults=build_fault_reporter(pull.events, pull.clock, pull.settings),
+        clock=pull.clock,
+        settings=pull.settings.orchestration,
+    )
+    reads_before_start = len(_auto_merge_reads(fake_github))
+    reconciler.start()
+    await wait_until(
+        lambda: (
+            len(_auto_merge_reads(fake_github)) == reads_before_start + 1
+            and processes_in_flight() == 0
+        ),
+        WAIT_SECONDS,
+    )
+    await reconciler.shutdown()
+    await reconciler.sweep()
+    assert len(_auto_merge_reads(fake_github)) == reads_before_start + 1
+
+
+async def test_transient_status_read_failure_is_retried_before_withdrawal(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(
+        engine_env, fake_github, tmp_path_factory, auto_merge=True, auto_merge_attempts=2
+    )
+    engine_env.tasks.set_holds(pull.task.id, frozenset({Hold.PAUSED}))
+    fake_github.fail_next(STATUS_READ_BUDGET, 1)
+    operation = asyncio.create_task(_auto_merge_service(pull).withdraw(pull.task.id))
+
+    await _advance_retry_task(pull, operation)
+
+    assert fake_github.auto_merge(_PULL_NUMBER) is None
+    assert len(_disable_requests(fake_github)) == 1
+    assert not pull.escalated()
+    assert EventKind.ENGINE_FAULT in _fault_kinds(pull)
+    assert EventKind.ENGINE_RECOVERED in _fault_kinds(pull)
+    await pull.stop()
+
+
+async def test_transient_auto_merge_read_failure_is_retried_before_withdrawal(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(
+        engine_env, fake_github, tmp_path_factory, auto_merge=True, auto_merge_attempts=2
+    )
+    engine_env.tasks.set_holds(pull.task.id, frozenset({Hold.PAUSED}))
+    fake_github.fail_next(AUTO_MERGE_READ_BUDGET, 1)
+    operation = asyncio.create_task(_auto_merge_service(pull).withdraw(pull.task.id))
+
+    await _advance_retry_task(pull, operation)
+
+    assert fake_github.auto_merge(_PULL_NUMBER) is None
+    assert len(_disable_requests(fake_github)) == 1
+    assert not pull.escalated()
+    assert EventKind.ENGINE_FAULT in _fault_kinds(pull)
+    assert EventKind.ENGINE_RECOVERED in _fault_kinds(pull)
+    await pull.stop()
+
+
+async def test_a_transient_enable_failure_is_confirmed_and_retried_without_escalation(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(
+        engine_env, fake_github, tmp_path_factory, auto_merge=True, auto_merge_attempts=2
+    )
+    fake_github.set_fields(_PULL_NUMBER, autoMerge=None)
+    fake_github.fail_next("auto-merge", 1)
+    head = await pull.remote_branch()
+    previous_requests = len(_enable_requests(fake_github))
+    operation = asyncio.create_task(
+        _auto_merge_service(pull).request(pull.task, f"{URL_PREFIX}{_PULL_NUMBER}", head)
+    )
+
+    await _advance_retry_task(pull, operation)
+
+    assert len(_enable_requests(fake_github)) == previous_requests + 2
+    assert fake_github.auto_merge(_PULL_NUMBER) is not None
+    assert not pull.escalated()
+    assert EventKind.ENGINE_FAULT in _fault_kinds(pull)
+    assert EventKind.ENGINE_RECOVERED in _fault_kinds(pull)
+    await pull.stop()
+
+
+async def test_a_transient_disable_failure_is_confirmed_and_retried_without_escalation(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(
+        engine_env, fake_github, tmp_path_factory, auto_merge=True, auto_merge_attempts=2
+    )
+    engine_env.tasks.set_holds(pull.task.id, frozenset({Hold.PAUSED}))
+    fake_github.fail_next("withdraw", 1)
+    operation = asyncio.create_task(_auto_merge_service(pull).withdraw(pull.task.id))
+
+    await _advance_retry_task(pull, operation)
+
+    assert len(_disable_requests(fake_github)) == 2
+    assert fake_github.auto_merge(_PULL_NUMBER) is None
+    assert not pull.escalated()
+    assert EventKind.ENGINE_FAULT in _fault_kinds(pull)
+    assert EventKind.ENGINE_RECOVERED in _fault_kinds(pull)
+    await pull.stop()
+
+
+async def test_a_hold_ends_the_enable_retry_wait_without_sending_another_request(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(
+        engine_env, fake_github, tmp_path_factory, auto_merge=True, auto_merge_attempts=2
+    )
+    await pull.stop()
+    fake_github.set_fields(_PULL_NUMBER, autoMerge=None)
+    fake_github.fail_next("auto-merge", 1)
+    head = await pull.remote_branch()
+    previous_requests = len(_enable_requests(fake_github))
+    operation = asyncio.create_task(
+        _auto_merge_service(pull).request(pull.task, f"{URL_PREFIX}{_PULL_NUMBER}", head)
+    )
+
+    await wait_until(
+        lambda: (
+            len(_enable_requests(fake_github)) == previous_requests + 1
+            and pull.clock.has_pending_sleep()
+        ),
+        WAIT_SECONDS,
+    )
+    engine_env.tasks.set_holds(pull.task.id, frozenset({Hold.PAUSED}))
+    pull.clock.advance_to_next_sleeper()
+    await operation
+
+    assert len(_enable_requests(fake_github)) == previous_requests + 1
+    assert fake_github.auto_merge(_PULL_NUMBER) is None
+    assert not pull.escalated()
+
+
+async def test_exhausted_auto_merge_state_reads_fail_as_integration_blocked(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(
+        engine_env, fake_github, tmp_path_factory, auto_merge=True, auto_merge_attempts=2
+    )
+    engine_env.tasks.set_holds(pull.task.id, frozenset({Hold.PAUSED}))
+    status_reads = len(_status_reads(fake_github))
+    fake_github.fail_next(STATUS_READ_BUDGET, 2)
+    operation = asyncio.create_task(_auto_merge_service(pull).withdraw(pull.task.id))
+
+    with pytest.raises(AutoMergeReadFailed, match="after 2 attempts"):
+        await _advance_retry_task(pull, operation)
+
+    assert len(_status_reads(fake_github)) == status_reads + 2
+    assert fake_github.auto_merge(_PULL_NUMBER) is not None
+    await pull.stop()
+
+
 async def test_a_feedback_round_in_progress_withdraws_the_request(
     engine_env: EngineEnv,
     fake_github: FakeGitHub,
@@ -197,7 +438,9 @@ async def test_an_adopted_auto_merge_is_withdrawn_before_first_poll_feedback_run
             "head": head,
         },
     )
-    pull.auto_merge = make_auto_merge(engine_env, enabled=True)
+    pull.auto_merge = make_auto_merge(
+        engine_env, enabled=True, settings=pull.settings, clock=pull.clock
+    )
 
     await pull.restart()
     await pull.until(pull.flow.done)
@@ -301,8 +544,10 @@ async def test_a_round_does_not_start_while_its_withdrawal_is_unconfirmed(
     tmux_server: TmuxServer,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    pull = await open_pull(engine_env, fake_github, tmp_path_factory, auto_merge=True)
-    fake_github.fail_next("withdraw", 1)
+    pull = await open_pull(
+        engine_env, fake_github, tmp_path_factory, auto_merge=True, auto_merge_attempts=2
+    )
+    fake_github.fail_next("withdraw", 2)
     await _publish_requested_changes(pull, tmux_server)
 
     await pull.until(pull.flow.done)
@@ -379,13 +624,15 @@ async def test_a_refused_request_escalates_with_the_reason_and_a_retry_requests_
     tmux_server: TmuxServer,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    pull = await open_pull(engine_env, fake_github, tmp_path_factory, auto_merge=True)
-    fake_github.fail_next("auto-merge", 1)
+    pull = await open_pull(
+        engine_env, fake_github, tmp_path_factory, auto_merge=True, auto_merge_attempts=2
+    )
+    fake_github.fail_next("auto-merge", 2)
     await _publish_requested_changes(pull, tmux_server)
     await pull.until(pull.flow.done)
     await pull.dispatch()
 
-    await wait_until(pull.escalated, WAIT_SECONDS)
+    await pull.until(pull.flow.done)
 
     [escalation] = fetch_open_escalations(engine_env.connection)
     assert escalation.reason is EscalationReason.INTEGRATION_BLOCKED

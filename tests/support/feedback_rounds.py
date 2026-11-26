@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 
     import pytest
 
+    from shikiru.clock import Clock
     from shikiru.config.settings import PullRequestFeedbackScope, Settings
     from shikiru.domain.tasks import Task
     from tests.support.engine import EngineEnv
@@ -132,6 +133,7 @@ class FeedbackPull:
         remote_dir: Path,
         task: Task,
         *,
+        clock: FakeClock,
         auto_merge: PullRequestAutoMerge | None,
     ) -> None:
         self.env = env
@@ -139,7 +141,7 @@ class FeedbackPull:
         self.github = github
         self.remote_dir = remote_dir
         self.task = task
-        self.clock = FakeClock(env.clock.now())
+        self.clock = clock
         self.cleanup: Callable[[Task], Awaitable[None]]
         self.store = FeedbackStore(env.connection)
         self.events = EventLog(env.connection, env.clock)
@@ -211,7 +213,9 @@ class FeedbackPull:
     async def restart(self) -> None:
         await self.stop()
         if self.auto_merge is not None:
-            auto_merge = make_auto_merge(self.env, enabled=True)
+            auto_merge = make_auto_merge(
+                self.env, enabled=True, settings=self.settings, clock=self.clock
+            )
             assert auto_merge is not None
             self.auto_merge = auto_merge
             self.reconciler = AutoMergeReconciler(
@@ -379,12 +383,19 @@ async def open_pull(
     task_commit: bool = False,
     pr_feedback: PullRequestFeedbackScope | None = None,
     auto_merge: bool = False,
+    auto_merge_attempts: int | None = None,
 ) -> FeedbackPull:
     settings = (
         flow_settings(pr_feedback=pr_feedback)
         if max_iterations is None
         else flow_settings(max_iterations=max_iterations, pr_feedback=pr_feedback)
     )
+    if auto_merge_attempts is not None:
+        network = settings.orchestration.network.model_copy(
+            update={"poll_attempts": auto_merge_attempts}
+        )
+        orchestration = settings.orchestration.model_copy(update={"network": network})
+        settings = settings.model_copy(update={"orchestration": orchestration})
     await init_project_repo(env.project_root)
     remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
     await add_bare_remote(env.project_root, remote_dir, settings.repo.remote)
@@ -394,15 +405,28 @@ async def open_pull(
         (worktree / _TASK_FILE).write_text("task\n")
         await git(worktree, "add", _TASK_FILE)
         await git(worktree, *COMMIT_IDENTITY_ARGS, "commit", "-m", "task work")
+    clock = FakeClock(env.clock.now())
     pull = FeedbackPull(
-        env, settings, github, remote_dir, task, auto_merge=make_auto_merge(env, enabled=auto_merge)
+        env,
+        settings,
+        github,
+        remote_dir,
+        task,
+        clock=clock,
+        auto_merge=make_auto_merge(env, enabled=auto_merge, settings=settings, clock=clock),
     )
     await pull.await_poll(1)
     assert pull.waiting()
     return pull
 
 
-def make_auto_merge(env: EngineEnv, *, enabled: bool) -> PullRequestAutoMerge | None:
+def make_auto_merge(
+    env: EngineEnv,
+    *,
+    enabled: bool,
+    settings: Settings,
+    clock: Clock,
+) -> PullRequestAutoMerge | None:
     if not enabled:
         return None
     return PullRequestAutoMerge(
@@ -412,6 +436,9 @@ def make_auto_merge(env: EngineEnv, *, enabled: bool) -> PullRequestAutoMerge | 
         tasks=env.tasks,
         project_root=env.project_root,
         metadata_of=ReportHistory(env.project_root).pull_request_metadata,
+        clock=clock,
+        faults=build_fault_reporter(EventLog(env.connection, env.clock), clock, settings),
+        settings=settings.orchestration,
     )
 
 

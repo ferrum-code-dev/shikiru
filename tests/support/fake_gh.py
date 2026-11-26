@@ -38,6 +38,8 @@ CLOSE_ON_GRAPHQL_BUDGET = "close-on-graphql"
 AUTO_MERGE_BUDGET = "auto-merge"
 LOST_AUTO_MERGE_BUDGET = "lost-auto-merge"
 WITHDRAW_BUDGET = "withdraw"
+AUTO_MERGE_READ_BUDGET = "view-auto-merge"
+STATUS_READ_BUDGET = "view-status"
 ACCEPTED_AUTO_MERGE_HOLD = "merge-accepted"
 AUTO_FLAG = "--auto"
 AUTO_MERGE_REQUEST_FIELD = "autoMergeRequest"
@@ -193,6 +195,9 @@ def _auto_merge_request_view(auto_merge: dict[str, Any] | None) -> dict[str, Any
 
 def _view(state: Path, url: str, options: list[str]) -> str:
     fields = options[options.index("--json") + 1].split(",")
+    operation = AUTO_MERGE_READ_BUDGET if AUTO_MERGE_REQUEST_FIELD in fields else STATUS_READ_BUDGET
+    if _failing(state, operation):
+        raise _GhError(_NETWORK_DOWN)
     record = json.loads(_pull_request_path(state, url.removeprefix(URL_PREFIX)).read_text())
     values = {
         field: _auto_merge_request_view(record["autoMerge"])

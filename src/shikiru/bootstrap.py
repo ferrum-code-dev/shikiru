@@ -1253,6 +1253,9 @@ def _build_pull_request_closing(
             tasks=tasks,
             project_root=project_root,
             metadata_of=history.pull_request_metadata,
+            clock=clock,
+            faults=faults,
+            settings=settings.orchestration,
         )
         if feedback_store is not None and settings.orchestration.pr_auto_merge
         else None
