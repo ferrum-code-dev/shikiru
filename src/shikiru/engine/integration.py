@@ -742,7 +742,7 @@ class PullRequest:
         deadline = self._clock.now() + timedelta(seconds=self._settings.timeouts.pr_wait)
         while True:
             if held():
-                await self._withdraw_auto_merge(task_id)
+                await self._withdraw_auto_merge(task_id, opened.url)
                 raise IntegrationHeld
             status = await self._status(task_id, opened.url, held)
             if status.state is not PullRequestState.OPEN:
@@ -766,11 +766,11 @@ class PullRequest:
             raise IntegrationBlocked(str(error)) from error
         return await self._landed_with_prepared(opened, merge_commit, base_sha)
 
-    async def _withdraw_auto_merge(self, task_id: str) -> None:
+    async def _withdraw_auto_merge(self, task_id: str, url: str) -> None:
         if self._auto_merge is None:
             return
         try:
-            await self._auto_merge.withdraw(task_id)
+            await self._auto_merge.withdraw(task_id, url)
         except IntegrationBlocked:
             self._tasks.set_wait_reason(task_id, None)
             raise
@@ -807,7 +807,7 @@ class PullRequest:
         arrived = await self._feedback.arrived(task_id, url)
         if arrived:
             self._tasks.set_wait_reason(task_id, None)
-            await self._withdraw_auto_merge(task_id)
+            await self._withdraw_auto_merge(task_id, url)
             raise FeedbackPending
         return arrived is not None
 
@@ -840,7 +840,7 @@ class PullRequest:
                 raise
             if pending:
                 self._tasks.set_wait_reason(task_id, None)
-                await self._withdraw_auto_merge(task_id)
+                await self._withdraw_auto_merge(task_id, url)
                 raise FeedbackPending
 
     async def _landed_pull_request(
@@ -991,7 +991,7 @@ class PullRequestCloser:
         state = (await self._github.pull_request_status(self._project_root, opened.url)).state
         if state is PullRequestState.OPEN:
             if self._auto_merge is not None:
-                await self._auto_merge.withdraw(task_id)
+                await self._auto_merge.withdraw(task_id, opened.url)
             await self._github.close_pull_request(self._project_root, opened.url)
             state = PullRequestState.CLOSED
         self._events.append(

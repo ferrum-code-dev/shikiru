@@ -345,7 +345,10 @@ ones, a round that republishes makes the next request carry the new head, subjec
 Withdrawal (`gh pr merge <url> --disable-auto`, recorded as `pr_auto_merge_cancelled`) is confirmed:
 after the disable call Shikiru reads GitHub again and fails if the request is still held. It happens
 synchronously before the flow hands a pull request over to a feedback or check repair round and before
-a held task stops, so no round step runs while GitHub may still merge. A failed or unconfirmed
+a held task stops, so no round step runs while GitHub may still merge. Request and withdrawal calls
+are serialized per task; after an enable call, Shikiru rereads the task and withdraws if it has become
+non-final. Withdrawal checks GitHub even when no local request event exists, covering an adopted pull
+request that already has auto-merge enabled. A failed or unconfirmed
 withdrawal escalates the task as integration blocked, and the round does not start. A separate
 reconciler withdraws requests of tasks that are held, cancelled or otherwise not waiting, including
 after an engine restart; its failures are engine faults retried with backoff. Closing a cancelled

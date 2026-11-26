@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 from shikiru.domain.reports import ReportKind
@@ -19,6 +20,7 @@ from tests.support.feedback_rounds import (
     WAIT_SECONDS,
     decision,
     feedback_analysis,
+    make_auto_merge,
     open_pull,
     verdict,
 )
@@ -175,6 +177,89 @@ async def test_a_feedback_round_in_progress_withdraws_the_request(
     assert fake_github.auto_merge(_PULL_NUMBER) is None
     assert len(_disable_requests(fake_github)) == 1
     assert engine_env.tasks.require(pull.task.id).status is Status.QUEUED
+    await pull.stop()
+
+
+async def test_an_adopted_auto_merge_is_withdrawn_before_first_poll_feedback_runs(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(engine_env, fake_github, tmp_path_factory, auto_merge=False)
+    await pull.request_changes()
+    head = await pull.remote_branch()
+    fake_github.set_fields(
+        _PULL_NUMBER,
+        autoMerge={
+            "method": "SQUASH",
+            "subject": "external auto-merge request",
+            "body": "external description",
+            "head": head,
+        },
+    )
+    pull.auto_merge = make_auto_merge(engine_env, enabled=True)
+
+    await pull.restart()
+    await pull.until(pull.flow.done)
+
+    assert fake_github.auto_merge(_PULL_NUMBER) is None
+    assert len(_disable_requests(fake_github)) == 1
+    assert engine_env.tasks.require(pull.task.id).status is Status.QUEUED
+    assert not _enable_requests(fake_github)
+    await pull.stop()
+
+
+async def test_a_hold_during_an_inflight_request_withdraws_it_before_releasing_the_lock(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmux_server: TmuxServer,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(engine_env, fake_github, tmp_path_factory, auto_merge=True)
+    await _publish_requested_changes(pull, tmux_server)
+    await pull.until(pull.flow.done)
+    fake_github.hold("merge")
+    await pull.dispatch()
+    await wait_until(lambda: len(_enable_requests(fake_github)) == 2, WAIT_SECONDS)
+
+    engine_env.tasks.set_holds(pull.task.id, frozenset({Hold.PAUSED}))
+    withdrawal_started = asyncio.Event()
+
+    async def sweep() -> None:
+        withdrawal_started.set()
+        await pull.sweep_auto_merge()
+
+    withdrawal = asyncio.create_task(sweep())
+    await wait_until(withdrawal_started.is_set, WAIT_SECONDS)
+    assert not withdrawal.done()
+    fake_github.release("merge")
+    await withdrawal
+    await pull.until(pull.flow.done)
+
+    assert fake_github.auto_merge(_PULL_NUMBER) is None
+    assert len(_enable_requests(fake_github)) == 2
+    assert len(_disable_requests(fake_github)) == 2
+    await pull.stop()
+
+
+async def test_an_inflight_request_rechecks_task_state_after_github_accepts_it(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmux_server: TmuxServer,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(engine_env, fake_github, tmp_path_factory, auto_merge=True)
+    await _publish_requested_changes(pull, tmux_server)
+    await pull.until(pull.flow.done)
+    fake_github.hold("merge")
+    await pull.dispatch()
+    await wait_until(lambda: len(_enable_requests(fake_github)) == 2, WAIT_SECONDS)
+
+    engine_env.tasks.set_holds(pull.task.id, frozenset({Hold.PAUSED}))
+    fake_github.release("merge")
+    await wait_until(lambda: len(_disable_requests(fake_github)) == 2, WAIT_SECONDS)
+
+    assert fake_github.auto_merge(_PULL_NUMBER) is None
     await pull.stop()
 
 

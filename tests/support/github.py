@@ -39,7 +39,7 @@ class FakeGitHub:
         return [json.loads((pulls / f"{n}.json").read_text()) for n in range(1, count + 1)]
 
     def hold(self, subcommand: str) -> None:
-        """Make `gh pr <subcommand>` block (`create` after recording, `close` before acting)."""
+        """Make `gh pr <subcommand>` block at its fake-GitHub operation boundary."""
         os.mkfifo(self.state / f"{fake_gh.HOLD_PREFIX}{subcommand}")
 
     def release(self, subcommand: str) -> None:
@@ -156,6 +156,7 @@ def fake_github(
     yield github
     github.release("create")
     github.release("close")
+    github.release("merge")
 
 
 async def add_bare_remote(

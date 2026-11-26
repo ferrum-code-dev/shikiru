@@ -416,3 +416,5 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [x] Cover the `gh` boundary with the fake `gh`: request argv, republish, withdrawal on hold, cancellation and an active round, refusal, and the title.
 - [x] Rework after review: confirm withdrawal before a feedback or check repair round starts, and reconcile a request GitHub accepted whose reply was lost.
   - Acceptance: a round does not start while its withdrawal is unconfirmed (the task escalates); a withdrawal reads GitHub's `autoMergeRequest` and fails if the request is still held; a request is recorded before it is sent and a lost reply is confirmed on GitHub rather than refused; gh-boundary tests cover both and a parser unit test covers the held request.
+- [x] Rework after review: serialize in-flight enables with withdrawals, recheck task state after enable, and withdraw adopted GitHub requests before an active round.
+  - Acceptance: when a hold arrives during `gh pr merge --auto`, the accepted request is withdrawn before the task lock is released; with no local request event, first-poll feedback still withdraws the PR's existing GitHub request.

@@ -1250,6 +1250,7 @@ def _build_pull_request_closing(
             github=github,
             events=events,
             feedback=feedback_store,
+            tasks=tasks,
             project_root=project_root,
             metadata_of=history.pull_request_metadata,
         )

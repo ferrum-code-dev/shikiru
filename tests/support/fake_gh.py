@@ -232,6 +232,7 @@ def _merge(state: Path, url: str, options: list[str]) -> str:
         if _failing(state, AUTO_MERGE_BUDGET):
             raise _GhError(_AUTO_MERGE_REFUSED)
         values = _flag_values([option for option in options if option not in _AUTO_MERGE_FLAGS])
+        _hold(state, "merge")
         record["autoMerge"] = {
             "method": "SQUASH",
             "subject": values[SUBJECT_FLAG],
@@ -461,7 +462,8 @@ def main(argv: list[str]) -> int:
 
     While the `hold-create` FIFO exists, `pr create` records its pull request and then blocks
     before printing it, as if the engine died between opening and recording it; `hold-close`
-    blocks `pr close` before it acts. A `fail-<operation>` file holding a count makes that many
+    blocks `pr close` before it acts; `hold-merge` blocks an auto-merge request before GitHub
+    accepts it. A `fail-<operation>` file holding a count makes that many
     calls of the operation fail, as a network blip does: `pr <subcommand>`, `graphql`, `post`
     (before it records anything) or `lost-post` (after it records the comment)."""
     state = Path(argv[0])

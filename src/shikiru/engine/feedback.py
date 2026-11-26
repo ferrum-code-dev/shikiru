@@ -170,7 +170,7 @@ class FeedbackRounds:
         if active is None:
             return
         if self._auto_merge is not None:
-            await self._auto_merge.withdraw(task.id)
+            await self._auto_merge.withdraw(task.id, active.pull_request_url)
         if active.blocked:
             self._store.reset_after_retry(active.id, active.stage)
         try:

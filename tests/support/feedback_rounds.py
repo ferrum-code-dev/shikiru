@@ -384,20 +384,21 @@ async def open_pull(
         await git(worktree, "add", _TASK_FILE)
         await git(worktree, *COMMIT_IDENTITY_ARGS, "commit", "-m", "task work")
     pull = FeedbackPull(
-        env, settings, github, remote_dir, task, auto_merge=_auto_merge(env, enabled=auto_merge)
+        env, settings, github, remote_dir, task, auto_merge=make_auto_merge(env, enabled=auto_merge)
     )
     await pull.await_poll(1)
     assert pull.waiting()
     return pull
 
 
-def _auto_merge(env: EngineEnv, *, enabled: bool) -> PullRequestAutoMerge | None:
+def make_auto_merge(env: EngineEnv, *, enabled: bool) -> PullRequestAutoMerge | None:
     if not enabled:
         return None
     return PullRequestAutoMerge(
         github=GitHub(RUNNER),
         events=EventLog(env.connection, env.clock),
         feedback=FeedbackStore(env.connection),
+        tasks=env.tasks,
         project_root=env.project_root,
         metadata_of=ReportHistory(env.project_root).pull_request_metadata,
     )
