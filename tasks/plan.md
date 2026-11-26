@@ -465,4 +465,4 @@ Run 45644430047 showed two separate timing and scrolling failures. On macOS, the
 
 Default Codex turn arguments bypass approvals and sandboxing for new and resumed turns. Explicit agent arguments replace that default. Remove the obsolete sandbox probe and Git-root configuration, document operator-level access, and exercise turn commands and live resume access.
 
-Review follow-up: the Doctor reference no longer lists the removed sandbox check. Live verification requires authenticated Codex credentials available within the task workspace; an isolated attempt reached the provider but received HTTP 401 before the first write or resume.
+Review follow-up: the Doctor reference no longer lists the removed sandbox check. An isolated attempt without credentials received HTTP 401. With the Operator-authorized authenticated Codex environment, the live test verifies outside-worktree writes for the first and resumed turns and confirms the workspace-write sandbox denies that location.

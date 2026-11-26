@@ -1290,9 +1290,26 @@ class TestCodexHeadlessContract(AgentContractSuite):
             cwd=main_repo,
             check=True,
         )
+        first_marker = tmp_path / "first-outside.txt"
+        control = await runner.run(
+            [
+                "codex",
+                "sandbox",
+                "-c",
+                'sandbox_mode="workspace-write"',
+                "--",
+                "touch",
+                str(first_marker),
+            ],
+            timeout=UI_WAIT_SECONDS,
+            cwd=worktree,
+            check=False,
+        )
+        assert control.returncode != 0
+        assert any(marker in control.stderr for marker in SANDBOX_DENIAL_MARKERS)
+        assert not first_marker.exists()
         spec = self.build_spec(tmp_path, resume_session_id=None)
         first = _replace_cwd(spec, worktree, "first-turn")
-        first_marker = tmp_path / "first-outside.txt"
         first_signals = await self._run_turn(
             _with_prompt(first, f"{_LIVE_COMMIT_PROMPT} Also write first to {first_marker}.")
         )
