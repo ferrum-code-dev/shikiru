@@ -70,9 +70,6 @@ from shikiru.plugins.agents.codex.options import (
     MODELS_CACHE_FILENAME,
     REASONING_EFFORT_CONFIG,
     RESUME_SUBCOMMAND,
-    SANDBOX_MODE_CONFIG,
-    WORKSPACE_WRITE_SANDBOX,
-    WRITABLE_ROOTS_CONFIG,
 )
 from shikiru.plugins.agents.codex.turn import CodexTurnParser, CodexTurnSequence, context_window
 from shikiru.process import SubprocessRunner
@@ -392,7 +389,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
                             f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
                             CONFIG_FLAG,
                             f"{AUTO_COMPACT_LIMIT_CONFIG}={limit}",
-                            *_sandbox_args(spec),
+                            "--dangerously-bypass-approvals-and-sandbox",
                             spec.prompt,
                         )
                     ],
@@ -445,7 +442,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
             f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
             CONFIG_FLAG,
             f"{AUTO_COMPACT_LIMIT_CONFIG}=80000",
-            *_sandbox_args(new_spec),
+            "--dangerously-bypass-approvals-and-sandbox",
             new_spec.prompt,
         )
         resumed = self.build_spec(
@@ -469,7 +466,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
             f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
             CONFIG_FLAG,
             f"{AUTO_COMPACT_LIMIT_CONFIG}=200000",
-            *_sandbox_args(resumed),
+            "--dangerously-bypass-approvals-and-sandbox",
             resumed.prompt,
         )
         provider_spec = self.build_spec(
@@ -496,14 +493,14 @@ class TestCodexHeadlessContract(AgentContractSuite):
         return [
             *self._model_change_cases(tmp_path),
             InvocationCase(
-                name="new turns use workspace-write and grant the run and git directories",
+                name="new turns bypass approvals and sandbox",
                 options={"compact_at_pct": _COMPACT_AT_PCT},
                 spec=new_spec,
                 expected_argv=[new_argv],
                 expected_env=[{CODEX_HOME_ENV_VAR: new_spec.env[CODEX_HOME_ENV_VAR]}],
             ),
             InvocationCase(
-                name="a resumed session grants the same roots and the same-model rollout window",
+                name="a resumed session bypasses approvals and sandbox and uses the rollout window",
                 options={"compact_at_pct": _COMPACT_AT_PCT},
                 spec=resumed,
                 expected_argv=[resumed_argv],
@@ -518,6 +515,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
                     _OTHER_MODEL,
                     CONFIG_FLAG,
                     f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
+                    "--dangerously-bypass-approvals-and-sandbox",
                 ),
             ),
             InvocationCase(
@@ -535,7 +533,6 @@ class TestCodexHeadlessContract(AgentContractSuite):
                         f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
                         CONFIG_FLAG,
                         f"{AUTO_COMPACT_LIMIT_CONFIG}=80000",
-                        *_sandbox_args(provider_spec),
                         provider_spec.prompt,
                     )
                 ],
@@ -551,7 +548,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
         ]
 
     def process_sequence(self, agent: Agent, spec: TurnSpec) -> CodexTurnSequence:
-        return cast("CodexAgent", agent).process_sequence(spec, git_dirs=_fake_git_dirs(spec))
+        return cast("CodexAgent", agent).process_sequence(spec)
 
     def live_compaction_options(self) -> Mapping[str, object]:
         return {"compact_at_pct": _LIVE_COMPACT_AT_PCT}
@@ -653,7 +650,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
             AgentContext(options={}, runner=SubprocessRunner(), clock=FakeClock(_SAMPLE_NOW))
         )
 
-        command = agent.process_sequence(spec, git_dirs=(tmp_path / ".git",)).start(spec)
+        command = agent.process_sequence(spec).start(spec)
 
         assert command.env[CODEX_HOME_ENV_VAR] == spec.env[CODEX_HOME_ENV_VAR]
         assert command.env[CODEX_HOME_ENV_VAR] != str(operator_codex_home)
@@ -874,7 +871,6 @@ class TestCodexHeadlessContract(AgentContractSuite):
         assert [invocation.split()[0] for invocation in invocations] == [
             "--version",
             "--version",
-            "sandbox",
         ]
         assert all(
             environment
@@ -929,7 +925,7 @@ class TestCodexHeadlessContract(AgentContractSuite):
 
         checks = await agent.doctor((_LIVE_MODEL,))
         context_check = next(check for check in checks if check.name == "context_window")
-        command = agent.process_sequence(spec, git_dirs=_fake_git_dirs(spec)).start(spec)
+        command = agent.process_sequence(spec).start(spec)
 
         assert context_check.ok
         assert "Codex CLI bundled model catalog" in context_check.detail
@@ -1296,7 +1292,11 @@ class TestCodexHeadlessContract(AgentContractSuite):
         )
         spec = self.build_spec(tmp_path, resume_session_id=None)
         first = _replace_cwd(spec, worktree, "first-turn")
-        first_signals = await self._run_turn(_with_prompt(first, _LIVE_COMMIT_PROMPT))
+        first_marker = tmp_path / "first-outside.txt"
+        first_signals = await self._run_turn(
+            _with_prompt(first, f"{_LIVE_COMMIT_PROMPT} Also write first to {first_marker}.")
+        )
+        assert first_marker.read_text().strip() == "first"
         session_id, usage = _latest_usage(first_signals)
         first_commit = await runner.run(
             ["git", "show", f"HEAD:{_FIRST_FILE}"],
@@ -1312,7 +1312,13 @@ class TestCodexHeadlessContract(AgentContractSuite):
             model=self._other_model(),
         )
         resumed = _replace_cwd(resumed, worktree, "second-turn")
-        await self._run_turn(_with_prompt(resumed, _LIVE_SECOND_COMMIT_PROMPT))
+        second_marker = tmp_path / "second-outside.txt"
+        await self._run_turn(
+            _with_prompt(
+                resumed, f"{_LIVE_SECOND_COMMIT_PROMPT} Also write second to {second_marker}."
+            )
+        )
+        assert second_marker.read_text().strip() == "second"
         for turn in (first, resumed):
             transcript = stream_log_path(turn.turn_dir, turn.role).read_text(errors="replace")
             denied = [marker for marker in SANDBOX_DENIAL_MARKERS if marker in transcript]
@@ -1363,26 +1369,12 @@ class TestCodexHeadlessContract(AgentContractSuite):
 
     def _emitted_limit(self, spec: TurnSpec) -> int:
         agent = cast("CodexAgent", self._build_agent())
-        argv = agent.process_sequence(spec, git_dirs=_fake_git_dirs(spec)).start(spec).argv
+        argv = agent.process_sequence(spec).start(spec).argv
         assert MODEL_FLAG in argv
         assert argv[argv.index(MODEL_FLAG) + 1] == spec.rung.model
         setting = f"{AUTO_COMPACT_LIMIT_CONFIG}="
         (limit,) = [value.removeprefix(setting) for value in argv if value.startswith(setting)]
         return int(limit)
-
-
-def _fake_git_dirs(spec: TurnSpec) -> tuple[Path, ...]:
-    return ((spec.cwd / ".git").resolve(),)
-
-
-def _sandbox_args(spec: TurnSpec) -> tuple[str, ...]:
-    roots = json.dumps([str(spec.run_dir), str((spec.cwd / ".git").resolve())])
-    return (
-        CONFIG_FLAG,
-        f'{SANDBOX_MODE_CONFIG}="{WORKSPACE_WRITE_SANDBOX}"',
-        CONFIG_FLAG,
-        f"{WRITABLE_ROOTS_CONFIG}={roots}",
-    )
 
 
 def _with_model(spec: TurnSpec, model: str) -> TurnSpec:
@@ -1641,6 +1633,6 @@ def _resume_argv(spec: TurnSpec) -> tuple[str, ...]:
         f'{REASONING_EFFORT_CONFIG}="{_EFFORT}"',
         CONFIG_FLAG,
         f"{AUTO_COMPACT_LIMIT_CONFIG}=80000",
-        *_sandbox_args(spec),
+        "--dangerously-bypass-approvals-and-sandbox",
         spec.prompt,
     )

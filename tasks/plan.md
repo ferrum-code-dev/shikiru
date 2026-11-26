@@ -460,3 +460,7 @@ The T-197 `Dismiss fault` button kept Textual's tall top border (`Button.-style-
 ## Latest CI refresh failures (T-201)
 
 Run 45644430047 showed two separate timing and scrolling failures. On macOS, the focused fault card remained the same object, expanded, and focused after refresh, but its region no longer fit inside the scroller. Restoring visibility alone did not preserve the documented screen position. On Ubuntu, the fullscreen test called `scroll.focus()` and immediately sent Pilot keypresses; Textual schedules focus for a later event-loop turn, so the keys arrived before the scroller had focus and the expected offsets never changed. The dashboard now retains the focused widget's screen row across layout changes with a visibility fallback, and the test waits for focus before driving actual keyboard scrolling.
+
+## Codex turn permissions (T-202)
+
+Default Codex turn arguments bypass approvals and sandboxing for new and resumed turns. Explicit agent arguments replace that default. Remove the obsolete sandbox probe and Git-root configuration, document operator-level access, and exercise turn commands and live resume access.

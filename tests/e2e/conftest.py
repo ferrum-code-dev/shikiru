@@ -12,7 +12,7 @@ import pytest
 
 from shikiru.clock import SystemClock
 from shikiru.plugins.agents.codex.home import codex_home
-from shikiru.plugins.agents.codex.options import WORKSPACE_WRITE_SANDBOX
+from shikiru.plugins.agents.codex.options import DANGEROUS_BYPASS_FLAG
 from tests.e2e.real_agent_config import REAL_ROLE_LADDERS
 from tests.support.e2e_attempts import AttemptRecord, total_cost
 from tests.support.e2e_provenance import source_state, tool_versions
@@ -132,7 +132,7 @@ def _sandbox_settings() -> dict[str, object]:
     path = codex_home() / CODEX_CONFIG_FILENAME
     config = tomllib.loads(path.read_text()) if path.is_file() else {}
     return {
-        "codex_sandbox_mode": WORKSPACE_WRITE_SANDBOX,
+        "codex_permissions": DANGEROUS_BYPASS_FLAG,
         "project_parent": str(E2E_PROJECTS_PARENT),
         "tmpdir": os.environ.get("TMPDIR"),
         "codex_config": {key: config[key] for key in CODEX_ACCESS_SETTINGS if key in config},

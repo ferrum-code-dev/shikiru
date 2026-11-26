@@ -48,7 +48,6 @@ from shikiru.plugins.agents.codex.options import (
     USAGE_EVENT_TYPE,
 )
 from shikiru.plugins.agents.codex.quota import CodexQuotaProbe, QuotaObservation
-from shikiru.plugins.agents.codex.sandbox import sandbox_config_args
 from shikiru.plugins.agents.codex.usage import latest_token_count, rollout_usage
 
 if TYPE_CHECKING:
@@ -398,7 +397,6 @@ class CodexTurnSequence(TurnProcessSequence):
         clock: Clock,
         reset_time: ResetTimeParser,
         home: Path | None = None,
-        git_dirs: Sequence[Path],
         compact_at_pct: float,
         model_context_windows: Mapping[str, int] | None = None,
         prices: Mapping[str, Any] | None = None,
@@ -412,7 +410,6 @@ class CodexTurnSequence(TurnProcessSequence):
         self._clock = clock
         self._reset_time = reset_time
         self._home = home or codex_home()
-        self._git_dirs = tuple(git_dirs)
         self._compact_at_pct = compact_at_pct
         self._session_id = spec.session_id
         self._phase = _PHASE_START
@@ -453,8 +450,6 @@ class CodexTurnSequence(TurnProcessSequence):
         token_limit = self._token_limit()
         if token_limit is not None:
             argv.extend([CONFIG_FLAG, f"{AUTO_COMPACT_LIMIT_CONFIG}={token_limit}"])
-        roots = _unique_paths((spec.run_dir, *self._git_dirs, *spec.add_dirs))
-        argv.extend(sandbox_config_args(roots))
         argv.extend(self._args)
         argv.append(spec.prompt)
         parser = CodexTurnParser(
@@ -833,19 +828,6 @@ def _tool_outcome(status: object, exit_code: int | None) -> ToolOutcome | None:
     if exit_code is None:
         return None
     return ToolOutcome.SUCCESS if exit_code == _ZERO_EXIT_CODE else ToolOutcome.FAILURE
-
-
-def _unique_paths(paths: Sequence[Path | None]) -> tuple[Path, ...]:
-    unique: list[Path] = []
-    seen: set[Path] = set()
-    for path in paths:
-        if path is None:
-            continue
-        normalized = path.resolve()
-        if normalized not in seen:
-            seen.add(normalized)
-            unique.append(path)
-    return tuple(unique)
 
 
 def _terminal(signals: Sequence[AgentSignal]) -> TurnEnded | TurnFailed | None:

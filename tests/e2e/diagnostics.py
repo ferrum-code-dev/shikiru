@@ -35,8 +35,7 @@ RERUN_SKIPPED_RULE = "an agent skipped a rule"
 SANDBOX_DENIAL_MARKERS = ("Operation not permitted", "was denied permission", "Permission denied")
 SANDBOX_DENIAL_NOTE = (
     "sandbox denial ({marker!r}) in an agent transcript: not agent flakiness and never rerun; "
-    "check the Codex sandbox writable roots (run directory, worktree git directory, "
-    "git common directory) and `shikiru doctor`"
+    "check agent permission options and the host environment, and run `shikiru doctor`"
 )
 
 
