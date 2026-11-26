@@ -16,7 +16,9 @@ from shikiru.domain.tasks import EscalationReason, Mode, Role, Status, Step
 from shikiru.engine.events import REPORT_KIND_FIELD
 from shikiru.engine.feedback_intake import FeedbackIntake
 from shikiru.engine.handlers.escalations import ResolveHandler
+from shikiru.engine.history import ReportHistory
 from shikiru.engine.integration import PullRequest
+from shikiru.engine.pull_request_auto_merge import AutoMergeReconciler, PullRequestAutoMerge
 from shikiru.paths import run_dir, task_root
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
@@ -46,6 +48,7 @@ if TYPE_CHECKING:
 
     import pytest
 
+    from shikiru.clock import Clock
     from shikiru.config.settings import PullRequestFeedbackScope, Settings
     from shikiru.domain.tasks import Task
     from tests.support.engine import EngineEnv
@@ -119,21 +122,41 @@ def verdict(decision: str, *reply_ids: str) -> dict[str, Any]:
     return {"kind": "report", "report": report}
 
 
-class _Pull:
+class FeedbackPull:
     """One task's flow on a fake pull request with a bare remote, restarted like the engine does."""
 
     def __init__(
-        self, env: EngineEnv, settings: Settings, github: FakeGitHub, remote_dir: Path, task: Task
+        self,
+        env: EngineEnv,
+        settings: Settings,
+        github: FakeGitHub,
+        remote_dir: Path,
+        task: Task,
+        *,
+        clock: FakeClock,
+        auto_merge: PullRequestAutoMerge | None,
     ) -> None:
         self.env = env
         self.settings = settings
         self.github = github
         self.remote_dir = remote_dir
         self.task = task
-        self.clock = FakeClock(env.clock.now())
+        self.clock = clock
         self.cleanup: Callable[[Task], Awaitable[None]]
         self.store = FeedbackStore(env.connection)
         self.events = EventLog(env.connection, env.clock)
+        self.auto_merge = auto_merge
+        self.reconciler = (
+            None
+            if auto_merge is None
+            else AutoMergeReconciler(
+                auto_merge=auto_merge,
+                tasks=env.tasks,
+                faults=build_fault_reporter(self.events, env.clock, settings),
+                clock=self.clock,
+                settings=settings.orchestration,
+            )
+        )
         self._command_ids = itertools.count(1)
         self.flow = self._start(resumed=True)
 
@@ -169,6 +192,7 @@ class _Pull:
                 project_root=env.project_root,
                 scope=self.settings.orchestration.pr_feedback,
             ),
+            auto_merge=self.auto_merge,
         )
         built = build_flow(
             env,
@@ -177,6 +201,7 @@ class _Pull:
             strategy=strategy,
             base_refs=fetched,
             feedback_store=self.store,
+            auto_merge=self.auto_merge,
         )
         assert built.cleanup is not None
         self.cleanup = built.cleanup
@@ -187,6 +212,19 @@ class _Pull:
 
     async def restart(self) -> None:
         await self.stop()
+        if self.auto_merge is not None:
+            auto_merge = make_auto_merge(
+                self.env, enabled=True, settings=self.settings, clock=self.clock
+            )
+            assert auto_merge is not None
+            self.auto_merge = auto_merge
+            self.reconciler = AutoMergeReconciler(
+                auto_merge=auto_merge,
+                tasks=self.env.tasks,
+                faults=build_fault_reporter(self.events, self.env.clock, self.settings),
+                clock=self.clock,
+                settings=self.settings.orchestration,
+            )
         self.flow = self._start(resumed=True)
 
     async def dispatch(self) -> None:
@@ -223,6 +261,10 @@ class _Pull:
         await wait_until_advancing(
             self.clock, condition, WAIT_SECONDS, step_seconds=pr_poll_seconds()
         )
+
+    async def sweep_auto_merge(self) -> None:
+        assert self.reconciler is not None
+        await self.reconciler.sweep()
 
     def waiting(self) -> bool:
         current = self.env.tasks.require(self.task.id)
@@ -340,12 +382,20 @@ async def open_pull(
     max_iterations: int | None = None,
     task_commit: bool = False,
     pr_feedback: PullRequestFeedbackScope | None = None,
-) -> _Pull:
+    auto_merge: bool = False,
+    auto_merge_attempts: int | None = None,
+) -> FeedbackPull:
     settings = (
         flow_settings(pr_feedback=pr_feedback)
         if max_iterations is None
         else flow_settings(max_iterations=max_iterations, pr_feedback=pr_feedback)
     )
+    if auto_merge_attempts is not None:
+        network = settings.orchestration.network.model_copy(
+            update={"poll_attempts": auto_merge_attempts}
+        )
+        orchestration = settings.orchestration.model_copy(update={"network": network})
+        settings = settings.model_copy(update={"orchestration": orchestration})
     await init_project_repo(env.project_root)
     remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
     await add_bare_remote(env.project_root, remote_dir, settings.repo.remote)
@@ -355,16 +405,47 @@ async def open_pull(
         (worktree / _TASK_FILE).write_text("task\n")
         await git(worktree, "add", _TASK_FILE)
         await git(worktree, *COMMIT_IDENTITY_ARGS, "commit", "-m", "task work")
-    pull = _Pull(env, settings, github, remote_dir, task)
+    clock = FakeClock(env.clock.now())
+    pull = FeedbackPull(
+        env,
+        settings,
+        github,
+        remote_dir,
+        task,
+        clock=clock,
+        auto_merge=make_auto_merge(env, enabled=auto_merge, settings=settings, clock=clock),
+    )
     await pull.await_poll(1)
     assert pull.waiting()
     return pull
 
 
+def make_auto_merge(
+    env: EngineEnv,
+    *,
+    enabled: bool,
+    settings: Settings,
+    clock: Clock,
+) -> PullRequestAutoMerge | None:
+    if not enabled:
+        return None
+    return PullRequestAutoMerge(
+        github=GitHub(RUNNER),
+        events=EventLog(env.connection, env.clock),
+        feedback=FeedbackStore(env.connection),
+        tasks=env.tasks,
+        project_root=env.project_root,
+        metadata_of=ReportHistory(env.project_root).pull_request_metadata,
+        clock=clock,
+        faults=build_fault_reporter(EventLog(env.connection, env.clock), clock, settings),
+        settings=settings.orchestration,
+    )
+
+
 LOCAL_FILE = "local.txt"
 
 
-async def script_round(pull: _Pull, tmux_server: TmuxServer) -> None:
+async def script_round(pull: FeedbackPull, tmux_server: TmuxServer) -> None:
     await pull.request_changes()
     await set_role_script(
         tmux_server,
@@ -379,13 +460,13 @@ async def script_round(pull: _Pull, tmux_server: TmuxServer) -> None:
     await pull.until(pull.flow.done)
 
 
-async def publish_round(pull: _Pull, tmux_server: TmuxServer) -> None:
+async def publish_round(pull: FeedbackPull, tmux_server: TmuxServer) -> None:
     await script_round(pull, tmux_server)
     await pull.dispatch()
     await wait_until(lambda: pull.handled() and pull.waiting(), WAIT_SECONDS)
 
 
-async def lose_checkpoint_of(pull: _Pull, column: str) -> None:
+async def lose_checkpoint_of(pull: FeedbackPull, column: str) -> None:
     pull.env.connection.execute(f"""
         CREATE TRIGGER lose_checkpoint BEFORE UPDATE OF {column} ON feedback_rounds
         BEGIN SELECT RAISE(ABORT, 'checkpoint lost'); END
@@ -395,13 +476,13 @@ async def lose_checkpoint_of(pull: _Pull, column: str) -> None:
     pull.env.connection.execute("DROP TRIGGER lose_checkpoint")
 
 
-async def land_remotely(pull: _Pull, style: MergeStyle) -> None:
+async def land_remotely(pull: FeedbackPull, style: MergeStyle) -> None:
     assert pull.task.repo is not None
     merged = await merge_on_remote(pull.remote_dir, "main", pull.task.repo.branch, style)
     pull.github.merge(1, merged)
 
 
-async def task_state(pull: _Pull) -> tuple[bool, str | None]:
+async def task_state(pull: FeedbackPull) -> tuple[bool, str | None]:
     assert pull.task.repo is not None
     root = pull.env.project_root
     branch = pull.task.repo.branch
@@ -414,7 +495,7 @@ async def task_state(pull: _Pull) -> tuple[bool, str | None]:
     return present, exists.stdout.strip() or None
 
 
-async def on_remote_base(pull: _Pull, commit: str) -> bool:
+async def on_remote_base(pull: FeedbackPull, commit: str) -> bool:
     result = await RUNNER.run(
         [_GIT, _MERGE_BASE, _IS_ANCESTOR, commit, _MAIN],
         timeout=_GIT_TIMEOUT,

@@ -235,8 +235,10 @@ an empty integration shows zero commits rather than falling back to earlier repo
 records without these fields keep the previous derivation.
 
 **Pull-request** mode pushes the rebased task branch and creates or adopts a GitHub PR through
-`gh`. The Leader supplies a whole-change description, refreshed when adopting a PR and after each
-accepted feedback round. Refreshing can overwrite a manually edited description. The engine polls
+`gh`. The Leader supplies a whole-change commit subject and description. The PR title is that
+accepted subject followed by the task ID (`<subject> (T-n)`, the subject a local squash writes),
+and title and description are refreshed together when adopting a PR and after each accepted
+feedback or check repair round. Refreshing can overwrite a manually edited description. The engine polls
 its state, requires the merge to land, fetches the base from `repo.remote`
 and verifies the merge commit is on it. Before the task is marked done, the local base is synced to
 that verified tip and `refs/remotes/<remote>/<base>` is advanced to the same tip. The sync only
@@ -308,7 +310,8 @@ a feedback question with its questions and source links, offering an answer (rec
 cancellation, never a retry. An answer re-runs the analysis of the same frozen batch, shown only to
 that analysis; the Leader may ask again, which opens a new answerable question. A round needs a scheduler-owned slot: the
 task becomes `queued` and is dispatched like any other, then returns to the PR wait. The Engine
-never dismisses reviews, resolves threads, approves or merges. Before edits it records the remote
+never dismisses reviews, resolves threads or approves, and asks GitHub to merge only through the
+optional auto-merge below. Before edits it records the remote
 head and pushes with `--force-with-lease` on that value; preparing publication reruns the
 cleanliness and rebase/conflict controls, and a changed tip sends the round back to verification.
 PR state is checked before a round and immediately before each external publication. Reply
@@ -325,6 +328,46 @@ recorded as pushed (PR opening or published round) nor the PR's final head; unre
 evidence keeps it too. The decision is recomputed from events and Git, so restarts and repeated
 cleanup keep the work, which is never reported as landed. Planning PRs
 neither enqueue follow-ups nor implement product code.
+
+**Auto-merge** is off unless `orchestration.pr_auto_merge` is `true`; the setting is read when the
+engine starts and has effect only with `pr`. When it is on, each poll of an open pull request that
+the task may merge (waiting on it, not held, no feedback or check round unfinished) reads GitHub's
+`autoMergeRequest` and, unless GitHub already holds exactly the wanted squash subject and description,
+requests auto-merge: `gh pr merge <url> --auto --squash --subject <subject> (T-n) --body <description>
+--match-head-commit <head>`, where the head is the one Shikiru published. A stale request GitHub holds
+is withdrawn first. Each request is recorded in `events` as `pr_auto_merge_requested` before it is
+sent, so a request GitHub accepts is never lost to an engine stop before its reply; after a restart
+the next withdrawal reads GitHub and withdraws it. When GitHub's reply to a request is lost, Shikiru
+confirms on GitHub whether the request is held and reads the pull request state before treating it as
+refused. If the pull request merged while the reply was lost, its status goes through the normal
+landing path. Before a retry after backoff, Shikiru checks both the pull request and auto-merge state
+again. A refusal is recorded as `pr_auto_merge_cancelled` and escalates. The initial auto-merge state
+read checks task state during retries; when the task becomes non-final, Shikiru withdraws any remote
+request before returning. The PR wait checks for a hold again after the auto-merge operation and
+exits through `IntegrationHeld` before its next poll sleep, so resuming does not wait for the poll
+interval. Because the subject and description are the latest accepted ones, a round that republishes
+makes the next request carry the new head, subject and description.
+
+Withdrawal (`gh pr merge <url> --disable-auto`, recorded as `pr_auto_merge_cancelled`) is confirmed:
+after the disable call Shikiru reads GitHub again and fails if the request is still held. It happens
+synchronously before the flow hands a pull request over to a feedback or check repair round and before
+a held task stops, so no round step runs while GitHub may still merge. Request and withdrawal calls
+are serialized per task; after an enable call, Shikiru rereads the task and withdraws if it has become
+non-final. Withdrawal checks GitHub even when no local request event exists, covering an adopted pull
+request that already has auto-merge enabled. A failed or unconfirmed
+withdrawal escalates the task as integration blocked, and the round does not start. A separate
+reconciler withdraws requests of tasks that are held, cancelled or otherwise not waiting, including
+after an engine restart; its failures are engine faults retried with backoff. Closing a cancelled
+task's pull request withdraws the request first. A withdrawal is skipped when the pull request is no
+longer open, so a merge that landed first is handled as a merged pull request. The request is sent again
+once the round has published or the task resumes. GitHub decides when the requirements are met; Shikiru
+keeps polling and completes the task from the merged commit. A refused request (auto-merge not allowed,
+squash merging disabled, missing permission, a head that no longer matches) escalates the task as
+integration blocked with GitHub's reason. Shikiru never uses `--admin`, a direct merge or any other
+bypass of repository rules. The repository must allow auto-merge and squash merging, and required
+status checks must be configured on the base branch before the setting is enabled: without them GitHub
+considers a new pull request mergeable at once. Accepted limitation: feedback that arrives shortly
+before the last requirement is met may not be processed, because GitHub can merge first.
 
 In merge and squash modes a push service publishes locally integrated bases to `repo.remote`. Each completed
 integration is registered with the base's durable pending state in the same transaction that

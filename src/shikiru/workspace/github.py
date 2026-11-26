@@ -45,6 +45,13 @@ _GRAPHQL_ERRORS = "GitHub GraphQL returned errors"
 _REST_POST_METHOD = "POST"
 _NAMED_FIELD_FLAG = "-f"
 _TYPED_FIELD_FLAG = "-F"
+_AUTO_FLAG = "--auto"
+_DISABLE_AUTO_FLAG = "--disable-auto"
+_SQUASH_FLAG = "--squash"
+_SUBJECT_FLAG = "--subject"
+_TITLE_FLAG = "--title"
+_BODY_FLAG = "--body"
+_MATCH_HEAD_FLAG = "--match-head-commit"
 
 _REVIEW_COMMENT_FRAGMENT = """
 fragment ReviewComment on PullRequestReviewComment {
@@ -148,8 +155,11 @@ class _Key(StrEnum):
     """The JSON keys gh and GitHub responses use, named once."""
 
     AUTHOR = "author"
+    AUTO_MERGE = "autoMergeRequest"
     BODY = "body"
     CHECKS = "statusCheckRollup"
+    COMMIT_BODY = "commitBody"
+    COMMIT_HEADLINE = "commitHeadline"
     COMMENTS = "comments"
     CONCLUSION = "conclusion"
     CONTEXT = "context"
@@ -168,6 +178,7 @@ class _Key(StrEnum):
     LINE = "line"
     LOGIN = "login"
     MERGE_COMMIT = "mergeCommit"
+    MERGE_METHOD = "mergeMethod"
     MERGEABLE = "mergeable"
     NAME = "name"
     NODE = "node"
@@ -242,6 +253,15 @@ class PullRequestStatus:
     head_sha: str | None = None
     failing_checks: tuple[FailingCheck, ...] = ()
     evidence_error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AutoMergeRequest:
+    """An auto-merge request GitHub holds for a pull request: its method, subject and body."""
+
+    method: str
+    subject: str | None
+    body: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -531,6 +551,20 @@ def parse_pull_request_status(text: str) -> PullRequestStatus:
     )
 
 
+def parse_auto_merge_request(text: str) -> AutoMergeRequest | None:
+    """Return the auto-merge request that `gh pr view --json autoMergeRequest` printed, if any."""
+    view = _object(_json(text))
+    raw = _field(view, _Key.AUTO_MERGE)
+    if raw is None:
+        return None
+    request = _object(raw)
+    return AutoMergeRequest(
+        method=_text(request, _Key.MERGE_METHOD),
+        subject=_optional_text(request, _Key.COMMIT_HEADLINE),
+        body=_optional_text(request, _Key.COMMIT_BODY) or "",
+    )
+
+
 def _malformed(key: _Key) -> ShikiruError:
     return ShikiruError(f"{_MALFORMED_RESPONSE}: {key.value}")
 
@@ -779,9 +813,36 @@ class GitHub:
             raise ShikiruError(message)
         return lines[-1]
 
-    async def edit_pull_request(self, repo_dir: Path, url: str, *, body: str) -> None:
-        """Replace the description of the pull request at `url`."""
-        await self._run(repo_dir, "pr", "edit", url, "--body", body)
+    async def edit_pull_request(self, repo_dir: Path, url: str, *, title: str, body: str) -> None:
+        """Replace the title and description of the pull request at `url`."""
+        await self._run(repo_dir, "pr", "edit", url, _TITLE_FLAG, title, _BODY_FLAG, body)
+
+    async def request_auto_merge(
+        self, repo_dir: Path, url: str, *, head: str, subject: str, body: str
+    ) -> None:
+        """Ask GitHub to squash-merge the pull request at `url` once its requirements are met.
+
+        The squash commit takes `subject` and `body`, and the request applies only while the head
+        is still `head`. It never bypasses repository rules.
+        """
+        await self._run(
+            repo_dir,
+            "pr",
+            "merge",
+            url,
+            _AUTO_FLAG,
+            _SQUASH_FLAG,
+            _SUBJECT_FLAG,
+            subject,
+            _BODY_FLAG,
+            body,
+            _MATCH_HEAD_FLAG,
+            head,
+        )
+
+    async def cancel_auto_merge(self, repo_dir: Path, url: str) -> None:
+        """Withdraw a pending auto-merge request of the pull request at `url`."""
+        await self._run(repo_dir, "pr", "merge", url, _DISABLE_AUTO_FLAG)
 
     async def pull_request_status(self, repo_dir: Path, url: str) -> PullRequestStatus:
         """Return the state, merge commit, conflict and check evidence of the PR at `url`.
@@ -794,6 +855,11 @@ class GitHub:
         fields = (_Key.STATE, _Key.MERGE_COMMIT, _Key.MERGEABLE, _Key.CHECKS, _Key.HEAD_SHA)
         result = await self._run(repo_dir, "pr", "view", url, "--json", ",".join(fields))
         return parse_pull_request_status(result.stdout)
+
+    async def auto_merge_request(self, repo_dir: Path, url: str) -> AutoMergeRequest | None:
+        """Return the auto-merge request GitHub currently holds for the PR at `url`, if any."""
+        result = await self._run(repo_dir, "pr", "view", url, "--json", _Key.AUTO_MERGE)
+        return parse_auto_merge_request(result.stdout)
 
     async def close_pull_request(self, repo_dir: Path, url: str) -> None:
         """Close the open pull request at `url` without merging it."""

@@ -45,6 +45,8 @@ class EventKind(StrEnum):
     INTEGRATION_WAITING = auto()
     PR_OPENED = auto()
     PR_WITHDRAWN = auto()
+    PR_AUTO_MERGE_REQUESTED = auto()
+    PR_AUTO_MERGE_CANCELLED = auto()
     FEEDBACK_STARTED = auto()
     FEEDBACK_REBASE_STARTED = auto()
     FEEDBACK_PREPARED = auto()

@@ -135,6 +135,7 @@ _READ_ONLY_DIRECTORY = 0o500
 _WRITABLE_DIRECTORY = 0o700
 _SECOND_RUNG = Rung(agent="fake", model="fake-2", effort=None)
 _FAILED_REPORT_EXIT_CODE = 2
+_POLLS_BEFORE_ASSERTING = 2
 _PANE_COMMAND_FORMAT = "#{pane_current_command}"
 _FAKE_REPL_PROCESS = "python"
 _TAKEOVER_REPL_WAIT_SECONDS = 15.0
@@ -1285,6 +1286,57 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
     finally:
         await stop_engine(engine_task, clock)
         connection.close()
+
+
+def _status_polls(fake_github: FakeGitHub) -> int:
+    """Count the pull request wait's status reads, the `pr view` calls that read its state."""
+    return sum(
+        any(argument.startswith("state,") for argument in argv) for argv in fake_github.argv("view")
+    )
+
+
+@pytest.mark.parametrize("enabled", [False, True], ids=["disabled", "enabled"])
+async def test_the_auto_merge_setting_decides_whether_the_engine_requests_a_merge(
+    enabled: bool,
+    tmp_path: Path,
+    tmux_server: TmuxServer,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    remote_dir = tmp_path_factory.mktemp("remote") / "origin.git"
+    settings = engine_settings(max_cpu_pct=CPU_UNCAPPED_PCT)
+    orchestration = settings.orchestration.model_copy(
+        update={"integration": "pr", "pr_auto_merge": enabled}
+    )
+    settings = settings.model_copy(update={"orchestration": orchestration})
+    async with _operator_session(
+        tmp_path,
+        tmux_server,
+        settings=settings,
+        remote_dir=remote_dir,
+        implementer_script=[{"kind": "accept"}, {"kind": "stall"}],
+    ) as (operator, task_id, _run):
+
+        def waiting_on_pull_request() -> bool:
+            task = operator.task(task_id)
+            return (
+                len(fake_github.pull_requests()) == 1
+                and task.status is Status.INTEGRATING
+                and task.wait_reason == WaitReason.PR_OPEN.value
+            )
+
+        await operator.advance_until(waiting_on_pull_request)
+        await operator.advance_until(lambda: _status_polls(fake_github) >= _POLLS_BEFORE_ASSERTING)
+        requests = [argv for argv in fake_github.argv("merge") if "--auto" in argv]
+
+        if not enabled:
+            assert requests == []
+            assert fake_github.auto_merge(1) is None
+            return
+        assert len(requests) == 1
+        request = fake_github.auto_merge(1)
+        assert request is not None
+        assert request["method"] == "SQUASH"
 
 
 async def test_take_over_repeats_while_the_pull_request_waits_for_its_merge(

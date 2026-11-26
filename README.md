@@ -248,8 +248,9 @@ Shikiru never bypasses repository review policy. Task commits follow the project
 convention, or Conventional Commits, and carry a `Task: T-n` trailer.
 
 With `pr`, `orchestration.pr_feedback` picks which reviews start a feedback round: `changes_requested`
-(default) or `any_comment`. Shikiru never dismisses reviews, resolves threads, approves or merges. A PR
-closed without merge escalates; only an explicit retry opens a new PR. Once all checks have settled,
+(default) or `any_comment`. Shikiru never dismisses reviews, resolves threads or approves; it merges
+only through the optional auto-merge below. A PR closed without merge escalates; only an explicit
+retry opens a new PR. Once all checks have settled,
 Shikiru can analyse and repair failing checks, verify and publish a fix, and wait for checks on the
 new head. It escalates demonstrated external failures and exhausted repair attempts with their
 evidence. A pending check keeps it waiting. `orchestration.pr_check_max_attempts` (default `3`, per
@@ -257,6 +258,28 @@ project) bounds the repair rounds. The task's dashboard briefing and Results fol
 detail (human and `--json`) and the MCP `get_task` result show the active (or interrupted) repair
 attempt and stage, the failing checks with their detail links, and — once attempts are exhausted —
 the exhaustion reason with the exact failing checks and detail links recorded by that escalation.
+
+A pull request's title is the Leader's accepted commit subject followed by the task ID, for example
+`feat: add retries (T-12)`, and its title and description are refreshed after each accepted feedback or
+check repair round.
+
+Set `orchestration.pr_auto_merge = true` (default `false`; configuration file only; effective only with
+`pr`) to have Shikiru ask GitHub to squash-merge each pull request once the base branch's requirements
+are met. The squash commit takes the same subject and the whole-change description, so a
+`BREAKING CHANGE:` line survives on the base branch. Shikiru withdraws the request while the task is
+held or paused, cancelled, or has a feedback or check repair round in progress. It confirms on GitHub
+that the request is gone before a round starts, and a withdrawal that cannot be confirmed escalates the
+task instead of letting the round run. It requests the merge again once the round has published or the
+task resumes. It then completes the task from the merged commit as
+it does without the setting. Before enabling it:
+
+- the repository must allow auto-merge and squash merging;
+- required status checks must be configured on the base branch, because without them GitHub considers
+  a new pull request mergeable at once.
+
+If GitHub refuses the request (auto-merge not allowed, squash merging disabled, missing permission),
+the task escalates with GitHub's reason; Shikiru never merges directly as a substitute. Feedback that
+arrives shortly before the last requirement is met may not be processed, because GitHub can merge first.
 
 If the local base cannot fast-forward to the merged remote tip, the task escalates as integration
 blocked and your uncommitted work is left untouched. Resolve it, then retry.

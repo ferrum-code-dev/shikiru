@@ -132,7 +132,6 @@ def _local_merge(
 def _request(task: Task, state: RepoState, task_root: Path) -> MergeRequest:
     return MergeRequest(
         task_id=task.id,
-        title=task.title,
         subject="feat: change",
         repo=state,
         task_root=task_root,

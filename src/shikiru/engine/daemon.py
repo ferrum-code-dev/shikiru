@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from shikiru.engine.layout_guard import LayoutGuard
     from shikiru.engine.notification_delivery import NotificationDelivery
     from shikiru.engine.notification_feed import NotificationFeed
+    from shikiru.engine.pull_request_auto_merge import AutoMergeReconciler
     from shikiru.engine.pull_request_closing import PullRequestClosing
     from shikiru.engine.push_service import PushService
     from shikiru.engine.reconcile import Reconciler
@@ -183,6 +184,7 @@ class Engine:
         retention: Retention,
         retention_guard: TickGuard,
         pull_request_closing: PullRequestClosing,
+        auto_merge_reconciler: AutoMergeReconciler | None,
         push_service: PushService | None,
         settings: Settings,
         clock: Clock,
@@ -212,6 +214,7 @@ class Engine:
         self._retention = retention
         self._retention_guard = retention_guard
         self._pull_request_closing = pull_request_closing
+        self._auto_merge_reconciler = auto_merge_reconciler
         self._push_service = push_service
         self._settings = settings
         self._clock = clock
@@ -244,12 +247,14 @@ class Engine:
             await self._until_done(self._restore_notifications)
             self._notifications.start()
             self._pull_request_closing.start()
+            self._start_auto_merge()
             await self._until_done(self._record_start)
             next_tick = self._clock.now()
             while not self._task_supervisor.stop_requested:
                 await self._task_supervisor.supervise(self._logger)
                 self._notifications.supervise(self._logger)
                 self._pull_request_closing.supervise(self._logger)
+                self._supervise_auto_merge()
                 if not self._reconciled:
                     await self._tick_guard.attempt(self._prepare)
                 commands_changed = bool(await self._command_guard.attempt(self._process_commands))
@@ -350,6 +355,7 @@ class Engine:
                 self._notifications.shutdown,
                 self._persist_notification_cursor,
                 self._pull_request_closing.shutdown,
+                self._shutdown_auto_merge,
                 self._shutdown_pushes,
                 self._deliver_stop,
                 self._scheduler.shutdown,
@@ -382,6 +388,18 @@ class Engine:
 
     async def _persist_notification_cursor(self) -> None:
         self._notification_feed.persist()
+
+    def _start_auto_merge(self) -> None:
+        if self._auto_merge_reconciler is not None:
+            self._auto_merge_reconciler.start()
+
+    def _supervise_auto_merge(self) -> None:
+        if self._auto_merge_reconciler is not None:
+            self._auto_merge_reconciler.supervise(self._logger)
+
+    async def _shutdown_auto_merge(self) -> None:
+        if self._auto_merge_reconciler is not None:
+            await self._auto_merge_reconciler.shutdown()
 
     async def _shutdown_pushes(self) -> None:
         if self._push_service is not None:

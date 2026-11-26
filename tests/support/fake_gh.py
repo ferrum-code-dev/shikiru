@@ -35,6 +35,22 @@ GRAPHQL_BUDGET = "graphql"
 POST_BUDGET = "post"
 LOST_POST_BUDGET = "lost-post"
 CLOSE_ON_GRAPHQL_BUDGET = "close-on-graphql"
+AUTO_MERGE_BUDGET = "auto-merge"
+LOST_AUTO_MERGE_BUDGET = "lost-auto-merge"
+WITHDRAW_BUDGET = "withdraw"
+AUTO_MERGE_READ_BUDGET = "view-auto-merge"
+STATUS_READ_BUDGET = "view-status"
+ACCEPTED_AUTO_MERGE_HOLD = "merge-accepted"
+AUTO_FLAG = "--auto"
+AUTO_MERGE_REQUEST_FIELD = "autoMergeRequest"
+DISABLE_AUTO_FLAG = "--disable-auto"
+SQUASH_FLAG = "--squash"
+SUBJECT_FLAG = "--subject"
+TITLE_FLAG = "--title"
+BODY_FLAG = "--body"
+MATCH_HEAD_FLAG = "--match-head-commit"
+_AUTO_MERGE_REFUSED = "auto-merge is not allowed for this repository"
+_AUTO_MERGE_FLAGS = (AUTO_FLAG, DISABLE_AUTO_FLAG, SQUASH_FLAG)
 PAGE_LIMIT = 2
 FAKE_LOGIN = "shikiru-fake"
 FAKE_TIMESTAMP = "2026-01-02T03:04:05Z"
@@ -145,6 +161,7 @@ def _create(state: Path, options: list[str]) -> str:
         "title": values["--title"],
         "body": values["--body"],
         "headRefOid": "head000000000000000000000000000000000001",
+        "autoMerge": None,
         "reviews": [],
         "reviewThreads": [],
         "conversationComments": [],
@@ -166,10 +183,29 @@ def _list(state: Path, options: list[str]) -> str:
     return json.dumps(matching)
 
 
+def _auto_merge_request_view(auto_merge: dict[str, Any] | None) -> dict[str, Any] | None:
+    if auto_merge is None:
+        return None
+    return {
+        "mergeMethod": auto_merge["method"],
+        "commitHeadline": auto_merge["subject"],
+        "commitBody": auto_merge["body"] or None,
+    }
+
+
 def _view(state: Path, url: str, options: list[str]) -> str:
     fields = options[options.index("--json") + 1].split(",")
+    operation = AUTO_MERGE_READ_BUDGET if AUTO_MERGE_REQUEST_FIELD in fields else STATUS_READ_BUDGET
+    if _failing(state, operation):
+        raise _GhError(_NETWORK_DOWN)
     record = json.loads(_pull_request_path(state, url.removeprefix(URL_PREFIX)).read_text())
-    return json.dumps({field: record[field] for field in fields})
+    values = {
+        field: _auto_merge_request_view(record["autoMerge"])
+        if field == AUTO_MERGE_REQUEST_FIELD
+        else record[field]
+        for field in fields
+    }
+    return json.dumps(values)
 
 
 def _close(state: Path, url: str) -> str:
@@ -181,8 +217,42 @@ def _close(state: Path, url: str) -> str:
 
 def _edit(state: Path, url: str, options: list[str]) -> str:
     path = _pull_request_path(state, url.removeprefix(URL_PREFIX))
-    write_record(path, {**json.loads(path.read_text()), "body": _flag_values(options)["--body"]})
+    values = _flag_values(options)
+    record = json.loads(path.read_text())
+    record["body"] = values[BODY_FLAG]
+    if TITLE_FLAG in values:
+        record["title"] = values[TITLE_FLAG]
+    write_record(path, record)
     _hold(state, "edit")
+    return ""
+
+
+def _merge(state: Path, url: str, options: list[str]) -> str:
+    path = _pull_request_path(state, url.removeprefix(URL_PREFIX))
+    record = json.loads(path.read_text())
+    if DISABLE_AUTO_FLAG in options:
+        if _failing(state, WITHDRAW_BUDGET):
+            raise _GhError(_NETWORK_DOWN)
+        record["autoMerge"] = None
+    elif AUTO_FLAG in options:
+        if _failing(state, AUTO_MERGE_BUDGET):
+            raise _GhError(_AUTO_MERGE_REFUSED)
+        values = _flag_values([option for option in options if option not in _AUTO_MERGE_FLAGS])
+        _hold(state, "merge")
+        record["autoMerge"] = {
+            "method": "SQUASH",
+            "subject": values[SUBJECT_FLAG],
+            "body": values[BODY_FLAG],
+            "head": values[MATCH_HEAD_FLAG],
+        }
+        write_record(path, record)
+        _hold(state, ACCEPTED_AUTO_MERGE_HOLD)
+        if _failing(state, LOST_AUTO_MERGE_BUDGET):
+            raise _GhError(_LOST_AFTER_RECORD)
+        return ""
+    else:
+        raise _unsupported(["pr", "merge", *options])
+    write_record(path, record)
     return ""
 
 
@@ -372,6 +442,10 @@ def _serve(state: Path, args: list[str]) -> str:
         return _api(state, _ApiRequest.parse(args))
     if args[:1] == [PR_COMMAND] and _failing(state, args[1]):
         raise _GhError(_NETWORK_DOWN)
+    return _pull_request_command(state, args)
+
+
+def _pull_request_command(state: Path, args: list[str]) -> str:
     match args:
         case ["pr", "create", *options]:
             return _create(state, options)
@@ -383,6 +457,8 @@ def _serve(state: Path, args: list[str]) -> str:
             return _close(state, url)
         case ["pr", "edit", url, *options]:
             return _edit(state, url, options)
+        case ["pr", "merge", url, *options]:
+            return _merge(state, url, options)
         case _:
             raise _unsupported(args)
 
@@ -393,7 +469,9 @@ def main(argv: list[str]) -> int:
 
     While the `hold-create` FIFO exists, `pr create` records its pull request and then blocks
     before printing it, as if the engine died between opening and recording it; `hold-close`
-    blocks `pr close` before it acts. A `fail-<operation>` file holding a count makes that many
+    blocks `pr close` before it acts; `hold-merge` blocks an auto-merge request before GitHub
+    accepts it and `hold-merge-accepted` blocks it after acceptance. A `fail-<operation>` file
+    holding a count makes that many
     calls of the operation fail, as a network blip does: `pr <subcommand>`, `graphql`, `post`
     (before it records anything) or `lost-post` (after it records the comment)."""
     state = Path(argv[0])

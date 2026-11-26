@@ -65,6 +65,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import ComplexityName, PullRequestFeedbackScope, Settings
     from shikiru.domain.tasks import Mode, Task
+    from shikiru.engine.pull_request_auto_merge import PullRequestAutoMerge
     from shikiru.engine.titles import TaskTitles
     from shikiru.store.events import EventLog
     from shikiru.workspace.base_refs import BaseRefs
@@ -181,6 +182,7 @@ def build_flow(
     lock: asyncio.Lock | None = None,
     registry: AgentRegistry | None = None,
     feedback_store: FeedbackStore | None = None,
+    auto_merge: PullRequestAutoMerge | None = None,
 ) -> FlowEnv:
     """Build one flow and its production turn collaborators with fake CLI processes.
 
@@ -313,6 +315,8 @@ def build_flow(
             project_root=env.project_root,
             remote=settings.repo.remote,
             settings=settings.orchestration,
+            presentation=history.pull_request_metadata,
+            auto_merge=auto_merge,
         )
         if feedback_store is not None
         else None

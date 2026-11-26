@@ -405,3 +405,24 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [x] Remove the obsolete Codex sandbox check from the Doctor reference.
 
 - [x] Synchronize release smoke ladder navigation with each visible scope before opening Helper.
+
+### Optional auto-merge for pull requests (T-203)
+
+- [x] Title pull requests with the accepted commit subject followed by the task ID, refreshed on adoption and after each accepted feedback or check repair round.
+  - Acceptance: the title is `<subject> (T-n)` regardless of the setting; a feedback or check repair round that publishes refreshes it together with the description.
+- [x] Request GitHub auto-merge when `orchestration.pr_auto_merge` is `true` and withdraw it while the task is held, cancelled or has an unfinished round.
+  - Acceptance: `gh pr merge <url> --auto --squash --subject --body --match-head-commit` for the published head; idempotent across restarts and adopted PRs; the request follows a republished round; a refusal escalates with GitHub's reason; nothing is sent when the setting is `false`.
+- [x] Document the setting, the repository prerequisites and the accepted limitation in `README.md` and `docs/design.md`.
+- [x] Cover the `gh` boundary with the fake `gh`: request argv, republish, withdrawal on hold, cancellation and an active round, refusal, and the title.
+- [x] Rework after review: confirm withdrawal before a feedback or check repair round starts, and reconcile a request GitHub accepted whose reply was lost.
+  - Acceptance: a round does not start while its withdrawal is unconfirmed (the task escalates); a withdrawal reads GitHub's `autoMergeRequest` and fails if the request is still held; a request is recorded before it is sent and a lost reply is confirmed on GitHub rather than refused; gh-boundary tests cover both and a parser unit test covers the held request.
+- [x] Rework after review: serialize in-flight enables with withdrawals, recheck task state after enable, and withdraw adopted GitHub requests before an active round.
+  - Acceptance: when a hold arrives during `gh pr merge --auto`, the accepted request is withdrawn before the task lock is released; with no local request event, first-poll feedback still withdraws the PR's existing GitHub request.
+- [x] Rework after third review: accept a null GitHub commit headline as a valid nonmatch and prove restart withdrawal after remote acceptance but before the `gh` call completes.
+  - Acceptance: parser tests accept `commitHeadline: null`; the fake `gh` test interrupts after recording auto-merge, restarts with the task held, and observes the request withdrawn.
+- [x] Rework after integration review: throttle unchanged non-final reconciliation and retry auto-merge GitHub reads, enables and withdrawals with bounded backoff and fault reporting.
+  - Acceptance: repeated held sweeps make no GitHub reads before `network.pr_poll_seconds`; each affected read and operation recovers after one transient failure; exhausted attempts surface as `IntegrationBlocked` with the cause; enable retries confirm remote state before resending.
+- [x] Rework after follow-up review: stop request-state retries safely when a task becomes held, and treat an already merged PR as landed after an ambiguous enable.
+  - Acceptance: a hold during a failed auto-merge read withdraws any existing remote request; a lost enable reply after immediate merge enters normal completion; an ambiguous retry checks PR and auto-merge state after backoff.
+- [x] Rework after follow-up review: exit the PR wait immediately when a hold is detected after an auto-merge state retry.
+  - Acceptance: a flow-level test pauses during a failed state read, verifies withdrawal and flow completion without advancing the PR poll interval, then resumes and observes auto-merge requested again.

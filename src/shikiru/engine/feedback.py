@@ -38,6 +38,7 @@ from shikiru.domain.reports import (
     FeedbackRework,
     FeedbackVerdict,
     ReportKind,
+    task_commit_subject,
 )
 from shikiru.domain.tasks import EscalationReason, Role
 from shikiru.engine.integration import (
@@ -58,6 +59,8 @@ if TYPE_CHECKING:
 
     from shikiru.config.settings import OrchestrationConfig
     from shikiru.domain.tasks import Task
+    from shikiru.engine.integration import IntegrationMetadata
+    from shikiru.engine.pull_request_auto_merge import PullRequestAutoMerge
     from shikiru.engine.step_runner import StepRunner
     from shikiru.store.events import EventLog
     from shikiru.store.feedback import FeedbackStore
@@ -129,10 +132,15 @@ class FeedbackRounds:
         project_root: Path,
         remote: str,
         settings: OrchestrationConfig,
+        presentation: Callable[[Task], IntegrationMetadata],
+        auto_merge: PullRequestAutoMerge | None = None,
     ) -> None:
         """Run turns through `steps`, publish to `remote` of `project_root`, and reply via `github`.
 
-        `settings.max_iterations` bounds the implementation attempts of one round.
+        `settings.max_iterations` bounds the implementation attempts of one round. `presentation`
+        gives the accepted subject that titles the pull request once the round's changes are sent.
+        With `auto_merge`, a round first withdraws any auto-merge request, and cannot proceed if
+        the withdrawal is not confirmed.
         """
         self._store = store
         self._steps = steps
@@ -143,6 +151,8 @@ class FeedbackRounds:
         self._project_root = project_root
         self._remote = remote
         self._settings = settings
+        self._presentation = presentation
+        self._auto_merge = auto_merge
 
     def pending(self, task_id: str) -> bool:
         """Return whether `task_id` has an unfinished feedback round."""
@@ -159,6 +169,8 @@ class FeedbackRounds:
         active = self._store.active(task.id)
         if active is None:
             return
+        if self._auto_merge is not None:
+            await self._auto_merge.withdraw(task.id, active.pull_request_url)
         if active.blocked:
             self._store.reset_after_retry(active.id, active.stage)
         try:
@@ -468,9 +480,11 @@ class FeedbackRounds:
 
     async def _reply(self, active: FeedbackRound) -> None:
         self._require_not_held(active.task_id)
+        subject = self._presentation(self._tasks.require(active.task_id)).subject
+        title = task_commit_subject(subject, active.task_id)
         try:
             await self._github.edit_pull_request(
-                self._project_root, active.pull_request_url, body=active.pr_description
+                self._project_root, active.pull_request_url, title=title, body=active.pr_description
             )
         except ShikiruError as error:
             raise self._blocked(
