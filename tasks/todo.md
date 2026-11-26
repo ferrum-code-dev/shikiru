@@ -424,3 +424,5 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
   - Acceptance: repeated held sweeps make no GitHub reads before `network.pr_poll_seconds`; each affected read and operation recovers after one transient failure; exhausted attempts surface as `IntegrationBlocked` with the cause; enable retries confirm remote state before resending.
 - [x] Rework after follow-up review: stop request-state retries safely when a task becomes held, and treat an already merged PR as landed after an ambiguous enable.
   - Acceptance: a hold during a failed auto-merge read withdraws any existing remote request; a lost enable reply after immediate merge enters normal completion; an ambiguous retry checks PR and auto-merge state after backoff.
+- [x] Rework after follow-up review: exit the PR wait immediately when a hold is detected after an auto-merge state retry.
+  - Acceptance: a flow-level test pauses during a failed state read, verifies withdrawal and flow completion without advancing the PR poll interval, then resumes and observes auto-merge requested again.

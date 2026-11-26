@@ -754,6 +754,9 @@ class PullRequest:
             if requested_status is not None and requested_status.state is not PullRequestState.OPEN:
                 status = requested_status
                 break
+            if held():
+                await self._withdraw_auto_merge(task_id, opened.url)
+                raise IntegrationHeld
             await self._clock.sleep(self._settings.network.pr_poll_seconds)
         self._tasks.set_wait_reason(task_id, None)
         if status.state is PullRequestState.CLOSED:

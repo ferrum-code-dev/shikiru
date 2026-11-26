@@ -343,8 +343,10 @@ refused. If the pull request merged while the reply was lost, its status goes th
 landing path. Before a retry after backoff, Shikiru checks both the pull request and auto-merge state
 again. A refusal is recorded as `pr_auto_merge_cancelled` and escalates. The initial auto-merge state
 read checks task state during retries; when the task becomes non-final, Shikiru withdraws any remote
-request before returning. Because the subject and description are the latest accepted ones, a round
-that republishes makes the next request carry the new head, subject and description.
+request before returning. The PR wait checks for a hold again after the auto-merge operation and
+exits through `IntegrationHeld` before its next poll sleep, so resuming does not wait for the poll
+interval. Because the subject and description are the latest accepted ones, a round that republishes
+makes the next request carry the new head, subject and description.
 
 Withdrawal (`gh pr merge <url> --disable-auto`, recorded as `pr_auto_merge_cancelled`) is confirmed:
 after the disable call Shikiru reads GitHub again and fails if the request is still held. It happens

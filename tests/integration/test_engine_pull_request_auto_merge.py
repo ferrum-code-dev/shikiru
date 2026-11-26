@@ -384,32 +384,50 @@ async def test_a_hold_ends_the_enable_retry_wait_without_sending_another_request
     assert not pull.escalated()
 
 
-async def test_a_hold_during_an_auto_merge_read_retry_withdraws_the_remote_request(
+async def test_a_hold_during_an_auto_merge_read_retry_withdraws_and_exits_the_flow(
     engine_env: EngineEnv,
     fake_github: FakeGitHub,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    pull = await open_pull(
-        engine_env, fake_github, tmp_path_factory, auto_merge=True, auto_merge_attempts=2
-    )
+    pull = await open_pull(engine_env, fake_github, tmp_path_factory, auto_merge=False)
     await pull.stop()
-    fake_github.fail_next(AUTO_MERGE_READ_BUDGET, 1)
-    requests = len(_enable_requests(fake_github))
-    operation = asyncio.create_task(
-        _auto_merge_service(pull).request(
-            pull.task, f"{URL_PREFIX}{_PULL_NUMBER}", await pull.remote_branch()
-        )
+    head = await pull.remote_branch()
+    fake_github.set_fields(
+        _PULL_NUMBER,
+        autoMerge={
+            "method": "SQUASH",
+            "subject": None,
+            "body": "external description",
+            "head": head,
+        },
     )
+    pull.auto_merge = make_auto_merge(
+        engine_env, enabled=True, settings=pull.settings, clock=pull.clock
+    )
+    fake_github.fail_next(AUTO_MERGE_READ_BUDGET, 1)
+    reads = len(_auto_merge_reads(fake_github))
 
-    await wait_until(pull.clock.has_pending_sleep, WAIT_SECONDS)
+    await pull.restart()
+    await wait_until(
+        lambda: len(_auto_merge_reads(fake_github)) == reads + 1 and pull.clock.has_pending_sleep(),
+        WAIT_SECONDS,
+    )
+    held_at = pull.clock.now()
     engine_env.tasks.set_holds(pull.task.id, frozenset({Hold.PAUSED}))
     pull.clock.advance_to_next_sleeper()
-    await operation
+    await wait_until(pull.flow.done, WAIT_SECONDS)
 
+    assert (pull.clock.now() - held_at).total_seconds() < (
+        pull.settings.orchestration.network.pr_poll_seconds
+    )
     assert fake_github.auto_merge(_PULL_NUMBER) is None
-    assert len(_enable_requests(fake_github)) == requests
     assert len(_disable_requests(fake_github)) == 1
     assert not pull.escalated()
+
+    engine_env.tasks.set_holds(pull.task.id, frozenset())
+    await pull.restart()
+    await wait_until(lambda: fake_github.auto_merge(_PULL_NUMBER) is not None, WAIT_SECONDS)
+    assert len(_enable_requests(fake_github)) == 1
     await pull.stop()
 
 
