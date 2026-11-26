@@ -401,3 +401,5 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 
 - [x] Default new and resumed Codex turns to unsandboxed permissions, preserve explicit arguments, update Doctor and document filesystem and network access.
 - [x] Cover command construction and explicit arguments; extend the opt-in live worktree/resume test to check writes outside the worktree.
+- [ ] Verify the live test with authenticated Codex credentials: the worktree-local Codex home received HTTP 401 without credentials.
+- [x] Remove the obsolete Codex sandbox check from the Doctor reference.
