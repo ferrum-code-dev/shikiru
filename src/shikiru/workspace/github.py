@@ -45,6 +45,13 @@ _GRAPHQL_ERRORS = "GitHub GraphQL returned errors"
 _REST_POST_METHOD = "POST"
 _NAMED_FIELD_FLAG = "-f"
 _TYPED_FIELD_FLAG = "-F"
+_AUTO_FLAG = "--auto"
+_DISABLE_AUTO_FLAG = "--disable-auto"
+_SQUASH_FLAG = "--squash"
+_SUBJECT_FLAG = "--subject"
+_TITLE_FLAG = "--title"
+_BODY_FLAG = "--body"
+_MATCH_HEAD_FLAG = "--match-head-commit"
 
 _REVIEW_COMMENT_FRAGMENT = """
 fragment ReviewComment on PullRequestReviewComment {
@@ -779,9 +786,36 @@ class GitHub:
             raise ShikiruError(message)
         return lines[-1]
 
-    async def edit_pull_request(self, repo_dir: Path, url: str, *, body: str) -> None:
-        """Replace the description of the pull request at `url`."""
-        await self._run(repo_dir, "pr", "edit", url, "--body", body)
+    async def edit_pull_request(self, repo_dir: Path, url: str, *, title: str, body: str) -> None:
+        """Replace the title and description of the pull request at `url`."""
+        await self._run(repo_dir, "pr", "edit", url, _TITLE_FLAG, title, _BODY_FLAG, body)
+
+    async def request_auto_merge(
+        self, repo_dir: Path, url: str, *, head: str, subject: str, body: str
+    ) -> None:
+        """Ask GitHub to squash-merge the pull request at `url` once its requirements are met.
+
+        The squash commit takes `subject` and `body`, and the request applies only while the head
+        is still `head`. It never bypasses repository rules.
+        """
+        await self._run(
+            repo_dir,
+            "pr",
+            "merge",
+            url,
+            _AUTO_FLAG,
+            _SQUASH_FLAG,
+            _SUBJECT_FLAG,
+            subject,
+            _BODY_FLAG,
+            body,
+            _MATCH_HEAD_FLAG,
+            head,
+        )
+
+    async def cancel_auto_merge(self, repo_dir: Path, url: str) -> None:
+        """Withdraw a pending auto-merge request of the pull request at `url`."""
+        await self._run(repo_dir, "pr", "merge", url, _DISABLE_AUTO_FLAG)
 
     async def pull_request_status(self, repo_dir: Path, url: str) -> PullRequestStatus:
         """Return the state, merge commit, conflict and check evidence of the PR at `url`.

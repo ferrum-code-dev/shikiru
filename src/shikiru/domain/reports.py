@@ -44,6 +44,11 @@ _TaskReference = Annotated[str, StringConstraints(pattern=DEPENDS_ON_PATTERN)]
 _Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
+def task_commit_subject(subject: str, task_id: str) -> str:
+    """Return the commit subject of a task's whole change: its accepted subject and task ID."""
+    return f"{subject} ({task_id})"
+
+
 def resolve_dependency(reference: str, sibling_ids: Sequence[str]) -> str:
     """Replace a report-local sibling reference with the assigned task id."""
     if reference.startswith(SIBLING_REFERENCE_PREFIX):

@@ -405,3 +405,12 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [x] Remove the obsolete Codex sandbox check from the Doctor reference.
 
 - [x] Synchronize release smoke ladder navigation with each visible scope before opening Helper.
+
+### Optional auto-merge for pull requests (T-203)
+
+- [x] Title pull requests with the accepted commit subject followed by the task ID, refreshed on adoption and after each accepted feedback or check repair round.
+  - Acceptance: the title is `<subject> (T-n)` regardless of the setting; a feedback or check repair round that publishes refreshes it together with the description.
+- [x] Request GitHub auto-merge when `orchestration.pr_auto_merge` is `true` and withdraw it while the task is held, cancelled or has an unfinished round.
+  - Acceptance: `gh pr merge <url> --auto --squash --subject --body --match-head-commit` for the published head; idempotent across restarts and adopted PRs; the request follows a republished round; a refusal escalates with GitHub's reason; nothing is sent when the setting is `false`.
+- [x] Document the setting, the repository prerequisites and the accepted limitation in `README.md` and `docs/design.md`.
+- [x] Cover the `gh` boundary with the fake `gh`: request argv, republish, withdrawal on hold, cancellation and an active round, refusal, and the title.

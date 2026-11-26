@@ -56,6 +56,7 @@ _RETRY_SLOT = 1
 _BASE_CHANGE_FILENAME = "base_moved.txt"
 _LOCAL_ONLY = "local_only.txt"
 _LOCAL_EDIT = "my notes\n"
+_ACCEPTED_SUBJECT = "feat: fake change"
 _RUNNER = SubprocessRunner()
 
 
@@ -241,7 +242,7 @@ async def _assert_landed(
     for pull in pulls:
         assert pull["head"] == task.repo.branch
         assert pull["base"] == task.repo.base
-        assert pull["title"] == task.title
+        assert pull["title"] == f"{_ACCEPTED_SUBJECT} ({task.id})"
         assert pull["body"] != final.summary
         assert "## What changed and why" in pull["body"]
         assert "## Task" in pull["body"]

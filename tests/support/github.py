@@ -60,13 +60,19 @@ class FakeGitHub:
         """Make the next `calls` calls of `operation` fail like a network blip.
 
         Operations are `pr <subcommand>` names, `graphql`, `post` (fails before recording the
-        comment) and `lost-post` (records the comment, then fails).
+        comment), `lost-post` (records the comment, then fails) and `auto-merge` (GitHub refuses
+        to enable auto-merge).
         """
         (self.state / f"{fake_gh.FAIL_PREFIX}{operation}").write_text(str(calls))
 
     def close_on_next_graphql(self) -> None:
         """Close every pull request just before the next GraphQL read is answered."""
         (self.state / f"{fake_gh.FAIL_PREFIX}{fake_gh.CLOSE_ON_GRAPHQL_BUDGET}").write_text("1")
+
+    def auto_merge(self, number: int) -> dict[str, Any] | None:
+        """The auto-merge request GitHub holds for pull request `number`, if one is pending."""
+        record = json.loads((self.state / fake_gh.PULLS_DIR / f"{number}.json").read_text())
+        return record["autoMerge"]
 
     def merge(self, number: int, commit: str) -> None:
         """Record pull request `number` as merged by `commit`, as gh reports a merged PR."""
@@ -87,12 +93,17 @@ class FakeGitHub:
         for path in (self.state / fake_gh.PULLS_DIR).glob("*.json"):
             path.write_text("{")
 
-    def calls(self, subcommand: str) -> int:
-        """Count the `gh pr <subcommand>` calls received, failed and blocked ones included."""
+    def argv(self, subcommand: str) -> list[list[str]]:
+        """The argv of every `gh pr <subcommand>` call, failed and blocked ones included."""
         log = self.state / fake_gh.CALLS_LOG
         lines = log.read_text().splitlines() if log.exists() else []
         prefix = [fake_gh.PR_COMMAND, subcommand]
-        return sum(json.loads(line)[: len(prefix)] == prefix for line in lines)
+        calls = [json.loads(line) for line in lines]
+        return [call for call in calls if call[: len(prefix)] == prefix]
+
+    def calls(self, subcommand: str) -> int:
+        """Count the `gh pr <subcommand>` calls received, failed and blocked ones included."""
+        return len(self.argv(subcommand))
 
     def views(self) -> int:
         return self.calls("view")

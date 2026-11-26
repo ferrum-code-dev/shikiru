@@ -412,7 +412,6 @@ async def test_a_squash_applied_before_a_crash_is_recognised_without_another_com
     await rig.strategy.merge(
         MergeRequest(
             task_id=task.id,
-            title=task.title,
             subject="feat: change",
             repo=task.repo,
             task_root=root,
@@ -449,7 +448,6 @@ async def test_a_local_merge_applied_before_sqlite_reopens_keeps_its_landed_evid
     await rig.strategy.merge(
         MergeRequest(
             task_id=task.id,
-            title=task.title,
             subject="feat: change",
             repo=task.repo,
             task_root=root,
@@ -496,7 +494,6 @@ async def test_a_new_task_commit_after_landing_survives_sqlite_restart(
     await rig.strategy.merge(
         MergeRequest(
             task_id=task.id,
-            title=task.title,
             subject="feat: change",
             repo=task.repo,
             task_root=root,

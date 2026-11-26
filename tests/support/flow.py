@@ -313,6 +313,7 @@ def build_flow(
             project_root=env.project_root,
             remote=settings.repo.remote,
             settings=settings.orchestration,
+            presentation=history.pull_request_metadata,
         )
         if feedback_store is not None
         else None

@@ -10,6 +10,7 @@ max_iterations = 5
 pr_check_max_attempts = 3
 integration = "merge"
 pr_feedback = "changes_requested"
+pr_auto_merge = false
 push_interval_seconds = 14400
 remote_recheck_seconds = 60
 poll_seconds = 2

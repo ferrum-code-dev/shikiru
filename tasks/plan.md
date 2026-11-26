@@ -468,3 +468,11 @@ Default Codex turn arguments bypass approvals and sandboxing for new and resumed
 Review follow-up: the Doctor reference no longer lists the removed sandbox check. An isolated attempt without credentials received HTTP 401. With the Operator-authorized authenticated Codex environment, the live test verifies outside-worktree writes for the first and resumed turns and confirms the workspace-write sandbox denies that location.
 
 Release smoke follow-up: wait for each ladder editor selection to render before sending the next Down key, so the wizard processes each movement before Helper is opened.
+
+## Optional auto-merge for pull requests (T-203)
+
+- Pull request titles are `<subject> (T-n)` from the accepted subject. A feedback verdict's accepted subject now counts as the latest accepted one, so a republished round refreshes the title and auto-merge values.
+- Requests are sent from the PR wait, which already runs on every poll and after adoption. They are compared with the latest `pr_auto_merge_requested`/`pr_auto_merge_cancelled` event, so restarts do not repeat them.
+- Withdrawals come from a background reconciler that checks every unfinished task each poll, so a hold or an unfinished round is withdrawn without waiting for the flow to notice. The closer withdraws before closing a cancelled task's PR.
+- A refusal is an `IntegrationBlocked` escalation; a failed withdrawal is an engine fault with backoff.
+- Live `gh` behaviour for a PR already in clean status is not verified here; a refusal there would escalate visibly.

@@ -133,6 +133,7 @@ class OrchestrationConfig(ConfigModel):
     pr_check_max_attempts: int = Field(gt=0, le=MAX_PR_CHECK_ATTEMPTS)
     integration: IntegrationStrategy
     pr_feedback: PullRequestFeedbackScope
+    pr_auto_merge: bool
     push_interval_seconds: int = Field(ge=0)
     remote_recheck_seconds: int = Field(gt=0)
     poll_seconds: int

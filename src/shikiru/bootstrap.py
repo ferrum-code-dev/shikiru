@@ -68,6 +68,7 @@ from shikiru.engine.monitor import TurnMonitor
 from shikiru.engine.notification_delivery import NotificationDelivery
 from shikiru.engine.notification_feed import NotificationFeed
 from shikiru.engine.notifier import Notifier
+from shikiru.engine.pull_request_auto_merge import AutoMergeReconciler, PullRequestAutoMerge
 from shikiru.engine.pull_request_closing import PullRequestClosing
 from shikiru.engine.push_service import PUSH_FAULT_SCOPE, REMOTE_CHECK_FAULT_SCOPE, PushService
 from shikiru.engine.quota_reconciler import QuotaReconciler
@@ -734,6 +735,7 @@ def _build_flow(
             project_root=project_root,
             remote=settings.repo.remote,
             settings=settings.orchestration,
+            presentation=history.pull_request_metadata,
         )
         if feedback_store is not None
         else None
@@ -910,14 +912,17 @@ def build_engine(
         else LocalBaseRefs(),
         trackers=resolved_settings.project.trackers,
     )
-    pull_request_closing = PullRequestClosing(
-        closer=PullRequestCloser(
-            github=GitHub(resolved_runner), events=events, project_root=project_root
-        ),
+    history = ReportHistory(project_root)
+    pull_request_closing, auto_merge, auto_merge_reconciler = _build_pull_request_closing(
+        settings=resolved_settings,
+        github=GitHub(resolved_runner),
+        events=events,
+        feedback_store=_feedback_store(connection, resolved_settings),
+        project_root=project_root,
+        history=history,
         tasks=tasks,
         faults=fault_reporter,
         clock=resolved_clock,
-        settings=resolved_settings.orchestration,
     )
     task_finisher = TaskFinisher(
         sessions,
@@ -932,7 +937,6 @@ def build_engine(
             project_root=project_root,
         ),
     )
-    history = ReportHistory(project_root)
     task_facts = TaskFacts(
         git_facts=GitFacts(git), project_root=project_root, settings=resolved_settings
     )
@@ -970,6 +974,7 @@ def build_engine(
         task_finisher=task_finisher,
         publication=push_service,
         atomically=lambda: transaction(connection),
+        auto_merge=auto_merge,
     )
     contexts = TurnContextPreparer(
         history=history,
@@ -1159,6 +1164,7 @@ def build_engine(
             scope="retention",
         ),
         pull_request_closing=pull_request_closing,
+        auto_merge_reconciler=auto_merge_reconciler,
         push_service=push_service,
         settings=resolved_settings,
         clock=resolved_clock,
@@ -1224,6 +1230,52 @@ def _feedback_store(connection: sqlite3.Connection, settings: Settings) -> Feedb
     return FeedbackStore(connection)
 
 
+def _build_pull_request_closing(
+    *,
+    settings: Settings,
+    github: GitHub,
+    events: EventLog,
+    feedback_store: FeedbackStore | None,
+    project_root: Path,
+    history: ReportHistory,
+    tasks: TaskStore,
+    faults: FaultReporter,
+    clock: Clock,
+) -> tuple[PullRequestClosing, PullRequestAutoMerge | None, AutoMergeReconciler | None]:
+    auto_merge = (
+        PullRequestAutoMerge(
+            github=github,
+            events=events,
+            feedback=feedback_store,
+            project_root=project_root,
+            metadata_of=history.pull_request_metadata,
+        )
+        if feedback_store is not None and settings.orchestration.pr_auto_merge
+        else None
+    )
+    closing = PullRequestClosing(
+        closer=PullRequestCloser(
+            github=github, events=events, project_root=project_root, auto_merge=auto_merge
+        ),
+        tasks=tasks,
+        faults=faults,
+        clock=clock,
+        settings=settings.orchestration,
+    )
+    reconciler = (
+        AutoMergeReconciler(
+            auto_merge=auto_merge,
+            tasks=tasks,
+            faults=faults,
+            clock=clock,
+            settings=settings.orchestration,
+        )
+        if auto_merge is not None
+        else None
+    )
+    return closing, auto_merge, reconciler
+
+
 def _build_integrator(
     *,
     project_root: Path,
@@ -1239,6 +1291,7 @@ def _build_integrator(
     atomically: Callable[[], AbstractContextManager[object]],
     github: GitHub,
     feedback_store: FeedbackStore | None,
+    auto_merge: PullRequestAutoMerge | None,
 ) -> Integrator:
     strategy: IntegrationStrategy
     base_refs: BaseRefs
@@ -1280,6 +1333,7 @@ def _build_integrator(
                 faults=faults,
                 settings=settings.orchestration,
                 feedback=feedback,
+                auto_merge=auto_merge,
             )
     return Integrator(
         git=git,

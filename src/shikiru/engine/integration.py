@@ -16,6 +16,7 @@ from shikiru.config.settings import (
 )
 from shikiru.domain.events import EventKind
 from shikiru.domain.faults import next_backoff
+from shikiru.domain.reports import task_commit_subject
 from shikiru.domain.results import (
     CHANGES_DELETIONS_KEY,
     CHANGES_FILES_KEY,
@@ -41,6 +42,7 @@ if TYPE_CHECKING:
     from shikiru.clock import Clock
     from shikiru.config.settings import OrchestrationConfig
     from shikiru.engine.fault_reporter import FaultReporter
+    from shikiru.engine.pull_request_auto_merge import PullRequestAutoMerge
     from shikiru.store.events import EventLog
     from shikiru.store.tasks import TaskStore
     from shikiru.workspace.base_refs import BaseRefs, FetchedBaseRefs, LocalBaseSync
@@ -232,7 +234,6 @@ class MergeRequest:
     """A rebased task branch ready to be applied to its base."""
 
     task_id: str
-    title: str
     subject: str
     repo: RepoState
     task_root: Path
@@ -596,7 +597,7 @@ def _tip_trailer(branch_sha: str) -> str:
 
 
 def _squash_message(request: MergeRequest, branch_sha: str) -> str:
-    subject = f"{request.subject} ({request.task_id})"
+    subject = task_commit_subject(request.subject, request.task_id)
     trailers = f"{SQUASH_TASK_TRAILER}: {request.task_id}\n{_tip_trailer(branch_sha)}"
     body = request.summary.strip()
     return "\n\n".join(part for part in (subject, body, trailers) if part)
@@ -631,10 +632,12 @@ class PullRequest:
         faults: FaultReporter,
         settings: OrchestrationConfig,
         feedback: FeedbackIntake | None = None,
+        auto_merge: PullRequestAutoMerge | None = None,
     ) -> None:
         """Push to `remote` from `project_root`; record the PR in `events`, waits in `tasks`.
 
         With `feedback`, an open PR that has review feedback ends its wait with `FeedbackPending`.
+        With `auto_merge`, each poll asks GitHub to merge the PR once it is final for the task.
 
         A merged PR's base is fetched and verified through `base_refs`, and the local base is
         fast-forwarded through `local_base`, before the task is done.
@@ -654,6 +657,7 @@ class PullRequest:
         self._faults = faults
         self._settings = settings
         self._feedback = feedback
+        self._auto_merge = auto_merge
 
     def started(self, task_id: str) -> Landing | None:
         """Return what `task_id`'s open pull request holds, if it has one."""
@@ -684,6 +688,7 @@ class PullRequest:
             raise MissingPullRequestDescription(message)
         lease = await self._git.remote_branch_sha(self._project_root, self._remote, repo.branch)
         await self._git.push(self._project_root, self._remote, repo.branch, lease=lease)
+        title = task_commit_subject(request.subject, request.task_id)
         url = await self._github.open_pull_request(
             self._project_root, base=repo.base, head=repo.branch
         )
@@ -692,12 +697,12 @@ class PullRequest:
                 self._project_root,
                 base=repo.base,
                 head=repo.branch,
-                title=request.title,
+                title=title,
                 body=request.pr_description,
             )
         else:
             await self._github.edit_pull_request(
-                self._project_root, url, body=request.pr_description
+                self._project_root, url, title=title, body=request.pr_description
             )
         self._events.append(
             EventKind.PR_OPENED,
@@ -744,6 +749,7 @@ class PullRequest:
             await self._check_wait(
                 task_id, opened.url, status, expired=self._clock.now() >= deadline
             )
+            await self._request_auto_merge(task_id, opened, status)
             await self._clock.sleep(self._settings.network.pr_poll_seconds)
         self._tasks.set_wait_reason(task_id, None)
         if status.state is PullRequestState.CLOSED:
@@ -758,6 +764,22 @@ class PullRequest:
         except (BaseFetchFailed, LocalBaseBlocked, MergedBaseUnavailable) as error:
             raise IntegrationBlocked(str(error)) from error
         return await self._landed_with_prepared(opened, merge_commit, base_sha)
+
+    async def _request_auto_merge(
+        self, task_id: str, opened: _OpenPullRequest, status: PullRequestStatus
+    ) -> None:
+        if self._auto_merge is None:
+            return
+        head = opened.branch_sha or status.head_sha
+        if head is None:
+            self._tasks.set_wait_reason(task_id, None)
+            message = f"{task_id} has no known head to request auto-merge for {opened.url}"
+            raise IntegrationBlocked(message)
+        try:
+            await self._auto_merge.request(self._tasks.require(task_id), opened.url, head)
+        except IntegrationBlocked:
+            self._tasks.set_wait_reason(task_id, None)
+            raise
 
     async def _landed_with_prepared(
         self, opened: _OpenPullRequest, merge_commit: str, base_sha: str
@@ -924,11 +946,22 @@ def _open_pull_request(
 class PullRequestCloser:
     """Close a task's open pull request when the task is cancelled."""
 
-    def __init__(self, *, github: GitHub, events: EventLog, project_root: Path) -> None:
-        """Close through `github` from `project_root` the PR that `events` record as open."""
+    def __init__(
+        self,
+        *,
+        github: GitHub,
+        events: EventLog,
+        project_root: Path,
+        auto_merge: PullRequestAutoMerge | None = None,
+    ) -> None:
+        """Close through `github` from `project_root` the PR that `events` record as open.
+
+        With `auto_merge`, a pending auto-merge request is withdrawn before the PR is closed.
+        """
         self._github = github
         self._events = events
         self._project_root = project_root
+        self._auto_merge = auto_merge
 
     def has_open(self, task_id: str) -> bool:
         """Return whether `task_id` has a pull request that was neither closed nor withdrawn."""
@@ -945,6 +978,8 @@ class PullRequestCloser:
             return
         state = (await self._github.pull_request_status(self._project_root, opened.url)).state
         if state is PullRequestState.OPEN:
+            if self._auto_merge is not None:
+                await self._auto_merge.cancel(task_id)
             await self._github.close_pull_request(self._project_root, opened.url)
             state = PullRequestState.CLOSED
         self._events.append(
@@ -1090,7 +1125,6 @@ class Integrator:
             landing = await self._strategy.merge(
                 MergeRequest(
                     task_id=current.id,
-                    title=current.title,
                     subject=current_metadata.subject,
                     repo=repo,
                     task_root=task_dir,

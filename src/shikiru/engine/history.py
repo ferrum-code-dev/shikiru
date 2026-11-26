@@ -98,7 +98,19 @@ class ReportHistory:
         """Choose the accepted change's subject and summary, falling back to the latest plan.
 
         A task with neither gets a `chore` subject named after its title, summarized by it.
+        Feedback verdicts are not integration evidence and are never chosen here.
         """
+        return self._accepted_metadata(task, accepted_feedback=False)
+
+    def pull_request_metadata(self, task: Task) -> IntegrationMetadata:
+        """Return the latest accepted subject and description of a task's pull request.
+
+        An accepted feedback or check repair round supersedes the initial acceptance, so its
+        subject and description are chosen when they are the latest.
+        """
+        return self._accepted_metadata(task, accepted_feedback=True)
+
+    def _accepted_metadata(self, task: Task, *, accepted_feedback: bool) -> IntegrationMetadata:
         history = self.load(task.id)
         fallback_subject = f"{FALLBACK_COMMIT_TYPE}: {' '.join(task.title.split())}"
         description = ""
@@ -112,8 +124,8 @@ class ReportHistory:
                 continue
             if (
                 isinstance(report, Verdict)
-                and not isinstance(report, FeedbackVerdict)
                 and report.decision == DECISION_ACCEPT
+                and (accepted_feedback or not isinstance(report, FeedbackVerdict))
             ):
                 return IntegrationMetadata(
                     subject=(
