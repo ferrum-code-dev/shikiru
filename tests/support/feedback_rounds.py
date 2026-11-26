@@ -210,6 +210,17 @@ class FeedbackPull:
 
     async def restart(self) -> None:
         await self.stop()
+        if self.auto_merge is not None:
+            auto_merge = make_auto_merge(self.env, enabled=True)
+            assert auto_merge is not None
+            self.auto_merge = auto_merge
+            self.reconciler = AutoMergeReconciler(
+                auto_merge=auto_merge,
+                tasks=self.env.tasks,
+                faults=build_fault_reporter(self.events, self.env.clock, self.settings),
+                clock=self.clock,
+                settings=self.settings.orchestration,
+            )
         self.flow = self._start(resumed=True)
 
     async def dispatch(self) -> None:

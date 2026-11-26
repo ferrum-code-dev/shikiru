@@ -157,6 +157,7 @@ def fake_github(
     github.release("create")
     github.release("close")
     github.release("merge")
+    github.release(fake_gh.ACCEPTED_AUTO_MERGE_HOLD)
 
 
 async def add_bare_remote(

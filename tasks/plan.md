@@ -477,4 +477,5 @@ Release smoke follow-up: wait for each ladder editor selection to render before 
 - Per-task request and withdrawal calls are serialized. After `gh` accepts an enable, Shikiru rereads task state and withdraws before unlocking if the task became non-final. A withdrawal inspects GitHub even without a local request event, covering an adopted PR that already has auto-merge enabled.
 - A lost reply to a request is confirmed on GitHub: if the request is held, it is accepted; otherwise it is a refusal.
 - A refusal and an unconfirmed withdrawal are `IntegrationBlocked` escalations; the reconciler's failed withdrawal is an engine fault with backoff.
+- Rework after third review: GitHub can report a null `commitHeadline`, which remains a valid nonmatching request and can be withdrawn before a feedback round. A restart test interrupts an accepted, unanswered `gh` request, rebuilds the coordinator and withdraws it for a held task.
 - Live `gh` behaviour for a PR already in clean status is not verified here; a refusal there would escalate visibly.

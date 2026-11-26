@@ -35,8 +35,18 @@ from shikiru.workspace.github import AutoMergeRequest, parse_auto_merge_request
             },
             AutoMergeRequest("SQUASH", "feat: change (T-1)", ""),
         ),
+        (
+            {
+                "autoMergeRequest": {
+                    "mergeMethod": "SQUASH",
+                    "commitHeadline": None,
+                    "commitBody": "Whole change.",
+                }
+            },
+            AutoMergeRequest("SQUASH", None, "Whole change."),
+        ),
     ],
-    ids=["none held", "body present", "empty body"],
+    ids=["none held", "body present", "empty body", "default headline"],
 )
 def test_the_held_auto_merge_request_is_read_as_gh_reports_it(
     view: dict[str, object], expected: AutoMergeRequest | None

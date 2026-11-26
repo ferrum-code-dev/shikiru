@@ -13,7 +13,7 @@ from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
 from shikiru.workspace.github import GitHub
 from tests.support.engine import set_role_script
-from tests.support.fake_gh import URL_PREFIX
+from tests.support.fake_gh import ACCEPTED_AUTO_MERGE_HOLD, URL_PREFIX
 from tests.support.feedback_rounds import (
     REVIEW,
     THREAD,
@@ -192,7 +192,7 @@ async def test_an_adopted_auto_merge_is_withdrawn_before_first_poll_feedback_run
         _PULL_NUMBER,
         autoMerge={
             "method": "SQUASH",
-            "subject": "external auto-merge request",
+            "subject": None,
             "body": "external description",
             "head": head,
         },
@@ -260,6 +260,38 @@ async def test_an_inflight_request_rechecks_task_state_after_github_accepts_it(
     await wait_until(lambda: len(_disable_requests(fake_github)) == 2, WAIT_SECONDS)
 
     assert fake_github.auto_merge(_PULL_NUMBER) is None
+    await pull.stop()
+
+
+async def test_restart_withdraws_a_request_accepted_before_gh_returns(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmux_server: TmuxServer,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(engine_env, fake_github, tmp_path_factory, auto_merge=True)
+    await _publish_requested_changes(pull, tmux_server)
+    await pull.until(pull.flow.done)
+    fake_github.hold(ACCEPTED_AUTO_MERGE_HOLD)
+    await pull.dispatch()
+    await wait_until(
+        lambda: (
+            len(_enable_requests(fake_github)) == 2
+            and fake_github.auto_merge(_PULL_NUMBER) is not None
+        ),
+        WAIT_SECONDS,
+    )
+    assert not pull.flow.done()
+
+    await pull.stop()
+    engine_env.tasks.set_holds(pull.task.id, frozenset({Hold.PAUSED}))
+    fake_github.release(ACCEPTED_AUTO_MERGE_HOLD)
+    await pull.restart()
+    await pull.sweep_auto_merge()
+
+    assert fake_github.auto_merge(_PULL_NUMBER) is None
+    assert len(_enable_requests(fake_github)) == 2
+    assert len(_disable_requests(fake_github)) == 2
     await pull.stop()
 
 

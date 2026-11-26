@@ -260,7 +260,7 @@ class AutoMergeRequest:
     """An auto-merge request GitHub holds for a pull request: its method, subject and body."""
 
     method: str
-    subject: str
+    subject: str | None
     body: str
 
 
@@ -560,7 +560,7 @@ def parse_auto_merge_request(text: str) -> AutoMergeRequest | None:
     request = _object(raw)
     return AutoMergeRequest(
         method=_text(request, _Key.MERGE_METHOD),
-        subject=_text(request, _Key.COMMIT_HEADLINE),
+        subject=_optional_text(request, _Key.COMMIT_HEADLINE),
         body=_optional_text(request, _Key.COMMIT_BODY) or "",
     )
 
