@@ -466,3 +466,5 @@ Run 45644430047 showed two separate timing and scrolling failures. On macOS, the
 Default Codex turn arguments bypass approvals and sandboxing for new and resumed turns. Explicit agent arguments replace that default. Remove the obsolete sandbox probe and Git-root configuration, document operator-level access, and exercise turn commands and live resume access.
 
 Review follow-up: the Doctor reference no longer lists the removed sandbox check. An isolated attempt without credentials received HTTP 401. With the Operator-authorized authenticated Codex environment, the live test verifies outside-worktree writes for the first and resumed turns and confirms the workspace-write sandbox denies that location.
+
+Release smoke follow-up: wait for each ladder editor selection to render before sending the next Down key, so the wizard processes each movement before Helper is opened.

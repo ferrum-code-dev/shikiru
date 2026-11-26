@@ -403,3 +403,5 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
 - [x] Cover command construction and explicit arguments; extend the opt-in live worktree/resume test to check writes outside the worktree.
 - [x] Verify authenticated live first and resumed turns can write outside the worktree, and that the workspace-write sandbox denies the same location.
 - [x] Remove the obsolete Codex sandbox check from the Doctor reference.
+
+- [x] Synchronize release smoke ladder navigation with each visible scope before opening Helper.
