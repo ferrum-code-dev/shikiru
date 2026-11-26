@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from shikiru.process import SubprocessRunner
+from tests.support.shards import SHARD_OPTION, parse_shard
 from tests.support.spawn_hook import spawn_hook
 from tests.support.waiting import SHORT_WAIT_SECONDS, scaled
 from tests.support.xdist_workers import CPUS_PER_WORKER_ENV, worker_count
@@ -44,8 +45,14 @@ def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
     return worker_count(cpus, os.environ.get(CPUS_PER_WORKER_ENV))
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register `--shard INDEX/COUNT`, which runs one of COUNT disjoint parts of the suite."""
+    parser.addoption(SHARD_OPTION, type=parse_shard, help="run one part, as INDEX/COUNT")
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Scale each test's pytest-timeout limit, marker or configured, by the test time scale."""
+    """Keep this run's shard and scale each pytest-timeout limit by the test time scale."""
+    _keep_shard(config, items)
     configured = _configured_timeout(config)
     for item in items:
         marker = item.get_closest_marker(_PYTEST_TIMEOUT_MARKER)
@@ -54,6 +61,15 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             continue
         item.own_markers = [own for own in item.own_markers if own.name != _PYTEST_TIMEOUT_MARKER]
         item.add_marker(pytest.mark.timeout(scaled(limit)))
+
+
+def _keep_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
+    shard = config.getoption(SHARD_OPTION)
+    if shard is None:
+        return
+    chosen = shard.select([item.nodeid for item in items])
+    config.hook.pytest_deselected(items=[item for item in items if item.nodeid not in chosen])
+    items[:] = [item for item in items if item.nodeid in chosen]
 
 
 def _configured_timeout(config: pytest.Config) -> float | None:

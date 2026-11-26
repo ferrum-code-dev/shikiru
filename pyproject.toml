@@ -364,6 +364,9 @@ patch = ["subprocess"]
 source = ["shikiru"]
 omit = ["tests/*"]
 
+[tool.coverage.paths]
+source = ["src/", "*/src/"]
+
 [tool.coverage.report]
 fail_under = 80
 exclude_also = ["if TYPE_CHECKING:"]
