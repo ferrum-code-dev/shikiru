@@ -331,26 +331,34 @@ neither enqueue follow-ups nor implement product code.
 
 **Auto-merge** is off unless `orchestration.pr_auto_merge` is `true`; the setting is read when the
 engine starts and has effect only with `pr`. When it is on, each poll of an open pull request that
-the task may merge (waiting on it, not held, no feedback or check round unfinished) requests
-GitHub auto-merge as a squash merge of the head Shikiru published: `gh pr merge <url> --auto
---squash --subject <subject> (T-n) --body <description> --match-head-commit <head>`. The request
-is recorded as `pr_auto_merge_requested`, and a request already recorded for the same values is not
-sent again, so restarts and adopted pull requests do not repeat it. Because the subject and
-description are the latest accepted ones, a round that republishes makes the next request carry the
-new head, subject and description. A separate reconciler withdraws the request (`gh pr merge <url>
---disable-auto`, recorded as `pr_auto_merge_cancelled`) whenever the task is held, paused,
-cancelled or has an unfinished feedback or check repair round, and it is requested again once that
-round has published or the task resumes. Closing a cancelled task's pull request withdraws the request
-first. A withdrawal is skipped when the pull request is no longer open, so a merge that landed first
-is handled as a merged pull request. GitHub decides when the requirements are met; Shikiru keeps
-polling and completes the task from the merged commit. A refused request (auto-merge not allowed,
+the task may merge (waiting on it, not held, no feedback or check round unfinished) reads GitHub's
+`autoMergeRequest` and, unless GitHub already holds exactly the wanted squash subject and description,
+requests auto-merge: `gh pr merge <url> --auto --squash --subject <subject> (T-n) --body <description>
+--match-head-commit <head>`, where the head is the one Shikiru published. A stale request GitHub holds
+is withdrawn first. Each request is recorded in `events` as `pr_auto_merge_requested` before it is
+sent, so a request GitHub accepts is never lost to an engine stop before its reply; after a restart
+the next withdrawal reads GitHub and withdraws it. When GitHub's reply to a request is lost, Shikiru
+confirms on GitHub whether the request is held before treating it as refused; a refusal is recorded as
+`pr_auto_merge_cancelled` and escalates. Because the subject and description are the latest accepted
+ones, a round that republishes makes the next request carry the new head, subject and description.
+
+Withdrawal (`gh pr merge <url> --disable-auto`, recorded as `pr_auto_merge_cancelled`) is confirmed:
+after the disable call Shikiru reads GitHub again and fails if the request is still held. It happens
+synchronously before the flow hands a pull request over to a feedback or check repair round and before
+a held task stops, so no round step runs while GitHub may still merge. A failed or unconfirmed
+withdrawal escalates the task as integration blocked, and the round does not start. A separate
+reconciler withdraws requests of tasks that are held, cancelled or otherwise not waiting, including
+after an engine restart; its failures are engine faults retried with backoff. Closing a cancelled
+task's pull request withdraws the request first. A withdrawal is skipped when the pull request is no
+longer open, so a merge that landed first is handled as a merged pull request. The request is sent again
+once the round has published or the task resumes. GitHub decides when the requirements are met; Shikiru
+keeps polling and completes the task from the merged commit. A refused request (auto-merge not allowed,
 squash merging disabled, missing permission, a head that no longer matches) escalates the task as
-integration blocked with GitHub's reason; a failed withdrawal is an engine fault retried with
-backoff. Shikiru never uses `--admin`, a direct merge or any other bypass of repository rules. The
-repository must allow auto-merge and squash merging, and required status checks must be configured
-on the base branch before the setting is enabled: without them GitHub considers a new pull request
-mergeable at once. Accepted limitation: feedback that arrives shortly before the last requirement is
-met may not be processed, because GitHub can merge first.
+integration blocked with GitHub's reason. Shikiru never uses `--admin`, a direct merge or any other
+bypass of repository rules. The repository must allow auto-merge and squash merging, and required
+status checks must be configured on the base branch before the setting is enabled: without them GitHub
+considers a new pull request mergeable at once. Accepted limitation: feedback that arrives shortly
+before the last requirement is met may not be processed, because GitHub can merge first.
 
 In merge and squash modes a push service publishes locally integrated bases to `repo.remote`. Each completed
 integration is registered with the base's durable pending state in the same transaction that

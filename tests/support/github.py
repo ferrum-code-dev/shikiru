@@ -60,8 +60,9 @@ class FakeGitHub:
         """Make the next `calls` calls of `operation` fail like a network blip.
 
         Operations are `pr <subcommand>` names, `graphql`, `post` (fails before recording the
-        comment), `lost-post` (records the comment, then fails) and `auto-merge` (GitHub refuses
-        to enable auto-merge).
+        comment), `lost-post` (records the comment, then fails), `auto-merge` (GitHub refuses to
+        enable auto-merge), `lost-auto-merge` (enables it, then the reply is lost) and `withdraw`
+        (GitHub refuses to disable auto-merge).
         """
         (self.state / f"{fake_gh.FAIL_PREFIX}{operation}").write_text(str(calls))
 

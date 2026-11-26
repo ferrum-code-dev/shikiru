@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from shikiru.domain.events import EventKind
@@ -29,9 +30,10 @@ if TYPE_CHECKING:
     from shikiru.store.events import EventLog
     from shikiru.store.feedback import FeedbackStore
     from shikiru.store.tasks import TaskStore
-    from shikiru.workspace.github import GitHub
+    from shikiru.workspace.github import AutoMergeRequest, GitHub
 
 AUTO_MERGE_FAULT_SCOPE = "pull request auto-merge"
+SQUASH_METHOD = "SQUASH"
 _REQUEST_RECORDS = (EventKind.PR_AUTO_MERGE_REQUESTED, EventKind.PR_AUTO_MERGE_CANCELLED)
 _SETTLED_STATUSES = (Status.DONE, Status.CANCELLED)
 _URL = "url"
@@ -39,22 +41,51 @@ _HEAD = "head"
 _SUBJECT = "subject"
 _BODY = "body"
 _STATE = "state"
+_REFUSED_STATE = "refused"
 
 
 class AutoMergeRefused(IntegrationBlocked):
     """GitHub refused to enable auto-merge for a pull request; the task needs the Operator."""
 
-    def __init__(self, task_id: str, url: str, error: Exception) -> None:
-        """Build the error for `task_id`'s pull request at `url`, quoting GitHub's `error`."""
-        super().__init__(f"{task_id}: GitHub refused auto-merge of {url}: {error}")
+    def __init__(self, task_id: str, url: str, detail: str) -> None:
+        """Build the error for `task_id`'s pull request at `url`, quoting GitHub's `detail`."""
+        super().__init__(f"{task_id}: GitHub refused auto-merge of {url}: {detail}")
+
+
+class AutoMergeWithdrawFailed(IntegrationBlocked):
+    """A pending auto-merge request could not be withdrawn, so the task may not go on."""
+
+    def __init__(self, task_id: str, url: str, detail: str) -> None:
+        """Build the error for `task_id`'s pull request at `url`, saying why it still holds."""
+        super().__init__(f"{task_id}: auto-merge of {url} could not be withdrawn: {detail}")
+
+
+@dataclass(frozen=True, slots=True)
+class _Request:
+    url: str
+    head: str
+    subject: str
+    body: str
+
+    def as_data(self) -> dict[str, str]:
+        return {_URL: self.url, _HEAD: self.head, _SUBJECT: self.subject, _BODY: self.body}
+
+    def is_held_by(self, held: AutoMergeRequest | None) -> bool:
+        return (
+            held is not None
+            and held.method == SQUASH_METHOD
+            and held.subject == self.subject
+            and held.body == self.body
+        )
 
 
 class PullRequestAutoMerge:
     """Request and withdraw GitHub auto-merge for a task's pull request.
 
-    A request names the squash commit's subject and description and the head Shikiru published.
-    The latest request or withdrawal recorded in `events` is the state: a request is not repeated
-    for the same values after a restart or an adoption, and a withdrawal is recorded only once.
+    GitHub's own `autoMergeRequest` is the state a request or a withdrawal is judged by. Every
+    request is recorded in `events` before it is sent, so a request GitHub accepts is never lost
+    when the engine stops before recording it: the next withdrawal reads GitHub and withdraws it.
+    A request whose reply is lost is confirmed on GitHub instead of being taken as a refusal.
     """
 
     def __init__(
@@ -92,60 +123,91 @@ class PullRequestAutoMerge:
     async def request(self, task: Task, url: str, head: str) -> None:
         """Request squash auto-merge of the pull request at `url` if `task` may merge now.
 
-        Nothing is sent when the latest record already requests these values. A refusal raises
-        `AutoMergeRefused`, and the request is recorded only once GitHub accepted it.
+        Nothing is sent when GitHub already holds exactly these values. Otherwise a stale request
+        is withdrawn first, the request is recorded, and GitHub is asked. A refusal, confirmed on
+        GitHub, raises `AutoMergeRefused`.
         """
         if not self.may_merge(task):
             return
         metadata = self._metadata_of(task)
-        values = {
-            _URL: url,
-            _HEAD: head,
-            _SUBJECT: task_commit_subject(metadata.subject, task.id),
-            _BODY: metadata.pr_description,
-        }
-        latest = self._latest(task.id)
-        if (
-            latest is not None
-            and latest.kind is EventKind.PR_AUTO_MERGE_REQUESTED
-            and all(latest.data.get(key) == value for key, value in values.items())
-        ):
+        wanted = _Request(
+            url=url,
+            head=head,
+            subject=task_commit_subject(metadata.subject, task.id),
+            body=metadata.pr_description,
+        )
+        held = await self._github.auto_merge_request(self._project_root, url)
+        if wanted.is_held_by(held):
+            if not self._recorded_as(task.id, wanted):
+                self._record_request(task.id, wanted)
             return
+        if held is not None:
+            await self._disable(task.id, url)
+        self._record_request(task.id, wanted)
         try:
             await self._github.request_auto_merge(
                 self._project_root,
                 url,
                 head=head,
-                subject=values[_SUBJECT],
-                body=values[_BODY],
+                subject=wanted.subject,
+                body=wanted.body,
             )
         except PROCESS_FAILURES as error:
-            raise AutoMergeRefused(task.id, url, error) from error
-        self._events.append(
-            EventKind.PR_AUTO_MERGE_REQUESTED,
-            task_id=task.id,
-            message=f"{task.id} requested auto-merge of {url}",
-            data=values,
-        )
+            if wanted.is_held_by(await self._github.auto_merge_request(self._project_root, url)):
+                return
+            self._events.append(
+                EventKind.PR_AUTO_MERGE_CANCELLED,
+                task_id=task.id,
+                message=f"{task.id} did not get auto-merge of {url}",
+                data={_URL: url, _STATE: _REFUSED_STATE},
+            )
+            raise AutoMergeRefused(task.id, url, str(error)) from error
 
-    async def cancel(self, task_id: str) -> None:
-        """Withdraw the pending auto-merge request of `task_id`, if one is recorded.
+    async def withdraw(self, task_id: str) -> None:
+        """Withdraw the auto-merge request of `task_id`, confirming on GitHub that it is gone.
 
-        A pull request that is no longer open has nothing left to withdraw, so only the record is
-        closed. Otherwise a failed withdrawal raises and nothing is recorded.
+        Nothing is done when no request was ever recorded for the task. A pull request that is no
+        longer open has nothing left to withdraw, so only the record is closed. Otherwise a request
+        GitHub still holds after the withdrawal raises `AutoMergeWithdrawFailed`.
         """
         latest = self._latest(task_id)
         if latest is None or latest.kind is not EventKind.PR_AUTO_MERGE_REQUESTED:
             return
         url = str(latest.data[_URL])
         state = (await self._github.pull_request_status(self._project_root, url)).state
-        if state is PullRequestState.OPEN:
-            await self._github.cancel_auto_merge(self._project_root, url)
+        if state is PullRequestState.OPEN and (
+            await self._github.auto_merge_request(self._project_root, url) is not None
+        ):
+            await self._disable(task_id, url)
         self._events.append(
             EventKind.PR_AUTO_MERGE_CANCELLED,
             task_id=task_id,
             message=f"{task_id} withdrew the auto-merge request of {url}",
             data={_URL: url, _STATE: state.value},
+        )
+
+    async def _disable(self, task_id: str, url: str) -> None:
+        try:
+            await self._github.cancel_auto_merge(self._project_root, url)
+        except PROCESS_FAILURES as error:
+            raise AutoMergeWithdrawFailed(task_id, url, str(error)) from error
+        if await self._github.auto_merge_request(self._project_root, url) is not None:
+            raise AutoMergeWithdrawFailed(task_id, url, "GitHub still holds the request")
+
+    def _record_request(self, task_id: str, wanted: _Request) -> None:
+        self._events.append(
+            EventKind.PR_AUTO_MERGE_REQUESTED,
+            task_id=task_id,
+            message=f"{task_id} requested auto-merge of {wanted.url}",
+            data=wanted.as_data(),
+        )
+
+    def _recorded_as(self, task_id: str, wanted: _Request) -> bool:
+        latest = self._latest(task_id)
+        return (
+            latest is not None
+            and latest.kind is EventKind.PR_AUTO_MERGE_REQUESTED
+            and latest.data == wanted.as_data()
         )
 
     def _latest(self, task_id: str) -> Event | None:
@@ -226,7 +288,7 @@ class AutoMergeReconciler:
             if task.status in _SETTLED_STATUSES or self._auto_merge.may_merge(task):
                 continue
             try:
-                await self._auto_merge.cancel(task.id)
+                await self._auto_merge.withdraw(task.id)
             except RECOVERABLE_FAULTS as error:
                 failed = True
                 self._faults.report(error, scope=AUTO_MERGE_FAULT_SCOPE, task_id=task.id)

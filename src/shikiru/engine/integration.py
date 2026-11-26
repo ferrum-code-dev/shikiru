@@ -742,6 +742,7 @@ class PullRequest:
         deadline = self._clock.now() + timedelta(seconds=self._settings.timeouts.pr_wait)
         while True:
             if held():
+                await self._withdraw_auto_merge(task_id)
                 raise IntegrationHeld
             status = await self._status(task_id, opened.url, held)
             if status.state is not PullRequestState.OPEN:
@@ -764,6 +765,15 @@ class PullRequest:
         except (BaseFetchFailed, LocalBaseBlocked, MergedBaseUnavailable) as error:
             raise IntegrationBlocked(str(error)) from error
         return await self._landed_with_prepared(opened, merge_commit, base_sha)
+
+    async def _withdraw_auto_merge(self, task_id: str) -> None:
+        if self._auto_merge is None:
+            return
+        try:
+            await self._auto_merge.withdraw(task_id)
+        except IntegrationBlocked:
+            self._tasks.set_wait_reason(task_id, None)
+            raise
 
     async def _request_auto_merge(
         self, task_id: str, opened: _OpenPullRequest, status: PullRequestStatus
@@ -797,6 +807,7 @@ class PullRequest:
         arrived = await self._feedback.arrived(task_id, url)
         if arrived:
             self._tasks.set_wait_reason(task_id, None)
+            await self._withdraw_auto_merge(task_id)
             raise FeedbackPending
         return arrived is not None
 
@@ -829,6 +840,7 @@ class PullRequest:
                 raise
             if pending:
                 self._tasks.set_wait_reason(task_id, None)
+                await self._withdraw_auto_merge(task_id)
                 raise FeedbackPending
 
     async def _landed_pull_request(
@@ -979,7 +991,7 @@ class PullRequestCloser:
         state = (await self._github.pull_request_status(self._project_root, opened.url)).state
         if state is PullRequestState.OPEN:
             if self._auto_merge is not None:
-                await self._auto_merge.cancel(task_id)
+                await self._auto_merge.withdraw(task_id)
             await self._github.close_pull_request(self._project_root, opened.url)
             state = PullRequestState.CLOSED
         self._events.append(

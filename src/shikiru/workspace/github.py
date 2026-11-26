@@ -155,8 +155,11 @@ class _Key(StrEnum):
     """The JSON keys gh and GitHub responses use, named once."""
 
     AUTHOR = "author"
+    AUTO_MERGE = "autoMergeRequest"
     BODY = "body"
     CHECKS = "statusCheckRollup"
+    COMMIT_BODY = "commitBody"
+    COMMIT_HEADLINE = "commitHeadline"
     COMMENTS = "comments"
     CONCLUSION = "conclusion"
     CONTEXT = "context"
@@ -175,6 +178,7 @@ class _Key(StrEnum):
     LINE = "line"
     LOGIN = "login"
     MERGE_COMMIT = "mergeCommit"
+    MERGE_METHOD = "mergeMethod"
     MERGEABLE = "mergeable"
     NAME = "name"
     NODE = "node"
@@ -249,6 +253,15 @@ class PullRequestStatus:
     head_sha: str | None = None
     failing_checks: tuple[FailingCheck, ...] = ()
     evidence_error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AutoMergeRequest:
+    """An auto-merge request GitHub holds for a pull request: its method, subject and body."""
+
+    method: str
+    subject: str
+    body: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -535,6 +548,20 @@ def parse_pull_request_status(text: str) -> PullRequestStatus:
         head_sha=head_sha,
         failing_checks=failing_checks,
         evidence_error=evidence_error,
+    )
+
+
+def parse_auto_merge_request(text: str) -> AutoMergeRequest | None:
+    """Return the auto-merge request that `gh pr view --json autoMergeRequest` printed, if any."""
+    view = _object(_json(text))
+    raw = _field(view, _Key.AUTO_MERGE)
+    if raw is None:
+        return None
+    request = _object(raw)
+    return AutoMergeRequest(
+        method=_text(request, _Key.MERGE_METHOD),
+        subject=_text(request, _Key.COMMIT_HEADLINE),
+        body=_optional_text(request, _Key.COMMIT_BODY) or "",
     )
 
 
@@ -828,6 +855,11 @@ class GitHub:
         fields = (_Key.STATE, _Key.MERGE_COMMIT, _Key.MERGEABLE, _Key.CHECKS, _Key.HEAD_SHA)
         result = await self._run(repo_dir, "pr", "view", url, "--json", ",".join(fields))
         return parse_pull_request_status(result.stdout)
+
+    async def auto_merge_request(self, repo_dir: Path, url: str) -> AutoMergeRequest | None:
+        """Return the auto-merge request GitHub currently holds for the PR at `url`, if any."""
+        result = await self._run(repo_dir, "pr", "view", url, "--json", _Key.AUTO_MERGE)
+        return parse_auto_merge_request(result.stdout)
 
     async def close_pull_request(self, repo_dir: Path, url: str) -> None:
         """Close the open pull request at `url` without merging it."""

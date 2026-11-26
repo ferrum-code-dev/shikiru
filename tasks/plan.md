@@ -472,7 +472,8 @@ Release smoke follow-up: wait for each ladder editor selection to render before 
 ## Optional auto-merge for pull requests (T-203)
 
 - Pull request titles are `<subject> (T-n)` from the accepted subject. A feedback verdict's accepted subject now counts as the latest accepted one, so a republished round refreshes the title and auto-merge values.
-- Requests are sent from the PR wait, which already runs on every poll and after adoption. They are compared with the latest `pr_auto_merge_requested`/`pr_auto_merge_cancelled` event, so restarts do not repeat them.
-- Withdrawals come from a background reconciler that checks every unfinished task each poll, so a hold or an unfinished round is withdrawn without waiting for the flow to notice. The closer withdraws before closing a cancelled task's PR.
-- A refusal is an `IntegrationBlocked` escalation; a failed withdrawal is an engine fault with backoff.
+- Requests are sent from the PR wait, which already runs on every poll and after adoption. Each poll reads GitHub's `autoMergeRequest` and sends nothing when GitHub already holds the wanted subject and description. Each request is recorded as `pr_auto_merge_requested` before it is sent, so an accepted request is never lost to a stop before its reply.
+- Withdrawals are confirmed on GitHub: after `--disable-auto` Shikiru reads `autoMergeRequest` again and fails if it is still held. They run synchronously before a feedback or check repair round starts and before a held task stops, so no round step runs while the request may still merge. A background reconciler covers holds and cancellations the flow does not see, including after a restart. The closer withdraws before closing a cancelled task's PR.
+- A lost reply to a request is confirmed on GitHub: if the request is held, it is accepted; otherwise it is a refusal.
+- A refusal and an unconfirmed withdrawal are `IntegrationBlocked` escalations; the reconciler's failed withdrawal is an engine fault with backoff.
 - Live `gh` behaviour for a PR already in clean status is not verified here; a refusal there would escalate visibly.

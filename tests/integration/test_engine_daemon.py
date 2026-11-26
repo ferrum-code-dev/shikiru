@@ -1288,6 +1288,13 @@ async def test_take_over_holds_only_that_task_and_hand_back_resumes_its_session(
         connection.close()
 
 
+def _status_polls(fake_github: FakeGitHub) -> int:
+    """Count the pull request wait's status reads, the `pr view` calls that read its state."""
+    return sum(
+        any(argument.startswith("state,") for argument in argv) for argv in fake_github.argv("view")
+    )
+
+
 @pytest.mark.parametrize("enabled", [False, True], ids=["disabled", "enabled"])
 async def test_the_auto_merge_setting_decides_whether_the_engine_requests_a_merge(
     enabled: bool,
@@ -1319,7 +1326,7 @@ async def test_the_auto_merge_setting_decides_whether_the_engine_requests_a_merg
             )
 
         await operator.advance_until(waiting_on_pull_request)
-        await operator.advance_until(lambda: fake_github.views() >= _POLLS_BEFORE_ASSERTING)
+        await operator.advance_until(lambda: _status_polls(fake_github) >= _POLLS_BEFORE_ASSERTING)
         requests = [argv for argv in fake_github.argv("merge") if "--auto" in argv]
 
         if not enabled:

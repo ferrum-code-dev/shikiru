@@ -704,6 +704,7 @@ def _build_flow(
     feedback_store: FeedbackStore | None,
     github: GitHub,
     git: Git,
+    auto_merge: PullRequestAutoMerge | None,
 ) -> TaskFlow:
     filer = EscalationFiler(raiser=raiser, evidence=evidence, writer=writer, tasks=tasks)
     turn_loop = TurnLoop(
@@ -736,6 +737,7 @@ def _build_flow(
             remote=settings.repo.remote,
             settings=settings.orchestration,
             presentation=history.pull_request_metadata,
+            auto_merge=auto_merge,
         )
         if feedback_store is not None
         else None
@@ -1026,6 +1028,7 @@ def build_engine(
         feedback_store=_feedback_store(connection, resolved_settings),
         github=GitHub(resolved_runner),
         git=git,
+        auto_merge=auto_merge,
     )
     task_supervisor = TaskSupervisor(tasks, flow, task_finisher)
     handler_context = HandlerContext(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from shikiru.domain.reports import ReportKind
 from shikiru.domain.tasks import EscalationReason, Hold, Role, Status
 from shikiru.engine.integration import PullRequestCloser
 from shikiru.process import SubprocessRunner
@@ -119,7 +120,6 @@ async def test_a_republished_round_withdraws_the_request_and_requests_its_new_va
     await _publish_requested_changes(pull, tmux_server)
 
     await pull.until(pull.flow.done)
-    await pull.sweep_auto_merge()
     assert fake_github.auto_merge(_PULL_NUMBER) is None
 
     await pull.dispatch()
@@ -171,10 +171,51 @@ async def test_a_feedback_round_in_progress_withdraws_the_request(
     await _publish_requested_changes(pull, tmux_server)
 
     await pull.until(pull.flow.done)
-    await pull.sweep_auto_merge()
 
     assert fake_github.auto_merge(_PULL_NUMBER) is None
+    assert len(_disable_requests(fake_github)) == 1
     assert engine_env.tasks.require(pull.task.id).status is Status.QUEUED
+    await pull.stop()
+
+
+async def test_a_round_does_not_start_while_its_withdrawal_is_unconfirmed(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmux_server: TmuxServer,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(engine_env, fake_github, tmp_path_factory, auto_merge=True)
+    fake_github.fail_next("withdraw", 1)
+    await _publish_requested_changes(pull, tmux_server)
+
+    await pull.until(pull.flow.done)
+
+    assert fake_github.auto_merge(_PULL_NUMBER) is not None
+    assert ReportKind.FEEDBACK_ANALYSIS.value not in pull.turn_kinds()
+    assert pull.escalated()
+    [escalation] = fetch_open_escalations(engine_env.connection)
+    assert escalation.reason is EscalationReason.INTEGRATION_BLOCKED
+    assert "could not be withdrawn" in pull.escalation_question()
+
+    pull.retry(EscalationReason.INTEGRATION_BLOCKED)
+    await wait_until(lambda: ReportKind.FEEDBACK_ANALYSIS.value in pull.turn_kinds(), WAIT_SECONDS)
+    assert fake_github.auto_merge(_PULL_NUMBER) is None
+    await pull.stop()
+
+
+async def test_a_request_whose_reply_is_lost_is_confirmed_on_github_not_refused(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    fake_github.fail_next("lost-auto-merge", 1)
+
+    pull = await open_pull(engine_env, fake_github, tmp_path_factory, auto_merge=True)
+
+    assert len(_enable_requests(fake_github)) == 1
+    assert fake_github.auto_merge(_PULL_NUMBER) is not None
+    assert not pull.escalated()
+    assert pull.waiting()
     await pull.stop()
 
 
@@ -225,7 +266,6 @@ async def test_a_refused_request_escalates_with_the_reason_and_a_retry_requests_
     fake_github.fail_next("auto-merge", 1)
     await _publish_requested_changes(pull, tmux_server)
     await pull.until(pull.flow.done)
-    await pull.sweep_auto_merge()
     await pull.dispatch()
 
     await wait_until(pull.escalated, WAIT_SECONDS)

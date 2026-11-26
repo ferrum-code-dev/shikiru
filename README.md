@@ -267,8 +267,10 @@ Set `orchestration.pr_auto_merge = true` (default `false`; configuration file on
 `pr`) to have Shikiru ask GitHub to squash-merge each pull request once the base branch's requirements
 are met. The squash commit takes the same subject and the whole-change description, so a
 `BREAKING CHANGE:` line survives on the base branch. Shikiru withdraws the request while the task is
-held or paused, cancelled, or has a feedback or check repair round in progress, and requests it again
-once the round has published or the task resumes. It then completes the task from the merged commit as
+held or paused, cancelled, or has a feedback or check repair round in progress. It confirms on GitHub
+that the request is gone before a round starts, and a withdrawal that cannot be confirmed escalates the
+task instead of letting the round run. It requests the merge again once the round has published or the
+task resumes. It then completes the task from the merged commit as
 it does without the setting. Before enabling it:
 
 - the repository must allow auto-merge and squash merging;

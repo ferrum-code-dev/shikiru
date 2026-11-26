@@ -414,3 +414,5 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
   - Acceptance: `gh pr merge <url> --auto --squash --subject --body --match-head-commit` for the published head; idempotent across restarts and adopted PRs; the request follows a republished round; a refusal escalates with GitHub's reason; nothing is sent when the setting is `false`.
 - [x] Document the setting, the repository prerequisites and the accepted limitation in `README.md` and `docs/design.md`.
 - [x] Cover the `gh` boundary with the fake `gh`: request argv, republish, withdrawal on hold, cancellation and an active round, refusal, and the title.
+- [x] Rework after review: confirm withdrawal before a feedback or check repair round starts, and reconcile a request GitHub accepted whose reply was lost.
+  - Acceptance: a round does not start while its withdrawal is unconfirmed (the task escalates); a withdrawal reads GitHub's `autoMergeRequest` and fails if the request is still held; a request is recorded before it is sent and a lost reply is confirmed on GitHub rather than refused; gh-boundary tests cover both and a parser unit test covers the held request.

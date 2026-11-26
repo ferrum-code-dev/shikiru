@@ -199,6 +199,7 @@ class FeedbackPull:
             strategy=strategy,
             base_refs=fetched,
             feedback_store=self.store,
+            auto_merge=self.auto_merge,
         )
         assert built.cleanup is not None
         self.cleanup = built.cleanup

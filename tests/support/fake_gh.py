@@ -36,7 +36,10 @@ POST_BUDGET = "post"
 LOST_POST_BUDGET = "lost-post"
 CLOSE_ON_GRAPHQL_BUDGET = "close-on-graphql"
 AUTO_MERGE_BUDGET = "auto-merge"
+LOST_AUTO_MERGE_BUDGET = "lost-auto-merge"
+WITHDRAW_BUDGET = "withdraw"
 AUTO_FLAG = "--auto"
+AUTO_MERGE_REQUEST_FIELD = "autoMergeRequest"
 DISABLE_AUTO_FLAG = "--disable-auto"
 SQUASH_FLAG = "--squash"
 SUBJECT_FLAG = "--subject"
@@ -177,10 +180,26 @@ def _list(state: Path, options: list[str]) -> str:
     return json.dumps(matching)
 
 
+def _auto_merge_request_view(auto_merge: dict[str, Any] | None) -> dict[str, Any] | None:
+    if auto_merge is None:
+        return None
+    return {
+        "mergeMethod": auto_merge["method"],
+        "commitHeadline": auto_merge["subject"],
+        "commitBody": auto_merge["body"] or None,
+    }
+
+
 def _view(state: Path, url: str, options: list[str]) -> str:
     fields = options[options.index("--json") + 1].split(",")
     record = json.loads(_pull_request_path(state, url.removeprefix(URL_PREFIX)).read_text())
-    return json.dumps({field: record[field] for field in fields})
+    values = {
+        field: _auto_merge_request_view(record["autoMerge"])
+        if field == AUTO_MERGE_REQUEST_FIELD
+        else record[field]
+        for field in fields
+    }
+    return json.dumps(values)
 
 
 def _close(state: Path, url: str) -> str:
@@ -206,6 +225,8 @@ def _merge(state: Path, url: str, options: list[str]) -> str:
     path = _pull_request_path(state, url.removeprefix(URL_PREFIX))
     record = json.loads(path.read_text())
     if DISABLE_AUTO_FLAG in options:
+        if _failing(state, WITHDRAW_BUDGET):
+            raise _GhError(_NETWORK_DOWN)
         record["autoMerge"] = None
     elif AUTO_FLAG in options:
         if _failing(state, AUTO_MERGE_BUDGET):
@@ -217,6 +238,10 @@ def _merge(state: Path, url: str, options: list[str]) -> str:
             "body": values[BODY_FLAG],
             "head": values[MATCH_HEAD_FLAG],
         }
+        write_record(path, record)
+        if _failing(state, LOST_AUTO_MERGE_BUDGET):
+            raise _GhError(_LOST_AFTER_RECORD)
+        return ""
     else:
         raise _unsupported(["pr", "merge", *options])
     write_record(path, record)
