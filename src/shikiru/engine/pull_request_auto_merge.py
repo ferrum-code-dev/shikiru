@@ -150,17 +150,18 @@ class PullRequestAutoMerge:
             and self._feedback.active(task.id) is None
         )
 
-    async def request(self, task: Task, url: str, head: str) -> None:
+    async def request(self, task: Task, url: str, head: str) -> PullRequestStatus | None:
         """Request squash auto-merge of the pull request at `url` if `task` may merge now.
 
         Nothing is sent when GitHub already holds exactly these values. Otherwise a stale request
-        is withdrawn first, the request is recorded, and GitHub is asked. A refusal, confirmed on
-        GitHub, raises `AutoMergeRefused`.
+        is withdrawn first, the request is recorded, and GitHub is asked. A merged pull request
+        discovered while resolving an ambiguous request is returned to the landing flow. A refusal,
+        confirmed on GitHub, raises `AutoMergeRefused`.
         """
         async with self._lock(task.id):
             current = self._tasks.require(task.id)
             if not self.may_merge(current):
-                return
+                return None
             metadata = self._metadata_of(current)
             wanted = _Request(
                 url=url,
@@ -168,17 +169,20 @@ class PullRequestAutoMerge:
                 subject=task_commit_subject(metadata.subject, task.id),
                 body=metadata.pr_description,
             )
-            held = await self._auto_merge_request(task.id, url)
+            can_request, held = await self._request_state(task.id, url)
+            if not can_request:
+                return None
             if wanted.is_held_by(held):
                 if not self._recorded_as(task.id, wanted):
                     self._record_request(task.id, wanted)
                 await self._withdraw_if_not_final(task.id, url)
-                return
+                return None
             if held is not None:
                 await self._disable(task.id, url)
             self._record_request(task.id, wanted)
-            await self._request(task.id, url, wanted)
+            status = await self._request(task.id, url, wanted)
             await self._withdraw_if_not_final(task.id, url)
+            return status
 
     async def withdraw(self, task_id: str, url: str | None = None) -> None:
         """Withdraw the auto-merge request of `task_id`, confirming on GitHub that it is gone.
@@ -221,12 +225,40 @@ class PullRequestAutoMerge:
     def _lock(self, task_id: str) -> asyncio.Lock:
         return self._locks.setdefault(task_id, asyncio.Lock())
 
-    async def _request(self, task_id: str, url: str, wanted: _Request) -> None:
+    async def _request_state(self, task_id: str, url: str) -> tuple[bool, AutoMergeRequest | None]:
         delay = 0.0
         attempts = self._settings.network.poll_attempts
         for attempt in range(1, attempts + 1):
             if not self.may_merge(self._tasks.require(task_id)):
-                return
+                await self._withdraw(task_id, url)
+                return False, None
+            try:
+                held = await self._github.auto_merge_request(self._project_root, url)
+            except PROCESS_FAILURES as error:
+                self._faults.report(error, scope=_AUTO_MERGE_READ_FAULT_SCOPE, task_id=task_id)
+                if not self.may_merge(self._tasks.require(task_id)):
+                    await self._withdraw(task_id, url)
+                    return False, None
+                if attempt == attempts:
+                    detail = f"could not read auto-merge request after {attempts} attempts: {error}"
+                    raise AutoMergeReadFailed(task_id, url, detail) from error
+                delay = self._next_retry_delay(delay)
+                await self._clock.sleep(delay)
+            else:
+                self._faults.resolve(_AUTO_MERGE_READ_FAULT_SCOPE, task_id=task_id)
+                return True, held
+        raise AssertionError(_RETRY_LOOP_EXHAUSTED)
+
+    async def _request(self, task_id: str, url: str, wanted: _Request) -> PullRequestStatus | None:
+        delay = 0.0
+        attempts = self._settings.network.poll_attempts
+        for attempt in range(1, attempts + 1):
+            if not self.may_merge(self._tasks.require(task_id)):
+                return None
+            if attempt > 1:
+                can_retry, status = await self._before_request_retry(task_id, url, wanted)
+                if not can_retry:
+                    return status
             try:
                 await self._github.request_auto_merge(
                     self._project_root,
@@ -237,27 +269,68 @@ class PullRequestAutoMerge:
                 )
             except PROCESS_FAILURES as error:
                 self._faults.report(error, scope=_REQUEST_FAULT_SCOPE, task_id=task_id)
-                held = await self._auto_merge_request(task_id, url)
-                if wanted.is_held_by(held):
-                    self._faults.resolve(_REQUEST_FAULT_SCOPE, task_id=task_id)
-                    return
-                if held is not None:
-                    await self._disable(task_id, url)
-                if not self.may_merge(self._tasks.require(task_id)):
-                    return
-                if attempt == attempts:
-                    self._events.append(
-                        EventKind.PR_AUTO_MERGE_CANCELLED,
-                        task_id=task_id,
-                        message=f"{task_id} did not get auto-merge of {url}",
-                        data={_URL: url, _STATE: _REFUSED_STATE},
-                    )
-                    raise AutoMergeRefused(task_id, url, str(error)) from error
+                can_retry, status = await self._after_request_failure(
+                    task_id, url, wanted, attempt=attempt, attempts=attempts, error=error
+                )
+                if status is not None:
+                    return status
+                if not can_retry:
+                    return None
                 delay = self._next_retry_delay(delay)
                 await self._clock.sleep(delay)
             else:
                 self._faults.resolve(_REQUEST_FAULT_SCOPE, task_id=task_id)
-                return
+                return None
+        return None
+
+    async def _before_request_retry(
+        self, task_id: str, url: str, wanted: _Request
+    ) -> tuple[bool, PullRequestStatus | None]:
+        status = await self._pull_request_status(task_id, url)
+        if status.state is not PullRequestState.OPEN:
+            self._faults.resolve(_REQUEST_FAULT_SCOPE, task_id=task_id)
+            return False, status
+        held = await self._auto_merge_request(task_id, url)
+        if wanted.is_held_by(held):
+            self._faults.resolve(_REQUEST_FAULT_SCOPE, task_id=task_id)
+            return False, None
+        if held is not None:
+            await self._disable(task_id, url)
+        return self.may_merge(self._tasks.require(task_id)), None
+
+    async def _after_request_failure(
+        self,
+        task_id: str,
+        url: str,
+        wanted: _Request,
+        *,
+        attempt: int,
+        attempts: int,
+        error: Exception,
+    ) -> tuple[bool, PullRequestStatus | None]:
+        held = await self._auto_merge_request(task_id, url)
+        if wanted.is_held_by(held):
+            self._faults.resolve(_REQUEST_FAULT_SCOPE, task_id=task_id)
+            return False, None
+        if held is not None:
+            await self._disable(task_id, url)
+        if not self.may_merge(self._tasks.require(task_id)):
+            return False, None
+        status = await self._pull_request_status(task_id, url)
+        if status.state is not PullRequestState.OPEN:
+            self._faults.resolve(_REQUEST_FAULT_SCOPE, task_id=task_id)
+            return False, status
+        if not self.may_merge(self._tasks.require(task_id)):
+            return False, None
+        if attempt == attempts:
+            self._events.append(
+                EventKind.PR_AUTO_MERGE_CANCELLED,
+                task_id=task_id,
+                message=f"{task_id} did not get auto-merge of {url}",
+                data={_URL: url, _STATE: _REFUSED_STATE},
+            )
+            raise AutoMergeRefused(task_id, url, str(error)) from error
+        return True, None
 
     async def _pull_request_status(self, task_id: str, url: str) -> PullRequestStatus:
         return await self._retry_read(

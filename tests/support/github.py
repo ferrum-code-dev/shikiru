@@ -79,7 +79,15 @@ class FakeGitHub:
         """Record pull request `number` as merged by `commit`, as gh reports a merged PR."""
         path = self.state / fake_gh.PULLS_DIR / f"{number}.json"
         record = json.loads(path.read_text())
-        fake_gh.write_record(path, {**record, "state": "MERGED", "mergeCommit": {"oid": commit}})
+        fake_gh.write_record(
+            path,
+            {
+                **record,
+                "state": "MERGED",
+                "mergeCommit": {"oid": commit},
+                "autoMerge": None,
+            },
+        )
 
     def set_state(self, number: int, state: PullRequestState) -> None:
         path = self.state / fake_gh.PULLS_DIR / f"{number}.json"

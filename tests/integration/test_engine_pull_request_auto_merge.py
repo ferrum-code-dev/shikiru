@@ -19,7 +19,7 @@ from shikiru.engine.pull_request_auto_merge import (
 from shikiru.process import SubprocessRunner
 from shikiru.store.escalations import fetch_open_escalations
 from shikiru.store.events import EventLog
-from shikiru.workspace.github import GitHub
+from shikiru.workspace.github import GitHub, PullRequestState
 from tests.support.engine import build_fault_reporter, set_role_script
 from tests.support.fake_gh import (
     ACCEPTED_AUTO_MERGE_HOLD,
@@ -38,6 +38,7 @@ from tests.support.feedback_rounds import (
     open_pull,
     verdict,
 )
+from tests.support.github import MergeStyle, merge_on_remote
 from tests.support.spawn_hook import processes_in_flight
 from tests.support.waiting import wait_until, wait_until_advancing
 
@@ -76,14 +77,14 @@ def _status_reads(github: FakeGitHub) -> list[list[str]]:
     return [argv for argv in github.argv("view") if AUTO_MERGE_REQUEST_FIELD not in argv]
 
 
-async def _advance_retry_task(pull: FeedbackPull, operation: asyncio.Task[None]) -> None:
+async def _advance_retry_task[T](pull: FeedbackPull, operation: asyncio.Task[T]) -> T:
     await wait_until_advancing(
         pull.clock,
         operation.done,
         WAIT_SECONDS,
         jump_while=pull.clock.has_pending_sleep,
     )
-    await operation
+    return await operation
 
 
 def _fault_kinds(pull: FeedbackPull) -> list[EventKind]:
@@ -383,6 +384,35 @@ async def test_a_hold_ends_the_enable_retry_wait_without_sending_another_request
     assert not pull.escalated()
 
 
+async def test_a_hold_during_an_auto_merge_read_retry_withdraws_the_remote_request(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(
+        engine_env, fake_github, tmp_path_factory, auto_merge=True, auto_merge_attempts=2
+    )
+    await pull.stop()
+    fake_github.fail_next(AUTO_MERGE_READ_BUDGET, 1)
+    requests = len(_enable_requests(fake_github))
+    operation = asyncio.create_task(
+        _auto_merge_service(pull).request(
+            pull.task, f"{URL_PREFIX}{_PULL_NUMBER}", await pull.remote_branch()
+        )
+    )
+
+    await wait_until(pull.clock.has_pending_sleep, WAIT_SECONDS)
+    engine_env.tasks.set_holds(pull.task.id, frozenset({Hold.PAUSED}))
+    pull.clock.advance_to_next_sleeper()
+    await operation
+
+    assert fake_github.auto_merge(_PULL_NUMBER) is None
+    assert len(_enable_requests(fake_github)) == requests
+    assert len(_disable_requests(fake_github)) == 1
+    assert not pull.escalated()
+    await pull.stop()
+
+
 async def test_exhausted_auto_merge_state_reads_fail_as_integration_blocked(
     engine_env: EngineEnv,
     fake_github: FakeGitHub,
@@ -578,6 +608,74 @@ async def test_a_request_whose_reply_is_lost_is_confirmed_on_github_not_refused(
     assert fake_github.auto_merge(_PULL_NUMBER) is not None
     assert not pull.escalated()
     assert pull.waiting()
+    await pull.stop()
+
+
+async def test_an_immediately_merged_pull_request_completes_after_a_lost_request_reply(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(engine_env, fake_github, tmp_path_factory, auto_merge=False)
+    await pull.stop()
+    pull.auto_merge = make_auto_merge(
+        engine_env, enabled=True, settings=pull.settings, clock=pull.clock
+    )
+    fake_github.hold(ACCEPTED_AUTO_MERGE_HOLD)
+    fake_github.fail_next("lost-auto-merge", 1)
+    await pull.restart()
+    await wait_until(
+        lambda: (
+            len(_enable_requests(fake_github)) == 1
+            and fake_github.auto_merge(_PULL_NUMBER) is not None
+        ),
+        WAIT_SECONDS,
+    )
+
+    branch = await pull.remote_branch()
+    merge_commit = await merge_on_remote(pull.remote_dir, "main", branch, MergeStyle.SQUASH)
+    fake_github.merge(_PULL_NUMBER, merge_commit)
+    fake_github.release(ACCEPTED_AUTO_MERGE_HOLD)
+    await pull.until(pull.flow.done)
+
+    assert engine_env.tasks.require(pull.task.id).status is Status.DONE
+    assert fake_github.auto_merge(_PULL_NUMBER) is None
+    assert len(_enable_requests(fake_github)) == 1
+    await pull.stop()
+
+
+async def test_an_ambiguous_enable_checks_for_a_merge_before_resending(
+    engine_env: EngineEnv,
+    fake_github: FakeGitHub,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    pull = await open_pull(
+        engine_env, fake_github, tmp_path_factory, auto_merge=True, auto_merge_attempts=2
+    )
+    await pull.stop()
+    fake_github.set_fields(_PULL_NUMBER, autoMerge=None)
+    fake_github.fail_next("auto-merge", 1)
+    requests = len(_enable_requests(fake_github))
+    head = await pull.remote_branch()
+    operation = asyncio.create_task(
+        _auto_merge_service(pull).request(pull.task, f"{URL_PREFIX}{_PULL_NUMBER}", head)
+    )
+
+    await wait_until(
+        lambda: (
+            len(_enable_requests(fake_github)) == requests + 1 and pull.clock.has_pending_sleep()
+        ),
+        WAIT_SECONDS,
+    )
+    merge_commit = await merge_on_remote(pull.remote_dir, "main", head, MergeStyle.SQUASH)
+    fake_github.merge(_PULL_NUMBER, merge_commit)
+    pull.clock.advance_to_next_sleeper()
+    status = await operation
+
+    assert status is not None
+    assert status.state is PullRequestState.MERGED
+    assert len(_enable_requests(fake_github)) == requests + 1
+    assert not pull.escalated()
     await pull.stop()
 
 

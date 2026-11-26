@@ -422,3 +422,5 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
   - Acceptance: parser tests accept `commitHeadline: null`; the fake `gh` test interrupts after recording auto-merge, restarts with the task held, and observes the request withdrawn.
 - [x] Rework after integration review: throttle unchanged non-final reconciliation and retry auto-merge GitHub reads, enables and withdrawals with bounded backoff and fault reporting.
   - Acceptance: repeated held sweeps make no GitHub reads before `network.pr_poll_seconds`; each affected read and operation recovers after one transient failure; exhausted attempts surface as `IntegrationBlocked` with the cause; enable retries confirm remote state before resending.
+- [x] Rework after follow-up review: stop request-state retries safely when a task becomes held, and treat an already merged PR as landed after an ambiguous enable.
+  - Acceptance: a hold during a failed auto-merge read withdraws any existing remote request; a lost enable reply after immediate merge enters normal completion; an ambiguous retry checks PR and auto-merge state after backoff.

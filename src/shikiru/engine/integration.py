@@ -750,7 +750,10 @@ class PullRequest:
             await self._check_wait(
                 task_id, opened.url, status, expired=self._clock.now() >= deadline
             )
-            await self._request_auto_merge(task_id, opened, status)
+            requested_status = await self._request_auto_merge(task_id, opened, status)
+            if requested_status is not None and requested_status.state is not PullRequestState.OPEN:
+                status = requested_status
+                break
             await self._clock.sleep(self._settings.network.pr_poll_seconds)
         self._tasks.set_wait_reason(task_id, None)
         if status.state is PullRequestState.CLOSED:
@@ -777,16 +780,16 @@ class PullRequest:
 
     async def _request_auto_merge(
         self, task_id: str, opened: _OpenPullRequest, status: PullRequestStatus
-    ) -> None:
+    ) -> PullRequestStatus | None:
         if self._auto_merge is None:
-            return
+            return None
         head = opened.branch_sha or status.head_sha
         if head is None:
             self._tasks.set_wait_reason(task_id, None)
             message = f"{task_id} has no known head to request auto-merge for {opened.url}"
             raise IntegrationBlocked(message)
         try:
-            await self._auto_merge.request(self._tasks.require(task_id), opened.url, head)
+            return await self._auto_merge.request(self._tasks.require(task_id), opened.url, head)
         except IntegrationBlocked:
             self._tasks.set_wait_reason(task_id, None)
             raise

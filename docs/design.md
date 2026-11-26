@@ -338,9 +338,13 @@ requests auto-merge: `gh pr merge <url> --auto --squash --subject <subject> (T-n
 is withdrawn first. Each request is recorded in `events` as `pr_auto_merge_requested` before it is
 sent, so a request GitHub accepts is never lost to an engine stop before its reply; after a restart
 the next withdrawal reads GitHub and withdraws it. When GitHub's reply to a request is lost, Shikiru
-confirms on GitHub whether the request is held before treating it as refused; a refusal is recorded as
-`pr_auto_merge_cancelled` and escalates. Because the subject and description are the latest accepted
-ones, a round that republishes makes the next request carry the new head, subject and description.
+confirms on GitHub whether the request is held and reads the pull request state before treating it as
+refused. If the pull request merged while the reply was lost, its status goes through the normal
+landing path. Before a retry after backoff, Shikiru checks both the pull request and auto-merge state
+again. A refusal is recorded as `pr_auto_merge_cancelled` and escalates. The initial auto-merge state
+read checks task state during retries; when the task becomes non-final, Shikiru withdraws any remote
+request before returning. Because the subject and description are the latest accepted ones, a round
+that republishes makes the next request carry the new head, subject and description.
 
 Withdrawal (`gh pr merge <url> --disable-auto`, recorded as `pr_auto_merge_cancelled`) is confirmed:
 after the disable call Shikiru reads GitHub again and fails if the request is still held. It happens
