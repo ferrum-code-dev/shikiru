@@ -426,3 +426,5 @@ Plan: [plan.md](plan.md). Each entry is a separate task, ordered by the dependen
   - Acceptance: a hold during a failed auto-merge read withdraws any existing remote request; a lost enable reply after immediate merge enters normal completion; an ambiguous retry checks PR and auto-merge state after backoff.
 - [x] Rework after follow-up review: exit the PR wait immediately when a hold is detected after an auto-merge state retry.
   - Acceptance: a flow-level test pauses during a failed state read, verifies withdrawal and flow completion without advancing the PR poll interval, then resumes and observes auto-merge requested again.
+- [x] Include the PR number from its URL in the auto-merge squash commit subject while retaining the PR title; verify both through the fake GitHub integration.
+  - Rework after integration failure: wait for the fake GitHub auto-merge state to clear after the second disable command is logged, and assert that two withdrawals were issued.
