@@ -333,8 +333,9 @@ neither enqueue follow-ups nor implement product code.
 engine starts and has effect only with `pr`. When it is on, each poll of an open pull request that
 the task may merge (waiting on it, not held, no feedback or check round unfinished) reads GitHub's
 `autoMergeRequest` and, unless GitHub already holds exactly the wanted squash subject and description,
-requests auto-merge: `gh pr merge <url> --auto --squash --subject <subject> (T-n) --body <description>
---match-head-commit <head>`, where the head is the one Shikiru published. A stale request GitHub holds
+requests auto-merge: `gh pr merge <url> --auto --squash --subject <subject> (T-n) (#number) --body <description>
+--match-head-commit <head>`, where `number` comes from the PR URL and the head is the one Shikiru
+published. The PR title remains `<subject> (T-n)`. A stale request GitHub holds
 is withdrawn first. Each request is recorded in `events` as `pr_auto_merge_requested` before it is
 sent, so a request GitHub accepts is never lost to an engine stop before its reply; after a restart
 the next withdrawal reads GitHub and withdraws it. When GitHub's reply to a request is lost, Shikiru

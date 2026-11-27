@@ -349,6 +349,11 @@ class _PullRequestAddress:
         )
 
 
+def parse_pull_request_number(url: str) -> int:
+    """Return the number from a GitHub pull request URL."""
+    return _PullRequestAddress.parse(url).number
+
+
 @dataclass(frozen=True, slots=True)
 class _Page:
     nodes: tuple[dict[str, Any], ...]

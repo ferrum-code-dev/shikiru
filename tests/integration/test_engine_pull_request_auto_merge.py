@@ -124,7 +124,7 @@ async def test_a_disabled_setting_requests_no_merge_for_an_opened_pull_request(
     await pull.stop()
 
 
-async def test_an_enabled_setting_requests_a_squash_merge_of_the_published_head_with_its_title(
+async def test_an_enabled_setting_requests_a_squash_merge_with_title_and_pr_number(
     engine_env: EngineEnv,
     fake_github: FakeGitHub,
     tmp_path_factory: pytest.TempPathFactory,
@@ -133,6 +133,7 @@ async def test_an_enabled_setting_requests_a_squash_merge_of_the_published_head_
     record = fake_github.pull_requests()[0]
     head = await pull.remote_branch()
     title = record["title"]
+    subject = f"{title} (#{_PULL_NUMBER})"
 
     assert title == f"{_ACCEPTED_SUBJECT} ({pull.task.id})"
     assert _enable_requests(fake_github) == [
@@ -143,7 +144,7 @@ async def test_an_enabled_setting_requests_a_squash_merge_of_the_published_head_
             _AUTO_FLAG,
             "--squash",
             "--subject",
-            title,
+            subject,
             "--body",
             record["body"],
             "--match-head-commit",
@@ -152,7 +153,7 @@ async def test_an_enabled_setting_requests_a_squash_merge_of_the_published_head_
     ]
     assert fake_github.auto_merge(_PULL_NUMBER) == {
         "method": "SQUASH",
-        "subject": title,
+        "subject": subject,
         "body": record["body"],
         "head": head,
     }
@@ -177,9 +178,10 @@ async def test_a_republished_round_withdraws_the_request_and_requests_its_new_va
     await wait_until(lambda: fake_github.auto_merge(_PULL_NUMBER) is not None, WAIT_SECONDS)
     record = fake_github.pull_requests()[0]
     head = await pull.remote_branch()
-    expected_subject = f"{_ROUND_SUBJECT} ({pull.task.id})"
+    expected_title = f"{_ROUND_SUBJECT} ({pull.task.id})"
+    expected_subject = f"{expected_title} (#{_PULL_NUMBER})"
 
-    assert record["title"] == expected_subject
+    assert record["title"] == expected_title
     assert fake_github.auto_merge(_PULL_NUMBER) == {
         "method": "SQUASH",
         "subject": expected_subject,

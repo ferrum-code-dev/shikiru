@@ -15,7 +15,7 @@ from shikiru.domain.tasks import Status
 from shikiru.engine.fault_reporter import RECOVERABLE_FAULTS
 from shikiru.engine.integration import IntegrationBlocked
 from shikiru.errors import PROCESS_FAILURES
-from shikiru.workspace.github import PullRequestState
+from shikiru.workspace.github import PullRequestState, parse_pull_request_number
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -163,10 +163,11 @@ class PullRequestAutoMerge:
             if not self.may_merge(current):
                 return None
             metadata = self._metadata_of(current)
+            title = task_commit_subject(metadata.subject, task.id)
             wanted = _Request(
                 url=url,
                 head=head,
-                subject=task_commit_subject(metadata.subject, task.id),
+                subject=f"{title} (#{parse_pull_request_number(url)})",
                 body=metadata.pr_description,
             )
             can_request, held = await self._request_state(task.id, url)
