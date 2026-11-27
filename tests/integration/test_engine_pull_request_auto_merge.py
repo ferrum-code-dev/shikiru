@@ -551,7 +551,9 @@ async def test_an_inflight_request_rechecks_task_state_after_github_accepts_it(
     engine_env.tasks.set_holds(pull.task.id, frozenset({Hold.PAUSED}))
     fake_github.release("merge")
     await wait_until(lambda: len(_disable_requests(fake_github)) == 2, WAIT_SECONDS)
+    await wait_until(lambda: fake_github.auto_merge(_PULL_NUMBER) is None, WAIT_SECONDS)
 
+    assert len(_disable_requests(fake_github)) == 2
     assert fake_github.auto_merge(_PULL_NUMBER) is None
     await pull.stop()
 
